@@ -1,0 +1,15 @@
+{
+  "type": "service_account",
+  "project_id": "revo365-e-commerce",
+  "private_key_id": "b908babe3f67269d9ca290d110034bf6bd136ea6",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDTLnVl8eB/vNYp\n4EtRvSliKzIvLJ8jSNtzPYxa2bkVr25dfB4/MAsTXwuM4V4GYIbG/KHfFWYXTmGg\nXlPCxBTj8VCa0ng35D7mH6+m2/WCJAKXuxb6xgZpSMQYSLWt1t25nd34cNSQu5u0\nIhBNTKqMO895Uu9qAThspL3XRYqwT0lkX+YWE+GMdRcqdv8bdjVWnrXT61pWUwMm\nWTr7Bp/3rKkz/vxVX3QHTuYoedvp47APrgn0PQ62K+u2qyaj0wdMjurnGMikKv1z\nK6L03j830w7vOBOeavbSGbDOC0mtP9DVNMLlmt88x7zEh+wfJobdLL4X4zpLmV6Y\nSptEp46LAgMBAAECggEANYB6LqsyWLpjObXA70LwxpWx/6Ca6qoNKuuHcQbi7LsG\nx3loAlMuIyi7uOPp2cy/qI8dhXKa7EGn2yS6rMfXkQ40gRzcZzCUvOF/M1Nbpi5w\nV7eG8V6VBjxwrcRR/upGPz3fHA+d0tMs9dyBa8wGE0Qd4ptf22fWvzOXgv/zzIm7\npRrnaCKdzWWVCJ5yUNfVYA5OwObn2Uwt5v9FSNqyJWZqmWtwEk8GcPp5NZc+7b5u\nUjvLwJ5x7valHgOF0bBQHfKLEbQhi0AosQ+mUBzsfHi5n4o8f47OjVqEgTaU45wV\nP0kt4tFRo3dmeCRO3mVEZGXp+Za7MeYRneVyhDC7EQKBgQD6qjvCBdlhPhdGsm6g\nMYK9LceMOPRsF06h5ieREKzHoJXCHFVaf+yL/HNRyZRkKnaE13PPLp7lPQMihaIN\nshrRErDDhUukNuYkO7mJcxlQp4YyPpKUgvw8Yjsi1ZH3vCXFlpP2U7gLMw6CIoEE\nFFtRrpYQldb0hQKgBFOqh/8RewKBgQDXrRivToLMmKl3SRlqtlPseljjcr49q80r\nzM62KdgpHauVK0orRxLSlHQC086t0/009C8g5q/0PhcPqLgPix2VVKWrC0Erf32L\nANAbl5E5gbAh2Gey5p6jrUmhTUA3YW7kzvoF315E2avgrl17E7IiB50f57DYNdge\nTctYmeLCMQKBgHx5THNstCW1z5krwgOKkoGe2hinr7h9Wm7K+5rtzN7Uv4lEyJ3I\nKI7bLejPUQDslS4iTz/yxrTPN19NPMvQRcDMpzpwVr+VA3O6tMesgEWs6tbIe8GD\nyf2ySetiYrnClH8p5w/LQvlMwUeeGrML6M0HBT33KmcCJeuQOnvUTLVBAoGAfpMp\nz4imHujhXA5cilIjAr/y9tlaaNsw+CmkjygTol21W0AisS9vDoLtatNfkoi9K5y7\nI/X/AbqG0jvUedrNK9yXtcBPKPYTecaqW+ch5bwE4Hges9HA/JIwiifKLjZSXJpU\nBapHquSMiLoMRrUScAJD5nuVP+6pvW8ujfsSJ6ECgYBnZynqJtZAcYQ1krfC0RG3\nENGFq4OYk4Qt2b1zEYZo/ypThpGDu4kiY/4I+WtpR6L1Vk85H4e5YNLDBlIGYhjR\nvqGW/qCwlXSUFYnUfNcXDpJ55kuBQMXDwj1jsCTCDATA06ZCpLCcTtToKo2PZayS\nx2qNRShc9JlHhKyjhHh/HQ==\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-rbojc@revo365-e-commerce.iam.gserviceaccount.com",
+  "client_id": "112518316863607468765",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-rbojc%40revo365-e-commerce.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+
+  

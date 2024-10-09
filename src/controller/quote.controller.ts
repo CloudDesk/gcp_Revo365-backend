@@ -1,0 +1,57 @@
+import { quoteService } from "../services/quote.service.js"
+
+export module quoteController {
+    export const getQuotes = async (request: any, reply: any) => {
+        try {
+            let fetchQuoteData = await quoteService.getQuoteData(request)
+            reply.send(fetchQuoteData)
+        } catch (error) {
+            reply.status(404).send(error.message)
+        }
+    }
+
+    export const upsertQuotes = async (request: any, reply: any) => {
+        try {
+            let upsertQuoteData = await quoteService.upsertQuotes(request.body)
+            console.log(upsertQuoteData, "upsertQuoteData")
+            if (upsertQuoteData.command === "UPDATE" || upsertQuoteData.command === "INSERT") {
+                let message: any = {}
+                message = {
+                    message: upsertQuoteData.command === "UPDATE"
+                        ? `Quotes Updated successfully`
+                        : `Quotes Inserted successfully`,
+                    Data: upsertQuoteData.rows[0]
+                };
+                reply.status(200).send(message)
+            }
+            else {
+                console.log("else upsertQuoteData Error")
+                console.log(upsertQuoteData)
+                reply.status(404).send({ error: [upsertQuoteData] })
+            }
+        } catch (error) {
+            reply.status(404).send(error.message)
+        }
+    }
+    export const attachQuotefiles = async (request: any, reply: any) => {
+        try {
+            let upsertQuoteData = await quoteService.attachQuotefiles(request)
+            if (upsertQuoteData.command === "UPDATE" || upsertQuoteData.command === "INSERT") {
+                let message: any = {}
+                message = {
+                    message: upsertQuoteData.command === "UPDATE"
+                        ? `Quotes Updated successfully`
+                        : `Quotes Inserted successfully`,
+                    Data: upsertQuoteData.rows[0]
+                };
+                reply.status(200).send(message)
+            }
+            else {
+                console.log("else upsertQuoteData Error")
+                reply.status(404).send({ error: [upsertQuoteData] })
+            }
+        } catch (error) {
+            reply.status(404).send(error.message)
+        }
+    }
+} 
