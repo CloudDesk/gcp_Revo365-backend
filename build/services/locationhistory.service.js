@@ -1,0 +1,89 @@
+import { query } from "../database/postgres.js";
+import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+export var locationHistoryService;
+(function (locationHistoryService) {
+    locationHistoryService.getLocationHistoryData = async (request) => {
+        try {
+            const pageNumber = parseInt(request.query.page) || 1;
+            const recordCount = parseInt(request.query.count) || 5000;
+            const keys = Object.keys(request.query);
+            const values = Object.values(request.query);
+            let whereClauses = [];
+            let parameterIndex = 1;
+            const queryParams = [];
+            let orderByField = "scannedtime";
+            let orderByDirection = "ASC";
+            keys.forEach((key, index) => {
+                const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
+                if (key === "sortby") {
+                    const [fieldName, direction] = paramValues[0].split("-");
+                    orderByField = fieldName;
+                    orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
+                }
+                else if (paramValues[0].startsWith("NOT ")) {
+                    const cleanValue = paramValues[0].slice(4);
+                    whereClauses.push(`(${key} != $${parameterIndex})`);
+                    queryParams.push(cleanValue);
+                    parameterIndex++;
+                }
+                else if (key !== "page" && key !== "count") {
+                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    whereClauses.push(`(${clauses.join(" OR ")})`);
+                    queryParams.push(...paramValues);
+                    parameterIndex += paramValues.length;
+                }
+            });
+            const offset = (pageNumber - 1) * recordCount;
+            const baseConditions = ``;
+            const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
+            const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
+            let queryText = `SELECT * FROM locationhistory ${whereClause} ${orderByClause}`;
+            if (pageNumber && recordCount) {
+                queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
+            console.log("Query Text:", queryText);
+            console.log("Query Params:", queryParams);
+            const result = await query(queryText, queryParams);
+            let datatypeCheckResult = await dataTypeCheck(result);
+            return datatypeCheckResult;
+        }
+        catch (error) {
+            console.log('ERROR IN  Controller getLocationHistoryData');
+            let errordata = await ErrorHandler.handleQueryError(error);
+        }
+    };
+    locationHistoryService.upsertLocationHistory = async (locationdata) => {
+        try {
+            let querydata;
+            let params;
+            const { id, ...upsertFields } = locationdata;
+            const fieldNames = Object.keys(upsertFields);
+            const fieldValues = Object.values(upsertFields);
+            if (id) {
+                querydata = `UPDATE locationhistory SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+                WHERE id = $${fieldNames.length + 1} 
+                RETURNING *`;
+                params = [...fieldValues, id];
+            }
+            else {
+                querydata = `INSERT INTO locationhistory (${fieldNames.join(", ")}) VALUES (${fieldNames
+                    .map((_, index) => `$${index + 1}`)
+                    .join(", ")}) RETURNING *`;
+                params = fieldValues;
+            }
+            console.log(querydata);
+            console.log(params);
+            const result = await query(querydata, params);
+            return result;
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN upsert Service locationhistory data", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage);
+            return ErrorMessage;
+        }
+    };
+})(locationHistoryService || (locationHistoryService = {}));
+//# sourceMappingURL=locationhistory.service.js.map

@@ -1,0 +1,13 @@
+export const BIG_INT = 20;
+export const BOOLEAN = 16;
+export const NUMERIC = 1700;
+export const TEXT = 25;
+export const TEXTA = 2249;
+export const TEXTB = 1007;
+export const VARCHAR = 1043;
+export const INTEGER = 23;
+export const ARRAY = 1009; //_TEXT
+export const _VARCHAR = 1015;
+export const ARRAYOFOBJECT = 3802;
+export const tsvector = 3614;
+//# sourceMappingURL=dataTypeconfig.js.map

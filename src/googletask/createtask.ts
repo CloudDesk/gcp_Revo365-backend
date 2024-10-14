@@ -1,11 +1,13 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-let project = 'revo-436904'
-let queue = 'revoorder'
-let location = 'asia-south1'
+let project = 'docblitz-437213'
+let queue = 'revoorderphonepe'
+let location = 'us-central1'
 // let url = 'https://us-central1-revo-436904.cloudfunctions.net/revoorder'
-let url = 'https://asia-south1-revo-436904.cloudfunctions.net/revo-cloud-function'
+// let url = 'https://asia-south1-revo-436904.cloudfunctions.net/revo-cloud-function'
+
+let url = 'https://us-central1-docblitz-437213.cloudfunctions.net/revo-gcp-phonepe'
 let inSeconds: any = 120
 import { CloudTasksClient } from '@google-cloud/tasks';
 let client;
@@ -19,11 +21,14 @@ try {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const parentDir = resolve(__dirname, '/revo-436904-8c40dfd46abd.json');
+const parentDir = resolve(__dirname, '/docblitz-437213-d99f2718bd72.json');
 // console.log(__dirname, "Parent Dir TAKS __dirname");
 // console.log(join(__dirname, "/revo-436904-8c40dfd46abd.json"), 'join  Name');
 // console.log(parentDir, "Parent Dir TAKS");
-process.env.GOOGLE_APPLICATION_CREDENTIALS = join(__dirname, "/revo-436904-09a3ddafb0ac.json")
+// process.env.GOOGLE_APPLICATION_CREDENTIALS = join(__dirname, "/revo-436904-09a3ddafb0ac.json")
+process.env.GOOGLE_APPLICATION_CREDENTIALS = join(__dirname, "/docblitz-437213-d99f2718bd72.json")
+
+
 
 // console.log(join(__dirname, "/revo-436904-09a3ddafb0ac.json") ,'VA:LUE IS ');
 export async function createHttpTask(merchantid: any) {

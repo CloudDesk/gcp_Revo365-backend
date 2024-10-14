@@ -333,7 +333,6 @@ export module transactionService {
             } catch (error) {
                 console.log(error.message, 'Error in Task Creation');
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true)
-
             }
 
             console.log(response.data, 'PAYMENT LOGS ARE ');

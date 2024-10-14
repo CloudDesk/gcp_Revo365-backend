@@ -1,0 +1,100 @@
+import { userInventoryService } from "../services/Inventoryuser.service.js";
+export var InventoryuserController;
+(function (InventoryuserController) {
+    InventoryuserController.getInventoryUsersData = async (request, reply) => {
+        try {
+            let getUsersDataResult = await userInventoryService.getInventoryUsersData(request, reply);
+            reply.send(getUsersDataResult);
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.userlogout = async (request, reply) => {
+        try {
+            const userData = request.body;
+            console.log(request.cookies.sessionId);
+            let upsertUserResult = await userInventoryService.userlogout(request, reply);
+            console.log(upsertUserResult);
+            reply.status(200).send('Logged Out Successfully');
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.forgotuser = async (request, reply) => {
+        try {
+            let forgotuserData = await userInventoryService.forgotuser(request, reply);
+            console.log(forgotuserData, 'forgotuserData');
+            if (forgotuserData.status === 'success') {
+                reply.send(forgotuserData);
+            }
+            else {
+                reply.status(404).send({ error: forgotuserData.message });
+            }
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.getInventoryUsersDataTickets = async (request, reply) => {
+        try {
+            let getUsersDataResult = await userInventoryService.getInventoryUsersDataTickets(request);
+            reply.send(getUsersDataResult);
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.getLoggedInInventoryUsersData = async (request, reply) => {
+        try {
+            let getUsersDataResult = await userInventoryService.getLoggedInInventoryUsersData(request, reply);
+            console.log(getUsersDataResult, 'getUsersDataResult');
+            console.log(Array.isArray(getUsersDataResult.userdata));
+            if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
+                reply.status(401).send({ error: getUsersDataResult });
+            }
+            else {
+                reply.send(getUsersDataResult);
+            }
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.deleteInventoryUserData = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            let deleteUserResult = await userInventoryService.deleteInventoryUser(Number(id));
+            reply.send(deleteUserResult);
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+    InventoryuserController.upsertInventoryUser = async (request, reply) => {
+        try {
+            const userData = request.body;
+            console.log(userData);
+            let upsertUserResult = await userInventoryService.upsertInventoryUser(userData);
+            console.log(upsertUserResult);
+            if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
+                let message = {};
+                message = {
+                    message: upsertUserResult?.command === "UPDATE"
+                        ? ` User signup done successfully`
+                        : ` User signup done successfully`,
+                    data: upsertUserResult?.rows[0]
+                };
+                reply.status(200).send(message);
+            }
+            else {
+                reply.status(500).send({ error: upsertUserResult });
+            }
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
+})(InventoryuserController || (InventoryuserController = {}));
+//# sourceMappingURL=Inventoryuser.controller.js.map
