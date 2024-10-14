@@ -139,21 +139,21 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //users
     fastify.get('/users', { preHandler: [getSession] }, userController.getUsersData);
     fastify.get('/users/:useremail/:userpassword', userController.getLoggedInUsersData);
-    fastify.post('/users', { preHandler: [getSession] }, userController.upsertUser);
-    fastify.post('/users/fcmid', { preHandler: [getSession] }, userController.upsertFcmidUser);
-    fastify.get('/users/logout', { preHandler: [getSession] }, userController.userlogout);
+    fastify.post('/users', userController.upsertUser);
+    fastify.post('/users/fcmid',userController.upsertFcmidUser);
+    fastify.get('/users/logout', userController.userlogout);
 
-    fastify.delete('/users/:id', { preHandler: [getSession] }, userController.deleteUserData);
-    fastify.post('/user-forgot', { preHandler: [getSession] }, userController.forgotuser);
+    fastify.delete('/users/:id', userController.deleteUserData);
+    fastify.post('/user-forgot', userController.forgotuser);
 
     //Invetroyusers
     fastify.get('/inventoryusers', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersData);
     fastify.get('/inventoryusers/tickets', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
-    fastify.post('/inventoryusers', { preHandler: [getSession] }, InventoryuserController.upsertInventoryUser);
-    fastify.delete('/inventoryusers/:id', { preHandler: [getSession] }, InventoryuserController.deleteInventoryUserData);
-    fastify.post('/inventoryusers-forgot', { preHandler: [getSession] }, InventoryuserController.forgotuser);
-    fastify.get('/inventoryusers/logout', { preHandler: [getSession] }, InventoryuserController.userlogout);
+    fastify.post('/inventoryusers',InventoryuserController.upsertInventoryUser);
+    fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
+    fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
+    fastify.get('/inventoryusers/logout', InventoryuserController.userlogout);
 
 
 

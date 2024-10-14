@@ -13,7 +13,7 @@ export module phonePay  {
                 merchantTransactionId: merchanttransactionId,
                 name: name,
                 amount: Number(amount) * 100,
-                redirectUrl: `http://[::1]:5600/payment/status?id=${merchanttransactionId}`,
+                redirectUrl: `https://revo-365-backend-1066464674690.us-central1.run.app/payment/status?id=${merchanttransactionId}`,
                 redirectMode: "POST",
                 mobileNumber: mobilenumber,
                 paymentInstrument: {

@@ -7,6 +7,8 @@ const __dirname = dirname(__filename);
 const parentDir = resolve(__dirname, '../../uploads');
 const fileMaxSize = 150 * 1024 * 1024;
 console.log(parentDir ,"Parent Dir");
+console.log(__dirname ,"__dirname Dir");
+
 const storage = Multer.diskStorage({
   destination: (req, file, cb) => {
     console.log('storage');
