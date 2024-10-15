@@ -46,7 +46,9 @@ import { servicecostestimationSchema } from "../schemas/servicecostestimation.sc
 import { revoinvoiceSchema } from "../schemas/revoinvoice.schema.js";
 import { ticketsSchema } from "../schemas/tickets.schema.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
-import { getSession } from "../cloudflare/cloudflare.session.js";
+import { getSession } from "../database/redis.session.js";
+// import { getSession } from "../cloudflare/cloudflare.session.js";
+
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     console.log('Routes called ');
