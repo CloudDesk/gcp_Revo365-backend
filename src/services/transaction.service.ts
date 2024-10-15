@@ -347,6 +347,9 @@ export module transactionService {
     }
     export const paymentConfirmation = async (request: any, reply: any) => {
         try {
+            console.log('inside payment confirmation');
+            console.log(REDIRECT_URL_SUCCESS, 'REDIRECT URL SUCCESS');
+            console.log(REDIRECT_URL_FAILURE, 'REDIRECT URL FAILURE');
             // console.log('status');
             const merchantTransactionId = request.query.id;
             const cloudflaretoken = request.query.token;

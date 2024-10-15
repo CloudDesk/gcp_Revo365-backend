@@ -192,10 +192,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     // data loader
     fastify.post('/dataloader', { preHandler: [getSession] }, dataLoaderController.insertDataLoaderData);
-    fastify.post('/get-dataloader', { preHandler: [filesUpload, getSession] }, dataLoaderController.getDataLoaderData);
+    fastify.post('/get-dataloader', { preHandler: [getSession,filesUpload] }, dataLoaderController.getDataLoaderData);
 
     //stockrevo dataloader
-    fastify.post('/get-dataloader/stock', { preHandler: [filesUpload, getSession] }, dataLoaderController.getDataLoaderDataStock);
+    fastify.post('/get-dataloader/stock', { preHandler: [getSession,filesUpload] }, dataLoaderController.getDataLoaderDataStock);
     fastify.post('/dataloader/stock', { preHandler: [getSession] }, dataLoaderController.insertBulkDataStock);
 
     //data loader
