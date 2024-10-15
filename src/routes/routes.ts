@@ -46,7 +46,9 @@ import { servicecostestimationSchema } from "../schemas/servicecostestimation.sc
 import { revoinvoiceSchema } from "../schemas/revoinvoice.schema.js";
 import { ticketsSchema } from "../schemas/tickets.schema.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
-import { getSession } from "../cloudflare/cloudflare.session.js";
+import { getSession } from "../database/redis.session.js";
+// import { getSession } from "../cloudflare/cloudflare.session.js";
+
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     console.log('Routes called ');
@@ -64,8 +66,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     // stock v1
     fastify.get(`/stock`, stockController.getStockData);
-    fastify.get('/loaderio-fae42a637f7c433045c894eb8e481020',(req,reply)=>{
-        reply.send('loaderio-fae42a637f7c433045c894eb8e481020')
+    fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5', (req, reply) => {
+        reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5')
     }
     )
     // verison 2 -> product
