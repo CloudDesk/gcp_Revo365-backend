@@ -53,6 +53,7 @@
     "pg": "^8.11.3",
     "pg-protocol": "^1.6.1",
     "pizzip": "^3.1.7",
+    "redis": "^4.7.0",
     "revo-365_backend": "file:",
     "url": "^0.11.3",
     "uuid": "^10.0.0"
