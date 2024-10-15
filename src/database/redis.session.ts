@@ -47,7 +47,7 @@ export const saveSession = async (sessionId,sessionData): Promise<string> => {
   console.log('Updated Session Data:',sessionDataWithCreatedTime);
 
   await redisClient.set(sessionId, JSON.stringify(sessionDataWithCreatedTime));
-  await redisClient.expire(sessionId, 120); 
+  await redisClient.expire(sessionId, 3600); 
 
   return sessionId; 
 };
