@@ -1,5 +1,6 @@
-import { saveSession } from "../cloudflare/cloudflare.session.js";
+// import { saveSession } from "../cloudflare/cloudflare.session.js";
 import { query } from "../database/postgres.js";
+import { saveSession } from "../database/redis.session.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { sendMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";

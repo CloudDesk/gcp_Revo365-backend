@@ -40,7 +40,8 @@ import { permissionscontroller } from "../controller/permissions.controller.js";
 import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
-import { getSession } from "../cloudflare/cloudflare.session.js";
+import { getSession } from "../database/redis.session.js";
+// import { getSession } from "../cloudflare/cloudflare.session.js";
 const Revo365Routes = async function (fastify, opts) {
     console.log('Routes called ');
     //product version 1
@@ -56,8 +57,8 @@ const Revo365Routes = async function (fastify, opts) {
     // fastify.get(`/product-ecom`, productController.getEcomProducts);
     // stock v1
     fastify.get(`/stock`, stockController.getStockData);
-    fastify.get('/loaderio-fae42a637f7c433045c894eb8e481020', (req, reply) => {
-        reply.send('loaderio-fae42a637f7c433045c894eb8e481020');
+    fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5', (req, reply) => {
+        reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5');
     });
     // verison 2 -> product
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
@@ -160,9 +161,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/supplier-name', { preHandler: [getSession] }, supplierController.getSupplierName);
     // data loader
     fastify.post('/dataloader', { preHandler: [getSession] }, dataLoaderController.insertDataLoaderData);
-    fastify.post('/get-dataloader', { preHandler: [filesUpload, getSession] }, dataLoaderController.getDataLoaderData);
+    fastify.post('/get-dataloader', { preHandler: [getSession, filesUpload] }, dataLoaderController.getDataLoaderData);
     //stockrevo dataloader
-    fastify.post('/get-dataloader/stock', { preHandler: [filesUpload, getSession] }, dataLoaderController.getDataLoaderDataStock);
+    fastify.post('/get-dataloader/stock', { preHandler: [getSession, filesUpload] }, dataLoaderController.getDataLoaderDataStock);
     fastify.post('/dataloader/stock', { preHandler: [getSession] }, dataLoaderController.insertBulkDataStock);
     //data loader
     fastify.post('/dataloader/test', { preHandler: [getSession] }, dataLoaderController.insertDataLoaderDatalatest);

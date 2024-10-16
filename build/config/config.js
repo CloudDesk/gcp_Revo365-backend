@@ -19,6 +19,10 @@ const config = {
     GMAIL_PORT: process.env.GMAIL_PORT,
     GMAIL_AUTH_USER: process.env.GMAIL_AUTH_USER,
     GMAIL_AUTH_PASSWORD: process.env.GMAIL_AUTH_PASSWORD,
+    GCP_PROJECT_ID: process.env.GCP_PROJECT_ID,
+    GCP_PRJECT_QUEUE: process.env.GCP_PRJECT_QUEUE,
+    GCP_PROJECT_LOCATION: process.env.GCP_PROJECT_LOCATION,
+    GCP_TASK_URL: process.env.GCP_TASK_URL
 };
 export const { ACCESSKEYID } = config;
 export const { SECRETACCESSKEY } = config;
@@ -38,4 +42,8 @@ export const { GMAIL_HOST } = config;
 export const { GMAIL_PORT } = config;
 export const { GMAIL_AUTH_USER } = config;
 export const { GMAIL_AUTH_PASSWORD } = config;
+export const { GCP_PROJECT_ID } = config;
+export const { GCP_PRJECT_QUEUE } = config;
+export const { GCP_PROJECT_LOCATION } = config;
+export const { GCP_TASK_URL } = config;
 //# sourceMappingURL=config.js.map

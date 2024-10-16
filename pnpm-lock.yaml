@@ -113,11 +113,8 @@ importers:
       revo-365_backend:
         specifier: 'file:'
         version: 'file:'
-      tsc:
-        specifier: ^2.0.4
-        version: 2.0.4
       tsx:
-        specifier: ^4.15.3
+        specifier: ^4.19.1
         version: 4.19.1
       url:
         specifier: ^0.11.3
@@ -2181,10 +2178,6 @@ packages:
 
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
-
-  tsc@2.0.4:
-    resolution: {integrity: sha512-fzoSieZI5KKJVBYGvwbVZs/J5za84f2lSTLPYf6AGiIf43tZ3GNrI1QzTLcjtyDDP4aLxd46RTZq1nQxe7+k5Q==}
-    hasBin: true
 
   tslib@2.7.0:
     resolution: {integrity: sha512-gLXCKdN1/j47AiHiOkJN69hJmcbGTHI0ImLmbYLHykhgeN0jVGola9yVjFgzCUklsZQMW55o+dW7IXv3RCXDzA==}
@@ -4807,7 +4800,6 @@ snapshots:
       pg-protocol: 1.7.0
       pizzip: 3.1.7
       redis: 4.7.0
-      tsc: 2.0.4
       tsx: 4.19.1
       url: 0.11.4
       uuid: 10.0.0
@@ -4944,8 +4936,6 @@ snapshots:
       ieee754: 1.2.1
 
   tr46@0.0.3: {}
-
-  tsc@2.0.4: {}
 
   tslib@2.7.0: {}
 

@@ -1,11 +1,10 @@
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-let project = 'docblitz-437213';
-let queue = 'revoorderphonepe';
-let location = 'us-central1';
-// let url = 'https://us-central1-revo-436904.cloudfunctions.net/revoorder'
-// let url = 'https://asia-south1-revo-436904.cloudfunctions.net/revo-cloud-function'
-let url = 'https://us-central1-docblitz-437213.cloudfunctions.net/revo-gcp-phonepe';
+import { GCP_PRJECT_QUEUE, GCP_PROJECT_ID, GCP_PROJECT_LOCATION, GCP_TASK_URL } from '../config/config.js';
+let project = GCP_PROJECT_ID;
+let queue = GCP_PRJECT_QUEUE;
+let location = GCP_PROJECT_LOCATION;
+let url = GCP_TASK_URL;
 let inSeconds = 120;
 import { CloudTasksClient } from '@google-cloud/tasks';
 let client;
