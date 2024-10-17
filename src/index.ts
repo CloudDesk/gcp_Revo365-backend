@@ -7,8 +7,9 @@ import { dirname, join, resolve } from 'path';
 import { checkDatabaseConnection } from './database/postgres.js';
 import cors from '@fastify/cors'
 import { PORT } from './config/config.js';
-import  formbody  from '@fastify/formbody';
+import formbody from '@fastify/formbody';
 import fastifyCookie from 'fastify-cookie';
+import { connectGetSessionredis } from './database/redis.session.js';
 
 const fastify: any = Fastify();
 const __filename = fileURLToPath(import.meta.url);
@@ -67,8 +68,8 @@ fastify.register(fastifyCookie)
 fastify.register(Multer.contentParser)
 fastify.register(Revo365Routes, { fastifyInstance: fastify })
 
-console.log(join(parentDir, "/uploads"),'INDEX PATH');
-console.log(parentDir,'INDEX PATH 2');
+console.log(join(parentDir, "/uploads"), 'INDEX PATH');
+console.log(parentDir, 'INDEX PATH 2');
 fastify.register(fastifyStatic, {
     root: join(parentDir, "/uploads"),
 });
@@ -87,7 +88,7 @@ fastify.register(cors)
 //     };
 //     console.log('ON REQUEST ROUTE IS');
 //   });
-  
+
 //   fastify.addHook('onResponse', (request, reply, done) => {
 
 //     request.sessionTimings.closeTime = Date.now();  // Request End Time
@@ -101,6 +102,7 @@ fastify.addHook('onReady', async () => {
     try {
         let data = await checkDatabaseConnection();
         console.log(data, 'inside');
+        await connectGetSessionredis();
         // done()
         // console.log(fastify.isServerReady, 'Loging value is');
     } catch (error) {
@@ -110,7 +112,7 @@ fastify.addHook('onReady', async () => {
 });
 
 
-fastify.listen({ port: PORT ,host: '0.0.0.0'}, (err, address) => {
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
     try {
         if (err) {
             console.error(err)

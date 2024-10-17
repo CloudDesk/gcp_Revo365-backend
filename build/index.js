@@ -9,6 +9,7 @@ import cors from '@fastify/cors';
 import { PORT } from './config/config.js';
 import formbody from '@fastify/formbody';
 import fastifyCookie from 'fastify-cookie';
+import { connectGetSessionredis } from './database/redis.session.js';
 const fastify = Fastify();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -82,6 +83,7 @@ fastify.addHook('onReady', async () => {
     try {
         let data = await checkDatabaseConnection();
         console.log(data, 'inside');
+        await connectGetSessionredis();
         // done()
         // console.log(fastify.isServerReady, 'Loging value is');
     }
