@@ -57,7 +57,7 @@ const Revo365Routes = async function (fastify, opts) {
     // fastify.get(`/product-ecom`, productController.getEcomProducts);
     // stock v1
     fastify.get(`/stock`, stockController.getStockData);
-    fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5', (req, reply) => {
+    fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5/', (req, reply) => {
         reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5');
     });
     // verison 2 -> product
