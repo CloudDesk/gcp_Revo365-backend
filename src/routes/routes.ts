@@ -142,7 +142,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/users', { preHandler: [getSession] }, userController.getUsersData);
     fastify.get('/users/:useremail/:userpassword', userController.getLoggedInUsersData);
     fastify.post('/users', userController.upsertUser);
-    fastify.post('/users/fcmid',userController.upsertFcmidUser);
+    fastify.post('/users/fcmid', userController.upsertFcmidUser);
     fastify.get('/users/logout', userController.userlogout);
 
     fastify.delete('/users/:id', userController.deleteUserData);
@@ -152,7 +152,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/inventoryusers', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersData);
     fastify.get('/inventoryusers/tickets', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
-    fastify.post('/inventoryusers',InventoryuserController.upsertInventoryUser);
+    fastify.post('/inventoryusers', InventoryuserController.upsertInventoryUser);
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
     fastify.get('/inventoryusers/logout', InventoryuserController.userlogout);
@@ -194,10 +194,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     // data loader
     fastify.post('/dataloader', { preHandler: [getSession] }, dataLoaderController.insertDataLoaderData);
-    fastify.post('/get-dataloader', { preHandler: [getSession,filesUpload] }, dataLoaderController.getDataLoaderData);
+    fastify.post('/get-dataloader', { preHandler: [getSession, filesUpload] }, dataLoaderController.getDataLoaderData);
 
     //stockrevo dataloader
-    fastify.post('/get-dataloader/stock', { preHandler: [getSession,filesUpload] }, dataLoaderController.getDataLoaderDataStock);
+    fastify.post('/get-dataloader/stock', { preHandler: [getSession, filesUpload] }, dataLoaderController.getDataLoaderDataStock);
     fastify.post('/dataloader/stock', { preHandler: [getSession] }, dataLoaderController.insertBulkDataStock);
 
     //data loader
