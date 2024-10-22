@@ -1,0 +1,15 @@
+runtime: nodejs20 # or nodejs18, depending on your Node.js version
+
+env: standard
+
+instance_class: F1 # This is the smallest instance class. Adjust as needed.
+
+env_variables:
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_HOST: /cloudsql/docblitz-437213:us-central1:revo
+  POSTGRES_PORT: 5432
+  POSTGRES__DATABASE: ${POSTGRES__DATABASE}
+
+beta_settings:
+  cloud_sql_instances: docblitz-437213:us-central1:revo

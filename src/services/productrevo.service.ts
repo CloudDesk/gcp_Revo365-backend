@@ -142,6 +142,10 @@ export module productrevoService {
       console.log(`[${new Date().toISOString()}] [${requestId}] Executing database query`);
       const queryStart = performance.now();
       const result = await query(queryText, queryParams);
+      // console.log(`Query result:`, result);
+      // console.log(`Query result:`, result.data.rows);
+      // console.log(`Query result:`, result.data.rows[0]);
+
       const queryEnd = performance.now();
       console.log(`[${new Date().toISOString()}] [${requestId}] Query execution time: ${queryEnd - queryStart} ms`);
 
