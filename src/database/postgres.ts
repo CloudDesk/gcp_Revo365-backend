@@ -7,10 +7,10 @@ const pool = new pkg.Pool({
     host: POSTGRES_HOST,
     port: POSTGRES_PORT,
     database: POSTGRES__DATABASE,
-     // Connection pool settings
-     max: 500, // maximum number of clients in the pool
-     idleTimeoutMillis: 20000, // how long a client is allowed to remain idle before being closed
-     connectionTimeoutMillis: 3000, // how long to wait when connecting a new client
+    // Connection pool settings
+    max: 500, // maximum number of clients in the pool
+    idleTimeoutMillis: 20000, // how long a client is allowed to remain idle before being closed
+    connectionTimeoutMillis: 3000, // how long to wait when connecting a new client
 
 });
 export const checkDatabaseConnection = () => {
@@ -34,13 +34,13 @@ pool.on("error", (err: any) => {
 export const query = async (stmt: any, options: any) => {
     let querydata = stmt;
     let params = options;
-   
+
     if (Object.keys(options).length > 0 || options.length > 0) {
         // let res = await pool.query(stmt, options)
         // return res
         try {
-            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query",{querydata, params})
-            console.log(res ,'res ENgine');
+            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params })
+            console.log(res, 'res ENgine');
             return res.data;
         } catch (error) {
             return error
@@ -51,9 +51,9 @@ export const query = async (stmt: any, options: any) => {
         // console.log("else latest");
         // return await pool.query(stmt);
         try {
-            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query",{querydata})
-            console.log(res ,'res  APP engine');
-            return res;
+            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata })
+            console.log(res, 'res  APP engine');
+            return res.data;
         } catch (error) {
             return error
         }

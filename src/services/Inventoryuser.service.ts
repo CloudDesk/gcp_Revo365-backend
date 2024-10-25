@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 let generatedotp;
 export module userInventoryService {
-    export const getInventoryUsersData = async (request: any,reply:any) => {
+    export const getInventoryUsersData = async (request: any, reply: any) => {
         try {
             console.log('get Inventory User function call');
             const pageNumber = parseInt(request.query.page) || 1;
@@ -73,29 +73,29 @@ export module userInventoryService {
         }
     };
 
-    export const userlogout = async (request,reply) => {
+    export const userlogout = async (request, reply) => {
         try {
-          // Make a DELETE request to the Cloudflare Worker to delete the session
-      
-          // Clear the sessionId cookie from the client
-          let sessionId = request.cookies.sessionId
-          console.log(request.cookies.sessionId, 'Request Cookies Before Logout');
-          reply.clearCookie('sessionId', {
-            path: '/',
-            httpOnly: true,
-            secure: true,
-            sameSite: 'Strict'
-          });
-          console.log(request.cookies.sessionId, 'Request Cookies After Logout');
-    
-          reply.send({ status: 'Session deleted'});
+            // Make a DELETE request to the Cloudflare Worker to delete the session
+
+            // Clear the sessionId cookie from the client
+            let sessionId = request.cookies.sessionId
+            console.log(request.cookies.sessionId, 'Request Cookies Before Logout');
+            reply.clearCookie('sessionId', {
+                path: '/',
+                httpOnly: true,
+                secure: true,
+                sameSite: 'Strict'
+            });
+            console.log(request.cookies.sessionId, 'Request Cookies After Logout');
+
+            reply.send({ status: 'Session deleted' });
         } catch (error) {
-          console.error("Query Execution Error: IN deleteUser", error);
-          let ErrorMessage = await ErrorHandler.handleQueryError(error);
-          console.log(ErrorMessage);
-          return ErrorMessage;
+            console.error("Query Execution Error: IN deleteUser", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage);
+            return ErrorMessage;
         }
-      }
+    }
 
     export const getInventoryUsersDataTickets = async (request: any) => {
         try {
@@ -157,14 +157,14 @@ export module userInventoryService {
         }
     };
 
-    export const getLoggedInInventoryUsersData = async (request,reply) => {
+    export const getLoggedInInventoryUsersData = async (request, reply) => {
         try {
             const queryString = `SELECT * FROM Inventoryusers where useremail = '${request.params.useremail}'`;
             console.log(queryString);
             const result = await query(queryString, []);
             console.log(result.rows)
             console.log(request.params.userpassword)
-            if (result.rows.length > 0) {
+            if (result && result.rows.length > 0) {
                 let validatepassword = await hashValidator(
                     request.params.userpassword,
                     result.rows[0].userpassword
@@ -172,23 +172,23 @@ export module userInventoryService {
                 if (validatepassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
-                      useremail: request.params.useremail,
-                      userpassword: request.params.userpassword
+                        useremail: request.params.useremail,
+                        userpassword: request.params.userpassword
                     };
                     let sessionsaved = await saveSession(sessionId, sessionData)
                     if (sessionsaved) {
-                      reply.setCookie('sessionId', sessionId, {
-                        path: '/',
-                        maxAge: 60 * 60 * 24
-                      });
-                      console.log(sessionId, "Session Id is ");
-                      console.log(result.rows, "Result Rows are ");
-                      return { sessionId, userdata: result.rows };
+                        reply.setCookie('sessionId', sessionId, {
+                            path: '/',
+                            maxAge: 60 * 60 * 24
+                        });
+                        console.log(sessionId, "Session Id is ");
+                        console.log(result.rows, "Result Rows are ");
+                        return { sessionId, userdata: result.rows };
                     }
                     else {
-                      return "Please Contact Admin.You are Not Authorized to Login";
+                        return "Please Contact Admin.You are Not Authorized to Login";
                     }
-                  } else {
+                } else {
                     return "user Credentials are wrong please try again";
                 }
             } else {
@@ -296,7 +296,7 @@ export module userInventoryService {
         }
     };
 
-    export const forgotuser = async (request: any,reply:any) => {
+    export const forgotuser = async (request: any, reply: any) => {
         try {
             request.query.useremail = request.body.useremail;
             if (!request.body.otp) {
@@ -305,7 +305,7 @@ export module userInventoryService {
                 request.body.text =
                     "Your otp code to Reset Password For Revo Site is " + generatedotp;
                 request.body.to = request.body.useremail;
-                let finduser = await getInventoryUsersData(request,reply);
+                let finduser = await getInventoryUsersData(request, reply);
                 if (finduser && finduser.length > 0) {
                     let emailresult = await sendMail(request, generatedotp);
                     console.log(emailresult);
@@ -319,7 +319,7 @@ export module userInventoryService {
                 }
             } else if (request.body.otp) {
                 console.log("else if  value of generatedotp is " + generatedotp);
-                let finduser = await getInventoryUsersData(request,reply);
+                let finduser = await getInventoryUsersData(request, reply);
                 console.log(finduser, "FInd User is ");
                 if (request.body.otp == generatedotp) {
                     return {

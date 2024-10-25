@@ -9,12 +9,13 @@ export const connectGetSessionredis = async () => {
 
     redisClient = createClient({
       url: process.env.CACHESTORE_CONNECTION_STRING,
-      password: 'MYwkDFf6aJBCL8Fb63UAbnHHZvx7m4CV',
+      password: 'Cs3OAZSzFSOnGpkbqmYdu6f9xLyx2PPn',
       socket: {
-        host: 'redis-11650.c253.us-central1-1.gce.redns.redis-cloud.com',
-        port: 11650
+        host: 'redis-11887.c330.asia-south1-1.gce.redns.redis-cloud.com',
+        port: 11887
       }
     });
+    // redis-11887.c330.asia-south1-1.gce.redns.redis-cloud.com:11887
 
     redisClient.on("connect", () => {
       console.log("Connected successfully to the Redis store");
@@ -24,9 +25,9 @@ export const connectGetSessionredis = async () => {
       console.error("Redis Client Error", err);
     });
 
-   let data = await redisClient.connect(); 
+    let data = await redisClient.connect();
 
-  
+
   } catch (error) {
     console.log('Inside redis error');
     console.error("Error connecting to Redis:", error);
@@ -34,44 +35,44 @@ export const connectGetSessionredis = async () => {
   }
 };
 
-export const saveSession = async (sessionId,sessionData): Promise<string> => {
+export const saveSession = async (sessionId, sessionData): Promise<string> => {
   console.log('Inside saveSessionredis')
   console.log('Generated Session ID:', sessionId);
   console.log('Session Data:', sessionData);
-  const createdTime = Math.floor(Date.now() / 1000);  
+  const createdTime = Math.floor(Date.now() / 1000);
 
   const sessionDataWithCreatedTime = {
     ...sessionData,
-    createddate: createdTime 
+    createddate: createdTime
   };
-  console.log('Updated Session Data:',sessionDataWithCreatedTime);
+  console.log('Updated Session Data:', sessionDataWithCreatedTime);
 
   await redisClient.set(sessionId, JSON.stringify(sessionDataWithCreatedTime));
-  await redisClient.expire(sessionId, 3600); 
+  await redisClient.expire(sessionId, 3600);
 
-  return sessionId; 
+  return sessionId;
 };
 
 export const getSession = async (req: any, reply: any): Promise<boolean> => {
-    try {
-      const sessionId = req.headers.authorization;
-  
-      if (!sessionId) {
-        console.log('No session ID provided in the authorization header');
-        return reply.status(401).send({ error: 'Unauthorized: No valid session' });
-      }
-  
-      const sessionData = await redisClient.get(sessionId);
-  
-      if (sessionData) {
-        console.log('Valid session found');
-        return true;
-      } else {
-        console.log('Session not found or expired');
-        return reply.status(401).send({ error: 'Unauthorized: No valid session' });
-      }
-    } catch (error) {
-      console.error('Error validating session:', error);
+  try {
+    const sessionId = req.headers.authorization;
+
+    if (!sessionId) {
+      console.log('No session ID provided in the authorization header');
       return reply.status(401).send({ error: 'Unauthorized: No valid session' });
     }
-  };
+
+    const sessionData = await redisClient.get(sessionId);
+
+    if (sessionData) {
+      console.log('Valid session found');
+      return true;
+    } else {
+      console.log('Session not found or expired');
+      return reply.status(401).send({ error: 'Unauthorized: No valid session' });
+    }
+  } catch (error) {
+    console.error('Error validating session:', error);
+    return reply.status(401).send({ error: 'Unauthorized: No valid session' });
+  }
+};
