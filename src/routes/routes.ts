@@ -70,6 +70,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5')
     }
     )
+
+    fastify.get('/test', { preHandler: [getSession] }, (req, reply) => {
+        reply.status(200).send('test')
+    }
+    )
     // verison 2 -> product
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);

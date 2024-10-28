@@ -2,20 +2,21 @@ import { createClient, RedisClientType } from 'redis';
 import { randomBytes } from 'crypto';
 
 let redisClient: RedisClientType | null = null;
-
 export const connectGetSessionredis = async () => {
   try {
     console.log('Inside redis connect');
 
     redisClient = createClient({
       url: process.env.CACHESTORE_CONNECTION_STRING,
-      password: 'Cs3OAZSzFSOnGpkbqmYdu6f9xLyx2PPn',
+      password: 'fVZWPfs4xi9SvpdY2d1HZgiqJCPNuZWh',
+
       socket: {
-        host: 'redis-11887.c330.asia-south1-1.gce.redns.redis-cloud.com',
-        port: 11887
+        host: 'redis-10690.c330.asia-south1-1.gce.redns.redis-cloud.com',
+        port: 10690
       }
     });
-    // redis-11887.c330.asia-south1-1.gce.redns.redis-cloud.com:11887
+    // redis-10690.c330.asia-south1-1.gce.redns.redis-cloud.com:10690 ,fVZWPfs4xi9SvpdY2d1HZgiqJCPNuZWh -  cdmac
+    // redis-11887.c330.asia-south1-1.gce.redns.redis-cloud.com:11887 ,Cs3OAZSzFSOnGpkbqmYdu6f9xLyx2PPn- suresh
 
     redisClient.on("connect", () => {
       console.log("Connected successfully to the Redis store");
@@ -47,8 +48,8 @@ export const saveSession = async (sessionId, sessionData): Promise<string> => {
   };
   console.log('Updated Session Data:', sessionDataWithCreatedTime);
 
-  await redisClient.set(sessionId, JSON.stringify(sessionDataWithCreatedTime));
-  await redisClient.expire(sessionId, 3600);
+  await redisClient.setEx(sessionId, 3600, JSON.stringify(sessionDataWithCreatedTime));
+  // await redisClient.expire(sessionId, 3600);
 
   return sessionId;
 };
@@ -56,16 +57,14 @@ export const saveSession = async (sessionId, sessionData): Promise<string> => {
 export const getSession = async (req: any, reply: any): Promise<boolean> => {
   try {
     const sessionId = req.headers.authorization;
-
     if (!sessionId) {
       console.log('No session ID provided in the authorization header');
       return reply.status(401).send({ error: 'Unauthorized: No valid session' });
     }
 
-    const sessionData = await redisClient.get(sessionId);
+    const sessionData = await redisClient.getEx(sessionId, { 'EX': 3600 });
 
     if (sessionData) {
-      console.log('Valid session found');
       return true;
     } else {
       console.log('Session not found or expired');
