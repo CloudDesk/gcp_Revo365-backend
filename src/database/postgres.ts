@@ -40,7 +40,6 @@ export const query = async (stmt: any, options: any) => {
         // return res
         try {
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params })
-            console.log(res, 'res ENgine');
             return res.data;
         } catch (error) {
             return error
@@ -52,7 +51,6 @@ export const query = async (stmt: any, options: any) => {
         // return await pool.query(stmt);
         try {
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata })
-            console.log(res, 'res  APP engine');
             return res.data;
         } catch (error) {
             return error

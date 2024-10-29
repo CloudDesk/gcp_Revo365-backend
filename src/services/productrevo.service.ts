@@ -2,6 +2,7 @@ import { query } from "../database/postgres.js"
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { QueryResult } from "pg";
 import imageResize from "../imageResize/imageRessize.js";
+// import  imageResizeGcp from "../imageResize/imageRessize.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { cartservice } from "./cart.service.js";
 import { performance } from 'perf_hooks';
@@ -490,6 +491,56 @@ export module productrevoService {
           : imageData.url.Small;
       }
       const pathurldatas = imageData?.path || null;
+      const { ...upsertFields } = upsertProductData;
+      const fieldNames = Object.keys(upsertFields);
+      const fieldValues = Object.values(upsertFields);
+      let querydata;
+      let params: any[] = [];
+      if (productid) {
+        querydata = `UPDATE product_revo SET ${fieldNames
+          .map((field, index) => `${field} = $${index + 1}`)
+          .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+        params = [...fieldValues, Number(productid)];
+      }
+      const result = await query(querydata, params);
+      return { result, productid, pathurldatas };
+    } catch (error) {
+      console.error("Query Execution Error: IN upsertProductwithFileRevo", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error)
+      console.log(ErrorMessage);
+      return ErrorMessage
+    }
+  };
+  export const upsertProductwithfileRevogcp = async (request: any) => {
+    try {
+      const { productid } = request.body;
+      let existingProductData: any = {};
+      const upsertProductData: any = [];
+      let data: any = {};
+      if (productid) {
+        existingProductData = await query(
+          `SELECT * FROM product_revo where id=${productid}`,
+          {}
+        );
+      }
+      if (existingProductData.rows && existingProductData.rows.length > 0) {
+        data = existingProductData?.rows[0];
+      }
+      console.log(data ,'data is here');
+      let imageData: any;
+      if (request.body.url) {
+        imageData = request.body;
+        upsertProductData.large = data?.large
+          ? [...data.large, ...imageData.url.Large]
+          : imageData.url.Large;
+        upsertProductData.medium = data?.medium
+          ? [...data.medium, ...imageData.url.Medium]
+          : imageData.url.Medium;
+        upsertProductData.small = data?.small
+          ? [...data.small, ...imageData.url.Small]
+          : imageData.url.Small;
+      }
+      const pathurldatas = imageData?.url || null;
       const { ...upsertFields } = upsertProductData;
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);

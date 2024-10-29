@@ -126,6 +126,28 @@ export module productrevoController {
             reply.send(` Error in upsert Product : ${error.message}`)
         }
     }
+    export const upsertProductwithfileRevogcp = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            console.log(request.body ,'Upload Image in DB');
+            let productUpsertResult: any = await productrevoService.upsertProductwithfileRevogcp(request)
+            console.log(productUpsertResult ,'Upload Image in DB'); 
+            if (productUpsertResult.result.command === "UPDATE" || productUpsertResult.result.command === "INSERT") {
+                let message: any = {}
+
+                message = {
+                    product: productUpsertResult.command === "UPDATE"
+                        ? `Product File Updated successfully`
+                        : `Product File Inserted successfully`
+                };
+                console.log(message);
+                return message
+            }
+            // reply.send('Success')
+        } catch (error) {
+            console.log(error.message, 'Error in Upsert Prodouct data set');
+            reply.send(` Error in upsert Product : ${error.message}`)
+        }
+    }
 
     export const rearrangeImageRevo = async function (request, reply) {
         try {

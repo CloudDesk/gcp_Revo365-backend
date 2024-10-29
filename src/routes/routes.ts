@@ -79,6 +79,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/product', { preHandler: [getSession] },/* { preHandler: [validateRequestBody(productInsertSchema)] } ,*/ productrevoController.upsertProductrevo);
     fastify.delete('/v2/product/:id', { preHandler: [getSession] },/* { preHandler: validateRequestBody(deleteProductSchema) } , */ productrevoController.deleteProductrevo);
     fastify.post('/v2/product-file/:productid', { preHandler: [getSession, filesUpload] }, productrevoController.upsertProductwithfileRevo);
+    fastify.post('/v3/product-file',productrevoController.upsertProductwithfileRevogcp);
     fastify.post('/v2/rearange-image/:productid', { preHandler: [getSession] }, productrevoController.rearrangeImageRevo);
     fastify.get('/v2/product/updaterecyclebin', { preHandler: [getSession] }, productrevoController.updateRemovedFromRecyclebinRevo);
     fastify.get(`/v2/product-ecom`, productrevoController.getProductsEcomrevoData);
