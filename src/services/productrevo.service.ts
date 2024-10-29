@@ -92,9 +92,10 @@ export module productrevoService {
   export const getproductsData = async (request: any) => {
     const start = performance.now();
     const requestId = Math.random().toString(36).substring(7);
-    console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData function called`);
+    // console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData function called`);
 
     try {
+      // console.log('Inside GET products data')
       const checkTimeout = (startTime: number, operationName: string) => {
         const currentTime = performance.now();
         if (currentTime - startTime > TIMEOUT_THRESHOLD) {
@@ -102,7 +103,7 @@ export module productrevoService {
         }
       };
 
-      console.log(`[${new Date().toISOString()}] [${requestId}] Processing request parameters`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Processing request parameters`);
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
       const keys = Object.keys(request.query);
@@ -116,10 +117,10 @@ export module productrevoService {
       let orderByField = "modifieddate";
       let orderByDirection = "DESC";
 
-      console.log(`[${new Date().toISOString()}] [${requestId}] Building query clauses`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Building query clauses`);
       keys.forEach((key, index) => {
         // ... (existing code for building query clauses)
-        console.log(`[${new Date().toISOString()}] [${requestId}] Processing key: ${key}`);
+        // console.log(`[${new Date().toISOString()}] [${requestId}] Processing key: ${key}`);
         checkTimeout(start, `processing key ${key}`);
       });
 
@@ -135,12 +136,12 @@ export module productrevoService {
         queryParams.push(offset, recordCount);
       }
 
-      console.log(`[${new Date().toISOString()}] [${requestId}] Query Text: ${queryText}`);
-      console.log(`[${new Date().toISOString()}] [${requestId}] Query Params:`, queryParams);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Query Text: ${queryText}`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Query Params:`, queryParams);
 
       checkTimeout(start, 'query preparation');
 
-      console.log(`[${new Date().toISOString()}] [${requestId}] Executing database query`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Executing database query`);
       const queryStart = performance.now();
       const result = await query(queryText, queryParams);
       // console.log(`Query result:`, result);
@@ -148,21 +149,20 @@ export module productrevoService {
       // console.log(`Query result:`, result.data.rows[0]);
 
       const queryEnd = performance.now();
-      console.log(`[${new Date().toISOString()}] [${requestId}] Query execution time: ${queryEnd - queryStart} ms`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Query execution time: ${queryEnd - queryStart} ms`);
 
       checkTimeout(start, 'database query');
 
-      console.log(`[${new Date().toISOString()}] [${requestId}] Performing datatype check`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Performing datatype check`);
       const datatypeCheckStart = performance.now();
       let datatypeCheckResult = await dataTypeCheck(result);
       const datatypeCheckEnd = performance.now();
-      console.log(`[${new Date().toISOString()}] [${requestId}] Datatype check time: ${datatypeCheckEnd - datatypeCheckStart} ms`);
+      // console.log(`[${new Date().toISOString()}] [${requestId}] Datatype check time: ${datatypeCheckEnd - datatypeCheckStart} ms`);
 
       checkTimeout(start, 'datatype check');
 
       const end = performance.now();
-      console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData total execution time: ${end - start} ms`);
-
+      // console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData total execution time: ${end - start} ms`);
       return datatypeCheckResult;
     } catch (error) {
       const end = performance.now();
@@ -174,7 +174,7 @@ export module productrevoService {
       }
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       console.log(`[${new Date().toISOString()}] [${requestId}] Error Message:`, ErrorMessage);
-      return ErrorMessage;
+      throw new Error(`Error occurred :${ErrorMessage}`);
     }
   };
 

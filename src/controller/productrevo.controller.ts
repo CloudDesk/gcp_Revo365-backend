@@ -12,7 +12,7 @@ export module productrevoController {
             let getProductRevoResult = await productrevoService.getproductsData(request);
             reply.send(getProductRevoResult)
         } catch (error) {
-            reply.send(error.message);
+            reply.status(500).send(error.message);
         }
     }
     export const getProductsEcomrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -34,7 +34,7 @@ export module productrevoController {
 
     export const upsertlockqty = async function (request: any, reply: any) {
         try {
-            let getProductsResult = await productrevoService.bulkupsertProducttosetZero(request.body,true)
+            let getProductsResult = await productrevoService.bulkupsertProducttosetZero(request.body, true)
             reply.send(getProductsResult)
         } catch (error) {
             reply.send(`${error.message} error in get Products`)
