@@ -1,5 +1,6 @@
 import { createClient, RedisClientType } from 'redis';
 import { randomBytes } from 'crypto';
+import { SESSIONEXSEC } from '../config/config.js';
 
 let redisClient: RedisClientType | null = null;
 export const connectGetSessionredis = async () => {
@@ -39,23 +40,34 @@ export const connectGetSessionredis = async () => {
 export const saveSession = async (sessionId, sessionData): Promise<string> => {
   console.log('Inside saveSessionredis')
   console.log('Generated Session ID:', sessionId);
-  console.log('Session Data:', sessionData);
+  // console.log('Session Data:', sessionData);
   const createdTime = Math.floor(Date.now() / 1000);
 
   const sessionDataWithCreatedTime = {
     ...sessionData,
     createddate: createdTime
   };
-  console.log('Updated Session Data:', sessionDataWithCreatedTime);
+  let sessionDataString;
+  if (typeof sessionData === 'string') {
+    sessionDataString = sessionData;
+  } else {
+    sessionDataString = JSON.stringify(sessionData);
+  }
+  const sizeofsessionDataWithCreatedTime = Buffer.byteLength(sessionDataString, 'utf8');
+  console.log('Data size:', sizeofsessionDataWithCreatedTime, 'bytes');
+  // console.log('Updated Session Data:', sessionDataWithCreatedTime);
 
-  await redisClient.setEx(sessionId, 3600, JSON.stringify(sessionDataWithCreatedTime));
+  // await redisClient.set(sessionId, JSON.stringify(sessionDataWithCreatedTime));
   // await redisClient.expire(sessionId, 3600);
+  let redissaved = await redisClient.setEx(sessionId, SESSIONEXSEC, JSON.stringify(sessionDataWithCreatedTime));
+  console.log('Saved data:',redissaved);
 
   return sessionId;
 };
 
 export const getSession = async (req: any, reply: any): Promise<boolean> => {
   try {
+    // console.log("Inside Get Session");
     const sessionId = req.headers.authorization;
     if (!sessionId) {
       console.log('No session ID provided in the authorization header');
@@ -65,7 +77,11 @@ export const getSession = async (req: any, reply: any): Promise<boolean> => {
     const sessionData = await redisClient.getEx(sessionId, { 'EX': 3600 });
 
     if (sessionData) {
-      return true;
+      const sessionDataSize = Buffer.byteLength(sessionData, 'utf8');
+      // console.log('Data size:', sessionDataSize, 'bytes');
+      console.log('Valid session found');
+      await redisClient.setEx(sessionId, SESSIONEXSEC, sessionData);
+      return JSON.parse(sessionData);
     } else {
       console.log('Session not found or expired');
       return reply.status(401).send({ error: 'Unauthorized: No valid session' });

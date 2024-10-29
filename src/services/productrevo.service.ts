@@ -94,6 +94,7 @@ export module productrevoService {
     // console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData function called`);
 
     try {
+      // console.log('Inside GET products data')
       const checkTimeout = (startTime: number, operationName: string) => {
         const currentTime = performance.now();
         if (currentTime - startTime > TIMEOUT_THRESHOLD) {
