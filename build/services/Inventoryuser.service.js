@@ -5,13 +5,13 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { sendMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from "uuid";
 let generatedotp;
 export var userInventoryService;
 (function (userInventoryService) {
     userInventoryService.getInventoryUsersData = async (request, reply) => {
         try {
-            console.log('get Inventory User function call');
+            console.log("get Inventory User function call");
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
@@ -22,11 +22,14 @@ export var userInventoryService;
             let orderByField = "modifieddate";
             let orderByDirection = "DESC";
             keys.forEach((key, index) => {
-                const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
+                const paramValues = Array.isArray(values[index])
+                    ? values[index]
+                    : [values[index]];
                 if (key === "name") {
-                    console.log(values[index], 'Before Capitalize');
-                    values[index] = values[index].charAt(0).toUpperCase() + values[index].slice(1);
-                    console.log(values[index], 'After Capitalize');
+                    console.log(values[index], "Before Capitalize");
+                    values[index] =
+                        values[index].charAt(0).toUpperCase() + values[index].slice(1);
+                    console.log(values[index], "After Capitalize");
                 }
                 else if (key === "sortby") {
                     const [fieldName, direction] = paramValues[0].split("-");
@@ -73,15 +76,15 @@ export var userInventoryService;
             // Make a DELETE request to the Cloudflare Worker to delete the session
             // Clear the sessionId cookie from the client
             let sessionId = request.cookies.sessionId;
-            console.log(request.cookies.sessionId, 'Request Cookies Before Logout');
-            reply.clearCookie('sessionId', {
-                path: '/',
+            console.log(request.cookies.sessionId, "Request Cookies Before Logout");
+            reply.clearCookie("sessionId", {
+                path: "/",
                 httpOnly: true,
                 secure: true,
-                sameSite: 'Strict'
+                sameSite: "Strict",
             });
-            console.log(request.cookies.sessionId, 'Request Cookies After Logout');
-            reply.send({ status: 'Session deleted' });
+            console.log(request.cookies.sessionId, "Request Cookies After Logout");
+            reply.send({ status: "Session deleted" });
         }
         catch (error) {
             console.error("Query Execution Error: IN deleteUser", error);
@@ -92,22 +95,22 @@ export var userInventoryService;
     };
     userInventoryService.getInventoryUsersDataTickets = async (request) => {
         try {
-            console.log('get Inventory User Tickets function call');
-            const role = request.query.role || 'Service';
-            const location = request.query.location || 'head_office';
+            console.log("get Inventory User Tickets function call");
+            const role = request.query.role || "Service";
+            const location = request.query.location || "head_office";
             // let queryText = `
             //     SELECT u.*,
             //            COUNT(t.id) AS ticketcount
-            //     FROM inventoryusers AS u 
+            //     FROM inventoryusers AS u
             //     LEFT Join tickets AS t ON u.id = t.assignedid
             //     WHERE t.ticketstatus <> 'closed' AND u.role = $1
             //     GROUP BY u.id
             // `;
             // let queryText = `
             //     SELECT u.*, COUNT(t.id) AS ticketcount
-            //     FROM inventoryusers AS u 
+            //     FROM inventoryusers AS u
             //     LEFT JOIN tickets AS t ON u.id = t.assignedid
-            //     WHERE u.role = $1 AND (t.ticketstatus <> 'resolved_closed' AND t.ticketstatus <> 'unresolved_closed') 
+            //     WHERE u.role = $1 AND (t.ticketstatus <> 'resolved_closed' AND t.ticketstatus <> 'unresolved_closed')
             //     AND u.location = $2
             //     GROUP BY u.id
             // `;
@@ -148,20 +151,22 @@ export var userInventoryService;
             const result = await query(queryString, []);
             console.log(result.rows);
             console.log(request.params.userpassword);
-            if (result.rows.length > 0) {
+            if (result && result.rows.length > 0) {
                 let validatepassword = await hashValidator(request.params.userpassword, result.rows[0].userpassword);
                 if (validatepassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
                         useremail: request.params.useremail,
-                        userpassword: request.params.userpassword
+                        userpassword: request.params.userpassword,
                     };
                     let sessionsaved = await saveSession(sessionId, sessionData);
+                    //   console.log(">>>>", sessionsaved, ">>>>");
+                    console.log(sessionsaved, "session saved is ");
                     if (sessionsaved) {
-                        reply.setCookie('sessionId', sessionId, {
-                            path: '/',
-                            maxAge: 60 * 60 * 24
-                        });
+                        // reply.setCookie('sessionId', sessionId, {
+                        //     path: '/',
+                        //     maxAge: 60 * 60 * 24
+                        // });
                         console.log(sessionId, "Session Id is ");
                         console.log(result.rows, "Result Rows are ");
                         return { sessionId, userdata: result.rows };

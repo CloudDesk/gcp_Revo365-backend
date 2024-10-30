@@ -8,7 +8,7 @@ export var productrevoController;
             reply.send(getProductRevoResult);
         }
         catch (error) {
-            reply.send(error.message);
+            reply.status(500).send(error.message);
         }
     };
     productrevoController.getProductsEcomrevoData = async (request, reply) => {
@@ -119,6 +119,28 @@ export var productrevoController;
                 };
                 reply.status(200).send(message);
             }
+        }
+        catch (error) {
+            console.log(error.message, 'Error in Upsert Prodouct data set');
+            reply.send(` Error in upsert Product : ${error.message}`);
+        }
+    };
+    productrevoController.upsertProductwithfileRevogcp = async (request, reply) => {
+        try {
+            console.log(request.body, 'Upload Image in DB');
+            let productUpsertResult = await productrevoService.upsertProductwithfileRevogcp(request);
+            console.log(productUpsertResult, 'Upload Image in DB');
+            if (productUpsertResult.result.command === "UPDATE" || productUpsertResult.result.command === "INSERT") {
+                let message = {};
+                message = {
+                    product: productUpsertResult.command === "UPDATE"
+                        ? `Product File Updated successfully`
+                        : `Product File Inserted successfully`
+                };
+                console.log(message);
+                return message;
+            }
+            // reply.send('Success')
         }
         catch (error) {
             console.log(error.message, 'Error in Upsert Prodouct data set');
