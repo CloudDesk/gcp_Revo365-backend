@@ -182,7 +182,8 @@ export module userInventoryService {
             userpassword: request.params.userpassword,
           };
           let sessionsaved = await saveSession(sessionId, sessionData);
-        //   console.log(">>>>", sessionsaved, ">>>>");
+          //   console.log(">>>>", sessionsaved, ">>>>");
+          console.log(sessionsaved, "session saved is ");
           if (sessionsaved) {
             // reply.setCookie('sessionId', sessionId, {
             //     path: '/',

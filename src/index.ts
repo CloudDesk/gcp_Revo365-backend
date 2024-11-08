@@ -1,47 +1,47 @@
-import Fastify, { FastifyRequest } from 'fastify'
-import Revo365Routes from './routes/routes.js';
-import Multer from 'fastify-multer';
-import fastifyStatic from '@fastify/static';
-import { fileURLToPath } from 'url';
-import { dirname, join, resolve } from 'path';
-import { checkDatabaseConnection } from './database/postgres.js';
-import cors from '@fastify/cors'
-import { PORT } from './config/config.js';
-import formbody from '@fastify/formbody';
+import Fastify, { FastifyRequest } from "fastify";
+import Revo365Routes from "./routes/routes.js";
+import Multer from "fastify-multer";
+import fastifyStatic from "@fastify/static";
+import { fileURLToPath } from "url";
+import { dirname, join, resolve } from "path";
+import { checkDatabaseConnection } from "./database/postgres.js";
+import cors from "@fastify/cors";
+import { PORT } from "./config/config.js";
+import formbody from "@fastify/formbody";
 
-import fs from 'fs';
+import fs from "fs";
 // import { stringify } from 'csv-stringify';
 
-import { connectGetSessionredis } from './database/redis.session.js';
+import { connectGetSessionredis } from "./database/redis.session.js";
 
 interface CustomRequest extends FastifyRequest {
-    startTime?: [number, number]; // Optional startTime property
+  startTime?: [number, number]; // Optional startTime property
 }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const parentDir = resolve(__dirname, '..');
+const parentDir = resolve(__dirname, "..");
 
 // Configuration
-const logFilePath = './request_logs.csv';
+const logFilePath = "./request_logs.csv";
 
 // Create a write stream for logging in append mode
-const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 // Create Fastify instance
-const fastify : any = Fastify({ logger: true });
+const fastify: any = Fastify({ logger: true });
 
 // Log CSV header if file is empty
 fs.stat(logFilePath, (err, stats) => {
-    if (err || stats.size === 0) {
-        logStream.write('timestamp,method,url,statusCode,duration\n');
-    }
+  if (err || stats.size === 0) {
+    logStream.write("timestamp,method,url,statusCode,duration\n");
+  }
 });
 
 // Log each request to CSV
-fastify.addHook('onRequest', (request: CustomRequest, reply, done) => {
-    request.startTime = process.hrtime(); // Start timer
-    done();
+fastify.addHook("onRequest", (request: CustomRequest, reply, done) => {
+  request.startTime = process.hrtime(); // Start timer
+  done();
 });
 
 // Log each response to CSV
@@ -80,53 +80,45 @@ fastify.addHook('onRequest', (request: CustomRequest, reply, done) => {
 //     done();
 // });
 
-
-
-
-
-
 fastify.register(formbody);
 // fastify.register(fastifyCookie)
-fastify.register(Multer.contentParser)
-fastify.register(Revo365Routes, { fastifyInstance: fastify })
+fastify.register(Multer.contentParser);
+fastify.register(Revo365Routes, { fastifyInstance: fastify });
 
-console.log(join(parentDir, "/uploads"), 'INDEX PATH');
-console.log(parentDir, 'INDEX PATH 2');
+console.log(join(parentDir, "/uploads"), "INDEX PATH");
+console.log(parentDir, "INDEX PATH 2");
 fastify.register(fastifyStatic, {
-    root: join(parentDir, "/uploads"),
+  root: join(parentDir, "/uploads"),
 });
 
-fastify.register(cors)
+fastify.register(cors);
 
-
-fastify.addHook('onReady', async () => {
-    try {
-        let data = await checkDatabaseConnection();
-        console.log(data, 'inside');
-        await connectGetSessionredis();
-        // done()
-        // console.log(fastify.isServerReady, 'Loging value is');
-    } catch (error) {
-        console.error("Failed to connect to the database:", error);
-        return error
-    }
+fastify.addHook("onReady", async () => {
+  try {
+    let data = await checkDatabaseConnection();
+    console.log(data, "inside");
+    await connectGetSessionredis();
+    // done()
+    // console.log(fastify.isServerReady, 'Loging value is');
+  } catch (error) {
+    console.error("Failed to connect to the database:", error);
+    return error;
+  }
 });
 
-
-fastify.listen({port: PORT,host: '0.0.0.0' }, (err, address) => {
-try {
-        if (err) {
-            console.error(err)
-        }
-        if (address) {
-            console.log("Successfully Connected", address);
-        }
-        else {
-            console.log('Server Not Connectd ');
-        }
-    } catch (error) {
-        return error
+fastify.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
+  try {
+    if (err) {
+      console.error(err);
     }
-})
+    if (address) {
+      console.log("Successfully Connected", address);
+    } else {
+      console.log("Server Not Connectd ");
+    }
+  } catch (error) {
+    return error;
+  }
+});
 
 // export { fastify };

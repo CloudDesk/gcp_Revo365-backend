@@ -22,7 +22,9 @@ const config = {
     GCP_PROJECT_ID: process.env.GCP_PROJECT_ID,
     GCP_PRJECT_QUEUE: process.env.GCP_PRJECT_QUEUE,
     GCP_PROJECT_LOCATION: process.env.GCP_PROJECT_LOCATION,
-    GCP_TASK_URL: process.env.GCP_TASK_URL
+    GCP_TASK_URL: process.env.GCP_TASK_URL,
+    SESSIONEXSEC: +process.env.SESSIONEXSEC,
+    OTPEXPSEC: +process.env.OTPEXPSEC
 };
 export const { ACCESSKEYID } = config;
 export const { SECRETACCESSKEY } = config;
@@ -46,4 +48,6 @@ export const { GCP_PROJECT_ID } = config;
 export const { GCP_PRJECT_QUEUE } = config;
 export const { GCP_PROJECT_LOCATION } = config;
 export const { GCP_TASK_URL } = config;
+export const { SESSIONEXSEC } = config;
+export const { OTPEXPSEC } = config;
 //# sourceMappingURL=config.js.map
