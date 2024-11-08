@@ -217,6 +217,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/purchase-order/:id', { preHandler: [getSession] }, purchaseOrderController.getEachPurchaseOrder);
     fastify.post('/purchase-order', { preHandler: [getSession, validateRequestBody(purchaseorderInsertSchema)] }, purchaseOrderController.upsertPurchaseOrder);
     fastify.post('/purchase-Order/invoice/:id', { preHandler: [getSession, filesUpload] }, purchaseOrderController.upsertInvoice);
+    fastify.post('/v2/purchase-Order/invoice/:id', purchaseOrderController.upsertInvoice);
     fastify.post('/purchase-Order/update/invoice/:id', { preHandler: [getSession] }, purchaseOrderController.deleteUrl);
     fastify.delete('/purchase-order/:id', { preHandler: [getSession] }, purchaseOrderController.deletePurchaseOrder);
 
@@ -230,6 +231,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/rating-ecom', ratingController.getRatingData);
     fastify.delete('/rating/:id', { preHandler: [getSession] }, ratingController.deleteRating);
     fastify.post('/rating', { preHandler: [getSession, filesUpload] }, ratingController.upsertRating);
+    fastify.post('/v2/rating',ratingController.upsertGcpRating);
     fastify.post('/rating-image/delete', { preHandler: [getSession] }, ratingController.deleteImageRating);
 
     // phonepe
@@ -256,10 +258,12 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     //attach quote
     fastify.post('/quote/file', { preHandler: [getSession, filesUpload] }, quoteController.attachQuotefiles);
+    fastify.post('/v2/quote/file', quoteController.attachGcpQuotefiles);
 
     //poinvoice
     fastify.get('/poinvoice', { preHandler: [getSession] }, poinvoicecontroller.getPOInvoice);
     fastify.post('/poinvoice', { preHandler: [getSession, filesUpload] }, poinvoicecontroller.upsertPoInvoice);
+    fastify.post('/v2/poinvoice', poinvoicecontroller.upsertGcpPoInvoice);
 
     //Gmail
     fastify.post('/gmail', { preHandler: [getSession, filesUpload] }, sendMail);
@@ -274,6 +278,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/customer/tickets', { preHandler: [getSession] }, ticketController.getTicketDynamicData);
     fastify.get('/tickets/queue', { preHandler: [getSession] }, ticketController.getQueueTicketsData);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
+    fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
 
     // Merchant Transaction Id - 
     fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)

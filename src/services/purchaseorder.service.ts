@@ -113,6 +113,49 @@ export module purchaseOrderService {
         }
 
     };
+
+    export const upsertGcpInvoice = async (request: any) => {
+
+        try {
+            const { id } = request.params;
+            // let fileurlarray = [];
+            // request.files.forEach((element) => {
+            //     let fileurl = request.protocol + "://" + request.headers.host + '/' + element.filename;
+            //     fileurlarray.push(fileurl);
+            //     console.log(fileurl, 'File url is');
+            // });
+            // console.log(fileurlarray);
+            const fetchQuery = `
+            SELECT invoiceurl
+            FROM purchaseorder
+            WHERE id = $1;
+            `;
+
+            let currentUrls;
+            const result = await query(fetchQuery, [id]);
+            currentUrls = result.rows[0].invoiceurl || [];
+
+            const combinedUrls = currentUrls.concat(request.body.invoiceUrl);
+            const updateQuery = `
+            UPDATE purchaseorder
+            SET invoiceurl = $1
+            WHERE id = $2;
+            `;
+
+            let params = [combinedUrls, id];
+            console.log(updateQuery);
+
+            let data = await query(updateQuery, params);
+            return data;
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN upsertInvoice", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            console.log(ErrorMessage);
+            return ErrorMessage
+        }
+
+    };
     export const deleteUrl = async (request: any) => {
 
         try {

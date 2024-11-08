@@ -53,6 +53,28 @@ export module ticketController {
         }
     }
 
+    export const upsertGcpTickets = async (request, reply) => {
+        console.log(request);
+        try {
+            let host = request.headers.host
+            let upsertTicket = await ticketService.upsertGcpTickets(request.body)
+            if (upsertTicket.command === "UPDATE" || upsertTicket.command === "INSERT") {
+                let message: any = {};
+                message = {
+                    message: upsertTicket.command === "UPDATE"
+                        ? `Ticket Updated Successfully`
+                        : `Ticket Raised Successfully`
+                };
+                reply.status(200).send(message);
+            } else {
+                reply.status(400).send(upsertTicket)
+            }
+        } catch (error) {
+            let ErrorDetails = ErrorHandler.handleQueryError(error);
+            reply.status(404).send(ErrorDetails);
+        }
+    }
+
     export const upsertTicketspayment = async (request, host) => {
         console.log(request);
         try {

@@ -54,4 +54,27 @@ export module quoteController {
             reply.status(404).send(error.message)
         }
     }
+
+    export const attachGcpQuotefiles = async (request: any, reply: any) => {
+        try {
+            let upsertQuoteData = await quoteService.attachGcpQuotefiles(request)
+            if (upsertQuoteData.command === "UPDATE" || upsertQuoteData.command === "INSERT") {
+                let message: any = {}
+                message = {
+                    message: upsertQuoteData.command === "UPDATE"
+                        ? `Quotes Updated successfully`
+                        : `Quotes Inserted successfully`,
+                    Data: upsertQuoteData.rows[0]
+                };
+                reply.status(200).send(message)
+            }
+            else {
+                console.log("else upsertQuoteData Error")
+                reply.status(404).send({ error: [upsertQuoteData] })
+            }
+        } catch (error) {
+            reply.status(404).send(error.message)
+        }
+    }
+
 } 

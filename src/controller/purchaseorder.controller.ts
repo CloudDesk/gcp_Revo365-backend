@@ -53,6 +53,27 @@ export module purchaseOrderController {
             reply.send(` Error in upsert Product : ${error.message}`)
         }
     }
+
+    export const upsertGcpInvoice = async (request: any, reply: any) => {
+        try {
+            let productUpsertResult: any = await purchaseOrderService.upsertInvoice(request)
+            if (productUpsertResult?.command === "UPDATE" || productUpsertResult?.command === "INSERT") {
+                let message: any = {}
+                message = {
+                    "Purchase Order": productUpsertResult.command === "UPDATE"
+                        ? `Inovice Added successfully`
+                        : `Inovice Added successfully`
+                };
+                reply.status(200).send(message)
+            }
+            else {
+                reply.status(404).send('Error when uploading Invoice please contact Admin')
+            }
+        } catch (error) {
+            console.log(error.message, 'Error in Upsert Prodouct data set');
+            reply.send(` Error in upsert Product : ${error.message}`)
+        }
+    }
     export const deleteUrl = async (request: any, reply: any) => {
         try {
             let productUpsertResult: any = await purchaseOrderService.deleteUrl(request)

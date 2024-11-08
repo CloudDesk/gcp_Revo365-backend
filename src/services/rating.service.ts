@@ -122,6 +122,50 @@ export module ratingService {
     }
   }
 
+  export const upsertGcpRating = async (request: any, reply: any) => {
+    try {
+      let querydata: string;
+      let params: any[];
+      let ratingData = request.body;
+      const { id, ...upsertFields } = ratingData;
+      const fieldNames = Object.keys(upsertFields);
+      const fieldValues = Object.values(upsertFields);
+      if (id) {
+        const fetchUrlQuery = 'SELECT url FROM rating WHERE id = $1';
+        const existingUrlResult = await query(fetchUrlQuery, [id]);
+        if (existingUrlResult.rows.length > 0) {
+          const existingUrls = existingUrlResult.rows[0].url;
+          console.log(existingUrls, 'Existing URL');
+          const updatedUrls = existingUrls.concat(ratingData.url);
+          console.log(updatedUrls);
+          upsertFields.url = updatedUrls;
+          const fieldNames = Object.keys(upsertFields);
+          const fieldValues = Object.values(upsertFields);
+          querydata = `UPDATE rating SET ${fieldNames
+            .map((field, index) => `${field} = $${index + 1}`)
+            .join(', ')} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+          params = [...fieldValues, id];
+        } else {
+          return `No rating found with id ${id}`;
+        }
+      } else {
+        querydata = `INSERT INTO rating (${fieldNames.join(', ')}) VALUES (${fieldNames
+          .map((_, index) => `$${index + 1}`)
+          .join(', ')}) RETURNING *`;
+        params = fieldValues;
+      }
+
+      const result = await query(querydata, params);
+      return result;
+
+    } catch (error) {
+      console.error("Query Execution Error: IN upsertProductrevo", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error)
+      console.log(ErrorMessage);
+      return ErrorMessage
+    }
+  }
+
   export const deleteImage = async (request: any, reply: any) => {
     try {
       let querydata: string = '';
