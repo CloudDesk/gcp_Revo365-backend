@@ -140,5 +140,73 @@ export var quoteService;
             return ErrorMessage;
         }
     };
+    quoteService.attachGcpQuotefiles = async (quotedata) => {
+        try {
+            let querydata;
+            let params;
+            console.log(quotedata.body, "quotedata.body");
+            const { id, ...upsertFields } = quotedata.body;
+            const fieldNames = Object.keys(upsertFields);
+            const fieldValues = Object.values(upsertFields);
+            console.log(id, "recId");
+            if (id) {
+                querydata = `UPDATE quotes SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+                WHERE id = $${fieldNames.length + 1} 
+                RETURNING *`;
+                params = [...fieldValues, id];
+            }
+            else {
+                querydata = `INSERT INTO quotes (${fieldNames.join(", ")}) VALUES (${fieldNames
+                    .map((_, index) => `$${index + 1}`)
+                    .join(", ")}) RETURNING *`;
+                params = fieldValues;
+            }
+            console.log(querydata, "querydata");
+            console.log(params, "params");
+            const result = await query(querydata, params);
+            console.log(result.rows, 'Result Data is ');
+            if (result && result.rows && result.rows.length > 0) {
+                if (result.rows[0].status === "closed_won") {
+                    let value = {
+                        prstatus: 'Completed',
+                        prnumber: result.rows[0].prnumber
+                    };
+                    console.log(value, ' Value is data ');
+                    let updatevalues = await purchaseRequestService.upsertstatusfield(value);
+                    console.log(JSON.stringify(updatevalues), ' Updated data');
+                    if (updatevalues.rows.length > 0) {
+                        let message = {
+                            Quote: "Quote Inserted or Updated Successfully",
+                            purchaseRequest: "Purchase Request Updated Successfully"
+                        };
+                        return result;
+                    }
+                    else {
+                        let message = {
+                            Quote: "Quote Inserted or Updated Successfully",
+                            purchaseRequest: "Purchase Request Updation Failed !!!"
+                        };
+                        return result;
+                    }
+                }
+                else {
+                    let message = {
+                        Quote: "Quote Inserted or Updated Successfully",
+                        purchaseRequest: "Purchase Request Updation Failed !!!"
+                    };
+                    return result;
+                }
+            }
+            else {
+                return result;
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN upsert Service Quote data", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage);
+            return ErrorMessage;
+        }
+    };
 })(quoteService || (quoteService = {}));
 //# sourceMappingURL=quote.service.js.map

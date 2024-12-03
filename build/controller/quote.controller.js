@@ -56,5 +56,27 @@ export var quoteController;
             reply.status(404).send(error.message);
         }
     };
+    quoteController.attachGcpQuotefiles = async (request, reply) => {
+        try {
+            let upsertQuoteData = await quoteService.attachGcpQuotefiles(request);
+            if (upsertQuoteData.command === "UPDATE" || upsertQuoteData.command === "INSERT") {
+                let message = {};
+                message = {
+                    message: upsertQuoteData.command === "UPDATE"
+                        ? `Quotes Updated successfully`
+                        : `Quotes Inserted successfully`,
+                    Data: upsertQuoteData.rows[0]
+                };
+                reply.status(200).send(message);
+            }
+            else {
+                console.log("else upsertQuoteData Error");
+                reply.status(404).send({ error: [upsertQuoteData] });
+            }
+        }
+        catch (error) {
+            reply.status(404).send(error.message);
+        }
+    };
 })(quoteController || (quoteController = {}));
 //# sourceMappingURL=quote.controller.js.map

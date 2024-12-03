@@ -44,6 +44,36 @@ export var ratingController;
             return ErrorMessage;
         }
     };
+    ratingController.upsertGcpRating = async (request, reply) => {
+        try {
+            let upsertRatingResult = await ratingService.upsertGcpRating(request, reply);
+            if (upsertRatingResult.command === "UPDATE" || upsertRatingResult.command === "INSERT") {
+                console.log('---', upsertRatingResult.rows, '---');
+                let productid = upsertRatingResult.rows[0].productid;
+                // console.log(productid);
+                let updateAvgRating = await ratingService.updateAvgRating(productid);
+                console.log('***', updateAvgRating, '***');
+                let message = {};
+                message = {
+                    product: upsertRatingResult.command === "UPDATE"
+                        ? `Rating Updated successfully`
+                        : `Rating Inserted successfully`
+                };
+                reply.status(200).send(message);
+            }
+            else {
+                console.log("else upsertRatingResult");
+                console.log(upsertRatingResult);
+                reply.status(404).send({ error: [upsertRatingResult] });
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN upsertRating controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage);
+            return ErrorMessage;
+        }
+    };
     ratingController.deleteImageRating = async (request, reply) => {
         try {
             let upsertRatingResult = await ratingService.deleteImage(request, reply);

@@ -304,6 +304,65 @@ export var ticketService;
             return ErrorData;
         }
     };
+    ticketService.upsertGcpTickets = async (ticketData) => {
+        try {
+            let querydata;
+            let params;
+            console.log(ticketData, "ticketData");
+            const { id, ...upsertFields } = ticketData;
+            const fieldNames = Object.keys(upsertFields);
+            const fieldValues = Object.values(upsertFields);
+            if (id) {
+                querydata = `UPDATE tickets SET ${fieldNames
+                    .map((field, index) => `${field} = $${index + 1}`)
+                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+                params = [...fieldValues, id];
+            }
+            else {
+                querydata = `INSERT INTO tickets (${fieldNames.join(", ")}) VALUES (${fieldNames
+                    .map((_, index) => `$${index + 1}`)
+                    .join(", ")}) RETURNING *`;
+                params = fieldValues;
+            }
+            const result = await query(querydata, params);
+            console.log(result.rows, 'INSERTED DATA');
+            if (result && result.rows.length > 0) {
+                let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
+                    result.rows[0].userid,
+                ]);
+                if (userdata && userdata.rows.length > 0) {
+                    console.log(result.rows[0].ticketstatus, "Ticket Status Product");
+                    const ticketStatus = result.rows[0].ticketstatus;
+                    const ticketNumber = result.rows[0].ticketnumber;
+                    console.log(ticketStatus, "ticketStatus");
+                    if (emailTemplates.tickets[ticketStatus]) {
+                        console.log(emailTemplates.tickets[ticketStatus], "emailTemplates");
+                        const { subject, text } = emailTemplates.tickets[ticketStatus];
+                        let maildata = {
+                            body: {
+                                to: userdata.rows[0].useremail,
+                                subject,
+                                text: text.replace("{ticketNumber}", ticketNumber),
+                            },
+                        };
+                        try {
+                            let sendingmail = await sendMail(maildata, false);
+                            console.log(sendingmail, "sendingmail");
+                        }
+                        catch (error) {
+                            console.log(error.message || error, "error in sending mail");
+                        }
+                        console.log(maildata, "maildata");
+                    }
+                }
+            }
+            return result;
+        }
+        catch (error) {
+            let ErrorData = ErrorHandler.handleQueryError(error);
+            return ErrorData;
+        }
+    };
     ticketService.upsertTicketspayment = async (ticketData, files, host) => {
         try {
             let querydata;

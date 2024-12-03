@@ -38,10 +38,13 @@ export const query = async (stmt, options) => {
         // let res = await pool.query(stmt, options)
         // return res
         try {
+            console.log(querydata, 'querydata if');
+            console.log(params, 'querydata if');
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params });
             return res.data;
         }
         catch (error) {
+            console.log('Errpr in query', error);
             return error;
         }
     }
@@ -49,10 +52,12 @@ export const query = async (stmt, options) => {
         // console.log("else latest");
         // return await pool.query(stmt);
         try {
+            console.log(querydata, 'querydata else');
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata });
             return res.data;
         }
         catch (error) {
+            console.log('Errpr in query', error);
             return error;
         }
     }
