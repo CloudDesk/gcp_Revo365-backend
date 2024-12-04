@@ -138,6 +138,136 @@ export module stockRevoService {
         }
     };
 
+    export const getDeletedStocksrevo = async (request: any) => {
+        try {
+            const pageNumber = request.query.page || 1
+            const recordCount = request.query.count || 5000
+            const keys = Object.keys(request.query);
+            const values = Object.values(request.query);
+            let whereClause = "";
+            let parameterIndex = 1;
+            let queryParams = [];
+            keys.forEach((key, index) => {
+                if (key !== 'page' && key != 'count') {
+                    const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+                    if (index !== 0) {
+                        if (whereClause.length > 0) {
+                            whereClause += " AND ";
+                        }
+                    }
+                    console.log(whereClause, 'Data set');
+                    whereClause += `(${paramValues
+                        .map((_, idx) => `${key} = $${parameterIndex + idx}`)
+                        .join(" OR ")})`;
+                    parameterIndex += paramValues.length;
+                    queryParams.push(...paramValues);
+                }
+            });
+            const offset = (pageNumber - 1) * recordCount;
+            let queryText = `SELECT * FROM stock_revo`;
+            console.log(whereClause, 'whereClause');
+            console.log(queryParams, 'queryParams');
+            if (whereClause) {
+                queryText += ` WHERE ${whereClause} AND isdeleted = true AND removefromrecyclebin = false AND ewaste = false OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
+                    }`;
+                if (pageNumber && recordCount) {
+                    queryParams.push(offset, recordCount);
+                }
+            }
+            else if (pageNumber && recordCount) {
+                queryText += ` WHERE isdeleted = true AND removefromrecyclebin = false AND ewaste = false  OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
+            else {
+                queryText += ` isdeleted = true AND removefromrecyclebin = false AND ewaste = false`;
+            }
+            console.log(queryText, 'Query text is');
+            console.log(queryParams, 'params');
+            const result: any = await query(queryText, queryParams);
+            let datatypecheckResult = await dataTypeCheck(result);
+            return datatypecheckResult;
+        } catch (error) {
+            console.error("Query Execution Error: IN getArcheivedStocksrevo", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            console.log(ErrorMessage);
+            return ErrorMessage
+        }
+
+    }
+
+    export const updateEwaste = async (id: number) => { 
+        try {
+            const result = await query(`UPDATE stock_revo SET ewaste = true WHERE id = $1`, [id]);
+            // console.log('<<<',result,'<<<');
+            if (result.command == 'UPDATE') {
+                return { message: 'E-waste updated successfully', rowCount: result.rowCount };
+            } else {
+                return { message: 'No stock found with the provided ID', rowCount: 0 };
+            }
+        } catch (error) {
+            console.error("Query Execution Error: updateEwaste", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage; 
+        }
+    };
+
+    export const getEwasteStocksrevo = async (request: any) => {
+        try {
+            const pageNumber = request.query.page || 1
+            const recordCount = request.query.count || 5000
+            const keys = Object.keys(request.query);
+            const values = Object.values(request.query);
+            let whereClause = "";
+            let parameterIndex = 1;
+            let queryParams = [];
+            keys.forEach((key, index) => {
+                if (key !== 'page' && key != 'count') {
+                    const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+                    if (index !== 0) {
+                        if (whereClause.length > 0) {
+                            whereClause += " AND ";
+                        }
+                    }
+                    console.log(whereClause, 'Data set');
+                    whereClause += `(${paramValues
+                        .map((_, idx) => `${key} = $${parameterIndex + idx}`)
+                        .join(" OR ")})`;
+                    parameterIndex += paramValues.length;
+                    queryParams.push(...paramValues);
+                }
+            });
+            const offset = (pageNumber - 1) * recordCount;
+            let queryText = `SELECT * FROM stock_revo`;
+            console.log(whereClause, 'whereClause');
+            console.log(queryParams, 'queryParams');
+            if (whereClause) {
+                queryText += ` WHERE ${whereClause} AND ewaste = true OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
+                    }`;
+                if (pageNumber && recordCount) {
+                    queryParams.push(offset, recordCount);
+                }
+            }
+            else if (pageNumber && recordCount) {
+                queryText += ` WHERE ewaste = true OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
+            else {
+                queryText += ` WHERE ewaste = true`;
+            }
+            console.log(queryText, 'Query text is');
+            console.log(queryParams, 'params');
+            const result: any = await query(queryText, queryParams);
+            let datatypecheckResult = await dataTypeCheck(result);
+            return datatypecheckResult;
+        } catch (error) {
+            console.error("Query Execution Error: IN getEwasteStocksrevo", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            console.log(ErrorMessage);
+            return ErrorMessage
+        }
+
+    }
+
     export const upsertStockRevoDatadelete = async (stockRevoData: any) => {
         try {
             let querydata: string;

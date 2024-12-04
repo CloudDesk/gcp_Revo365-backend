@@ -38,6 +38,8 @@ fs.stat(logFilePath, (err, stats) => {
   }
 });
 
+fastify.register(cors);
+
 // Log each request to CSV
 fastify.addHook("onRequest", (request: CustomRequest, reply, done) => {
   request.startTime = process.hrtime(); // Start timer
@@ -91,7 +93,6 @@ fastify.register(fastifyStatic, {
   root: join(parentDir, "/uploads"),
 });
 
-fastify.register(cors);
 
 fastify.addHook("onReady", async () => {
   try {
@@ -106,7 +107,7 @@ fastify.addHook("onReady", async () => {
   }
 });
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
+fastify.listen({ port: PORT}, (err, address) => {
   try {
     if (err) {
       console.error(err);

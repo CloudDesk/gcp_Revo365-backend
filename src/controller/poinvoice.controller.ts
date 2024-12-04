@@ -34,6 +34,16 @@ export module poinvoicecontroller {
         }
     }
 
+    export const deletePoInvoice = async (request: any, reply: any) => {
+        try {
+            const { id } = request.params
+            let deleteStockResult = await poinvoiceservice.deletePoInvoice(id);
+            reply.send(deleteStockResult);
+        } catch (error) {
+            reply.send(error.message);
+        }
+    };
+
     export const upsertGcpPoInvoice = async (request: any, reply: any) => {
         try {
 

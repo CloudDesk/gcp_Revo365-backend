@@ -62,6 +62,7 @@ export module InventoryuserController {
                 reply.status(401).send({ error: getUsersDataResult })
             }
             else {
+                console.log("INISIDE ELSE OF USERS ")
                 reply.send(getUsersDataResult);
 
             }

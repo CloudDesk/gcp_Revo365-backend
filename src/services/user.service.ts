@@ -1,11 +1,10 @@
-// import { saveSession } from "../cloudflare/cloudflare.session.js";
 import { query } from "../database/postgres.js";
-import { saveSession } from "../database/redis.session.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { sendMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from 'uuid';
+import { saveSession } from "./session.service.js";
 let generatedotp;
 
 export module userService {
@@ -149,10 +148,6 @@ export module userService {
           console.log(sessionData, "Session Data is ");
           console.log(sessionId, "Session Id is ");
           if (sessionsaved) {
-            reply.setCookie('sessionId', sessionId, {
-              path: '/',
-              maxAge: 60 * 60 * 24
-            });
             console.log(sessionId, "Session Id is ");
             console.log(result.rows, "Result Rows are ");
             return { sessionId, userdata: result.rows };
