@@ -31,6 +31,16 @@ export var poinvoicecontroller;
             reply.status(404).send(error.message);
         }
     };
+    poinvoicecontroller.deletePoInvoice = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            let deleteStockResult = await poinvoiceservice.deletePoInvoice(id);
+            reply.send(deleteStockResult);
+        }
+        catch (error) {
+            reply.send(error.message);
+        }
+    };
     poinvoicecontroller.upsertGcpPoInvoice = async (request, reply) => {
         try {
             let host = request.headers.host;

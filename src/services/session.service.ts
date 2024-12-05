@@ -32,6 +32,7 @@ export const saveSession = async (sessionId, sessionData): Promise<string> => {
 export const getSession = async (req: any, reply: any): Promise<any> => {
     try {
       console.log('Inside GetSession');
+      console.log(req.headers ,'headers are ')
       console.log(req.headers.authorization, "getSession headers");
       const sessionId = req.headers.authorization;
       

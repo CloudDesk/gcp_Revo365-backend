@@ -129,5 +129,29 @@ export var poinvoiceservice;
             return ErrorMessage;
         }
     };
+    poinvoiceservice.deletePoInvoice = async (id) => {
+        try {
+            const invoiceResult = await query(`SELECT invoiceurl FROM poinvoice WHERE id = $1`, [id]);
+            const invoiceUrl = invoiceResult.rows[0].invoiceurl;
+            console.log(invoiceUrl, "<<");
+            const result = await query(`DELETE FROM poinvoice WHERE id = $1`, [
+                id,
+            ]);
+            if (result.rowCount != 0) {
+                // const updateResult = await purchaseOrderService.updateInvoiceurlAfterDelete(invoiceUrl);
+                // console.log(updateResult)
+                return `Purchase Order invoice Deleted Successfully`;
+            }
+            else {
+                return `Purchase Order invoice not found with id ${id}`;
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN deletePoInvoice", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage);
+            return ErrorMessage;
+        }
+    };
 })(poinvoiceservice || (poinvoiceservice = {}));
 //# sourceMappingURL=poinvoice.service.js.map

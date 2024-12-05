@@ -70,7 +70,6 @@ export module purchaseRequestService {
                 upsertFields.prdata = prdataJsonString
             }
 
-            console.log(upsertFields, 'Converted');
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
@@ -86,8 +85,6 @@ export module purchaseRequestService {
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata, 'Query PR');
-            console.log(params, 'Params PR');
             const result = await query(querydata, params)
             return result;
         } catch (error) {

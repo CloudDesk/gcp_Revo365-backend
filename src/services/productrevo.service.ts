@@ -526,7 +526,7 @@ export module productrevoService {
       if (existingProductData.rows && existingProductData.rows.length > 0) {
         data = existingProductData?.rows[0];
       }
-      console.log(data ,'data is here');
+      console.log(data, 'data is here');
       let imageData: any;
       if (request.body.url) {
         imageData = request.body;

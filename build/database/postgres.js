@@ -41,6 +41,7 @@ export const query = async (stmt, options) => {
             console.log(querydata, 'querydata if');
             console.log(params, 'querydata if');
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params });
+            console.log(res.data, 'Result from app engine is ');
             return res.data;
         }
         catch (error) {

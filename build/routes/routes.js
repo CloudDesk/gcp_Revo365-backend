@@ -40,7 +40,8 @@ import { permissionscontroller } from "../controller/permissions.controller.js";
 import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
-import { getSession } from "../database/redis.session.js";
+import { getSession } from "../services/session.service.js";
+// import { getSession } from "../database/redis.session.js";
 // import { getSession } from "../cloudflare/cloudflare.session.js";
 const Revo365Routes = async function (fastify, opts) {
     console.log('Routes called ');

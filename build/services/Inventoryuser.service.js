@@ -1,11 +1,11 @@
-// import { saveSession } from "../cloudflare/cloudflare.session.js";
 import { query } from "../database/postgres.js";
-import { saveSession } from "../database/redis.session.js";
+// import { saveSession } from "../database/redis.session.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { sendMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from "uuid";
+import { saveSession } from "./session.service.js";
 let generatedotp;
 export var userInventoryService;
 (function (userInventoryService) {

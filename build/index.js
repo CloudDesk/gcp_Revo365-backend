@@ -26,6 +26,7 @@ fs.stat(logFilePath, (err, stats) => {
         logStream.write("timestamp,method,url,statusCode,duration\n");
     }
 });
+fastify.register(cors);
 // Log each request to CSV
 fastify.addHook("onRequest", (request, reply, done) => {
     request.startTime = process.hrtime(); // Start timer
@@ -72,7 +73,6 @@ console.log(parentDir, "INDEX PATH 2");
 fastify.register(fastifyStatic, {
     root: join(parentDir, "/uploads"),
 });
-fastify.register(cors);
 fastify.addHook("onReady", async () => {
     try {
         let data = await checkDatabaseConnection();
@@ -86,7 +86,8 @@ fastify.addHook("onReady", async () => {
         return error;
     }
 });
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
+fastify.listen({ port: PORT, host: "0.0.0.0"
+}, (err, address) => {
     try {
         if (err) {
             console.error(err);

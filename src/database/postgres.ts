@@ -43,6 +43,7 @@ export const query = async (stmt: any, options: any) => {
             console.log(params, 'querydata if');
 
             let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params })
+            console.log(res.data ,'Result from app engine is ')
             return res.data;
         } catch (error) {
             console.log('Errpr in query', error);

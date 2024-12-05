@@ -19,6 +19,34 @@ export var stockRevoController;
             reply.send(error.message);
         }
     };
+    stockRevoController.getEwasteStocksRevo = async (request, reply) => {
+        try {
+            let getProductsResult = await stockRevoService.getEwasteStocksrevo(request);
+            reply.send(getProductsResult);
+        }
+        catch (error) {
+            reply.send(`${error.message} error in get Products`);
+        }
+    };
+    stockRevoController.updateEwaste = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            let deleteStockResult = await stockRevoService.updateEwaste(id); // Pass the id directly as an integer
+            reply.send(deleteStockResult); // Send the result back to the client
+        }
+        catch (error) {
+            reply.send(error.message); // Handle and send errors if any
+        }
+    };
+    stockRevoController.getDeletedStocksRevo = async (request, reply) => {
+        try {
+            let getProductsResult = await stockRevoService.getDeletedStocksrevo(request);
+            reply.send(getProductsResult);
+        }
+        catch (error) {
+            reply.send(`${error.message} error in get Products`);
+        }
+    };
     stockRevoController.updateRemovedFromRecyclebinRevo = async (request, reply) => {
         try {
             let resultremoverecyclebin = await stockRevoService.updateRemoveFromRecyclebin();

@@ -184,7 +184,7 @@ export var purchaseOrderService;
     };
     purchaseOrderService.upsertPurchaseOrder = async (purchaseorderData) => {
         try {
-            console.log(purchaseorderData, 'data');
+            console.log(purchaseorderData, 'data in purchase order is ');
             let querydata;
             let params;
             const { id, product, ...upsertFields } = purchaseorderData;
