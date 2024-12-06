@@ -108,6 +108,56 @@ export var purchaseOrderService;
             return ErrorMessage;
         }
     };
+    purchaseOrderService.updatePoStatus = async (ponumber, total, po_status) => {
+        try {
+            console.log("Inside update PO status");
+            // console.log('PONUMBER:',ponumber)
+            // console.log('POSTATUS:',po_status)
+            // console.log('TOTAL Amount to Paid:',total)
+            const purchaseordernumber = ponumber;
+            const poinvoiceData = await query(`SELECT paymentdata FROM poinvoice WHERE ponumber = $1`, [purchaseordernumber]);
+            let paymentData = poinvoiceData.rows;
+            const allPaymentAmounts = paymentData.flatMap((item) => item.paymentdata.map((payment) => payment.paymentamount));
+            const paidAmount = allPaymentAmounts.reduce((sum, amount) => sum + amount, 0);
+            console.log("All Payment Amounts:", allPaymentAmounts);
+            console.log("paid Amount:", paidAmount);
+            console.log("PO STATUS:", po_status);
+            if (po_status === "cancelled") {
+                console.log("INSIDE CANCEl");
+                const result = await query(`UPDATE purchaseorder SET po_status = 'cancelled' WHERE ponumber ='${purchaseordernumber}'`, []);
+                console.log("Result:", result.command);
+            }
+            else if (po_status === "void") {
+                console.log("INSIDE VOID");
+                const result = await query(`UPDATE purchaseorder SET po_status = 'void' WHERE ponumber ='${purchaseordernumber}'`, []);
+                console.log("Result:", result.command);
+            }
+            else {
+                // console.log("INSIDE IF")
+                if (paidAmount === Number(total)) {
+                    console.log("INSIDE FULLFILL");
+                    // po_status = 'fulfilled'
+                    console.log("----", purchaseordernumber);
+                    const result = await query(`UPDATE purchaseorder SET po_status = 'fulfilled' WHERE ponumber ='${purchaseordernumber}'`, []);
+                    console.log("RESULT:", result.command);
+                }
+                else if (paidAmount === 0 || po_status === null) {
+                    console.log("INSIDE in_progress");
+                    const result = await query(`UPDATE purchaseorder SET po_status = 'in_progress' WHERE ponumber ='${purchaseordernumber}'`, []);
+                    console.log("Result", result.command);
+                }
+                else if (paidAmount < Number(total)) {
+                    console.log("INSIDE PART FULL FILL");
+                    // po_status = 'partially_fulfilled'
+                    console.log("----", purchaseordernumber);
+                    const result = await query(`UPDATE purchaseorder SET po_status = 'partially_fulfilled' WHERE ponumber ='${purchaseordernumber}'`, []);
+                    console.log("RESULT:", result.command);
+                }
+            }
+            return "Purchase Order Status Updated Successfully";
+        }
+        catch (error) { }
+    };
     purchaseOrderService.upsertGcpInvoice = async (request) => {
         try {
             const { id } = request.params;

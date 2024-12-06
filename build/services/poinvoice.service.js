@@ -2,6 +2,7 @@ import { PROTOCOL } from "../config/config.js";
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import { purchaseOrderService } from "./purchaseorder.service.js";
 export var poinvoiceservice;
 (function (poinvoiceservice) {
     poinvoiceservice.getPoInvoiceData = async (request) => {
@@ -86,6 +87,8 @@ export var poinvoiceservice;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            const updatedValue = await poinvoiceservice.updateInvoiceStatus(result.rows[0]);
+            console.log("AFTER UPDATE:", updatedValue);
             return result;
         }
         catch (error) {
@@ -121,12 +124,105 @@ export var poinvoiceservice;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            const updatedValue = await poinvoiceservice.updateInvoiceStatus(result.rows[0]);
+            console.log("AFTER UPDATE:", updatedValue);
             return result;
         }
         catch (error) {
             console.log("Erro in upsert Invoce data in PO invoice ", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
+        }
+    };
+    poinvoiceservice.updateInvoiceStatus = async (poinvocedata) => {
+        try {
+            console.log("Inside Update Invoice Status");
+            let { id, invoiceamount, paymentdata, paymentduedate, invoicestatus, iscreditpayment, } = poinvocedata;
+            // console.log("STARTING:", poinvocedata);
+            console.log("Invoice Amount:", invoiceamount, "<<<");
+            // console.log("Payment Due Data:", paymentduedate, "<<<");
+            // console.log("Invoice Status:", invoicestatus, "<<<");
+            // console.log("Raw Payment Data:", paymentdata, "<<<");
+            let total = 0;
+            const parsedPaymentData = paymentdata;
+            for (let i = 0; i < parsedPaymentData.length; i++) {
+                total += parsedPaymentData[i].paymentamount || 0;
+            }
+            const currentUTCDate = new Date();
+            const indiaOffset = 5.5 * 60 * 60 * 1000;
+            const currentISTDate = new Date(currentUTCDate.getTime() + indiaOffset);
+            const unixTimestampInSeconds = Math.floor(currentISTDate.getTime() / 1000);
+            console.log("Current IST Unix Timestamp:", unixTimestampInSeconds);
+            console.log("Total Paid Amount:", total);
+            console.log('Initial Status:', invoicestatus);
+            console.log(Number(invoiceamount) - total);
+            // let balanceamount = Number(invoiceamount)-total
+            if (invoicestatus === "cancelled") {
+                console.log("INSIDE CANCELLED");
+                // console.log(total);
+                // console.log('Paymentdata:',paymentdata);
+                const paidAmount = paymentdata.reduce((sum, payment) => sum + payment.paymentamount, 0);
+                const remainingAmount = total - paidAmount;
+                paymentdata.forEach(payment => {
+                    payment.paymentamount = remainingAmount;
+                });
+                // console.log("Updated Payment Data:", paymentdata);
+                let modifiedPaymentData = JSON.stringify(paymentdata);
+                // console.log('After modify:', modifiedPaymentData);
+                // const result = await query(`UPDATE poinvoice SET invoicestatus = 'cancelled', paymentdata=${paymentdata} where id =${id}`,[])
+                const result = await query(`UPDATE poinvoice 
+               SET invoicestatus = 'cancelled', balanceamount = 0,
+               paymentdata = '${modifiedPaymentData}'::jsonb 
+               WHERE id = ${id}`, []);
+                console.log('Result:', result.command);
+                // poinvocedata.invoicestatus = "cancelled";
+            }
+            else if (Number(invoiceamount) - total === 0) {
+                console.log("first ELSE");
+                if (unixTimestampInSeconds > Number(paymentduedate) &&
+                    iscreditpayment === true) {
+                    console.log("Inside overdue");
+                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'overdue_complete' where id =${id}`, []);
+                    console.log('Result:', result.command);
+                    // poinvocedata.invoicestatus = "overdue_complete";
+                }
+                else {
+                    console.log("Inside complete2");
+                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'complete' where id =${id}`, []);
+                    console.log('Result:', result.command);
+                    // poinvocedata.invoicestatus = "complete";
+                }
+            }
+            else if (total - Number(invoiceamount) !== 0) {
+                console.log('Second ELSE');
+                console.log("Inside overdue");
+                // console.log(unixTimestampInSeconds,'---',Number(paymentduedate),'---',iscreditpayment);
+                if (unixTimestampInSeconds > Number(paymentduedate) &&
+                    iscreditpayment === true) {
+                    console.log("INSIDE overdue");
+                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'overdue' where id =${id}`, []);
+                    console.log('Result:', result.command);
+                    // poinvocedata.invoicestatus = "overdue";
+                }
+                else {
+                    console.log("INSIDE in_progress");
+                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'in_progress' where id =${id}`, []);
+                    console.log('Result:', result.command);
+                    // poinvocedata.invoicestatus = "in_progress";
+                }
+            }
+            // Remove this line that was causing the error
+            // console.log("END POINVOICE DATA:", poinvocedata[0].invoicestatus);
+            // Replace with this
+            // console.log("END POINVOICE DATA:", poinvocedata.invoicestatus);
+            const posetstatus = await purchaseOrderService.updatePoStatus(poinvocedata.ponumber, poinvocedata.pototal, poinvocedata.purchaseorderstatus);
+            console.log("PURCHASE ORDER status:", posetstatus);
+            console.log("PURCHASE ORDER end data:", poinvocedata);
+            return 'PO Invoice Status Updated Success';
+        }
+        catch (error) {
+            console.error("An error occurred:", error);
+            throw error; // Re-throw the error to handle it at a higher level
         }
     };
     poinvoiceservice.deletePoInvoice = async (id) => {

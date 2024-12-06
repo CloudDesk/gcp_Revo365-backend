@@ -92,6 +92,8 @@ export module poinvoiceservice {
         params = fieldValues;
       }
       const result = await query(querydata, params);
+      const updatedValue = await updateInvoiceStatus(result.rows[0]);
+      console.log("AFTER UPDATE:", updatedValue);
       return result;
     } catch (error) {
       console.log("Erro in upsert Invoce data in PO invoice ", error);

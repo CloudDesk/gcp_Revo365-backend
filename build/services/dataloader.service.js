@@ -1,19 +1,19 @@
-import csvtojson from 'csvtojson';
-import { ProductNumberFields, productArrayFields, productBooleanFields, productStringFields } from '../utils/Fields/productFields.js';
-import { validateDataLoader } from '../schemas/ajv.schema.js';
-import { productInsertSchema } from '../schemas/v1/product.schema.js';
-import { stockRevoService } from './stockRevo.service.js';
-import { stockArray, stockBoolean, stockInteger, stocklocationArray, stockText } from '../utils/Fields/stockFields.js';
-import { stockrevoSchema } from '../schemas/stockRevo.schema.js';
-import { ErrorHandler } from '../errorHandler/errorHandler.js';
-import { getStockLocationData } from '../utils/StockLocationPicklist/locationpicklist.js';
+import csvtojson from "csvtojson";
+import { ProductNumberFields, productArrayFields, productBooleanFields, productStringFields, } from "../utils/Fields/productFields.js";
+import { validateDataLoader } from "../schemas/ajv.schema.js";
+import { productInsertSchema } from "../schemas/v1/product.schema.js";
+import { stockRevoService } from "./stockRevo.service.js";
+import { stockArray, stockBoolean, stockInteger, stocklocationArray, stockText, } from "../utils/Fields/stockFields.js";
+import { stockrevoSchema } from "../schemas/stockRevo.schema.js";
+import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
 //  export const stocklocationdataajv = [];
 export var dataLoaderService;
 (function (dataLoaderService) {
     dataLoaderService.getDataLoaderData = async (request) => {
         try {
             const files = request.files[0].filename;
-            const csvfilepath = 'uploads/' + files;
+            const csvfilepath = "uploads/" + files;
             const jsonresult = await csvtojson().fromFile(csvfilepath);
             let failuredata = [];
             console.log(jsonresult);
@@ -34,10 +34,14 @@ export var dataLoaderService;
                                 }
                             }
                             else if (productBooleanFields.includes(key)) {
-                                if (e[key] === 'FALSE' || e[key] === 'false' || e[key] === 'False') {
+                                if (e[key] === "FALSE" ||
+                                    e[key] === "false" ||
+                                    e[key] === "False") {
                                     e[key] = false;
                                 }
-                                else if (e[key] === 'True' || e[key] === 'TRUE' || e[key] === 'true') {
+                                else if (e[key] === "True" ||
+                                    e[key] === "TRUE" ||
+                                    e[key] === "true") {
                                     e[key] = true;
                                 }
                                 else {
@@ -48,12 +52,12 @@ export var dataLoaderService;
                                 e[key] = value;
                             }
                             else if (productArrayFields.includes(key)) {
-                                if (typeof value === 'string') {
+                                if (typeof value === "string") {
                                     try {
                                         e[key] = JSON.parse(value);
                                     }
                                     catch (error) {
-                                        console.log('json parsing error ');
+                                        console.log("json parsing error ");
                                         e[key] = value;
                                     }
                                 }
@@ -72,7 +76,7 @@ export var dataLoaderService;
                     else {
                         console.log(validationresult.error);
                         const errorObject = {};
-                        validationresult.error.forEach(error => {
+                        validationresult.error.forEach((error) => {
                             const key = error.instancePath.slice(1);
                             const value = error.message;
                             errorObject.rowNumber = index + 2;
@@ -107,13 +111,13 @@ export var dataLoaderService;
     dataLoaderService.getDataLoaderDataStock = async (request) => {
         try {
             const files = request.files[0].filename;
-            const csvfilepath = 'uploads/' + files;
+            const csvfilepath = "uploads/" + files;
             const jsonresult = await csvtojson().fromFile(csvfilepath);
             const locationdataarray = await getStockLocationData();
-            console.log('11', locationdataarray, '11');
+            console.log("11", locationdataarray, "11");
             let failuredata = [];
-            console.log('data');
-            console.log(JSON.stringify(jsonresult), 'Data is');
+            console.log("data");
+            console.log(JSON.stringify(jsonresult), "Data is");
             await Promise.all(jsonresult.map(async (e, index) => {
                 try {
                     for (let [key, value] of Object.entries(e)) {
@@ -131,12 +135,16 @@ export var dataLoaderService;
                                 }
                             }
                             else if (stockBoolean.includes(key)) {
-                                console.log(key, 'Remove From Recycle BIn is ');
+                                console.log(key, "Remove From Recycle BIn is ");
                                 console.log(e[key]);
-                                if (e[key] === 'FALSE' || e[key] === 'false' || e[key] === 'False') {
+                                if (e[key] === "FALSE" ||
+                                    e[key] === "false" ||
+                                    e[key] === "False") {
                                     e[key] = false;
                                 }
-                                else if (e[key] === 'True' || e[key] === 'TRUE' || e[key] === 'true') {
+                                else if (e[key] === "True" ||
+                                    e[key] === "TRUE" ||
+                                    e[key] === "true") {
                                     e[key] = true;
                                 }
                                 else {
@@ -153,7 +161,7 @@ export var dataLoaderService;
                                 e[key] = value;
                             }
                             else if (stockArray.includes(key)) {
-                                if (typeof value === 'string') {
+                                if (typeof value === "string") {
                                     try {
                                         e[key] = JSON.parse(value);
                                     }
@@ -166,10 +174,12 @@ export var dataLoaderService;
                                 }
                             }
                             else if (stocklocationArray.includes(key)) {
-                                console.log('Location--', e.location);
+                                console.log("Location--", e.location);
                                 let convertedvalue = value;
-                                convertedvalue = convertedvalue.toLowerCase().replace(' ', '_');
-                                console.log('---', convertedvalue, '--- CONVERTED');
+                                convertedvalue = convertedvalue
+                                    .toLowerCase()
+                                    .replace(" ", "_");
+                                console.log("---", convertedvalue, "--- CONVERTED");
                                 e[key] = convertedvalue;
                             }
                             else {
@@ -177,20 +187,20 @@ export var dataLoaderService;
                             }
                         }
                     }
-                    console.log(e.ecompublish, 'Ecom Publish is Before');
-                    if (e.rfid === null || e.rfid === undefined || e.rfid === '') {
+                    console.log(e.ecompublish, "Ecom Publish is Before");
+                    if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
                         e.ecompublish = false;
                     }
-                    console.log(e.ecompublish, 'Ecom Publish is AFTER');
-                    console.log(e, 'Ecom Publish is AFTER');
+                    console.log(e.ecompublish, "Ecom Publish is AFTER");
+                    console.log(e, "Ecom Publish is AFTER");
                     let validationresult = await validateDataLoader(stockrevoSchema, e);
                     // console.log(validationresult, 'Validation Result is ');
                     if (validationresult === true) {
                     }
                     else {
                         const errorObject = {};
-                        console.log(validationresult, 'VALIDATION ERROR IS');
-                        validationresult.error.forEach(error => {
+                        console.log(validationresult, "VALIDATION ERROR IS");
+                        validationresult.error.forEach((error) => {
                             const key = error.instancePath.slice(1);
                             const value = error.message;
                             errorObject.rowNumber = index + 2;
@@ -222,8 +232,9 @@ export var dataLoaderService;
     };
     dataLoaderService.upsertBulkDataStock = async (request, reply) => {
         try {
+            console.log(request.body, "Request Body Test data");
             let upsertStockResult = await stockRevoService.upsertBulkStockRevoData(request.body);
-            console.log(upsertStockResult, 'USPERT STOCK RESULT IS ;;;;');
+            console.log(upsertStockResult, "USPERT STOCK RESULT IS ;;;;");
             return upsertStockResult;
         }
         catch (error) {
