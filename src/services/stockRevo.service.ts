@@ -122,6 +122,7 @@ export module stockRevoService {
 
             console.log(querydata, 'querydata');
             const result = await query(querydata, params);
+            console.log('<<<<<',result, '<<<<<');
             const puc = result.rows[0].puc;
             console.log('-- RESULT', puc, 'RESULT --');
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
@@ -375,6 +376,7 @@ export module stockRevoService {
             let result;
             try {
                 result = await query(querydata, values);
+                console.log('<<<<',JSON.stringify(result),'<<<<');
                 console.log(JSON.stringify(result.rowCount), 'Result is');
                 let successCount = result?.rowCount
                 console.log(successCount, 'sucess Count');
