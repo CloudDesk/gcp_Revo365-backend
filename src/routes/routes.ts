@@ -103,6 +103,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/stock/updaterecyclebin', { preHandler: [getSession] }, stockRevoController.updateRemovedFromRecyclebinRevo);
     fastify.delete('/v2/stock/isdelete', { preHandler: [validateRequestBody(deletestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDatadelete);
     fastify.post('/v2/stock/isarchive', { preHandler: [validateRequestBody(archivestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDataarchive);
+    fastify.get('/v2/stock/e-waste', stockRevoController.getEwasteStocksRevo);
 
 
     // fastify.get('/v2/stock/qty',stockRevoController.testgetArcheivedStocksRevo)

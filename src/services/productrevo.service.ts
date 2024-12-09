@@ -440,7 +440,7 @@ export module productrevoService {
 
   export const getEachProductsRevo = async function (request: any, id: Number) {
     try {
-      console.log("getEachProducts call");
+      console.log("getEachProducts call 2");
       console.log(id);
       const result: QueryResult = await query(
         `SELECT * FROM product_revo where id=${id}`,

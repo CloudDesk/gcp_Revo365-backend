@@ -395,7 +395,7 @@ export module productService {
 
   export const getEachProducts = async function (request, id: Number) {
     try {
-      console.log("getEachProducts call");
+      console.log("getEachProducts call 3");
       console.log(id);
       const result: QueryResult = await query(
         `SELECT * FROM products where id=${id}`,

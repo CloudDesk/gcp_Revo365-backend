@@ -68,7 +68,7 @@ export module stockRevoService {
     export const getEachStockRevoData = async (request: any) => {
         try {
             const { id } = request.params
-            console.log("getEachProducts call");
+            console.log("getEachProducts call 1");
             console.log(id);
             const result: any = await query(
                 `SELECT * FROM stock_revo where id=${id}`,
