@@ -90,26 +90,12 @@ export module productrevoService {
   const TIMEOUT_THRESHOLD = 5000; // 5 seconds, adjust as needed
 
   export const getproductsData = async (request: any) => {
-    const start = performance.now();
-    const requestId = Math.random().toString(36).substring(7);
-    // console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData function called`);
-
     try {
-      // console.log('Inside GET products data')
-      const checkTimeout = (startTime: number, operationName: string) => {
-        const currentTime = performance.now();
-        if (currentTime - startTime > TIMEOUT_THRESHOLD) {
-          throw new Error(`Timeout occurred during ${operationName}`);
-        }
-      };
-
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Processing request parameters`);
+      console.log('get PRoduct function call');
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
       const keys = Object.keys(request.query);
       const values = Object.values(request.query);
-
-      checkTimeout(start, 'request parameter processing');
 
       let whereClauses: string[] = [];
       let parameterIndex = 1;
@@ -117,13 +103,36 @@ export module productrevoService {
       let orderByField = "modifieddate";
       let orderByDirection = "DESC";
 
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Building query clauses`);
       keys.forEach((key, index) => {
-        // ... (existing code for building query clauses)
-        // console.log(`[${new Date().toISOString()}] [${requestId}] Processing key: ${key}`);
-        checkTimeout(start, `processing key ${key}`);
-      });
+        const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+        if (key === "displaysize" || key === "price") {
+          const rangeClauses = paramValues.map(range => {
+            const [lowerBound, upperBound] = range.split("-");
+            queryParams.push(lowerBound, upperBound);
+            const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+            console.log(clause, 'clause 2');
 
+            parameterIndex += 2;
+            console.log(clause, 'clause');
+            return clause;
+          });
+          whereClauses.push(`(${rangeClauses.join(" OR ")})`);
+        } else if (key === "sortby") {
+          const [fieldName, direction] = paramValues[0].split("-");
+          orderByField = fieldName;
+          orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
+        } else if (paramValues[0].startsWith("NOT ")) {
+          const cleanValue = paramValues[0].slice(4);
+          whereClauses.push(`(${key} != $${parameterIndex})`);
+          queryParams.push(cleanValue);
+          parameterIndex++;
+        } else if (key !== "page" && key !== "count") {
+          const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+          whereClauses.push(`(${clauses.join(" OR ")})`);
+          queryParams.push(...paramValues);
+          parameterIndex += paramValues.length;
+        }
+      });
       const offset = (pageNumber - 1) * recordCount;
       const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
       const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
@@ -131,50 +140,25 @@ export module productrevoService {
 
       let queryText = `SELECT * FROM product_revo ${whereClause} ${orderByClause}`;
 
+
       if (pageNumber && recordCount) {
         queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
         queryParams.push(offset, recordCount);
       }
 
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Query Text: ${queryText}`);
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Query Params:`, queryParams);
+      console.log("Query Text:", queryText);
+      console.log("Query Params:", queryParams);
 
-      checkTimeout(start, 'query preparation');
-
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Executing database query`);
-      const queryStart = performance.now();
       const result = await query(queryText, queryParams);
-      // console.log(`Query result:`, result);
-      // console.log(`Query result:`, result.data.rows);
-      // console.log(`Query result:`, result.data.rows[0]);
+      let datatypeCheckResult = await dataTypeCheck(result)
+      return datatypeCheckResult
+    }
 
-      const queryEnd = performance.now();
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Query execution time: ${queryEnd - queryStart} ms`);
-
-      checkTimeout(start, 'database query');
-
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Performing datatype check`);
-      const datatypeCheckStart = performance.now();
-      let datatypeCheckResult = await dataTypeCheck(result);
-      const datatypeCheckEnd = performance.now();
-      // console.log(`[${new Date().toISOString()}] [${requestId}] Datatype check time: ${datatypeCheckEnd - datatypeCheckStart} ms`);
-
-      checkTimeout(start, 'datatype check');
-
-      const end = performance.now();
-      // console.log(`[${new Date().toISOString()}] [${requestId}] getProductsData total execution time: ${end - start} ms`);
-      return datatypeCheckResult;
-    } catch (error) {
-      const end = performance.now();
-      const duration = end - start;
-      if (error.message.startsWith('Timeout occurred during')) {
-        console.error(`[${new Date().toISOString()}] [${requestId}] ${error.message} after ${duration} ms`);
-      } else {
-        console.error(`[${new Date().toISOString()}] [${requestId}] Error in getproductsData after ${duration} ms:`, error);
-      }
-      let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(`[${new Date().toISOString()}] [${requestId}] Error Message:`, ErrorMessage);
-      throw new Error(`Error occurred :${ErrorMessage}`);
+    catch (error) {
+      console.error("Query Execution Error: IN getproductsData", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error)
+      console.log(ErrorMessage);
+      return ErrorMessage
     }
   };
 
