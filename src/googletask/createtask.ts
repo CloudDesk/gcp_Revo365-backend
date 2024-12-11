@@ -34,7 +34,7 @@ const parentDir = resolve(__dirname, "/revo-436904-9d74b8194087.json");
 // console.log(parentDir, "Parent Dir TAKS");
 process.env.GOOGLE_APPLICATION_CREDENTIALS = join(
   __dirname,
-  "/revo-436904-9d74b8194087.json"
+  "/docblitz-437213-d99f2718bd72.json"
 );
 
 // console.log(join(__dirname, "/revo-436904-09a3ddafb0ac.json") ,'VA:LUE IS ');
@@ -71,6 +71,6 @@ export async function createHttpTask(merchantid: any) {
     console.log(`Created task ${response.name}`);
   } catch (error) {
     console.error("Error in createHttpTask1:", error);
-    throw error;
+    return { success: false, error };
   }
 }
