@@ -152,6 +152,7 @@ export var recordCountService;
             let archieveCount = false;
             let recyclebin = false;
             let productecom = false;
+            let ewaste = false;
             let parameterIndex = 1;
             const queryParamsList = [];
             const whereClauses = [];
@@ -170,7 +171,7 @@ export var recordCountService;
                     }).join(" OR ");
                     whereClauses.push(`(${rangeWhereClause})`);
                 }
-                else if (!["globalSearch", "Archive", "recyclebin", "productecom"].includes(key)) {
+                else if (!["globalSearch", "Archive", "recyclebin", "productecom", "ewaste"].includes(key)) {
                     const normalClauses = [];
                     const notClauses = [];
                     const nullClauses = [];
@@ -206,6 +207,8 @@ export var recordCountService;
                         recyclebin = true;
                     if (key === "productecom")
                         productecom = true;
+                    if (key === 'ewaste')
+                        ewaste = true;
                 }
             });
             console.log(archieveCount, 'archive count');
@@ -220,7 +223,7 @@ export var recordCountService;
                 return result.rows[0].count;
             };
             console.log(whereClause, 'where clause is ~');
-            if (whereClause && !productecom && !archieveCount && !recyclebin && !globalCount) {
+            if (whereClause && !productecom && !archieveCount && !recyclebin && !globalCount && !ewaste) {
                 console.log('1 st condition');
                 const baseQuery = `select count(*) from ${objectName} where ${objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? 'removefromrecyclebin = false AND ' : ''} ${whereClause}`;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
@@ -244,11 +247,11 @@ export var recordCountService;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
                 return await getCountQuery(objectName.toLocaleLowerCase() === 'product_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
             }
-            if (!whereClause && !productecom && !archieveCount && !recyclebin && !globalCount) {
+            if (!whereClause && !productecom && !archieveCount && !recyclebin && !globalCount && !ewaste) {
                 console.log('insidde new ');
                 console.log('5th condition');
                 const baseQuery = `select count(*) from ${objectName} `;
-                const productsQuery = ` where removefromrecyclebin = false AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
+                const productsQuery = ` where removefromrecyclebin = false AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (ewaste = FALSE or ewaste IS NULL)`;
                 return await getCountQuery(objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
             }
             if (archieveCount) {
@@ -259,6 +262,10 @@ export var recordCountService;
             if (recyclebin) {
                 console.log('Inside recyclebin');
                 return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + 'AND' : ""} isdeleted = TRUE AND removefromrecyclebin = false`, queryParamsList);
+            }
+            if (ewaste) {
+                console.log('Inside ewaste');
+                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + 'AND' : ""} isdeleted = false AND removefromrecyclebin = false AND ewaste = TRUE`, queryParamsList);
             }
             if (globalCount) {
                 const columnQuery = `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_Revo';`;

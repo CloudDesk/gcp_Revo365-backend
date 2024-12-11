@@ -28,7 +28,6 @@ try {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const parentDir = resolve(__dirname, "/revo-436904-9d74b8194087.json");
 // console.log(__dirname, "Parent Dir TAKS __dirname");
 // console.log(join(__dirname, "/revo-436904-8c40dfd46abd.json"), 'join  Name');
 // console.log(parentDir, "Parent Dir TAKS");

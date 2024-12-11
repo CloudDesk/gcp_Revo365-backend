@@ -5,6 +5,7 @@ export var transactionController;
     transactionController.paymentInitialization = async (request, reply) => {
         try {
             let transactionData = await transactionService.paymentInitialization(request);
+            console.log(transactionData, "Transacion data is ===>> ");
             if (transactionData?.status == 400) {
                 reply.status(404).send(transactionData.message);
             }

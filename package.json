@@ -8,9 +8,9 @@
     "dev": "npx tsx src/index",
     "build": "tsc",
     "test": "npm run test",
-    "docgen-build": "docker build -t revo-365-backend .",
-    "docgen-tag": "docker tag revo-365-backend gcr.io/docblitz-437213/revo-365-backend",
-    "docgen-push": "docker push gcr.io/docblitz-437213/revo-365-backend"
+    "docker-build": "docker build -t revo-365-backend .",
+    "docker-tag": "docker tag revo-365-backend gcr.io/docblitz-437213/revo-365-backend",
+    "docker-push": "docker push gcr.io/docblitz-437213/revo-365-backend"
   },
   "repository": {
     "type": "git",

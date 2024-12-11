@@ -1,13 +1,14 @@
-import { createClient } from 'redis';
-import dotenv from 'dotenv';
+import { createClient } from "redis";
+import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 let redisClient = null;
 export const connectGetSessionredis = async () => {
     try {
-        console.log('Inside redis connect');
+        console.log("Inside redis connect");
         redisClient = createClient({
             url: `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`
+            // url: `redis://:fVZWPfs4xi9SvpdY2d1HZgiqJCPNuZWh@redis-10690.c330.asia-south1-1.gce.redns.redis-cloud.com:10690`,
             // Note: The format is redis://:password@host:port
             // The extra colon before the password is important!
         });
@@ -20,7 +21,7 @@ export const connectGetSessionredis = async () => {
         await redisClient.connect();
     }
     catch (error) {
-        console.log('Inside redis error');
+        console.log("Inside redis error");
         console.error("Error connecting to Redis:", error);
         throw error;
     }

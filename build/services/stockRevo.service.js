@@ -72,7 +72,7 @@ export var stockRevoService;
     stockRevoService.getEachStockRevoData = async (request) => {
         try {
             const { id } = request.params;
-            console.log("getEachProducts call");
+            console.log("getEachProducts call 1");
             console.log(id);
             const result = await query(`SELECT * FROM stock_revo where id=${id}`, []);
             let getvalues = { objectName: "null" };

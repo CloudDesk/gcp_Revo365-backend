@@ -1308,6 +1308,7 @@ ${whereClause} ${orderByClause}`;
             let result;
             try {
                 result = await query(insertQuery, insertValues);
+                console.log('--', result, '--');
                 if (result.command == 'INSERT') {
                     const orderid = result.rows[0].id;
                     const orderiduique = result.rows[0].orderid;

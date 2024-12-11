@@ -355,7 +355,7 @@ export var productService;
     };
     productService.getEachProducts = async function (request, id) {
         try {
-            console.log("getEachProducts call");
+            console.log("getEachProducts call 3");
             console.log(id);
             const result = await query(`SELECT * FROM products where id=${id}`, []);
             let getvalues = { objectName: "null" };

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "url";
-import { dirname, join, resolve } from "path";
+import { dirname, join } from "path";
 import { GCP_PROJECT_ID, GCP_PROJECT_LOCATION, GCP_PROJECT_QUEUE, GCP_TASK_URL, } from "../config/config.js";
 console.log(GCP_PROJECT_ID, "GCP_PROJECT_ID");
 console.log(GCP_PROJECT_LOCATION);
@@ -23,11 +23,10 @@ catch (error) {
 }
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const parentDir = resolve(__dirname, "/revo-436904-9d74b8194087.json");
 // console.log(__dirname, "Parent Dir TAKS __dirname");
 // console.log(join(__dirname, "/revo-436904-8c40dfd46abd.json"), 'join  Name');
 // console.log(parentDir, "Parent Dir TAKS");
-process.env.GOOGLE_APPLICATION_CREDENTIALS = join(__dirname, "/revo-436904-9d74b8194087.json");
+process.env.GOOGLE_APPLICATION_CREDENTIALS = join(__dirname, "/docblitz-437213-d99f2718bd72.json");
 // console.log(join(__dirname, "/revo-436904-09a3ddafb0ac.json") ,'VA:LUE IS ');
 export async function createHttpTask(merchantid) {
     try {
@@ -63,7 +62,7 @@ export async function createHttpTask(merchantid) {
     }
     catch (error) {
         console.error("Error in createHttpTask1:", error);
-        throw error;
+        return { success: false, error };
     }
 }
 //# sourceMappingURL=createtask.js.map
