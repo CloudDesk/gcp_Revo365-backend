@@ -1338,67 +1338,91 @@ ${whereClause} ${orderByClause}`;
 
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
-
-        const rfidSet = new Set(orderData.map(item => item.rfid));
-        if (rfidSet.size !== orderData.length) {
-            console.log("Please scan different RFID");
-            throw new Error("Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.");
-        }
-        console.log('After checking duplicate RFID');
-            let querydata: string;
-            let params: any[];
-            const { rfid, orderlinenumber, productid } = orderData;
-            console.log(orderData, 'order Datai s ');
-            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
-            console.log(updateStock, 'Update Stock latestddatera ');
-            if (updateStock.error) {
-                return { error: updateStock.error }
+            // Enhanced RFID Duplicate Check
+            const rfidMap = new Map();
+            for (const item of orderData) {
+                if (rfidMap.has(item.rfid)) {
+                    return {
+                        errorMessage: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
+                        errorDetails: [],
+                        statusCode: 401
+                    };
+                }
+                rfidMap.set(item.rfid, true);
             }
-            else if (updateStock && updateStock.command === "UPDATE" || updateStock && updateStock.command === "INSERT") {
+    
+            console.log('After checking duplicate RFID');
+            
+            // Validate individual RFIDs before processing
+            const validationPromises = orderData.map(async (item) => {
+                try {
+                    // Check if RFID exists and is valid
+                    const validationQuery = `
+                        SELECT COUNT(*) as count 
+                        FROM stock_revo 
+                        WHERE rfid = $1 
+                        AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
+                        AND stockstatus = 'Pending'
+                    `;
+                    const validationResult = await query(validationQuery, [item.rfid, item.productid]);
+                    
+                    if (validationResult.rows[0].count === 0) {
+                        throw new Error(`Invalid RFID: ${item.rfid} for product ${item.productid}`);
+                    }
+                } catch (validationError) {
+                    throw validationError;
+                }
+            });
+    
+            // Validate all RFIDs before proceeding
+            try {
+                await Promise.all(validationPromises);
+            } catch (validationError) {
+                return {
+                    errorMessage: validationError.message,
+                    errorDetails: [],
+                    statusCode: 400
+                };
+            }
+    
+            console.log(orderData, 'order Data is');
+            
+            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
+            console.log(updateStock, 'Update Stock latest data');
+    
+            if (updateStock.error) {
+                return { error: updateStock.error };
+            }
+            else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
                 console.log(updateStock.result.rowCount, 'ROW COUNT IS');
-                const puc = updateStock.result.puc; // Get the puc from the result
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
-
+    
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
-                // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray, true);
                 console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
-                // console.log(orderData[0].orderid, "orderData[0].orderid")
                 console.log(updateStock.result.rows, 'ROWS OF UPDATE StOCK IS');
-
-                // if (orderData[0].orderid) {
-                //     querydata = `UPDATE orders SET orderstatus=$${1} where orderid=$${2} RETURNING *`;
-                //     params = ['ready_to_dispatch', orderData[0].orderid];
-                // }
-                // else {
-                //     return { error: `Stock Status Updated but Order Status Not Updated.Please Contact Support Team` }
-                // }
-                // const result = await query(querydata, params);
-                // return result;
-
-                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  // Only consider rows with an orderid
+    
+                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  
                 if (ordersToUpdate.length > 0) {
                     let querydata = `
-        UPDATE orderline 
-        SET 
-            orderstatus = 'ready_to_dispatch',
-            deliveryfrom = CASE 
-                ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
-            END
-        WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
-        RETURNING *`;
-
+                        UPDATE orderline 
+                        SET 
+                            orderstatus = 'ready_to_dispatch',
+                            deliveryfrom = CASE 
+                                ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
+                            END
+                        WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
+                        RETURNING *`;
+    
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
-                    console.log(querydata, 'Query Data is ');
+                    console.log(querydata, 'Query Data is');
                     const result = await query(querydata, params);
                     return result;
                 }
-
             }
             else {
-                return { error: updateStock }
+                return { error: updateStock };
             }
-
+    
         } catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
