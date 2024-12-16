@@ -1278,7 +1278,8 @@ ${whereClause} ${orderByClause}`;
             let querydata: string;
             let params: any[];
             const { rfid, orderlinenumber, productid } = orderData;
-            console.log(orderData, 'order Datai s ');
+            // console.log(orderData, 'order Datai s ');
+            
             let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
             console.log(updateStock, 'Update Stock');
 
@@ -1337,6 +1338,13 @@ ${whereClause} ${orderByClause}`;
 
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
+
+        const rfidSet = new Set(orderData.map(item => item.rfid));
+        if (rfidSet.size !== orderData.length) {
+            console.log("Please scan different RFID");
+            throw new Error("Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.");
+        }
+        console.log('After checking duplicate RFID');
             let querydata: string;
             let params: any[];
             const { rfid, orderlinenumber, productid } = orderData;
