@@ -195,10 +195,10 @@ export module userService {
 
           if (sessionSaved) {
             console.log('1st - reply.setCookie');
-            reply.setCookie('sessionId', sessionId, {
-              path: '/',
-              maxAge: 60 * 60 * 24
-            });
+            // reply.setCookie('sessionId', sessionId, {
+            //   path: '/',
+            //   maxAge: 60 * 60 * 24
+            // });
             return { sessionId, userdata: ecomResult.rows };
           } else {
             return "Please Contact Admin. You are Not Authorized to Login";
