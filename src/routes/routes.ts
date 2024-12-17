@@ -47,6 +47,7 @@ import { revoinvoiceSchema } from "../schemas/revoinvoice.schema.js";
 import { ticketsSchema } from "../schemas/tickets.schema.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
+import { sessionController } from "../controller/session.controller.js";
 // import { getSession } from "../database/redis.session.js";
 // import { getSession } from "../cloudflare/cloudflare.session.js";
 
@@ -249,6 +250,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
     //generate PR
     fastify.post('/generate/purchase-request', { preHandler: [getSession, validateRequestBody(generatePRSchema)] }, generatePRController.generatepr);
+    
+    fastify.get('/session', sessionController.getSessionController)
 
     //quote
     fastify.get('/quote', { preHandler: [getSession] }, quoteController.getQuotes);
