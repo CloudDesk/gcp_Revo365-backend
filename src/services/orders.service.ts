@@ -1275,6 +1275,7 @@ ${whereClause} ${orderByClause}`;
 
     export const upsertOrderrfid = async (orderData: any) => {
         try {
+            console.log('inside upsert order rfid 1');
             let querydata: string;
             let params: any[];
             const { rfid, orderlinenumber, productid } = orderData;
@@ -1338,12 +1339,13 @@ ${whereClause} ${orderByClause}`;
 
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
+            console.log('inside upsert orderline rfid 2');
             // Enhanced RFID Duplicate Check
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
                     return {
-                        errorMessage: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
+                        error: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
                         errorDetails: [],
                         statusCode: 401
                     };
@@ -1376,6 +1378,7 @@ ${whereClause} ${orderByClause}`;
     
             // Validate all RFIDs before proceeding
             try {
+                console.log('Validate all RFIDs before proceeding');
                 await Promise.all(validationPromises);
             } catch (validationError) {
                 return {
