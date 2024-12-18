@@ -41,6 +41,7 @@ import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
+import { sessionController } from "../controller/session.controller.js";
 // import { getSession } from "../database/redis.session.js";
 // import { getSession } from "../cloudflare/cloudflare.session.js";
 const Revo365Routes = async function (fastify, opts) {
@@ -205,6 +206,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
     //generate PR
     fastify.post('/generate/purchase-request', { preHandler: [getSession, validateRequestBody(generatePRSchema)] }, generatePRController.generatepr);
+    fastify.get('/session', sessionController.getSessionController);
     //quote
     fastify.get('/quote', { preHandler: [getSession] }, quoteController.getQuotes);
     fastify.post('/quote', { preHandler: [getSession] }, quoteController.upsertQuotes);

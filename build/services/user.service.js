@@ -5,6 +5,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from 'uuid';
 import { saveSession } from "./session.service.js";
+import { REDIRECT_INVENTORY_URL } from "../config/config.js";
 let generatedotp;
 export var userService;
 (function (userService) {
@@ -122,38 +123,132 @@ export var userService;
             return ErrorMessage;
         }
     };
+    // export const getLoggedInUsersData = async (request, reply) => {
+    //   try {
+    //     const queryString = `SELECT * FROM users where useremail = '${request.params.useremail}'`;
+    //     console.log(queryString);
+    //     const result = await query(queryString, []);
+    //     if (result.rows.length > 0) {
+    //       let validatepassword = await hashValidator(
+    //         request.params.userpassword,
+    //         result.rows[0].userpassword
+    //       );
+    //       console.log(validatepassword);
+    //       if (validatepassword) {
+    //         const sessionId = uuidv4();
+    //         const sessionData = {
+    //           useremail: request.params.useremail,
+    //           userpassword: request.params.userpassword
+    //         };
+    //         let sessionsaved = await saveSession(sessionId, sessionData)
+    //         console.log(sessionData, "Session Data is ");
+    //         console.log(sessionId, "Session Id is ");
+    //         if (sessionsaved) {
+    //           console.log(sessionId, "Session Id is ");
+    //           console.log(result.rows, "Result Rows are ");
+    //           return { sessionId, userdata: result.rows };
+    //         }
+    //         else {
+    //           return "Please Contact Admin.You are Not Authorized to Login";
+    //         }
+    //       } else {
+    //         return "user Credentials are wrong please try again";
+    //       }
+    //     } else {
+    //       return "No Users Found With this Email Id.Please Sign in";
+    //     }
+    //   } catch (error) {
+    //     console.error("Query Execution Error: IN getLoggedInUsersData", error);
+    //     let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //     console.log(ErrorMessage);
+    //     return ErrorMessage;
+    //   }
+    // };
     userService.getLoggedInUsersData = async (request, reply) => {
         try {
-            const queryString = `SELECT * FROM users where useremail = '${request.params.useremail}'`;
-            console.log(queryString);
-            const result = await query(queryString, []);
-            if (result.rows.length > 0) {
-                let validatepassword = await hashValidator(request.params.userpassword, result.rows[0].userpassword);
-                console.log(validatepassword);
-                if (validatepassword) {
+            // First, check e-commerce users
+            console.log('First, check e-commerce users');
+            const ecomQuery = `SELECT * FROM users WHERE LOWER(useremail) = LOWER($1)`;
+            const ecomResult = await query(ecomQuery, [request.params.useremail]);
+            console.log(ecomResult, "ecomResultecomResult");
+            if (ecomResult.rows.length > 0) {
+                // E-commerce user found, proceed with normal login
+                console.log("E-commerce user found, proceed with normal login");
+                let validatePassword = await hashValidator(request.params.userpassword, ecomResult.rows[0].userpassword);
+                if (validatePassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
                         useremail: request.params.useremail,
                         userpassword: request.params.userpassword
                     };
-                    let sessionsaved = await saveSession(sessionId, sessionData);
-                    console.log(sessionData, "Session Data is ");
-                    console.log(sessionId, "Session Id is ");
-                    if (sessionsaved) {
-                        console.log(sessionId, "Session Id is ");
-                        console.log(result.rows, "Result Rows are ");
-                        return { sessionId, userdata: result.rows };
+                    let sessionSaved = await saveSession(sessionId, sessionData);
+                    if (sessionSaved) {
+                        console.log('1st - reply.setCookie');
+                        // reply.setCookie('sessionId', sessionId, {
+                        //   path: '/',
+                        //   maxAge: 60 * 60 * 24
+                        // });
+                        return { sessionId, userdata: ecomResult.rows };
                     }
                     else {
-                        return "Please Contact Admin.You are Not Authorized to Login";
+                        return "Please Contact Admin. You are Not Authorized to Login";
                     }
                 }
                 else {
-                    return "user Credentials are wrong please try again";
+                    return "User Credentials are wrong. Please try again";
                 }
             }
             else {
-                return "No Users Found With this Email Id.Please Sign in";
+                // If not found in e-commerce, check inventory users
+                console.log("If not found in e-commerce, check inventory users");
+                console.log('Inside else inventory login');
+                const inventoryQuery = `SELECT * FROM inventoryusers WHERE useremail = $1`;
+                const inventoryResult = await query(inventoryQuery, [request.params.useremail]);
+                console.log('inventoryResult', inventoryResult.rows);
+                if (inventoryResult.rows.length > 0) {
+                    // Inventory user found, validate password
+                    console.log("Inventory user found, validate password");
+                    console.log('Password check');
+                    let validatePassword = await hashValidator(request.params.userpassword, inventoryResult.rows[0].userpassword);
+                    if (validatePassword) {
+                        console.log('valid password');
+                        const sessionId = uuidv4();
+                        const sessionData = {
+                            firstname: inventoryResult.rows[0].firstname,
+                            id: inventoryResult.rows[0].id,
+                            lastname: inventoryResult.rows[0].lastname,
+                            location: inventoryResult.rows[0].location,
+                            role: inventoryResult.rows[0].role,
+                            useremail: inventoryResult.rows[0].useremail,
+                            userpassword: inventoryResult.rows[0].userpassword,
+                            usersphonenumber: inventoryResult.rows[0].usersphonenumber
+                        };
+                        console.log('session data:', sessionData);
+                        let sessionSaved = await saveSession(sessionId, sessionData);
+                        console.log('sessionSaved', sessionSaved);
+                        if (sessionSaved) {
+                            console.log('2nd - reply.setCookie');
+                            // reply.setCookie('sessionId', sessionId, {
+                            //   path: '/',
+                            //   maxAge: 60 * 60 * 24
+                            // });
+                            return {
+                                sessionId, userdata: inventoryResult.rows,
+                                redirect: true,
+                                inventoryAppUrl: `${REDIRECT_INVENTORY_URL}?sessionId=${sessionId}`
+                            };
+                        }
+                        else {
+                            return "Please Contact Admin. You are Not Authorized to Login";
+                        }
+                    }
+                    else {
+                        return "User Credentials are wrong. Please try again";
+                    }
+                }
+                else {
+                    return "No Users Found With this Email ID. Please Sign up";
+                }
             }
         }
         catch (error) {

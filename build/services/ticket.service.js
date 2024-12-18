@@ -244,7 +244,7 @@ export var ticketService;
             let querydata;
             let params;
             console.log(ticketData, "ticketData");
-            const { id, ...upsertFields } = ticketData;
+            const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
             if (files && files.length > 0) {
                 for (const file of files) {
                     upsertFields.recipturl =

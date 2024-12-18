@@ -714,17 +714,28 @@ export var stockRevoService;
             }).join(' ');
             console.log(caseStatementsOrderId, 'caseStatementsOrderId');
             let updateQuery = `
-            UPDATE stock_revo 
-            SET orderlinenumber = CASE ${caseStatementsOrderId} END,
-                stockstatus = 'Sold',
-                rfid = NULL
-            WHERE rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
-            AND puc IN (SELECT puc FROM product_revo WHERE id = $1)
-            RETURNING *;
-        `;
+                UPDATE stock_revo 
+                SET 
+                    orderlinenumber = CASE ${caseStatementsOrderId} END,
+                    stockstatus = 'Sold',
+                    rfid = NULL
+                WHERE 
+                    rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
+                    AND puc IN (SELECT puc FROM product_revo WHERE id = $1)
+                    AND stockstatus = 'Pending'
+                RETURNING *;
+            `;
             console.log(updateQuery);
             console.log(productid);
             let result = await query(updateQuery, [productid]);
+            // Check if all RFIDs were successfully updated
+            if (result.rows.length !== rfidValues.length) {
+                return {
+                    error: 'Error in RFID scan. Ensure all RFIDs are valid.',
+                    updatedCount: result.rows.length,
+                    expectedCount: rfidValues.length
+                };
+            }
             const puc = result.rows.length > 0 ? result.rows[0].puc : null;
             if (puc) {
                 const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
@@ -733,7 +744,12 @@ export var stockRevoService;
                 const totalCount = parseInt(countResult.rows[0].count, 10);
                 console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
                 console.log('-- TOTAL COUNT', result, 'TOTAL COUNT --');
-                return { command: "UPDATE", result: result, totalCount, arraylength };
+                return {
+                    command: "UPDATE",
+                    result: result,
+                    totalCount,
+                    arraylength
+                };
             }
             else {
                 return { error: 'No records were updated. Please check the provided RFIDs.' };
