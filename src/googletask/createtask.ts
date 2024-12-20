@@ -31,11 +31,12 @@ const __dirname = dirname(__filename);
 // console.log(__dirname, "Parent Dir TAKS __dirname");
 // console.log(join(__dirname, "/revo-436904-8c40dfd46abd.json"), 'join  Name');
 // console.log(parentDir, "Parent Dir TAKS");
-process.env.GOOGLE_APPLICATION_CREDENTIALS = join(
-  __dirname,
-  "/docblitz-437213-d99f2718bd72.json"
-);
 
+// process.env.GOOGLE_APPLICATION_CREDENTIALS = join(
+//   __dirname,
+//   "/docblitz-437213-d99f2718bd72.json"
+// );
+console.log('deleted service account')
 // console.log(join(__dirname, "/revo-436904-09a3ddafb0ac.json") ,'VA:LUE IS ');
 export async function createHttpTask(merchantid: any) {
   try {

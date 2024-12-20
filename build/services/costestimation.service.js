@@ -182,5 +182,98 @@ export var costEstimationService;
             return ErrorMessage;
         }
     };
+    costEstimationService.upsertGcpCostEstimation = async (request, costEstimationData) => {
+        try {
+            console.log(costEstimationData, "costEstimationData");
+            if (costEstimationData.productdata) {
+                costEstimationData.productdata = JSON.parse(costEstimationData.productdata);
+            }
+            if (costEstimationData.servicedata) {
+                costEstimationData.servicedata = JSON.parse(costEstimationData.servicedata);
+            }
+            costEstimationData.estimationdate = new Date().toLocaleDateString();
+            let data = [costEstimationData];
+            console.log(data, 'data is');
+            const { id, ...upsertFields } = costEstimationData;
+            let template = "costestimation/costestimation.docx";
+            // if (!id) {
+            //     let docxrestult = await GenerateDocx(request, data, template)
+            //     console.log(docxrestult, "result from invoiceData");
+            //     upsertFields.estimationurl = docxrestult.fileurl;
+            //     delete docxrestult.fileurl;
+            //     console.log(costEstimationData, "costEstimationData");
+            // }
+            delete upsertFields.estimationdate;
+            const fieldNames = Object.keys(upsertFields);
+            const fieldValues = Object.values(upsertFields);
+            let productdataIndex = fieldNames.indexOf("productdata");
+            let servicedataIndex = fieldNames.indexOf("servicedata");
+            console.log(productdataIndex, 'productdataIndex');
+            console.log(servicedataIndex, 'servicedataIndex');
+            if (productdataIndex !== -1) {
+                fieldValues[productdataIndex] = JSON.stringify(fieldValues[productdataIndex]);
+                console.log(fieldValues[productdataIndex], 'fieldValues[productdataIndex]');
+            }
+            if (servicedataIndex !== -1) {
+                fieldValues[servicedataIndex] = JSON.stringify(fieldValues[servicedataIndex]);
+                console.log(fieldValues[servicedataIndex], 'fieldValues[servicedataIndex]');
+            }
+            console.log(fieldValues, "fieldValues");
+            console.log(fieldNames, "fieldNames");
+            let querydata;
+            let params;
+            if (id) {
+                querydata = `UPDATE servicecostestimation SET ${fieldNames
+                    .map((field, index) => `${field} = $${index + 1}`)
+                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+                params = [...fieldValues, id];
+            }
+            else {
+                querydata = `INSERT INTO servicecostestimation (${fieldNames.join(", ")}) VALUES (${fieldNames
+                    .map((_, index) => `$${index + 1}`)
+                    .join(", ")}) RETURNING *`;
+                params = fieldValues;
+            }
+            console.log(querydata, `querydata`);
+            console.log(params, `params`);
+            let datavalue;
+            const result = await query(querydata, params);
+            if (result && result.rows.length > 0) {
+                let ticketnumber = result.rows[0].ticketnumber;
+                if (result.rows[0].estimationstatus === 'waiting_for_approval') {
+                    datavalue = {
+                        ticketnumber: ticketnumber,
+                        ticketstatus: "waiting_for_cost_estimation_approval"
+                    };
+                }
+                if (result.rows[0].estimationstatus === 'rejected') {
+                    datavalue = {
+                        ticketnumber: ticketnumber,
+                        ticketstatus: "unresolved_closed"
+                    };
+                }
+                if (result.rows[0].estimationstatus === 're_quote') {
+                    datavalue = {
+                        ticketnumber: ticketnumber,
+                        ticketstatus: "open"
+                    };
+                }
+                if (result.rows[0].estimationstatus === 'approved') {
+                    datavalue = {
+                        ticketnumber: ticketnumber,
+                        ticketstatus: "service_in_progress",
+                        approvedcostestimationid: result.rows[0].id
+                    };
+                }
+                let upsertticket = await ticketService.upsertTicketstatus(datavalue);
+                console.log(upsertticket, 'datas for ticket updated');
+            }
+            return result;
+        }
+        catch (error) {
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
 })(costEstimationService || (costEstimationService = {}));
 //# sourceMappingURL=costestimation.service.js.map

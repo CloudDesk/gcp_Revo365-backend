@@ -270,6 +270,7 @@ const Revo365Routes = async function (fastify, opts) {
     //service estimation
     fastify.get('/service-estimation', { preHandler: [getSession] }, constEstimationController.getCostEstimationData);
     fastify.post('/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertCostEstimation);
+    fastify.post('/v2/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);
     // fastify.post('/service-estimation',{preHandler:[validateRequestBody(servicecostestimationSchema)]},constEstimationController.upsertCostEstimation);
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);

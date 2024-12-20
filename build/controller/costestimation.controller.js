@@ -35,5 +35,28 @@ export var constEstimationController;
             return ErrorMessage;
         }
     };
+    constEstimationController.upsertGcpCostEstimation = async (request, reply) => {
+        try {
+            let host = request.headers.host;
+            let upsertCostEstimationResult = await costEstimationService.upsertGcpCostEstimation(request, request.body);
+            if (upsertCostEstimationResult.command === "UPDATE" || upsertCostEstimationResult.command === "INSERT") {
+                let message = {};
+                message = {
+                    message: upsertCostEstimationResult.command === "UPDATE"
+                        ? `Cost Estimation Updated  successfully`
+                        : `Cost Estimation Created  successfully`,
+                    data: upsertCostEstimationResult.rows[0]
+                };
+                reply.status(200).send(message);
+            }
+            else {
+                reply.status(500).send(upsertCostEstimationResult);
+            }
+        }
+        catch (error) {
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
 })(constEstimationController || (constEstimationController = {}));
 //# sourceMappingURL=costestimation.controller.js.map
