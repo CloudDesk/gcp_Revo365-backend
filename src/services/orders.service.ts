@@ -1364,7 +1364,7 @@ ${whereClause} ${orderByClause}`;
                         FROM stock_revo 
                         WHERE rfid = $1 
                         AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
-                        AND stockstatus = 'Pending'
+                        AND stockstatus = 'Available'
                     `;
                     const validationResult = await query(validationQuery, [item.rfid, item.productid]);
                     

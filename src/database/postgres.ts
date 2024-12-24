@@ -1,5 +1,6 @@
 import pkg from "pg";
 import {
+  POSTGRESS_QUERY_API,
   POSTGRES_HOST,
   POSTGRES_PASSWORD,
   POSTGRES_PORT,
@@ -49,7 +50,7 @@ export const query = async (stmt: any, options: any) => {
       console.log(params, "querydata if");
 
       let res = await axios.post(
-        "https://docblitz-437213.uc.r.appspot.com/execute-query",
+        POSTGRESS_QUERY_API,
         { querydata, params }
       );
       console.log(res.data, "Result from app engine is ");
@@ -64,12 +65,10 @@ export const query = async (stmt: any, options: any) => {
       throw errorResult;
     }
   } else {
-    // console.log("else latest");
-    // return await pool.query(stmt);
     try {
       console.log(querydata, "querydata else");
       let res = await axios.post(
-        "https://docblitz-437213.uc.r.appspot.com/execute-query",
+        POSTGRESS_QUERY_API,
         { querydata }
       );
       return res.data;

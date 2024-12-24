@@ -25,9 +25,9 @@ const config = {
   GCP_PROJECT_QUEUE: process.env.GCP_PROJECT_QUEUE,
   GCP_PROJECT_LOCATION: process.env.GCP_PROJECT_LOCATION,
   REDIRECT_INVENTORY_URL: process.env.REDIRECT_INVENTORY_URL,
-
   REDIS_SESSIONEXSEC: +process.env.REDIS_SESSIONEXSEC,
-  REDIS_EMAIL_OTPEXPSEC: +process.env.REDIS_EMAIL_OTPEXPSEC
+  REDIS_EMAIL_OTPEXPSEC: +process.env.REDIS_EMAIL_OTPEXPSEC,
+  POSTGRESS_QUERY_API:process.env.POSTGRESS_QUERY_API
 
 };
 
@@ -56,3 +56,4 @@ export const { GCP_PROJECT_LOCATION } = config;
 export const { REDIRECT_INVENTORY_URL } = config
 export const { REDIS_SESSIONEXSEC } = config
 export const { REDIS_EMAIL_OTPEXPSEC } = config
+export const { POSTGRESS_QUERY_API } = config

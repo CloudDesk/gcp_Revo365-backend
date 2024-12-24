@@ -706,6 +706,7 @@ export var stockRevoService;
     // };
     stockRevoService.upsertStockRevoDatarfid = async (rfidDataArray) => {
         try {
+            console.log('inside upsert Stock Revo Data rfid');
             let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
             let arraylength = rfidDataArray.length;
@@ -722,7 +723,7 @@ export var stockRevoService;
                 WHERE 
                     rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
                     AND puc IN (SELECT puc FROM product_revo WHERE id = $1)
-                    AND stockstatus = 'Pending'
+                    AND stockstatus = 'Available'
                 RETURNING *;
             `;
             console.log(updateQuery);

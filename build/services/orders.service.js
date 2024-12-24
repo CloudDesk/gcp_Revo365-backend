@@ -1175,6 +1175,7 @@ ${whereClause} ${orderByClause}`;
     // };
     ordersService.upsertOrderrfid = async (orderData) => {
         try {
+            console.log('inside upsert order rfid 1');
             let querydata;
             let params;
             const { rfid, orderlinenumber, productid } = orderData;
@@ -1230,12 +1231,13 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.upsertOrderlinerfid = async (orderData) => {
         try {
+            console.log('inside upsert orderline rfid 2');
             // Enhanced RFID Duplicate Check
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
                     return {
-                        errorMessage: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
+                        error: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
                         errorDetails: [],
                         statusCode: 401
                     };
@@ -1252,7 +1254,7 @@ ${whereClause} ${orderByClause}`;
                         FROM stock_revo 
                         WHERE rfid = $1 
                         AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
-                        AND stockstatus = 'Pending'
+                        AND stockstatus = 'Available'
                     `;
                     const validationResult = await query(validationQuery, [item.rfid, item.productid]);
                     if (validationResult.rows[0].count === 0) {
@@ -1265,6 +1267,7 @@ ${whereClause} ${orderByClause}`;
             });
             // Validate all RFIDs before proceeding
             try {
+                console.log('Validate all RFIDs before proceeding');
                 await Promise.all(validationPromises);
             }
             catch (validationError) {
