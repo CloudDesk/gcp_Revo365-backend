@@ -57,27 +57,57 @@ export module userController {
         }
     }
 
+    // export const upsertUser = async (request: any, reply: any) => {
+    //     try {
+    //         const userData = request.body;
+    //         let upsertUserResult = await userService.upsertUser(userData);
+    //         console.log(upsertUserResult);
+    //         if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
+    //             let message: any = {};
+    //             message = {
+    //                 user: upsertUserResult?.command === "UPDATE"
+    //                     ? ` User Updated successfully`
+    //                     : ` User signup done successfully`
+    //             };
+    //             reply.status(200).send(message);
+    //         }
+    //         else {
+    //             reply.status(500).send(upsertUserResult)
+    //         }
+    //     } catch (error) {
+    //         reply.send(error.message);
+    //     }
+    // }
+
     export const upsertUser = async (request: any, reply: any) => {
         try {
             const userData = request.body;
             let upsertUserResult = await userService.upsertUser(userData);
-            console.log(upsertUserResult);
-            if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
-                let message: any = {};
-                message = {
-                    user: upsertUserResult?.command === "UPDATE"
-                        ? ` User Updated successfully`
-                        : ` User signup done successfully`
-                };
-                reply.status(200).send(message);
+            console.log('>>>>>',upsertUserResult,'>>>>>');
+            if (upsertUserResult.command == 'UPDATE') {
+                console.log('Inside Update')
+                // let message: any = {};
+                // message = {
+                //     user: upsertUserResult?.command === "UPDATE"
+                //         ? ` User Updated successfully`
+                //         : ` User signup done successfully`
+                // };
+                reply.status(200).send('User Updated successfully');
+            } else if(upsertUserResult.command == 'INSERT'){
+                console.log('Inside Insert')
+                reply.status(200).send('User signup done successfully');
             }
             else {
-                reply.status(500).send(upsertUserResult)
+                console.log('Inside error')
+                console.log(upsertUserResult.message)
+                reply.status(401).send(upsertUserResult.message)
             }
         } catch (error) {
+            console.log('Error:',error.message)
             reply.send(error.message);
         }
     }
+    
     export const userlogout = async (request: any, reply: any) => {
         try {
             const userData = request.body;

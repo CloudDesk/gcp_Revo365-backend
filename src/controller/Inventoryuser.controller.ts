@@ -81,19 +81,42 @@ export module InventoryuserController {
         }
     }
 
+    // export const upsertInventoryUser = async (request: any, reply: any) => {
+    //     try {
+    //         const userData = request.body;
+    //         console.log(userData)
+    //         let upsertUserResult = await userInventoryService.upsertInventoryUser(userData);
+    //         console.log(upsertUserResult);
+    //         if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
+    //             let message: any = {};
+    //             message = {
+    //                 message: upsertUserResult?.command === "UPDATE"
+    //                     ? ` User signup done successfully`
+    //                     : ` User signup done successfully`,
+    //                 data: upsertUserResult?.rows[0]
+    //             };
+    //             reply.status(200).send(message);
+    //         }
+    //         else {
+    //             reply.status(500).send({ error: upsertUserResult })
+    //         }
+    //     } catch (error) {
+    //         reply.send(error.message);
+    //     }
+    // }
     export const upsertInventoryUser = async (request: any, reply: any) => {
         try {
             const userData = request.body;
             console.log(userData)
             let upsertUserResult = await userInventoryService.upsertInventoryUser(userData);
-            console.log(upsertUserResult);
-            if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
+            // console.log('2222',upsertUserResult);
+            if (upsertUserResult.command === "UPDATE" || upsertUserResult.command === "INSERT") {
                 let message: any = {};
                 message = {
-                    message: upsertUserResult?.command === "UPDATE"
-                        ? ` User signup done successfully`
-                        : ` User signup done successfully`,
-                    data: upsertUserResult?.rows[0]
+                    message: upsertUserResult.command === "UPDATE"
+                        ? `Inventory Users Updated successfully`
+                        : `Inventory Users Data Inserted successfully`,
+                        data:upsertUserResult.rows
                 };
                 reply.status(200).send(message);
             }

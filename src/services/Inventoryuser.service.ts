@@ -231,84 +231,189 @@ export module userInventoryService {
     }
   };
 
+  // export const upsertInventoryUser = async (userData: any) => {
+  //   try {
+  //     // Implement logic to insert or update user data
+  //     let querydata: string;
+  //     let params: any[];
+  //     const { id, ...upsertFields } = userData;
+  //     if (id) {
+  //       if (upsertFields.useremail) {
+  //         console.log(upsertFields.useremail);
+  //         querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
+  //         console.log(querydata);
+  //         const result = await query(querydata, []);
+  //         console.log(result.rows);
+  //         let iddaata = result.rows[0].id;
+  //         if (iddaata) {
+  //           if (upsertFields.userpassword) {
+  //             let hashingResult = await hashGenerate(upsertFields.userpassword);
+  //             console.log(hashingResult, "Hashing Result when Updating User ");
+  //             if (hashingResult) {
+  //               upsertFields.userpassword = hashingResult;
+  //             }
+  //           }
+  //           console.log(upsertFields, "upsertFields when Updating user");
+  //           let updatedfieldNames = Object.keys(upsertFields);
+  //           let updatedfieldValues = Object.values(upsertFields);
+  //           console.log(updatedfieldNames);
+  //           querydata = `UPDATE Inventoryusers SET ${updatedfieldNames
+  //             .map((field, index) => `${field} = $${index + 1}`)
+  //             .join(", ")} WHERE id = $${
+  //             updatedfieldNames.length + 1
+  //           } RETURNING *`;
+  //           params = [...updatedfieldValues, iddaata];
+  //           const result = await query(querydata, params);
+  //           return result;
+  //         } else {
+  //           return "Entered Email is Wrong.Please Enter Correct Email";
+  //         }
+  //       }
+  //     } else {
+  //       console.log(upsertFields);
+
+  //       if (upsertFields.useremail) {
+  //         console.log(upsertFields.useremail);
+  //         querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
+  //         console.log(querydata);
+  //         const result = await query(querydata, []);
+  //         console.log(result.rows);
+  //         if (result.rows.length > 0) {
+  //           return "Users already Exist";
+  //         } else {
+  //           let hashingResult = await hashGenerate(upsertFields.userpassword);
+  //           console.log(hashingResult, "Hashing Result is ");
+  //           if (hashingResult) {
+  //             upsertFields.userpassword = hashingResult;
+  //           }
+  //           console.log(upsertFields, "upsertFields");
+  //           let updatedfieldNames = Object.keys(upsertFields);
+  //           let updatedfieldValues = Object.values(upsertFields);
+  //           console.log(updatedfieldNames);
+  //           querydata = `INSERT INTO Inventoryusers (${updatedfieldNames.join(
+  //             ", "
+  //           )}) VALUES (${updatedfieldNames
+  //             .map((_, index) => `$${index + 1}`)
+  //             .join(", ")}) RETURNING *`;
+  //           params = updatedfieldValues;
+  //           const result = await query(querydata, params);
+  //           return result;
+  //         }
+  //       }
+  //     }
+  //   } catch (error) {
+  //     console.error("Query Execution Error: IN upsert Inventory User", error);
+  //     let ErrorMessage = await ErrorHandler.handleQueryError(error);
+  //     console.log(ErrorMessage);
+  //     return ErrorMessage;
+  //   }
+  // };
+
   export const upsertInventoryUser = async (userData: any) => {
     try {
-      // Implement logic to insert or update user data
-      let querydata: string;
-      let params: any[];
-      const { id, ...upsertFields } = userData;
-      if (id) {
-        if (upsertFields.useremail) {
-          console.log(upsertFields.useremail);
-          querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
-          console.log(querydata);
-          const result = await query(querydata, []);
-          console.log(result.rows);
-          let iddaata = result.rows[0].id;
-          if (iddaata) {
-            if (upsertFields.userpassword) {
-              let hashingResult = await hashGenerate(upsertFields.userpassword);
-              console.log(hashingResult, "Hashing Result when Updating User ");
-              if (hashingResult) {
-                upsertFields.userpassword = hashingResult;
-              }
-            }
-            console.log(upsertFields, "upsertFields when Updating user");
-            let updatedfieldNames = Object.keys(upsertFields);
-            let updatedfieldValues = Object.values(upsertFields);
-            console.log(updatedfieldNames);
-            querydata = `UPDATE Inventoryusers SET ${updatedfieldNames
-              .map((field, index) => `${field} = $${index + 1}`)
-              .join(", ")} WHERE id = $${
-              updatedfieldNames.length + 1
-            } RETURNING *`;
-            params = [...updatedfieldValues, iddaata];
-            const result = await query(querydata, params);
-            return result;
-          } else {
-            return "Entered Email is Wrong.Please Enter Correct Email";
-          }
+      console.log('Received userData:', userData);
+  
+      if (!userData.id) {
+        const checkEmailQuery = `
+          SELECT id, 'users' as table_name FROM users WHERE useremail = $1
+          UNION ALL
+          SELECT id, 'inventoryusers' as table_name FROM inventoryusers WHERE useremail = $1
+        `;
+        const emailCheckResult = await query(checkEmailQuery, [userData.useremail]);
+  
+        if (emailCheckResult.rows.length > 0) {
+          return "Email already exists in users or inventoryusers table";
         }
-      } else {
-        console.log(upsertFields);
+  
+        const hashedPassword = await hashGenerate(userData.userpassword);
+  
+        const insertData = {
+          firstname: userData.firstname,
+          lastname: userData.lastname,
+          location: userData.location,
+          role: userData.role,
+          useremail: userData.useremail,
+          userpassword: hashedPassword,
+          usersphonenumber: userData.usersphonenumber
+        };
+        console.log("Insert Data:",insertData);
 
-        if (upsertFields.useremail) {
-          console.log(upsertFields.useremail);
-          querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
-          console.log(querydata);
-          const result = await query(querydata, []);
-          console.log(result.rows);
-          if (result.rows.length > 0) {
-            return "Users already Exist";
-          } else {
-            let hashingResult = await hashGenerate(upsertFields.userpassword);
-            console.log(hashingResult, "Hashing Result is ");
-            if (hashingResult) {
-              upsertFields.userpassword = hashingResult;
-            }
-            console.log(upsertFields, "upsertFields");
-            let updatedfieldNames = Object.keys(upsertFields);
-            let updatedfieldValues = Object.values(upsertFields);
-            console.log(updatedfieldNames);
-            querydata = `INSERT INTO Inventoryusers (${updatedfieldNames.join(
-              ", "
-            )}) VALUES (${updatedfieldNames
-              .map((_, index) => `$${index + 1}`)
-              .join(", ")}) RETURNING *`;
-            params = updatedfieldValues;
-            const result = await query(querydata, params);
-            return result;
-          }
-        }
+  
+        const insertFields = Object.keys(insertData);
+        const insertValues = Object.values(insertData);
+  
+        const insertQuery = `
+          INSERT INTO inventoryusers (${insertFields.join(", ")}) 
+          VALUES (${insertFields.map((_, index) => `$${index + 1}`).join(", ")}) 
+          RETURNING *
+        `;
+  
+        const result = await query(insertQuery, insertValues);
+        
+        return {
+          command: "INSERT",
+          rows: result.rows
+        };
       }
+  
+      const { id, ...updateFields } = userData;
+console.log("New;;", updateFields);
+
+const checkUserQuery = `
+  SELECT * FROM inventoryusers WHERE id = $1
+`;
+const userExists = await query(checkUserQuery, [id]);
+console.log("Checking:", userExists.rows);
+
+if (userExists.rows.length === 0) {
+  return "User not found";
+}
+
+const updateData: any = {};
+
+// Handle all fields from updateFields
+for (const [key, value] of Object.entries(updateFields)) {
+  // Skip empty or undefined values
+  if (value !== undefined && value !== '') {
+    if (key === 'userpassword') {
+      updateData[key] = await hashGenerate(value);
+    } else {
+      updateData[key] = value;
+    }
+  }
+}
+
+console.log('Console:', updateData, 'Console:');
+if (Object.keys(updateData).length === 0) {
+  return "No fields to update";
+}
+
+const updateQueryFields = Object.keys(updateData);
+const updateValues = Object.values(updateData);
+console.log('updateQueryFields:', updateQueryFields);
+console.log('updateValues:', updateValues);
+
+const updateQuery = `
+  UPDATE inventoryusers 
+  SET ${updateQueryFields.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+  WHERE id = $${updateQueryFields.length + 1} 
+  RETURNING *
+`;
+
+const result = await query(updateQuery, [...updateValues, id]);
+
+return {
+  command: "UPDATE",
+  rows: result.rows
+};
+  
     } catch (error) {
-      console.error("Query Execution Error: IN upsert Inventory User", error);
-      let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
-      return ErrorMessage;
+      console.error("Query Execution Error in upsertInventoryUser:", error);
+      const errorMessage = await ErrorHandler.handleQueryError(error);
+      return errorMessage;
     }
   };
-
+  
   export const forgotuser = async (request: any, reply: any) => {
     try {
       request.query.useremail = request.body.useremail;
