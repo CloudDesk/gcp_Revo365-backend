@@ -1337,10 +1337,132 @@ ${whereClause} ${orderByClause}`;
         }
     };
 
+    // export const upsertOrderlinerfid = async (orderData: any) => {
+    //     try {
+    //         console.log('inside upsert orderline rfid 2');
+    //         // step 1 - RFID Duplicate Check
+    //         const rfidMap = new Map();
+    //         for (const item of orderData) {
+    //             if (rfidMap.has(item.rfid)) {
+    //                 return {
+    //                     error: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
+    //                     errorDetails: [],
+    //                     statusCode: 401
+    //                 };
+    //             }
+    //             rfidMap.set(item.rfid, true);
+    //         }
+    
+    //         console.log('After checking duplicate RFID');
+    //         // step 2 - check all rfid's are valid 
+    //         // Verify all RFIDs exist in stock table before proceeding
+    //     const validationQuery = `
+    //     SELECT rfid, puc 
+    //     FROM stock_revo 
+    //     WHERE rfid = ANY($1)
+    //     AND puc IN (SELECT puc FROM product_revo WHERE id = ANY($2))
+    //     AND stockstatus = 'Available'
+    // `;
+    // const rfids = orderData.map(item => item.rfid);
+    // const productIds = orderData.map(item => item.productid);
+    // const validationResult = await query(validationQuery, [rfids, productIds]);
+
+    // // Check if all RFIDs were found
+    // if (validationResult.rows.length !== orderData.length) {
+    //     const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
+    //     const invalidRfids = orderData.filter(item => !foundRfids.has(item.rfid));
+    //     console.log('last step');
+    //     return {
+    //         error: `Invalid RFIDs detected: ${invalidRfids.map(item => item.rfid).join(', ')}`,
+    //         errorDetails: [],
+    //         statusCode: 400
+    //     };
+    // }
+    //        console.log(`After validating RFID's`);
+    //         // step 3
+    //         // Validate individual RFIDs before processing
+    //         const validationPromises = orderData.map(async (item) => {
+    //             try {
+    //                 // Check if RFID exists and is valid
+    //                 const validationQuery = `
+    //                     SELECT COUNT(*) as count 
+    //                     FROM stock_revo 
+    //                     WHERE rfid = $1 
+    //                     AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
+    //                     AND stockstatus = 'Available'
+    //                 `;
+    //                 const validationResult = await query(validationQuery, [item.rfid, item.productid]);
+                    
+    //                 if (validationResult.rows[0].count === 0) {
+    //                     throw new Error(`Invalid RFID: ${item.rfid} for product ${item.productid}`);
+    //                 }
+    //             } catch (validationError) {
+    //                 throw validationError;
+    //             }
+    //         });
+    
+    //         // Validate all RFIDs before proceeding
+    //         try {
+    //             console.log('Validate all RFIDs before proceeding');
+    //             await Promise.all(validationPromises);
+    //         } catch (validationError) {
+    //             return {
+    //                 errorMessage: validationError.message,
+    //                 errorDetails: [],
+    //                 statusCode: 400
+    //             };
+    //         }
+    
+    //         console.log(orderData, 'order Data is');
+            
+    //         let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
+    //         console.log(updateStock, 'Update Stock latest data');
+    
+    //         if (updateStock.error) {
+    //             return { error: updateStock.error };
+    //         }
+    //         else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
+    //             console.log(updateStock.result.rowCount, 'ROW COUNT IS');
+    //             const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
+    
+    //             let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
+    //             console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
+    //             console.log(updateStock.result.rows, 'ROWS OF UPDATE StOCK IS');
+    
+    //             const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  
+    //             if (ordersToUpdate.length > 0) {
+    //                 let querydata = `
+    //                     UPDATE orderline 
+    //                     SET 
+    //                         orderstatus = 'ready_to_dispatch',
+    //                         deliveryfrom = CASE 
+    //                             ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
+    //                         END
+    //                     WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
+    //                     RETURNING *`;
+    
+    //                 const params = ordersToUpdate.map(e => e.orderlinenumber);
+    //                 console.log(querydata, 'Query Data is');
+    //                 const result = await query(querydata, params);
+    //                 return result;
+    //             }
+    //         }
+    //         else {
+    //             return { error: updateStock };
+    //         }
+    
+    //     } catch (error) {
+    //         console.error("Query Execution Error: IN upsertOrder", error);
+    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //         console.log(ErrorMessage);
+    //         return ErrorMessage;
+    //     }
+    // };
+
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
             console.log('inside upsert orderline rfid 2');
-            // Enhanced RFID Duplicate Check
+            // step 1 - RFID Duplicate Check
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
@@ -1354,35 +1476,26 @@ ${whereClause} ${orderByClause}`;
             }
     
             console.log('After checking duplicate RFID');
-            
-            // Validate individual RFIDs before processing
-            const validationPromises = orderData.map(async (item) => {
-                try {
-                    // Check if RFID exists and is valid
-                    const validationQuery = `
-                        SELECT COUNT(*) as count 
-                        FROM stock_revo 
-                        WHERE rfid = $1 
-                        AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
-                        AND stockstatus = 'Pending'
-                    `;
-                    const validationResult = await query(validationQuery, [item.rfid, item.productid]);
-                    
-                    if (validationResult.rows[0].count === 0) {
-                        throw new Error(`Invalid RFID: ${item.rfid} for product ${item.productid}`);
-                    }
-                } catch (validationError) {
-                    throw validationError;
-                }
-            });
+            // step 2 - check all rfid's are valid 
+            // Verify all RFIDs exist in stock table before proceeding
+            const validationQuery = `
+                SELECT rfid, puc 
+                FROM stock_revo 
+                WHERE rfid = ANY($1)
+                AND puc IN (SELECT puc FROM product_revo WHERE id = ANY($2))
+                AND stockstatus = 'Available'
+            `;
+            const rfids = orderData.map(item => item.rfid);
+            const productIds = orderData.map(item => item.productid);
+            const validationResult = await query(validationQuery, [rfids, productIds]);
     
-            // Validate all RFIDs before proceeding
-            try {
-                console.log('Validate all RFIDs before proceeding');
-                await Promise.all(validationPromises);
-            } catch (validationError) {
+            // Check if all RFIDs were found
+            if (validationResult.rows.length !== orderData.length) {
+                const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
+                const invalidRfids = orderData.filter(item => !foundRfids.has(item.rfid));
+                console.log('last step');
                 return {
-                    errorMessage: validationError.message,
+                    error: `Invalid RFIDs detected: ${invalidRfids.map(item => item.rfid).join(', ')}`,
                     errorDetails: [],
                     statusCode: 400
                 };
@@ -1433,7 +1546,6 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
-
     export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
         try {
             console.log('Transaction Data:', transactionData);
