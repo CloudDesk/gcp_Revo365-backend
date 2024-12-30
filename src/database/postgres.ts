@@ -46,18 +46,13 @@ export const query = async (stmt: any, options: any) => {
     // let res = await pool.query(stmt, options)
     // return res
     try {
-      console.log(querydata, "querydata if");
-      console.log(params, "querydata if");
-
       let res = await axios.post(
         POSTGRESS_QUERY_API,
         { querydata, params }
       );
-      console.log(res.data, "Result from app engine is ");
       return res.data;
     } catch (error) {
       console.log("Errpr in query data", error.response.data);
-      console.log("Errpr in query response", error);
       let errorResult = await ErrorHandler.checkErrorMessage(
         error.response.data
       );
@@ -66,7 +61,6 @@ export const query = async (stmt: any, options: any) => {
     }
   } else {
     try {
-      console.log(querydata, "querydata else");
       let res = await axios.post(
         POSTGRESS_QUERY_API,
         { querydata }
@@ -74,11 +68,9 @@ export const query = async (stmt: any, options: any) => {
       return res.data;
     } catch (error) {
       console.log("Errpr in query data else ", error.response.data);
-      console.log("Errpr in query response else ", error);
       let errorResult = await ErrorHandler.checkErrorMessage(
         error.response.data
       );
-      console.log(errorResult, "Error Result is else");
       throw errorResult;
     }
   }

@@ -51,7 +51,6 @@ export var phonePay;
     };
     phonePay.paymentConfirmation = async (request) => {
         try {
-            console.log('status');
             const merchantTransactionId = request.query.id;
             const merchantId = MERCHANT_ID;
             const keyIndex = 1;

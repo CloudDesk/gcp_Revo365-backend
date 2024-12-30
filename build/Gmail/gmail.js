@@ -8,9 +8,6 @@ const parentDir = resolve(__dirname, '..');
 let mailOptions;
 export const sendMail = async (request, reply) => {
     const { to, cc, subject, text } = request.body;
-    console.log(to);
-    console.log(subject);
-    console.log(text);
     mailOptions = {
         from: '"Revo" <pravinsf24@gmail.com>',
         to: to,
@@ -18,14 +15,12 @@ export const sendMail = async (request, reply) => {
         subject: subject,
         text: text,
     };
-    console.log(request.files);
     if (request.files && request.files.length > 0) {
         mailOptions.attachments = request.files.map((file) => {
             const filepath = join(parentDir, "../uploads", file.filename);
             return { filename: file.filename, path: filepath };
         });
     }
-    console.log(mailOptions);
     const transporter = nodemailer.createTransport({
         service: GMAIL_SERVICE,
         host: GMAIL_HOST,
@@ -47,13 +42,10 @@ export const sendMail = async (request, reply) => {
             }
         }
         else {
-            console.log("Email sent: ", info.response);
-            console.log(reply, 'Reply is ');
             if (reply) {
                 reply.send("Email Sent Successfully");
             }
             else {
-                console.log(`Else PART`);
                 return 'Email Sent Successfully';
             }
         }

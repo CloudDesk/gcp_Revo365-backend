@@ -4,7 +4,6 @@ export var productController;
     productController.rearrangeImage = async function (request, reply) {
         try {
             let getProductsResult = await productService.rearrangeImage(request);
-            console.log(getProductsResult);
             if (getProductsResult.command === "UPDATE" || getProductsResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -24,20 +23,6 @@ export var productController;
     };
     productController.getProducts = async function (request, reply) {
         try {
-            // const client = await this.pg.connect()
-            // let data = await client.query('select * from products')
-            // console.log(data.rows.length, 'Dataset Values are data');
-            // reply.send(data.rows)
-            //Decorator test
-            // console.log(request.isServerReady ,'Requesting data 1');             
-            // console.log(request.gotch ,'Requesting data 1 gotch');             
-            // console.log(reply.isNot ,'Requesting data 2'); 
-            // console.log(request.yeah ,'Yeah request');  
-            // console.log(this.data() ,'Getting data using this ');
-            // console.log(this.utility('oHOOOOO') ,'Getting utility using this ');
-            // console.log(this.almost('oHOOOOO almost') ,'Getting utility using this ');
-            // console.log(this.testdata() ,'Getting testdata using this ');
-            // console.log(this.testdatass() ,'Getting testdatass using this ');
             const { pageNumber, recordCount } = request.params;
             let getProductsResult = await productService.getProducts(pageNumber, recordCount, request);
             reply.send(getProductsResult);
@@ -57,20 +42,6 @@ export var productController;
     };
     productController.getSimilarProducts = async function (request, reply) {
         try {
-            // const client = await this.pg.connect()
-            // let data = await client.query('select * from products')
-            // console.log(data.rows.length, 'Dataset Values are data');
-            // reply.send(data.rows)
-            //Decorator test
-            // console.log(request.isServerReady ,'Requesting data 1');             
-            // console.log(request.gotch ,'Requesting data 1 gotch');             
-            // console.log(reply.isNot ,'Requesting data 2'); 
-            // console.log(request.yeah ,'Yeah request');  
-            // console.log(this.data() ,'Getting data using this ');
-            // console.log(this.utility('oHOOOOO') ,'Getting utility using this ');
-            // console.log(this.almost('oHOOOOO almost') ,'Getting utility using this ');
-            // console.log(this.testdata() ,'Getting testdata using this ');
-            // console.log(this.testdatass() ,'Getting testdatass using this ');
             const { pageNumber, recordCount } = request.params;
             let getProductsResult = await productService.getSimilarProducts(pageNumber, recordCount, request);
             reply.send(getProductsResult);
@@ -102,7 +73,6 @@ export var productController;
     productController.upsertProduct = async (request, reply) => {
         try {
             let productUpsertResult = await productService.upsertProduct(request.body);
-            console.log(productUpsertResult, "productUpsertResult");
             if (productUpsertResult.command === "UPDATE" || productUpsertResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -113,13 +83,10 @@ export var productController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else productUpsertResult");
-                console.log(productUpsertResult);
                 reply.status(404).send({ error: [productUpsertResult] });
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
             reply.status(404).send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -129,11 +96,6 @@ export var productController;
             if (productUpsertResult.command === "UPDATE" || productUpsertResult.command === "INSERT") {
                 let message = {};
                 let productId = productUpsertResult.productid;
-                // if (productId) {
-                //     console.log(productId);
-                //     let result = await uploadtos3(productUpsertResult.pathurldatas, productId)
-                //     console.log(result);
-                // }
                 message = {
                     product: productUpsertResult.command === "UPDATE"
                         ? `Product File Updated successfully`

@@ -95,11 +95,8 @@ export var purchaseOrderController;
     purchaseOrderController.upsertPurchaseOrder = async (request, reply) => {
         try {
             const purchaseorderData = request.body;
-            console.log(purchaseorderData, 'PURCHASE DATA ====>>>');
             let upsertPurchaseorderResult = await purchaseOrderService.upsertPurchaseOrder(purchaseorderData);
-            console.log(upsertPurchaseorderResult, 'UPSWERRT DSFGJ');
             if (upsertPurchaseorderResult.command === "UPDATE" || upsertPurchaseorderResult.command === "INSERT") {
-                console.log(upsertPurchaseorderResult.command, '--');
                 let message = {};
                 message = {
                     message: upsertPurchaseorderResult.command === "UPDATE"

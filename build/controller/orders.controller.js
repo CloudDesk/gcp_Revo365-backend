@@ -19,7 +19,6 @@ export var ordersController;
         catch (error) {
             console.error("Query Execution Error: IN getOrderData Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -42,7 +41,6 @@ export var ordersController;
         catch (error) {
             console.error("Query Execution Error: IN getOrderData Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -55,7 +53,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller getUserOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -67,7 +64,6 @@ export var ordersController;
         catch (error) {
             console.error("Query Execution Error: IN getorderlinedata Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -79,7 +75,6 @@ export var ordersController;
         catch (error) {
             console.error("Query Execution Error: IN getorderlinedata Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -92,7 +87,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller getUserOrderData1", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -105,7 +99,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller deleteOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -129,7 +122,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -153,37 +145,11 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
-    // export const upsertOrderrfid = async (request: any, reply: any) => {
-    //     try {
-    //         console.log("upsertOrderrfid", request.body)
-    //         const orderData = request.body;
-    //         let upsertOrderResult = await ordersService.upsertOrderrfid(orderData);
-    //         if (upsertOrderResult.command === "UPDATE" || upsertOrderResult.command === "INSERT") {
-    //             let message: any = {};
-    //             message = {
-    //                 message: upsertOrderResult.command === "UPDATE"
-    //                     ? `Order Updated Successfully and Stock Status Updated To Sold`
-    //                     : `Order Placed Successfully`
-    //             };
-    //             reply.status(200).send(message);
-    //         }
-    //         else {
-    //             reply.status(400).send(upsertOrderResult)
-    //         }
-    //     } catch (error) {
-    //         console.error("Error IN Controller upsertOrder", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage
-    //     }
-    // }
     ordersController.upsertOrderrfid = async (request, reply) => {
         try {
-            console.log("upsertOrderrfid", request.body);
             const orderData = request.body;
             let upsertOrderResult = await ordersService.upsertOrderrfid(orderData);
             if (upsertOrderResult.command === "UPDATE" || upsertOrderResult.command === "INSERT") {
@@ -202,13 +168,11 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     ordersController.upsertOrderlinerfid = async (request, reply) => {
         try {
-            console.log("upsertOrderrfid", request.body);
             const orderData = request.body;
             let upsertOrderResult = await ordersService.upsertOrderlinerfid(orderData);
             if (upsertOrderResult.command === "UPDATE" || upsertOrderResult.command === "INSERT") {
@@ -227,7 +191,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -239,7 +202,6 @@ export var ordersController;
         catch (error) {
             console.error("Error IN Controller upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

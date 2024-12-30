@@ -42,7 +42,6 @@ export module costEstimationService {
             });
             let offset = (pageNumber - 1) * recordCount;
             let baseConditions = ``;
-            console.log(whereClauses, 'whereClauses');
             let whereClause =
                 whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             let orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
@@ -67,37 +66,9 @@ export module costEstimationService {
         }
     }
 
-    // export const generatecostestimation = async (request: any, estimationdata: any, reply: any) => {
-    //     console.log(JSON.stringify(estimationdata), 'podata');
-    //     try {
-    //         let template ="invoice/revoinvoice.docx"
-    //         let result = await GenerateDocx(request, estimationdata,template)
-    //         console.log(result, "result from invoiceData");
-    //         result.estimationurl = result.fileurl;
-    //         delete result.fileurl;
-    //         let data ={
-    //             id:result.id,
-    //             estimationurl:result.estimationurl
-    //         }
-    //         console.log(data);
-    //         let insertFileinvoice: any = await upsertCostEstimation(data)
-    //         if (insertFileinvoice.command === "UPDATE" || insertFileinvoice.command === "INSERT") {
-    //             reply.send(result.estimationurl)
-    //         }
-    //         else {
-    //             reply.status(404).send("File not inserted.So Please Contact Admin")
-    //         }
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN generatepurchaseOrderData", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage
-    //     }
-    // }
 
     export const upsertCostEstimation = async (request: any, costEstimationData: any) => {
         try {
-            console.log(costEstimationData, "costEstimationData");
             if (costEstimationData.productdata) {
                 costEstimationData.productdata = JSON.parse(costEstimationData.productdata)
             }
@@ -106,37 +77,26 @@ export module costEstimationService {
             }
             costEstimationData.estimationdate = new Date().toLocaleDateString();
             let data = [costEstimationData];
-            console.log(data, 'data is');
             const { id, ...upsertFields } = costEstimationData;
             let template = "costestimation/costestimation.docx"
 
             if (!id) {
                 let docxrestult = await GenerateDocx(request, data, template)
-                console.log(docxrestult, "result from invoiceData");
                 upsertFields.estimationurl = docxrestult.fileurl;
                 delete docxrestult.fileurl;
-                console.log(costEstimationData, "costEstimationData");
             }
             delete upsertFields.estimationdate
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             let productdataIndex = fieldNames.indexOf("productdata");
             let servicedataIndex = fieldNames.indexOf("servicedata");
-            console.log(productdataIndex, 'productdataIndex');
-            console.log(servicedataIndex, 'servicedataIndex');
             if (productdataIndex !== -1) {
                 fieldValues[productdataIndex] = JSON.stringify(fieldValues[productdataIndex]);
-                console.log(fieldValues[productdataIndex], 'fieldValues[productdataIndex]');
-
             }
             if (servicedataIndex !== -1) {
                 fieldValues[servicedataIndex] = JSON.stringify(fieldValues[servicedataIndex]);
-                console.log(fieldValues[servicedataIndex], 'fieldValues[servicedataIndex]');
 
             }
-
-            console.log(fieldValues, "fieldValues");
-
             let querydata: string;
             let params: any[];
             if (id) {
@@ -152,9 +112,6 @@ export module costEstimationService {
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-
-            console.log(querydata, `querydata`);
-            console.log(params, `params`);
             let datavalue
             const result = await query(querydata, params);
             if (result && result.rows.length > 0) {
@@ -206,37 +163,23 @@ export module costEstimationService {
             }
             costEstimationData.estimationdate = new Date().toLocaleDateString();
             let data = [costEstimationData];
-            console.log(data, 'data is');
             const { id, ...upsertFields } = costEstimationData;
             let template = "costestimation/costestimation.docx"
 
-            // if (!id) {
-            //     let docxrestult = await GenerateDocx(request, data, template)
-            //     console.log(docxrestult, "result from invoiceData");
-            //     upsertFields.estimationurl = docxrestult.fileurl;
-            //     delete docxrestult.fileurl;
-            //     console.log(costEstimationData, "costEstimationData");
-            // }
             delete upsertFields.estimationdate
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             let productdataIndex = fieldNames.indexOf("productdata");
             let servicedataIndex = fieldNames.indexOf("servicedata");
-            console.log(productdataIndex, 'productdataIndex');
-            console.log(servicedataIndex, 'servicedataIndex');
+
             if (productdataIndex !== -1) {
                 fieldValues[productdataIndex] = JSON.stringify(fieldValues[productdataIndex]);
-                console.log(fieldValues[productdataIndex], 'fieldValues[productdataIndex]');
 
             }
             if (servicedataIndex !== -1) {
                 fieldValues[servicedataIndex] = JSON.stringify(fieldValues[servicedataIndex]);
-                console.log(fieldValues[servicedataIndex], 'fieldValues[servicedataIndex]');
 
             }
-
-            console.log(fieldValues, "fieldValues");
-            console.log(fieldNames, "fieldNames");
 
             let querydata: string;
             let params: any[];
@@ -253,9 +196,6 @@ export module costEstimationService {
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-
-            console.log(querydata, `querydata`);
-            console.log(params, `params`);
             let datavalue
             const result = await query(querydata, params);
             if (result && result.rows.length > 0) {

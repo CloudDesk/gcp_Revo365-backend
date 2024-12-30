@@ -82,24 +82,16 @@ export module userController {
     export const upsertUser = async (request: any, reply: any) => {
         try {
             const userData = request.body;
-            let upsertUserResult = await userService.upsertUser(userData);
+            let upsertUserResult : any = await userService.upsertUser(userData);
             console.log('>>>>>',upsertUserResult,'>>>>>');
             if (upsertUserResult.command == 'UPDATE') {
-                console.log('Inside Update')
-                // let message: any = {};
-                // message = {
-                //     user: upsertUserResult?.command === "UPDATE"
-                //         ? ` User Updated successfully`
-                //         : ` User signup done successfully`
-                // };
                 reply.status(200).send('User Updated successfully');
             } else if(upsertUserResult.command == 'INSERT'){
                 console.log('Inside Insert')
                 reply.status(200).send('User signup done successfully');
             }
             else {
-                console.log('Inside error')
-                console.log(upsertUserResult.message)
+    
                 reply.status(401).send(upsertUserResult.message)
             }
         } catch (error) {

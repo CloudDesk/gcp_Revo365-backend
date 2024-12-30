@@ -16,7 +16,6 @@ export var dataLoaderController;
             let failuredata = [];
             await Promise.all(jsonresult.map(async (e, index) => {
                 try {
-                    console.log(JSON.stringify(e), ' Each Records ');
                     let validationresult = await validateDataLoader(productInsertSchema, e);
                     if (validationresult === true) {
                         let productUpsertResult = await productService.upsertProduct(e);
@@ -38,7 +37,6 @@ export var dataLoaderController;
                             errorObject[key] = value;
                         });
                         failuredata.push(errorObject);
-                        console.log(errorObject);
                     }
                 }
                 catch (error) {
@@ -72,10 +70,7 @@ export var dataLoaderController;
             const groupedData = groupByMultiple(jsonresult, arraydata);
             const result = Object.entries(groupedData).map(([key, value]) => {
                 const keyParts = key.split(' ');
-                console.log(keyParts);
                 const combination = arraydata.reduce((acc, prop, index) => {
-                    console.log(acc, 'acc');
-                    console.log(prop);
                     acc[prop] = keyParts[index];
                     return acc;
                 }, {});
@@ -95,7 +90,6 @@ export var dataLoaderController;
     dataLoaderController.getDataLoaderData = async (request, reply) => {
         try {
             let jsonResult = await dataLoaderService.getDataLoaderData(request);
-            console.log(jsonResult);
             reply.send(jsonResult);
         }
         catch (error) {
@@ -107,7 +101,6 @@ export var dataLoaderController;
     dataLoaderController.getDataLoaderDataStock = async (request, reply) => {
         try {
             let jsonResult = await dataLoaderService.getDataLoaderDataStock(request);
-            // console.log(jsonResult ,'Update Result ');
             reply.send(jsonResult);
         }
         catch (error) {
@@ -119,13 +112,9 @@ export var dataLoaderController;
     dataLoaderController.insertBulkDataStock = async (request, reply) => {
         try {
             let upsertStockResult = await dataLoaderService.upsertBulkDataStock(request, reply);
-            console.log(upsertStockResult, 'Result is Total data resutl data ');
             if (upsertStockResult?.result?.command === "UPDATE" || upsertStockResult?.result?.command === "INSERT") {
-                console.log('--- multi', upsertStockResult.result);
-                console.log(upsertStockResult.result.rows[0].puc, 'PRODUCT PUC');
                 const puc = upsertStockResult.result.rows[0].puc;
                 const pucArray = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                console.log(pucArray, 'PUC ARRAY');
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray);
                 // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
                 let message = {

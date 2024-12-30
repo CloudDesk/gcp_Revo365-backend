@@ -92,7 +92,6 @@ export var productrevoController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else productUpsertResult");
                 console.log(upsertProductRevoResult);
                 reply.status(404).send({ error: [upsertProductRevoResult] });
             }
@@ -110,7 +109,6 @@ export var productrevoController;
                 if (productId) {
                     console.log(productId);
                     let result = await uploadtos3(productUpsertResult.pathurldatas, productId);
-                    console.log(result);
                 }
                 message = {
                     product: productUpsertResult.command === "UPDATE"
@@ -127,9 +125,7 @@ export var productrevoController;
     };
     productrevoController.upsertProductwithfileRevogcp = async (request, reply) => {
         try {
-            console.log(request.body, 'Upload Image in DB');
             let productUpsertResult = await productrevoService.upsertProductwithfileRevogcp(request);
-            console.log(productUpsertResult, 'Upload Image in DB');
             if (productUpsertResult.result.command === "UPDATE" || productUpsertResult.result.command === "INSERT") {
                 let message = {};
                 message = {
@@ -137,7 +133,6 @@ export var productrevoController;
                         ? `Product File Updated successfully`
                         : `Product File Inserted successfully`
                 };
-                console.log(message);
                 return message;
             }
             // reply.send('Success')
@@ -150,7 +145,6 @@ export var productrevoController;
     productrevoController.rearrangeImageRevo = async function (request, reply) {
         try {
             let getProductsResult = await productrevoService.rearrangeImageRevo(request);
-            console.log(getProductsResult);
             if (getProductsResult.command === "UPDATE" || getProductsResult.command === "INSERT") {
                 let message = {};
                 message = {

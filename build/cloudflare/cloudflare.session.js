@@ -3,20 +3,15 @@ import axios from "axios";
 const workerUrl = 'https://crimson-rain-3768.cdmacdev.workers.dev';
 export async function getSession(request, reply) {
     try {
-        console.log(request.cookies.sessionId, 'Request Cookies');
-        console.log(request.headers.authorization, 'Headers are');
         //let sessionId = request.cookies.sessionId
         let sessionId = request.headers.authorization;
-        console.log(sessionId, 'Rquest Session ID');
         const response = await axios.get(`${workerUrl}/session/get?sessionId=${sessionId}`);
-        console.log(response.data, 'Response Data');
         let data = {};
         if (response.data.error) {
             return reply.status(401).send({ error: 'Unauthorized: No valid session' });
             //return true
         }
         else if (response.data) {
-            console.log(`Route: ${request.routerPath} ROUTE INSIDE SESSION `);
             return true;
         }
     }

@@ -11,7 +11,6 @@ let generatedotp;
 export module userInventoryService {
   export const getInventoryUsersData = async (request: any, reply: any) => {
     try {
-      console.log("get Inventory User function call");
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
       const keys = Object.keys(request.query);
@@ -28,10 +27,8 @@ export module userInventoryService {
           ? values[index]
           : [values[index]];
         if (key === "name") {
-          console.log(values[index], "Before Capitalize");
           values[index] =
             values[index].charAt(0).toUpperCase() + values[index].slice(1);
-          console.log(values[index], "After Capitalize");
         } else if (key === "sortby") {
           const [fieldName, direction] = paramValues[0].split("-");
           orderByField = fieldName;
@@ -62,17 +59,13 @@ export module userInventoryService {
         queryParams.push(offset, recordCount);
       }
 
-      console.log("Query Text:", queryText);
-      console.log("Query Params:", queryParams);
 
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
-      console.log(datatypeCheckResult, "datatypeCheckResult");
       return datatypeCheckResult;
     } catch (error) {
       console.error("Query Execution Error: IN Get Inventory User", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -83,15 +76,6 @@ export module userInventoryService {
 
       // Clear the sessionId cookie from the client
       let sessionId = request.cookies.sessionId;
-      console.log(request.cookies.sessionId, "Request Cookies Before Logout");
-      reply.clearCookie("sessionId", {
-        path: "/",
-        httpOnly: true,
-        secure: true,
-        sameSite: "Strict",
-      });
-      console.log(request.cookies.sessionId, "Request Cookies After Logout");
-
       reply.send({ status: "Session deleted" });
     } catch (error) {
       console.error("Query Execution Error: IN deleteUser", error);
@@ -107,24 +91,7 @@ export module userInventoryService {
       const role = request.query.role || "Service";
       const location = request.query.location || "head_office";
 
-      // let queryText = `
-      //     SELECT u.*,
-      //            COUNT(t.id) AS ticketcount
-      //     FROM inventoryusers AS u
-      //     LEFT Join tickets AS t ON u.id = t.assignedid
-      //     WHERE t.ticketstatus <> 'closed' AND u.role = $1
-      //     GROUP BY u.id
-      // `;
-
-      // let queryText = `
-      //     SELECT u.*, COUNT(t.id) AS ticketcount
-      //     FROM inventoryusers AS u
-      //     LEFT JOIN tickets AS t ON u.id = t.assignedid
-      //     WHERE u.role = $1 AND (t.ticketstatus <> 'resolved_closed' AND t.ticketstatus <> 'unresolved_closed')
-      //     AND u.location = $2
-      //     GROUP BY u.id
-      // `;
-
+     
       let queryText = `
             SELECT u.*, COUNT(t.id) AS ticketcount
             FROM inventoryusers AS u 
@@ -145,12 +112,8 @@ export module userInventoryService {
         queryParams.push(offset, recordCount);
       }
 
-      console.log("Query Text:", queryText);
-      console.log("Query Params:", queryParams);
-
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
-      console.log(datatypeCheckResult, "datatypeCheckResult");
       return datatypeCheckResult;
     } catch (error) {
       console.error(
@@ -166,10 +129,7 @@ export module userInventoryService {
   export const getLoggedInInventoryUsersData = async (request, reply) => {
     try {
       const queryString = `SELECT * FROM Inventoryusers where useremail = '${request.params.useremail}'`;
-      console.log(queryString);
       const result = await query(queryString, []);
-      console.log(result.rows);
-      console.log(request.params.userpassword);
       if (result && result.rows.length > 0) {
         let validatepassword = await hashValidator(
           request.params.userpassword,
@@ -182,15 +142,7 @@ export module userInventoryService {
             userpassword: request.params.userpassword,
           };
           let sessionsaved = await saveSession(sessionId, sessionData);
-          //   console.log(">>>>", sessionsaved, ">>>>");
-          console.log(sessionsaved, "session saved is ");
           if (sessionsaved) {
-            // reply.setCookie('sessionId', sessionId, {
-            //     path: '/',
-            //     maxAge: 60 * 60 * 24
-            // });
-            console.log(sessionId, "Session Id is ");
-            console.log(result.rows, "Result Rows are ");
             return { sessionId, userdata: result.rows };
           } else {
             return "Please Contact Admin.You are Not Authorized to Login";
@@ -231,88 +183,9 @@ export module userInventoryService {
     }
   };
 
-  // export const upsertInventoryUser = async (userData: any) => {
-  //   try {
-  //     // Implement logic to insert or update user data
-  //     let querydata: string;
-  //     let params: any[];
-  //     const { id, ...upsertFields } = userData;
-  //     if (id) {
-  //       if (upsertFields.useremail) {
-  //         console.log(upsertFields.useremail);
-  //         querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
-  //         console.log(querydata);
-  //         const result = await query(querydata, []);
-  //         console.log(result.rows);
-  //         let iddaata = result.rows[0].id;
-  //         if (iddaata) {
-  //           if (upsertFields.userpassword) {
-  //             let hashingResult = await hashGenerate(upsertFields.userpassword);
-  //             console.log(hashingResult, "Hashing Result when Updating User ");
-  //             if (hashingResult) {
-  //               upsertFields.userpassword = hashingResult;
-  //             }
-  //           }
-  //           console.log(upsertFields, "upsertFields when Updating user");
-  //           let updatedfieldNames = Object.keys(upsertFields);
-  //           let updatedfieldValues = Object.values(upsertFields);
-  //           console.log(updatedfieldNames);
-  //           querydata = `UPDATE Inventoryusers SET ${updatedfieldNames
-  //             .map((field, index) => `${field} = $${index + 1}`)
-  //             .join(", ")} WHERE id = $${
-  //             updatedfieldNames.length + 1
-  //           } RETURNING *`;
-  //           params = [...updatedfieldValues, iddaata];
-  //           const result = await query(querydata, params);
-  //           return result;
-  //         } else {
-  //           return "Entered Email is Wrong.Please Enter Correct Email";
-  //         }
-  //       }
-  //     } else {
-  //       console.log(upsertFields);
-
-  //       if (upsertFields.useremail) {
-  //         console.log(upsertFields.useremail);
-  //         querydata = `select * from Inventoryusers where useremail = '${upsertFields.useremail}'`;
-  //         console.log(querydata);
-  //         const result = await query(querydata, []);
-  //         console.log(result.rows);
-  //         if (result.rows.length > 0) {
-  //           return "Users already Exist";
-  //         } else {
-  //           let hashingResult = await hashGenerate(upsertFields.userpassword);
-  //           console.log(hashingResult, "Hashing Result is ");
-  //           if (hashingResult) {
-  //             upsertFields.userpassword = hashingResult;
-  //           }
-  //           console.log(upsertFields, "upsertFields");
-  //           let updatedfieldNames = Object.keys(upsertFields);
-  //           let updatedfieldValues = Object.values(upsertFields);
-  //           console.log(updatedfieldNames);
-  //           querydata = `INSERT INTO Inventoryusers (${updatedfieldNames.join(
-  //             ", "
-  //           )}) VALUES (${updatedfieldNames
-  //             .map((_, index) => `$${index + 1}`)
-  //             .join(", ")}) RETURNING *`;
-  //           params = updatedfieldValues;
-  //           const result = await query(querydata, params);
-  //           return result;
-  //         }
-  //       }
-  //     }
-  //   } catch (error) {
-  //     console.error("Query Execution Error: IN upsert Inventory User", error);
-  //     let ErrorMessage = await ErrorHandler.handleQueryError(error);
-  //     console.log(ErrorMessage);
-  //     return ErrorMessage;
-  //   }
-  // };
 
   export const upsertInventoryUser = async (userData: any) => {
-    try {
-      console.log('Received userData:', userData);
-  
+    try {  
       if (!userData.id) {
         const checkEmailQuery = `
           SELECT id, 'users' as table_name FROM users WHERE useremail = $1
@@ -336,7 +209,6 @@ export module userInventoryService {
           userpassword: hashedPassword,
           usersphonenumber: userData.usersphonenumber
         };
-        console.log("Insert Data:",insertData);
 
   
         const insertFields = Object.keys(insertData);
@@ -357,14 +229,10 @@ export module userInventoryService {
       }
   
       const { id, ...updateFields } = userData;
-console.log("New;;", updateFields);
-
 const checkUserQuery = `
   SELECT * FROM inventoryusers WHERE id = $1
 `;
 const userExists = await query(checkUserQuery, [id]);
-console.log("Checking:", userExists.rows);
-
 if (userExists.rows.length === 0) {
   return "User not found";
 }
@@ -383,15 +251,12 @@ for (const [key, value] of Object.entries(updateFields)) {
   }
 }
 
-console.log('Console:', updateData, 'Console:');
 if (Object.keys(updateData).length === 0) {
   return "No fields to update";
 }
 
 const updateQueryFields = Object.keys(updateData);
 const updateValues = Object.values(updateData);
-console.log('updateQueryFields:', updateQueryFields);
-console.log('updateValues:', updateValues);
 
 const updateQuery = `
   UPDATE inventoryusers 
@@ -426,7 +291,6 @@ return {
         let finduser = await getInventoryUsersData(request, reply);
         if (finduser && finduser.length > 0) {
           let emailresult = await sendMail(request, generatedotp);
-          console.log(emailresult);
           return { status: "success", message: "OTP sent Successfuly" };
         } else {
           return {
@@ -436,9 +300,7 @@ return {
           };
         }
       } else if (request.body.otp) {
-        console.log("else if  value of generatedotp is " + generatedotp);
         let finduser = await getInventoryUsersData(request, reply);
-        console.log(finduser, "FInd User is ");
         if (request.body.otp == generatedotp) {
           return {
             status: "success",

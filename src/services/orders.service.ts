@@ -57,16 +57,12 @@ export module ordersService {
                 queryParams.push(offset, recordCount);
             }
 
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
-
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
             return datatypeCheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -112,7 +108,6 @@ export module ordersService {
             const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} ` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-            console.log(whereClause, 'Where Clause is');
             // Updated query to include JOIN with address and user tables
             let queryText = `
            
@@ -168,13 +163,9 @@ export module ordersService {
                 queryParams.push(offset, recordCount);
             }
 
-            console.log("Query Text:", queryText);
-            // console.log("Query Params:", queryParams);
-
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element: any) => {
-                console.log(element);
                 if (element.invoiceurl) {
                     console.log(element.invoiceurl, 'Invoice URL is');
                     element.invoiceurl = element.invoiceurl.split(',')[1]
@@ -185,243 +176,12 @@ export module ordersService {
         } catch (error) {
             console.error("Query Execution Error: IN getOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
 
-    //     export const getUserOrderData = async (request: any) => {
-    //         try {
-    //             let offset: any
-
-    //             const userId = request.params.userId
-    //             const pageNumber = request.query.page
-    //             const recordcount = request.query.count
-    //             const keys = Object.keys(request.query);
-    //             const values = Object.values(request.query);
-    //             let whereClauses = [];
-    //             let parameterIndex = 1;
-    //             const queryParams = [];
-    //             // queryParams.push(Number(userId))
-    //             console.log(keys);
-    //             console.log(values);
-    //             keys.forEach((key, index) => {
-    //                 const paramValues: any = Array.isArray(values[index])
-    //                     ? values[index]
-    //                     : [values[index]];
-    //                 console.log(paramValues, "Param values are ");
-    //                 if (key === 'userId' || key === 'userid') {
-    //                     key = "o.userid"
-    //                 }
-    //                 console.log(key, 'Key is ');
-    //                 console.log('inside else');
-    //                 console.log(key);
-    //                 whereClauses.push(
-    //                     `(${paramValues
-    //                         .map((_, idx) => `${key} = $${parameterIndex + idx}`)
-    //                         .join(" OR ")})`
-    //                 );
-    //                 console.log(whereClauses, 'inside the status');
-    //                 queryParams.push(...paramValues);
-    //                 parameterIndex += paramValues.length;
-    //             });
-    //             console.log(whereClauses, " Where clause is ");
-    //             if (pageNumber && recordcount) {
-    //                 offset = (pageNumber - 1) * recordcount;
-    //             }
-    //             console.log(whereClauses, 'Where Clauses');
-    //             let queryText
-    // if(whereClauses.length > 0) {
-    //      queryText = `
-    //     SELECT
-    //         o.id AS id,
-    //         o.productid AS order_productid,
-    //         o.userid AS order_userid,
-    //         o.addressid AS order_addressid,
-    //         o.createddate AS order_createddate,
-    //         o.modifieddate AS order_modifieddate,
-    //         o.orderamount,
-    //         o.orderstatus,
-    //         o.delivereddate,
-    //         o.cancelleddate,
-    //         o.returneddate,
-    //         a.id AS address_id,
-    //         a.userid AS address_userid,
-    //         a."name" AS address_name,
-    //         a.mobilenumber AS address_mobilenumber,
-    //         a.pincode AS address_pincode,
-    //         a.doornumber AS address_doornumber,
-    //         a.landmark AS address_landmark,
-    //         a.state AS address_state,
-    //         a.city AS address_city,
-    //         a.createddate AS address_createddate,
-    //         a.modifieddate AS address_modifieddate,
-    //         p.id AS products_id,
-    //         p.productname AS products_productname,
-    //         p."large" AS products_large,
-    //         p.medium AS products_medium,
-    //         p.small AS products_small,
-    //         p.price AS products_price,
-    //         p.colour AS products_colour,
-    //         p.category AS products_category
-    //     FROM
-    //         orders o
-    //     JOIN
-    //         products p ON o.productid = p.id
-    //     JOIN
-    //         address a ON o.addressid = a.id
-    //     WHERE
-    //     ${whereClauses.length > 0 ? `${whereClauses.join(" AND ")} ` : ' '}`
-    // }
-    // else {
-    //      queryText = `
-    //     SELECT
-    //         o.id AS id,
-    //         o.productid AS order_productid,
-    //         o.userid AS order_userid,
-    //         o.addressid AS order_addressid,
-    //         o.createddate AS order_createddate,
-    //         o.modifieddate AS order_modifieddate,
-    //         o.orderamount,
-    //         o.orderstatus,
-    //         o.delivereddate,
-    //         o.cancelleddate,
-    //         o.returneddate,
-    //         a.id AS address_id,
-    //         a.userid AS address_userid,
-    //         a."name" AS address_name,
-    //         a.mobilenumber AS address_mobilenumber,
-    //         a.pincode AS address_pincode,
-    //         a.doornumber AS address_doornumber,
-    //         a.landmark AS address_landmark,
-    //         a.state AS address_state,
-    //         a.city AS address_city,
-    //         a.createddate AS address_createddate,
-    //         a.modifieddate AS address_modifieddate,
-    //         p.id AS products_id,
-    //         p.productname AS products_productname,
-    //         p."large" AS products_large,
-    //         p.medium AS products_medium,
-    //         p.small AS products_small,
-    //         p.price AS products_price,
-    //         p.colour AS products_colour,
-    //         p.category AS products_category
-    //     FROM
-    //         orders o
-    //     JOIN
-    //         products p ON o.productid = p.id
-    //     JOIN
-    //         address a ON o.addressid = a.id
-    //   `
-    // }
-
-    //             console.log(queryParams);
-    //             const result = await query(queryText, queryParams);
-    //             let datatypecheckResult = await dataTypeCheck(result);
-    //             console.log(datatypecheckResult.length ,'Length is ');
-    //             return datatypecheckResult;
-    //         } catch (error) {
-    //             console.error('Error executing query', error);
-    //             throw error;
-    //         }
-    //     };
-
-    // export const getUserOrderData = async (request: any) => {
-    //     try {
-    //         const userId = request.params.userId;
-    //         const pageNumber = request.query.page;
-    //         const recordCount = Number(request.query.count);
-    //         const queryParams = [];
-    //         let whereClauses = [];
-    //         let offset: any;
-    //         let parameterIndex = 1;
-
-    //         // Construct WHERE clauses and query parameters
-    //         Object.entries(request.query).forEach(([key, value], index) => {
-    //             if (key !== 'page' && key !== 'count') {
-    //                 const paramValues = Array.isArray(value) ? value : [value];
-    //                 const formattedKey = key.toLowerCase() === 'userid' ? 'o.userid' : key;
-    //                 whereClauses.push(
-    //                     `(${paramValues.map((_, idx) => `${formattedKey} = $${parameterIndex}`).join(" OR ")})`
-    //                 );
-    //                 queryParams.push(...paramValues);
-    //             }
-    //         });
-    //         console.log(whereClauses, 'Where Clauses');
-    //         // Calculate offset
-    //         if (pageNumber && recordCount) {
-    //             offset = (pageNumber - 1) * recordCount;
-    //         }
-    //         console.log(offset, 'Offset are');
-    //         console.log(recordCount, 'record count');
-
-    //         // Construct the main query text
-    //         let queryText = `
-    //         SELECT
-    //             o.id AS id,
-    //             o.productid AS order_productid,
-    //             o.userid AS order_userid,
-    //             o.addressid AS order_addressid,
-    //             o.createddate AS order_createddate,
-    //             o.modifieddate AS order_modifieddate,
-    //             o.orderamount,
-    //             o.orderstatus,
-    //             o.delivereddate,
-    //             o.cancelleddate,
-    //             o.returneddate,
-    //             a.id AS address_id,
-    //             a.userid AS address_userid,
-    //             a."name" AS address_name,
-    //             a.mobilenumber AS address_mobilenumber,
-    //             a.pincode AS address_pincode,
-    //             a.doornumber AS address_doornumber,
-    //             a.landmark AS address_landmark,
-    //             a.state AS address_state,
-    //             a.city AS address_city,
-    //             a.createddate AS address_createddate,
-    //             a.modifieddate AS address_modifieddate,
-    //             p.id AS products_id,
-    //             p.productname AS products_productname,
-    //             p."large" AS products_large,
-    //             p.medium AS products_medium,
-    //             p.small AS products_small,
-    //             p.price AS products_price,
-    //             p.colour AS products_colour,
-    //             p.category AS products_category
-    //         FROM
-    //             orders o
-    //         JOIN
-    //             products p ON o.productid = p.id
-    //         JOIN
-    //             address a ON o.addressid = a.id`;
-
-    //         if (whereClauses.length > 0) {
-    //             queryText += ` WHERE ${whereClauses.join(" AND ")}`;
-    //         }
-    //         console.log(offset, 'Testing Offset');
-    //         console.log(typeof recordCount);
-    //         console.log(offset && recordCount);
-    //         if (offset != null && recordCount != null) {
-    //             queryText += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
-
-    //             console.log('inside if condition of offset and recordcount');
-    //             queryParams.push(offset, recordCount);
-    //         }
-    //         console.log(queryParams, 'Query Params are');
-    //         const result = await query(queryText, queryParams);
-    //         const dataTypeCheckResult = await dataTypeCheck(result);
-    //         console.log(dataTypeCheckResult.length, 'Length is ');
-    //         return dataTypeCheckResult;
-    //     } catch (error) {
-    //         console.error('Error executing query', error);
-    //         throw error;
-    //     }
-    // };
-
     export const getUserOrderData = async (request: any) => {
         try {
-            console.log(request.params, "request get order");
-            console.log(request.query, "request get order");
             const userId = request.query.userid;
             const pageNumber = request.query.page;
             const recordCount = request.query.count;
@@ -432,7 +192,6 @@ export module ordersService {
 
             // Construct WHERE clauses and query parameters
             Object.entries(request.query).forEach(([key, value], index) => {
-                console.log(key, 'KEY IS')
                 if (key !== "page" && key !== "count") {
                     const paramValues = Array.isArray(value) ? value : [value];
 
@@ -445,30 +204,22 @@ export module ordersService {
                             key = "o.delivereddate";
                         }
 
-                        console.log("inside price");
                         let rangeWhereClause = paramValues
                             .map((range) => {
-                                console.log(range);
                                 const [lowerBound, upperBound] = range.split("-");
-                                console.log(lowerBound);
-                                console.log(upperBound);
                                 queryParams.push(lowerBound, upperBound);
                                 const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
                                     })`;
                                 parameterIndex += 2;
-                                console.log(clause, " Clause Data is");
                                 return clause;
                             })
                             .join(" OR ");
                         whereClauses.push(`(${rangeWhereClause})`);
                     } else {
-                        console.log('else ' + key);
                         const formattedKey =
                             key.toLowerCase() === "userid" ? "o.userid" :
                                 key.toLowerCase() === "id" ? "o.id" :
                                     key;
-                        console.log(key);
-                        console.log(formattedKey, 'Formatted Key');
                         whereClauses.push(
                             `(${paramValues
                                 .map((_, idx) => `${formattedKey} = $${parameterIndex + idx}`)
@@ -479,8 +230,6 @@ export module ordersService {
                     }
                 }
             });
-            console.log(whereClauses, 'Where Clauses');
-            console.log(queryParams, 'Query Params are');
             // Calculate offset
             if (pageNumber && recordCount) {
                 offset = (pageNumber - 1) * recordCount;
@@ -553,9 +302,7 @@ export module ordersService {
                 `;
 
             if (whereClauses.length > 0) {
-                console.log("where clause");
                 queryText += ` WHERE ${whereClauses.join(" AND ")}`;
-                console.log(queryText, "Query Text");
             }
             queryText += " ORDER BY o.modifieddate DESC";
 
@@ -564,105 +311,17 @@ export module ordersService {
                     }`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(queryText, 'QueryText')
             const result = await query(queryText, queryParams);
             const dataTypeCheckResult = await dataTypeCheck(result);
-            console.log(dataTypeCheckResult.length);
-            console.log(JSON.stringify(dataTypeCheckResult), "Records are");
             return dataTypeCheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getUserOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
 
-    // export const getOrderlineDynamic = async (request) => {
-    //     try {
-    //         const userid = request.query.userid;
-    //         const keys = Object.keys(request.query)
-    //         const pageNumber = request.query.page;
-    //         const recordCount = request.query.count;
-    //         const queryParams = [];
-    //         let whereClauses = [];
-    //         let offset: any;
-    //         let parameterIndex = 1;
-    //         Object.entries(request.query).forEach(([key, value], index) => {
-    //             if (key !== 'page' && key !== 'count') {
-    //                 const paramValues = Array.isArray(value) ? value : [value];
-    //                 if (key === "createddate" || key === "modifieddate") {
-    //                     console.log('inside created Date');
-    //                     let rangeWhereClause = paramValues
-    //                         .map((range) => {
-    //                             console.log(range);
-    //                             const [lowerBound, upperBound] = range.split("-");
-    //                             console.log(lowerBound);
-    //                             console.log(upperBound);
-    //                             queryParams.push(lowerBound, upperBound);
-    //                             const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
-    //                                 })`;
-    //                             parameterIndex += 2;
-    //                             console.log(clause, ' Clause Data is');
-    //                             return clause;
-    //                         })
-    //                         .join(" OR ");
-    //                     whereClauses.push(`(${rangeWhereClause})`);
-
-    //                 }
-    //                 else {
-    //                     // const formattedKey = key.toLowerCase() === 'userid' ? key : key;
-    //                     whereClauses.push(
-    //                         `(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`
-    //                     );
-    //                     queryParams.push(...paramValues);
-    //                     parameterIndex += paramValues.length; // Increment parameter index 
-    //                 }
-
-    //             }
-
-    //         });
-    //         if (pageNumber && recordCount) {
-    //             offset = (pageNumber - 1) * recordCount;
-    //         }
-
-    //         let querydata = `select * from orderline`
-    //         if (whereClauses.length > 0) {
-    //             querydata += ` WHERE ${whereClauses.join(" AND ")} ORDER BY modifieddate DESC`;
-    //         }
-    //         else{
-    //             querydata += ` ORDER BY modifieddate DESC`;
-
-    //         }
-
-    //         if (offset != null && recordCount != null) {
-    //             querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
-    //             queryParams.push(offset, recordCount);
-    //         }
-    //         console.log(querydata);
-    //         let data = await query(querydata, queryParams)
-    //         if(keys.length == 1 && keys[0] == 'userid'){
-    //             console.log('Inside IF>>');
-    //             const invoiceQuery = `select DISTINCT(r.invoiceurl)
-    //                                   from revoinvoice as r join orderline as o
-    //                                   on r.orderid = o.uniqueordderid
-    //                                   where o.userid = $1;`
-
-    //             const invoiceurldata = await query(invoiceQuery,[userid])
-
-    //             console.log(invoiceurldata.rows);
-    //         }
-    //         else{
-    //             console.log("Inside ELSE>>");
-    //         }
-    //         return data.rows
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN getTicketDynamic", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage
-    //     }
-    // }
+   
 
     export const getOrderlineDynamic = async (request) => {
         try {
@@ -679,17 +338,12 @@ export module ordersService {
                 if (key !== 'page' && key !== 'count') {
                     const paramValues = Array.isArray(value) ? value : [value];
                     if (key === "createddate" || key === "modifieddate") {
-                        console.log('inside created Date');
                         let rangeWhereClause = paramValues
                             .map((range) => {
-                                console.log(range);
                                 const [lowerBound, upperBound] = range.split("-");
-                                console.log(lowerBound);
-                                console.log(upperBound);
                                 queryParams.push(lowerBound, upperBound);
                                 const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                                 parameterIndex += 2;
-                                console.log(clause, ' Clause Data is');
                                 return clause;
                             })
                             .join(" OR ");
@@ -721,8 +375,6 @@ export module ordersService {
                 querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(querydata);
-
             let data = await query(querydata, queryParams)
 
             // get invoiceurl
@@ -733,8 +385,6 @@ export module ordersService {
                     WHERE o.userid = $1 AND r.invoicefor = 'product';
                 `
             const invoiceurldata = await query(invoiceQuery, [userid])
-            console.log(invoiceurldata.rows);
-
             const invoiceMap = new Map(invoiceurldata.rows.map(row => [row.orderid, row.invoiceurl]));
 
             data.rows = data.rows.map(row => ({
@@ -772,7 +422,6 @@ export module ordersService {
         } catch (error) {
             console.error("Query Execution Error: IN getTicketDynamic", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -853,9 +502,6 @@ ${whereClause} ${orderByClause}`;
                 queryParams.push(offset, recordCount);
             }
 
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
-
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
             const messageData = {
@@ -863,15 +509,11 @@ ${whereClause} ${orderByClause}`;
                 body: "Payment Done Successfully",
             };
 
-            console.log(messageData)
-            console.log('test')
-
           //  let resut = await messageinitialization(3, messageData);
             return datatypeCheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getOrderLineData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -952,17 +594,12 @@ ${whereClause} ${orderByClause}`;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
-
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
             return datatypeCheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getOrderLineData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -970,8 +607,6 @@ ${whereClause} ${orderByClause}`;
 
     export const getUserOrderData1 = async (request: any) => {
         try {
-            console.log(request.params, "request get order");
-            console.log(request.query, "request get order");
             const userId = request.query.userid;
             const pageNumber = request.query.page;
             const recordCount = request.query.count;
@@ -982,7 +617,6 @@ ${whereClause} ${orderByClause}`;
 
             // Construct WHERE clauses and query parameters
             Object.entries(request.query).forEach(([key, value], index) => {
-                console.log(key, 'KEY IS')
                 if (key !== "page" && key !== "count") {
                     const paramValues = Array.isArray(value) ? value : [value];
 
@@ -994,31 +628,22 @@ ${whereClause} ${orderByClause}`;
                         else if (key === "delivereddate") {
                             key = "o.delivereddate";
                         }
-
-                        console.log("inside price");
                         let rangeWhereClause = paramValues
                             .map((range) => {
-                                console.log(range);
                                 const [lowerBound, upperBound] = range.split("-");
-                                console.log(lowerBound);
-                                console.log(upperBound);
                                 queryParams.push(lowerBound, upperBound);
                                 const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
                                     })`;
                                 parameterIndex += 2;
-                                console.log(clause, " Clause Data is");
                                 return clause;
                             })
                             .join(" OR ");
                         whereClauses.push(`(${rangeWhereClause})`);
                     } else {
-                        console.log('else ' + key);
                         const formattedKey =
                             key.toLowerCase() === "userid" ? "o.userid" :
                                 key.toLowerCase() === "id" ? "o.id" :
                                     key;
-                        console.log(key);
-                        console.log(formattedKey, 'Formatted Key');
                         whereClauses.push(
                             `(${paramValues
                                 .map((_, idx) => `${formattedKey} = $${parameterIndex + idx}`)
@@ -1029,9 +654,6 @@ ${whereClause} ${orderByClause}`;
                     }
                 }
             });
-            console.log(whereClauses, 'Where Clauses');
-            console.log(queryParams, 'Query Params are');
-            // Calculate offset
             if (pageNumber && recordCount) {
                 offset = (pageNumber - 1) * recordCount;
             }
@@ -1093,9 +715,7 @@ ${whereClause} ${orderByClause}`;
                 `;
 
             if (whereClauses.length > 0) {
-                console.log("where clause");
                 queryText += ` WHERE ${whereClauses.join(" AND ")}`;
-                console.log(queryText, "Query Text");
             }
             queryText += " ORDER BY o.modifieddate DESC";
 
@@ -1104,16 +724,12 @@ ${whereClause} ${orderByClause}`;
                     }`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(queryText, 'QueryText')
             const result = await query(queryText, queryParams);
             const dataTypeCheckResult = await dataTypeCheck(result);
-            console.log(dataTypeCheckResult.length);
-            console.log(JSON.stringify(dataTypeCheckResult), "Records are");
             return dataTypeCheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getUserOrderData1", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -1146,10 +762,8 @@ ${whereClause} ${orderByClause}`;
                 let productid = result.rows[0].productid;
                 let quantitydata = result.rows[0].quantity
                 let updateQuantity = await productrevoService.updateCancelledOrderedQuantity([productid], Number(quantitydata));
-                console.log(updateQuantity, 'Cancelled Quantity Updated');
                 let userid = result.rows[0].userid;
                 let getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
-                console.log(getuser.rows[0].useremail, 'User Email');
                 const template = emailTemplates.orders.cancelled;
                 const orderId = result.rows[0].orderid;
                 const orderAmount = result.rows[0].orderamount;
@@ -1163,14 +777,12 @@ ${whereClause} ${orderByClause}`;
                     },
                 };
                 let sendEmailResult = await sendMail(maildata, false);
-                console.log(sendEmailResult, 'Send Email Valuie is ');
             }
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -1180,7 +792,6 @@ ${whereClause} ${orderByClause}`;
             let querydata: string;
             let params: any[];
             const { id, ...upsertFields } = orderlineData.body;
-            console.log(upsertFields, 'upsertfieldsß')
             let productid = orderlineData.productid;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
@@ -1198,17 +809,14 @@ ${whereClause} ${orderByClause}`;
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata)
             const result = await query(querydata, params);
 
             if (result.rows[0].orderstatus === 'cancelled') {
                 let productid = result.rows[0].productid;
                 let quantitydata = result.rows[0].quantity
                 let updateQuantity = await productrevoService.updateCancelledOrderedQuantity([productid], Number(quantitydata));
-                console.log(updateQuantity, 'Cancelled Quantity Updated');
                 let userid = result.rows[0].userid;
                 let getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
-                console.log(getuser.rows[0].useremail, 'User Email');
                 const template = emailTemplates.orders.cancelled;
                 const orderId = result.rows[0].orderid;
                 const orderAmount = result.rows[0].orderamount;
@@ -1222,80 +830,30 @@ ${whereClause} ${orderByClause}`;
                     },
                 };
                 let sendEmailResult = await sendMail(maildata, false);
-                console.log(sendEmailResult, 'Send Email Valuie is ');
             }
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
 
-    // export const upsertOrderrfid = async (orderData: any) => {
-    //     try {
-    //         let querydata: string;
-    //         let params: any[];
-    //         const { rfid, orderid, productid } = orderData;
-    //         console.log(rfid, 'RFID');
-    //         console.log(orderid, 'ORDER ID IS ');
-    //         let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(rfid, productid, orderid);
-    //         if (updateStock.command === "UPDATE" || updateStock.command === "INSERT") {
-
-    //             const puc = updateStock.result.puc; // Get the puc from the result
-    //             // console.log('-- Request', puc, '-- Request');
-    //             const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
-
-    //             let updateQuantity = await stockRevoService.updateQuantity(pucArray, true);
-    //             console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
-    //             if (orderid) {
-    //                 querydata = `UPDATE orders SET orderstatus=$${1} where orderid=$${2} RETURNING *`;
-    //                 params = ['ready_to_dispatch', orderid];
-    //             }
-    //             else {
-    //                 return { error: `Stock Status Updated but Order Status Not Updated.Please Contact Support Team` }
-    //             }
-
-    //             const result = await query(querydata, params);
-    //             return result;
-    //         }
-    //         else {
-    //             return updateStock
-    //         }
-
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN upsertOrder", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage;
-    //     }
-    // };
 
     export const upsertOrderrfid = async (orderData: any) => {
         try {
-            console.log('inside upsert order rfid 1');
             let querydata: string;
             let params: any[];
             const { rfid, orderlinenumber, productid } = orderData;
-            // console.log(orderData, 'order Datai s ');
             
             let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
-            console.log(updateStock, 'Update Stock');
 
             if (updateStock.command === "UPDATE" || updateStock.command === "INSERT") {
-                console.log(updateStock.result.rowCount, 'ROW COUNT IS');
                 const puc = updateStock.result.puc; // Get the puc from the result
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
 
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
-                // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray, true);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
-                // console.log(orderData[0].orderid, "orderData[0].orderid")
-                console.log(updateStock.result.rows, 'ROWS OF UPDATE StOCK IS');
-
                 // if (orderData[0].orderid) {
                 //     querydata = `UPDATE orders SET orderstatus=$${1} where orderid=$${2} RETURNING *`;
                 //     params = ['ready_to_dispatch', orderData[0].orderid];
@@ -1319,7 +877,6 @@ ${whereClause} ${orderByClause}`;
         RETURNING *`;
 
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
-                    console.log(querydata, 'Query Data is ');
                     const result = await query(querydata, params);
                     return result;
                 }
@@ -1332,137 +889,11 @@ ${whereClause} ${orderByClause}`;
         } catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
-
-    // export const upsertOrderlinerfid = async (orderData: any) => {
-    //     try {
-    //         console.log('inside upsert orderline rfid 2');
-    //         // step 1 - RFID Duplicate Check
-    //         const rfidMap = new Map();
-    //         for (const item of orderData) {
-    //             if (rfidMap.has(item.rfid)) {
-    //                 return {
-    //                     error: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
-    //                     errorDetails: [],
-    //                     statusCode: 401
-    //                 };
-    //             }
-    //             rfidMap.set(item.rfid, true);
-    //         }
-    
-    //         console.log('After checking duplicate RFID');
-    //         // step 2 - check all rfid's are valid 
-    //         // Verify all RFIDs exist in stock table before proceeding
-    //     const validationQuery = `
-    //     SELECT rfid, puc 
-    //     FROM stock_revo 
-    //     WHERE rfid = ANY($1)
-    //     AND puc IN (SELECT puc FROM product_revo WHERE id = ANY($2))
-    //     AND stockstatus = 'Available'
-    // `;
-    // const rfids = orderData.map(item => item.rfid);
-    // const productIds = orderData.map(item => item.productid);
-    // const validationResult = await query(validationQuery, [rfids, productIds]);
-
-    // // Check if all RFIDs were found
-    // if (validationResult.rows.length !== orderData.length) {
-    //     const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
-    //     const invalidRfids = orderData.filter(item => !foundRfids.has(item.rfid));
-    //     console.log('last step');
-    //     return {
-    //         error: `Invalid RFIDs detected: ${invalidRfids.map(item => item.rfid).join(', ')}`,
-    //         errorDetails: [],
-    //         statusCode: 400
-    //     };
-    // }
-    //        console.log(`After validating RFID's`);
-    //         // step 3
-    //         // Validate individual RFIDs before processing
-    //         const validationPromises = orderData.map(async (item) => {
-    //             try {
-    //                 // Check if RFID exists and is valid
-    //                 const validationQuery = `
-    //                     SELECT COUNT(*) as count 
-    //                     FROM stock_revo 
-    //                     WHERE rfid = $1 
-    //                     AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
-    //                     AND stockstatus = 'Available'
-    //                 `;
-    //                 const validationResult = await query(validationQuery, [item.rfid, item.productid]);
-                    
-    //                 if (validationResult.rows[0].count === 0) {
-    //                     throw new Error(`Invalid RFID: ${item.rfid} for product ${item.productid}`);
-    //                 }
-    //             } catch (validationError) {
-    //                 throw validationError;
-    //             }
-    //         });
-    
-    //         // Validate all RFIDs before proceeding
-    //         try {
-    //             console.log('Validate all RFIDs before proceeding');
-    //             await Promise.all(validationPromises);
-    //         } catch (validationError) {
-    //             return {
-    //                 errorMessage: validationError.message,
-    //                 errorDetails: [],
-    //                 statusCode: 400
-    //             };
-    //         }
-    
-    //         console.log(orderData, 'order Data is');
-            
-    //         let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
-    //         console.log(updateStock, 'Update Stock latest data');
-    
-    //         if (updateStock.error) {
-    //             return { error: updateStock.error };
-    //         }
-    //         else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
-    //             console.log(updateStock.result.rowCount, 'ROW COUNT IS');
-    //             const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
-    
-    //             let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
-    //             console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
-    //             console.log(updateStock.result.rows, 'ROWS OF UPDATE StOCK IS');
-    
-    //             const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  
-    //             if (ordersToUpdate.length > 0) {
-    //                 let querydata = `
-    //                     UPDATE orderline 
-    //                     SET 
-    //                         orderstatus = 'ready_to_dispatch',
-    //                         deliveryfrom = CASE 
-    //                             ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
-    //                         END
-    //                     WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
-    //                     RETURNING *`;
-    
-    //                 const params = ordersToUpdate.map(e => e.orderlinenumber);
-    //                 console.log(querydata, 'Query Data is');
-    //                 const result = await query(querydata, params);
-    //                 return result;
-    //             }
-    //         }
-    //         else {
-    //             return { error: updateStock };
-    //         }
-    
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN upsertOrder", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage;
-    //     }
-    // };
-
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
-            console.log('inside upsert orderline rfid 2');
-            // step 1 - RFID Duplicate Check
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
@@ -1474,10 +905,6 @@ ${whereClause} ${orderByClause}`;
                 }
                 rfidMap.set(item.rfid, true);
             }
-    
-            console.log('After checking duplicate RFID');
-            // step 2 - check all rfid's are valid 
-            // Verify all RFIDs exist in stock table before proceeding
             const validationQuery = `
                 SELECT rfid, puc 
                 FROM stock_revo 
@@ -1493,7 +920,6 @@ ${whereClause} ${orderByClause}`;
             if (validationResult.rows.length !== orderData.length) {
                 const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
                 const invalidRfids = orderData.filter(item => !foundRfids.has(item.rfid));
-                console.log('last step');
                 return {
                     error: `Invalid RFIDs detected: ${invalidRfids.map(item => item.rfid).join(', ')}`,
                     errorDetails: [],
@@ -1501,22 +927,15 @@ ${whereClause} ${orderByClause}`;
                 };
             }
     
-            console.log(orderData, 'order Data is');
             
-            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
-            console.log(updateStock, 'Update Stock latest data');
-    
+            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);    
             if (updateStock.error) {
                 return { error: updateStock.error };
             }
             else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
-                console.log(updateStock.result.rowCount, 'ROW COUNT IS');
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
     
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
-                console.log(updateStock.result.rows, 'ROWS OF UPDATE StOCK IS');
-    
+                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);    
                 const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  
                 if (ordersToUpdate.length > 0) {
                     let querydata = `
@@ -1530,7 +949,6 @@ ${whereClause} ${orderByClause}`;
                         RETURNING *`;
     
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
-                    console.log(querydata, 'Query Data is');
                     const result = await query(querydata, params);
                     return result;
                 }
@@ -1542,14 +960,11 @@ ${whereClause} ${orderByClause}`;
         } catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
         try {
-            console.log('Transaction Data:', transactionData);
-            console.log('Order Data:', orderData);
             let cartId = [];
             let productid = []
             orderData.forEach((e) => {
@@ -1569,7 +984,6 @@ ${whereClause} ${orderByClause}`;
             let result: any;
             try {
                 result = await query(insertQuery, insertValues);
-                console.log('--',result,'--')
                 if (result.command == 'INSERT') {
                     const orderid = result.rows[0].id
                     const orderiduique = result.rows[0].orderid
@@ -1579,12 +993,9 @@ ${whereClause} ${orderByClause}`;
                         e.uniqueordderid = orderiduique
                         e.orderstatus = orderstatus
                     })
-                    // console.log('>>>',orderData,'<<<');
                     let insertorderitems = await bulkInsertOrderlines(orderData)
 
                 }
-                console.log('Cart To Delete is ' + cartId);
-                // let deleteCartData = await cartservice.deleteCart(cartId);
                 return result;
             } catch (error) {
                 console.error(
@@ -1592,27 +1003,20 @@ ${whereClause} ${orderByClause}`;
                     error
                 );
                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                console.log(ErrorMessage);
                 return ErrorMessage;
             }
         } catch (error) {
             console.error("Query Execution Error: IN upsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
 
     export const bulkInsertOrderlines = async (orderData: any[]) => {
         try {
-
-            console.log(JSON.stringify(orderData), "JSON RESULT IN INSERT IS");
-
             const fields = Object.keys(orderData[0]);
             const fieldNames = fields.join(", ");
-
             const baseQuery = `INSERT INTO orderline (${fieldNames}) VALUES `;
-
             const valuesClause = orderData.map((order, index) => {
                 const valuePlaceholders = fields.map((_, fieldIndex) => `$${index * fields.length + fieldIndex + 1}`);
                 return `(${valuePlaceholders.join(", ")})`;
@@ -1623,188 +1027,16 @@ ${whereClause} ${orderByClause}`;
             const values = orderData.flatMap(order =>
                 fields.map(field => order[field])
             );
-
-            // console.log("Constructed Query:", querydata);
-            // console.log("Values Array:", JSON.stringify(values));
-
             const result = await query(querydata, values);
-
-            // console.log(JSON.stringify(result), "Insert result is");
-            // console.log("Inserted result is", result);
 
             return result;
 
         } catch (error) {
             console.error("Query Execution Error: IN bulkInsertOrderlines", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
-
-
-
-    //     export const bulkInsertOrder = async (orderData: any) => {
-    //         try {
-    //             let cartId = [];
-    //             let productid = []
-    //             orderData.forEach((e) => {
-    //                 productid.push(e.productid)
-    //                 // e.transactionid = transactionData.transactionid;
-    //                 cartId.push(e.cartId);
-    //                 delete e.cartId
-    //             });
-    //             console.log(JSON.stringify(orderData), "JSON RESULT IN INSERT IS");
-    //             const fields = Object.keys(orderData[0]);
-    //             const fieldNames = fields.join(", ");
-    //             const baseQuery = `INSERT INTO orders (${fieldNames}) VALUES `;
-    //             const valuesClause = orderData.map((product, index) => {
-    //                 const valuePlaceholders = fields.map((_, fieldIndex) => `$${index * fields.length + fieldIndex + 1}`);
-    //                 return `(${valuePlaceholders.join(", ")})`;
-    //             }).join(", ");
-    //             const querydata = `${baseQuery}${valuesClause} RETURNING *`;
-    //             const values = orderData.flatMap((product) =>
-    //                 fields.map((field) => product[field])
-    //             );
-    //             console.log("Constructed Query:", querydata);
-    //             console.log("Values Array:", JSON.stringify(values));
-
-    //             let result: any;
-    //             try {
-    //                 result = await query(querydata, values);
-    //                 console.log(JSON.stringify(result), " Result is ");
-    //                 console.log(cartId, 'Cart id is');
-    //                 let orderedquantity = result.rows[0].quantity
-    //                 result.rows.forEach(async (e) => {
-    //                     let upsertUnorderedQuantity = await productrevoService.updateOrderedQuantity([e.productid], Number(e.quantity));
-    //                     console.log(JSON.stringify(upsertUnorderedQuantity), 'Unordered Quantity Updated');
-    //                 })
-
-    // //                 console.log(transactionData.name, 'Transaction Data');
-    // //                 const template = emailTemplates.orders.orderPlaced;
-    // //                 const orderId = result.rows[0].orderid;
-    // //                 const orderAmount = result.rows[0].orderamount;
-
-    // //                 let textdata = result.rows.map(e => 
-    // //                     `Order Id  : ${e.orderid} and Amount : ${e.orderamount}`
-    // //                 ).join('\n');
-
-    // //                 let maildata = {
-    // //                     body: {
-    // //                         to: transactionData.name,
-    // //                         subject: template.subject,
-    // //                         text: `Hi,
-
-    // // Order placed success.
-    // // ${textdata}
-
-    // // Thank You!`,
-    // //                     },
-    // //                 };
-    // //                 console.log(maildata, 'Mail Data');
-    // //                 let sendemail = await sendMail(maildata, false);
-    // //                 console.log(sendemail, 'Email Sent When Ordering');
-    // //                 let deleteCartData = await cartservice.deleteCart(cartId);
-    //                 return result;
-    //             } catch (error) {
-    //                 console.error(
-    //                     "Query Execution Error: upsertBulkStockRevoData result",
-    //                     error
-    //                 );
-    //                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    //                 console.log(ErrorMessage);
-    //                 return ErrorMessage;
-    //             }
-    //         } catch (error) {
-    //             console.error("Query Execution Error: IN upsertOrder", error);
-    //             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    //             console.log(ErrorMessage);
-    //             return ErrorMessage;
-    //         }
-    //     }; 
-
-
-
-    // export const updateOrder = async (data) => {
-    //     try {
-    //         const orders = data.order; 
-    //         const transactionid = data.transactiondata.transactionid; 
-    //         console.log('All Data:',data);
-    //         console.log("Orders:", orders);
-    //         console.log("Transaction ID:", transactionid);
-
-    //         for (const order of orders) {
-    //             const orderId = order.id;
-
-    //             const updateOrderQuery = `
-    //                 UPDATE orders
-    //                 SET transactionid = $1,
-    //                     orderstatus = 'ordered',
-    //                     ispaymentsucceed = TRUE
-    //                 WHERE id = $2
-    //                 RETURNING *`;
-
-    //             const updateValues = [transactionid, orderId];
-
-    //             const updatedOrderResult = await query(updateOrderQuery, updateValues);
-    //             // console.log(updatedOrderResult.rows, '<<Updated Order Result');
-    //             // if(updatedOrderResult.command == 'UPDATE'){
-    //             //      let data = productrevoService.updateOrderedQuantity([order.productid],order.quantity)
-    //             // }
-    //             // let orderedquantity = updatedOrderResult.rows[0].quantity
-    //             // updatedOrderResult.rows.forEach(async (e) => {
-    //             //         let upsertUnorderedQuantity = await productrevoService.updateOrderedQuantity([e.productid], Number(e.quantity));
-    //             //         console.log(JSON.stringify(upsertUnorderedQuantity), 'Unordered Quantity Updated');
-    //             //     })
-    //             // console.log(`Updated order ${orderId}:`, updatedOrderResult.rows[0]);
-    //         }
-
-    //         return { message: "Orders updated successfully" };
-
-    //     } catch (error) {
-    //         console.error("Error in updateOrder:", error);
-    //         throw error;
-    //     }
-    // };
-
-
-    // export const updateOrder = async (data) => {
-    //     try {
-    //         const orders = data.order;
-    //         const transactionid = data.transactiondata.transactionid;
-    //         console.log('All Data:', data);
-    //         console.log("Orders:", orders);
-    //         console.log("Transaction ID:", transactionid);
-    //         const updateValuesArray = [];
-    //         for (const order of orders) {
-    //             const orderId = order.id;
-    //             updateValuesArray.push([transactionid, orderId]);
-    //         }
-    //         console.log(updateValuesArray ,'UPDATED VALUS ARRAY');
-    //         if (updateValuesArray.length > 0) {
-    //             const updateOrderQuery = `
-    //             UPDATE orders
-    //             SET transactionid = bulk_data.transactionid,
-    //                 orderstatus = 'ordered',
-    //                 ispaymentsucceed = TRUE
-    //             FROM (
-    //                 VALUES ${updateValuesArray.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ")}
-    //             ) AS bulk_data(transactionid, id)
-    //             WHERE orders.id = bulk_data.id
-    //             RETURNING *`;
-    //             const updateValues = updateValuesArray.flat();
-    //             console.log(updateOrderQuery ,'updateOrderQuery');
-    //             console.log(updateValues ,'updateOrderQuery');
-    //             const updatedOrderResult = await query(updateOrderQuery, updateValues);
-    //             console.log("Updated orders:", updatedOrderResult.rows);
-    //             return updatedOrderResult
-    //         }
-    //         // return { message: "Orders updated successfully" };
-    //     } catch (error) {
-    //         console.error("Error in updateOrder:", error);
-    //         throw error;
-    //     }
-    // };
 
 
     export const updateOrder = async (data, paymentfailed) => {
@@ -1812,8 +1044,6 @@ ${whereClause} ${orderByClause}`;
             const orders = data.order;
             const transactionid = data.transactiondata.transactionid;
             const emailid = data.transactiondata.name;
-            // console.log("Orders:", orders);
-            // console.log("Transaction ID:", transactionid);
 
             const updateValuesArray = [];
 
@@ -1821,8 +1051,6 @@ ${whereClause} ${orderByClause}`;
                 const orderId = parseInt(order.id, 10); // Ensure it's an integer
                 updateValuesArray.push([transactionid, orderId]);
             }
-
-            // console.log(updateValuesArray, 'UPDATED VALUES ARRAY');
 
             if (updateValuesArray.length > 0) {
                 // Create the VALUES part dynamically with parameter placeholders

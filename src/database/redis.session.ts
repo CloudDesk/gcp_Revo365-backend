@@ -8,7 +8,6 @@ let redisClient: RedisClientType | null = null;
 
 export const connectGetSessionredis = async () => {
   try {
-    console.log("Inside redis connect");
     redisClient = createClient({
       url: `redis://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`
       // url: `redis://:fVZWPfs4xi9SvpdY2d1HZgiqJCPNuZWh@redis-10690.c330.asia-south1-1.gce.redns.redis-cloud.com:10690`,

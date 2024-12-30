@@ -10,7 +10,6 @@ export var ratingController;
         catch (error) {
             console.error("Query Execution Error: IN getRatingData controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -18,9 +17,7 @@ export var ratingController;
         try {
             let upsertRatingResult = await ratingService.upsertRating(request, reply);
             if (upsertRatingResult.command === "UPDATE" || upsertRatingResult.command === "INSERT") {
-                console.log('---', upsertRatingResult.rows, '---');
                 let productid = upsertRatingResult.rows[0].productid;
-                // console.log(productid);
                 let updateAvgRating = await ratingService.updateAvgRating(productid);
                 console.log('***', updateAvgRating, '***');
                 let message = {};
@@ -32,7 +29,6 @@ export var ratingController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else upsertRatingResult");
                 console.log(upsertRatingResult);
                 reply.status(404).send({ error: [upsertRatingResult] });
             }
@@ -48,9 +44,7 @@ export var ratingController;
         try {
             let upsertRatingResult = await ratingService.upsertGcpRating(request, reply);
             if (upsertRatingResult.command === "UPDATE" || upsertRatingResult.command === "INSERT") {
-                console.log('---', upsertRatingResult.rows, '---');
                 let productid = upsertRatingResult.rows[0].productid;
-                // console.log(productid);
                 let updateAvgRating = await ratingService.updateAvgRating(productid);
                 console.log('***', updateAvgRating, '***');
                 let message = {};
@@ -62,7 +56,6 @@ export var ratingController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else upsertRatingResult");
                 console.log(upsertRatingResult);
                 reply.status(404).send({ error: [upsertRatingResult] });
             }
@@ -70,7 +63,6 @@ export var ratingController;
         catch (error) {
             console.error("Query Execution Error: IN upsertRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -87,7 +79,6 @@ export var ratingController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else upsertRatingResult");
                 console.log(upsertRatingResult);
                 reply.status(404).send({ error: [upsertRatingResult] });
             }
@@ -95,7 +86,6 @@ export var ratingController;
         catch (error) {
             console.error("Query Execution Error: IN upsertRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -108,7 +98,6 @@ export var ratingController;
         catch (error) {
             console.error("Query Execution Error: IN daleteRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

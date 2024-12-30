@@ -4,8 +4,6 @@ export var sessionController;
 (function (sessionController) {
     sessionController.getSessionController = async (req, rep) => {
         try {
-            console.log('Inside Session Controller', req);
-            console.log('Inside Session Controller', req.query);
             // let getSessionDataResult = await sessionService.getSessionData(req);
             let getSessionDataResult = await getSessionData(req);
             console.log(getSessionDataResult, "getSessionDataResultgetSessionDataResult");

@@ -13,9 +13,7 @@ export var InventoryuserController;
     InventoryuserController.userlogout = async (request, reply) => {
         try {
             const userData = request.body;
-            console.log(request.cookies.sessionId);
             let upsertUserResult = await userInventoryService.userlogout(request, reply);
-            console.log(upsertUserResult);
             reply.status(200).send('Logged Out Successfully');
         }
         catch (error) {
@@ -25,7 +23,6 @@ export var InventoryuserController;
     InventoryuserController.forgotuser = async (request, reply) => {
         try {
             let forgotuserData = await userInventoryService.forgotuser(request, reply);
-            console.log(forgotuserData, 'forgotuserData');
             if (forgotuserData.status === 'success') {
                 reply.send(forgotuserData);
             }
@@ -49,8 +46,6 @@ export var InventoryuserController;
     InventoryuserController.getLoggedInInventoryUsersData = async (request, reply) => {
         try {
             let getUsersDataResult = await userInventoryService.getLoggedInInventoryUsersData(request, reply);
-            console.log(getUsersDataResult, 'getUsersDataResult');
-            console.log(Array.isArray(getUsersDataResult.userdata));
             if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
                 reply.status(401).send({ error: getUsersDataResult });
             }
@@ -78,14 +73,13 @@ export var InventoryuserController;
             const userData = request.body;
             console.log(userData);
             let upsertUserResult = await userInventoryService.upsertInventoryUser(userData);
-            console.log(upsertUserResult);
-            if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
+            if (upsertUserResult.command === "UPDATE" || upsertUserResult.command === "INSERT") {
                 let message = {};
                 message = {
-                    message: upsertUserResult?.command === "UPDATE"
-                        ? ` User signup done successfully`
-                        : ` User signup done successfully`,
-                    data: upsertUserResult?.rows[0]
+                    message: upsertUserResult.command === "UPDATE"
+                        ? `Inventory Users Updated successfully`
+                        : `Inventory Users Data Inserted successfully`,
+                    data: upsertUserResult.rows
                 };
                 reply.status(200).send(message);
             }

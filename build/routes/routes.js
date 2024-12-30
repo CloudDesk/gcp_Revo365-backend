@@ -287,26 +287,6 @@ const Revo365Routes = async function (fastify, opts) {
     //location History
     fastify.get('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.getLocationHistoryData);
     fastify.post('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.upsertLocatonData);
-    /* decorator
-    fastify.decorateRequest('gotch', 'data')
-
-    fastify.decorate('util', (request, key, value) => {
-        return request[key] = value
-    })
-    fastify.decorate('data', () => {
-        return 'Yeah got it !!!! updated one set value is '
-    })
-    fastify.post('/plugin1', function (request, reply) {
-        console.log('plugin');
-        console.log(request.utildata);
-        reply.send({ Timestamp: request.timestamp, utildata: request.utildata, testdatass: request.testdatass })
-    })
-
-    
-    fastify.get('/plugin2', (request, reply) => {
-        reply.send(request)
-    })
- */
 };
 export default Revo365Routes;
 //# sourceMappingURL=routes.js.map

@@ -20,7 +20,6 @@ import { CloudTasksClient } from "@google-cloud/tasks";
 let client;
 try {
   client = new CloudTasksClient();
-  console.log("CloudTasksClient initialized successfully");
 } catch (error) {
   console.error("Error initializing CloudTasksClient:", error);
   process.exit(1);
@@ -36,16 +35,13 @@ const __dirname = dirname(__filename);
 //   __dirname,
 //   "/docblitz-437213-d99f2718bd72.json"
 // );
-console.log('deleted service account')
 // console.log(join(__dirname, "/revo-436904-09a3ddafb0ac.json") ,'VA:LUE IS ');
 export async function createHttpTask(merchantid: any) {
   try {
     console.log(merchantid, "INSIDE TASK");
-    console.log("Task parameters:", { project, queue, location, url });
     // const payloadString = JSON.stringify({ message: "Hello, world" });
     const payloadString: any = JSON.stringify({ merchantid: merchantid });
     const parent = client.queuePath(project, location, queue);
-    console.log("Queue path created:", parent);
     const task: any = {
       httpRequest: {
         headers: {

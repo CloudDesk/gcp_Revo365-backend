@@ -41,8 +41,6 @@ export module locationHistoryService {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
             return datatypeCheckResult
@@ -75,8 +73,6 @@ export module locationHistoryService {
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-console.log(querydata);
-console.log(params);
             const result = await query(querydata, params);
             return result;
         } catch (error) {

@@ -30,7 +30,6 @@ export module dataLoaderService {
       const csvfilepath = "uploads/" + files;
       const jsonresult = await csvtojson().fromFile(csvfilepath);
       let failuredata = [];
-      console.log(jsonresult);
       await Promise.all(
         jsonresult.map(async (e: any, index: number) => {
           try {
@@ -68,7 +67,6 @@ export module dataLoaderService {
                     try {
                       e[key] = JSON.parse(value);
                     } catch (error) {
-                      console.log("json parsing error ");
                       e[key] = value;
                     }
                   } else {
@@ -85,7 +83,6 @@ export module dataLoaderService {
             );
             if (validationresult === true) {
             } else {
-              console.log(validationresult.error);
               const errorObject: any = {};
               validationresult.error.forEach((error) => {
                 const key = error.instancePath.slice(1);
@@ -94,7 +91,6 @@ export module dataLoaderService {
                 errorObject[key] = value;
               });
               failuredata.push(errorObject);
-              console.log(errorObject);
             }
           } catch (error) {
             console.error(
@@ -102,12 +98,10 @@ export module dataLoaderService {
               error
             );
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
           }
         })
       );
-      console.log(failuredata);
       if (failuredata.length > 0) {
         return { error: failuredata, data: jsonresult };
       } else {
@@ -119,7 +113,6 @@ export module dataLoaderService {
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -129,10 +122,7 @@ export module dataLoaderService {
       const csvfilepath = "uploads/" + files;
       const jsonresult = await csvtojson().fromFile(csvfilepath);
       const locationdataarray = await getStockLocationData();
-      console.log("11", locationdataarray, "11");
       let failuredata = [];
-      console.log("data");
-      console.log(JSON.stringify(jsonresult), "Data is");
       await Promise.all(
         jsonresult.map(async (e: any, index: number) => {
           try {
@@ -148,7 +138,6 @@ export module dataLoaderService {
                     e[key] = valueconvert;
                   }
                 } else if (stockBoolean.includes(key)) {
-                  console.log(key, "Remove From Recycle BIn is ");
                   console.log(e[key]);
                   if (
                     e[key] === "FALSE" ||
@@ -166,12 +155,6 @@ export module dataLoaderService {
                     e[key] = value;
                   }
                 } else if (stockText.includes(key)) {
-                  // let valueconvert: any = Number(value);
-                  // if (isNaN(valueconvert)) {
-                  //     e[key] = value;
-                  // } else {
-                  //     e[key] = valueconvert;
-                  // }
                   e[key] = value;
                 } else if (stockArray.includes(key)) {
                   if (typeof value === "string") {
@@ -184,31 +167,23 @@ export module dataLoaderService {
                     e[key] = value;
                   }
                 } else if (stocklocationArray.includes(key)) {
-                  console.log("Location--", e.location);
                   let convertedvalue: any = value;
                   convertedvalue = convertedvalue
                     .toLowerCase()
                     .replace(" ", "_");
-                  console.log("---", convertedvalue, "--- CONVERTED");
                   e[key] = convertedvalue;
                 } else {
                   e[key] = value;
                 }
               }
             }
-            console.log(e.ecompublish, "Ecom Publish is Before");
             if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
               e.ecompublish = false;
             }
-            console.log(e.ecompublish, "Ecom Publish is AFTER");
-            console.log(e, "Ecom Publish is AFTER");
-
             let validationresult = await validateDataLoader(stockrevoSchema, e);
-            // console.log(validationresult, 'Validation Result is ');
             if (validationresult === true) {
             } else {
               const errorObject: any = {};
-              console.log(validationresult, "VALIDATION ERROR IS");
               validationresult.error.forEach((error) => {
                 const key = error.instancePath.slice(1);
                 const value = error.message;
@@ -223,7 +198,6 @@ export module dataLoaderService {
               error
             );
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
           }
         })
@@ -243,16 +217,13 @@ export module dataLoaderService {
 
   export const upsertBulkDataStock = async (request, reply) => {
     try {
-      console.log(request.body, "Request Body Test data");
       let upsertStockResult = await stockRevoService.upsertBulkStockRevoData(
         request.body
       );
-      console.log(upsertStockResult, "USPERT STOCK RESULT IS ;;;;");
       return upsertStockResult;
     } catch (error) {
       console.error("Query Execution Error: In upsertBulkDataStock", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

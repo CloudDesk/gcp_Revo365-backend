@@ -63,11 +63,8 @@ export module stockRevoController {
             console.log(JSON.stringify(upsertStockResult));
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
                 const puc = upsertStockResult.result.puc; // Get the puc from the result
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                  let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-                //let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
                 let message: any = {
                     product: upsertStockResult.command === "UPDATE"
                         ? `Stock Updated successfully`
@@ -87,19 +84,14 @@ export module stockRevoController {
     export const assetlocationstock = async (request: any, reply: any) => {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoData(request.body);
-            console.log(JSON.stringify(upsertStockResult));
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
                 const puc = upsertStockResult.result.puc; // Get the puc from the result
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
                 let message: any = {
                     product: upsertStockResult.command === "UPDATE"
                         ? `Stock Updated successfully`
                         : `Stock Inserted successfully`,
-                    // totalCount: upsertStockResult.totalCount, // Include the total count in the response
-                    // updateQuantity
                 };
                 reply.status(200).send(message);
             } else {
@@ -116,18 +108,13 @@ export module stockRevoController {
             console.log(JSON.stringify(upsertStockResult));
             if (upsertStockResult?.command === "UPDATE" || upsertStockResult?.command === "INSERT") {
                 const puc = upsertStockResult.result.puc; // Get the puc from the result
-                console.log(upsertStockResult.result.rows[0], 'Data in stock Deletion');
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                  let updateQuantity = await stockRevoService.updateQuantity(pucArray);
               //  let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isdeleted === true
                         ? `Stock Deleted successfully`
                         : `Stock Restored succcessfully`,
-                    // totalCount: upsertStockResult.totalCount, // Include the total count in the response
-                    // updateQuantity
                 };
                 reply.status(200).send(message);
             } else if (upsertStockResult.status === 400) {
@@ -146,12 +133,9 @@ export module stockRevoController {
             console.log(JSON.stringify(upsertStockResult));
             if (upsertStockResult?.command === "UPDATE" || upsertStockResult?.command === "INSERT") {
                 const puc = upsertStockResult.result.puc; // Get the puc from the result
-                console.log(upsertStockResult.result.rows[0], 'Data in stock Archive');
-                // console.log('-- Request', puc, '-- Request');
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                  let updateQuantity = await stockRevoService.updateQuantity(pucArray);
                // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
-                console.log('-- Update Quantity Result', updateQuantity, '-- Update Quantity Result');
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isarchive === true
                         ? `Stock successfully archived`

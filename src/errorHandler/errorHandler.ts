@@ -10,16 +10,12 @@ export module ErrorHandler {
     if (error.errorDetails) {
       return error;
     }
-    console.log(error, "Main Error Handler is ");
     let errorMessage = "An unknown error occurred";
-    const errorDetails: { key: string; message: string }[] = [];
-    console.log(error.code, "Error code is ");
-    console.log(error.detail, "Error details is ");
+    const errorDetails: { key: string; message: string }[] = [];;
     if (error.code) {
       switch (error.code) {
         case "23505": // Duplicate key violation
           errorMessage = "Duplicate Key Exist";
-          console.log(error.detail, "Error Detail is ");
           if (error.detail) {
             const match = error.detail.match(/Key \((.*?)\)=\((.*?)\)/);
             if (match) {

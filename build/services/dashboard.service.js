@@ -18,8 +18,6 @@ export var dashboardservice;
         try {
             const fields = Object.keys(querydata);
             const values = Object.values(querydata);
-            console.log("Fields:", fields);
-            console.log("Values:", values);
             const currentYear = new Date().getFullYear();
             const fieldMappings = {
                 'orderstatus': 'o.orderstatus',
@@ -60,11 +58,8 @@ export var dashboardservice;
                 JOIN product_revo AS p ON o.productid = p.id
                 WHERE ${conditions.join(' AND ')}
             `;
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             await dataTypeCheck(result);
-            console.log(result.rows);
             const data = result.rows[0] || { total_quantity: 0, total_orderamount: 0 };
             const response = {
                 total_quantity: data.total_quantity,
@@ -168,7 +163,6 @@ ORDER BY
             await dataTypeCheck(result);
             const data = result.rows || [];
             let newArray = [Object.keys(data[0]).filter(key => key !== 'year' && key !== 'Total Quantity')];
-            console.log(newArray, 'newArray');
             result.rows.forEach((row) => {
                 const values = Object.entries(row)
                     .filter(([key]) => key !== 'year' && key !== 'Total Quantity')
@@ -200,10 +194,8 @@ ORDER BY
     };
     dashboardservice.getSalesMonthlyLocationData = async (querydata) => {
         try {
-            console.log('Quary Data:', querydata);
             const dataParam = querydata.data;
             const location = querydata.location;
-            console.log('---', location);
             if (!dataParam) {
                 throw new Error('Missing data parameter');
             }
@@ -266,7 +258,6 @@ ORDER BY
             await dataTypeCheck(result);
             const data = result.rows || [];
             let newArray = [Object.keys(data[0]).filter(key => key !== 'year' && key !== 'Total Quantity')];
-            console.log(newArray, 'newArray');
             result.rows.forEach((row) => {
                 const values = Object.entries(row)
                     .filter(([key]) => key !== 'year' && key !== 'Total Quantity')
@@ -281,95 +272,8 @@ ORDER BY
             return { error: ErrorMessage };
         }
     };
-    // export const getGroupedData = async (querydata) => {
-    //     try {
-    //         const getColumns = async (tableName) => {
-    //             const columnQuery = `
-    //                 SELECT column_name
-    //                 FROM information_schema.columns
-    //                 WHERE table_schema = 'public'
-    //                 AND table_name = $1
-    //             `;
-    //             console.log(columnQuery,'columnQuery');
-    //             const result = await query(columnQuery, [tableName]);
-    //             return result.rows.map(row => row.column_name);
-    //         };
-    //         const orderColumns = await getColumns('orders');
-    //         const productRevoColumns = await getColumns('product_revo');
-    //         const orderColumnsSet = new Set(orderColumns);
-    //         const productRevoColumnsSet = new Set(productRevoColumns);
-    //         let selectedColumns = [];
-    //         let groupByColumns = [];
-    //         const dateRange = querydata.data ? querydata.data.split(',') : [];
-    //         let startEpoch = 0;
-    //         let endEpoch = 0;
-    //         if(querydata.data){
-    //             const dateRange = querydata.data.split(',');
-    //             ({startEpoch, endEpoch} = convertDateRangeToEpoch(dateRange))
-    //         }
-    //         if (!startEpoch || !endEpoch) {
-    //             throw new Error('Invalid date range.');
-    //         }
-    //         for (const field of Object.keys(querydata)) {
-    //             if (field === 'data') {
-    //                 continue; 
-    //             }
-    //             if (orderColumnsSet.has(field)) {
-    //                 selectedColumns.push(`o.${field}`);
-    //                 groupByColumns.push(`o.${field}`);
-    //             } else if (productRevoColumnsSet.has(field)) {
-    //                 selectedColumns.push(`p.${field}`);
-    //                 groupByColumns.push(`p.${field}`);
-    //             } else {
-    //                 throw new Error(`Invalid column: ${field}`);
-    //             }
-    //         }
-    //         selectedColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon') AS month");
-    //         selectedColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate)) AS year");
-    //         groupByColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon')");
-    //         groupByColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate))");
-    //         let queryText = `
-    //             SELECT
-    //                 COALESCE(SUM(o.quantity), 0) AS quantity,
-    //                 COALESCE(SUM(o.orderamount), 0) AS total_amount,
-    //                 ${selectedColumns.join(', ')}
-    //             FROM orders AS o
-    //             JOIN product_revo AS p ON o.productid = p.id
-    //             WHERE o.createddate BETWEEN $1 AND $2
-    //         `;
-    //         if (groupByColumns.length > 0) {
-    //             queryText += `
-    //                 GROUP BY ${groupByColumns.join(', ')}
-    //             `;
-    //         }
-    //         // console.log("Constructed Query:", queryText);
-    //         const result = await query(queryText, [startEpoch, endEpoch]);
-    //         return result.rows;
-    //         // API - /dashboard/group-by?data=2023-january,2024-july&orderstatus
-    //         // [
-    //         //     {
-    //         //       "quantity": "3",
-    //         //       "total_amount": "83988",
-    //         //       "orderstatus": "delivered",
-    //         //       "month": "Jul",
-    //         //       "year": "2024"
-    //         //     },
-    //         //     {
-    //         //       "quantity": "1",
-    //         //       "total_amount": "22980",
-    //         //       "orderstatus": "ordered",
-    //         //       "month": "Dec",
-    //         //       "year": "2023"
-    //         //     }
-    //         // ]
-    //     } catch (error) {
-    //         console.log("Error in getGroupedData", error.message);
-    //         return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
-    //     }
-    // };
     dashboardservice.getGroupedData = async (querydata) => {
         try {
-            console.log(querydata.data, 'querydata');
             const getColumns = async (tableName) => {
                 const columnQuery = `
                     SELECT column_name
@@ -422,7 +326,6 @@ ORDER BY
                     else {
                         throw new Error(`Invalid column: ${field}`);
                     }
-                    console.log(distinctValues, 'Distinct');
                 }
                 selectedColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon') AS month");
                 selectedColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate)) AS year");
@@ -442,7 +345,6 @@ ORDER BY
                     GROUP BY ${groupByColumns.join(', ')}
                 `;
                 }
-                // console.log("Constructed Query:", queryText);
                 const result = await query(queryText, [startEpoch, endEpoch]);
                 return result.rows;
                 // API - /dashboard/group-by?data=2023-january,2024-july&orderstatus
@@ -469,331 +371,6 @@ ORDER BY
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
-    // IMportant
-    // export const getCountData = async (querydata: any, { objectName }: any) => {
-    //     try {
-    //         let countlabel: string
-    //         if (objectName === 'stock_revo') {
-    //             countlabel = 'stockcount'
-    //         }
-    //         else if (objectName === 'product_revo') {
-    //             countlabel = 'product'
-    //         }
-    //         else {
-    //             countlabel = objectName
-    //         }
-    //         const getColumns = async () => {
-    //             const columnQuery = `
-    //                 SELECT column_name
-    //                 FROM information_schema.columns
-    //                 WHERE table_schema = 'public'
-    //                 AND table_name = '${objectName}'
-    //             `;
-    //             console.log(columnQuery, 'columnQuery');
-    //             const result = await query(columnQuery, []);
-    //             return result.rows.map(row => row.column_name);
-    //         };
-    //         const columns = await getColumns();
-    //         const columnSet = new Set(columns);
-    //         let selectedColumns = [];
-    //         let groupByColumns = [];
-    //         let queryParams = [];
-    //         let startEpoch = 0;
-    //         let endEpoch = 0;
-    //         if (querydata.data) {
-    //             const dateRange = querydata.data.split(',');
-    //             ({ startEpoch, endEpoch } = convertDateRangeToEpoch(dateRange))
-    //         }
-    //         for (const field of Object.keys(querydata)) {
-    //             if (field === 'data') {
-    //                 continue;
-    //             }
-    //             if (columnSet.has(field)) {
-    //                 selectedColumns.push(`t.${field}`);
-    //                 groupByColumns.push(`t.${field}`);
-    //             } else {
-    //                 throw new Error(`Invalid column: ${field}`);
-    //             }
-    //         }
-    //         selectedColumns.push(`
-    //             to_char(to_timestamp(t.createddate), 'Mon') as month,
-    //             to_char(to_timestamp(t.createddate), 'YYYY') as year
-    //         `);
-    //         groupByColumns.push(`
-    //             to_char(to_timestamp(t.createddate), 'Mon'),
-    //             to_char(to_timestamp(t.createddate), 'YYYY')
-    //         `);
-    //         console.log(selectedColumns, 'selectedColumns');
-    //         let queryText = `
-    //             SELECT
-    //             to_char(to_timestamp(t.createddate), 'Mon') as month,
-    //             count(id) as ordercount,
-    //               SUM(quantity)  AS orderquantity,${selectedColumns.join(',')}
-    //             FROM ${objectName} AS t
-    //             WHERE t.createddate BETWEEN $1 AND $2
-    //         `;
-    //         //             let queryText = `
-    //         //            WITH date_range AS (
-    //         //     SELECT generate_series(
-    //         //         date_trunc('month', to_timestamp($1)),
-    //         //         date_trunc('month', to_timestamp($2)),
-    //         //         '1 month'::interval
-    //         //     ) AS month
-    //         // ),
-    //         // monthly_data AS (
-    //         //     SELECT
-    //         //         to_char(date_trunc('month', to_timestamp(t.createddate)), 'Mon') as month,
-    //         //         count(id) as ordercount,
-    //         //         SUM(quantity) AS orderquantity,
-    //         //      to_char(date_trunc('month', to_timestamp(t.createddate)), 'YYYY') as year
-    //         //     FROM orders AS t
-    //         //     WHERE t.createddate BETWEEN $1 AND $2
-    //         //     GROUP BY
-    //         //         date_trunc('month', to_timestamp(t.createddate))
-    //         // )
-    //         // SELECT
-    //         //     to_char(date_range.month, 'Mon') as month,
-    //         //     COALESCE(monthly_data.ordercount, 0) as ordercount,
-    //         //     COALESCE(monthly_data.orderquantity, 0) as orderquantity,
-    //         //         to_char(date_range.month, 'YYYY') as year
-    //         // FROM date_range
-    //         // LEFT JOIN monthly_data ON
-    //         //     to_char(date_range.month, 'Mon') = monthly_data.month AND
-    //         //     to_char(date_range.month, 'YYYY') = monthly_data.year
-    //         // ORDER BY date_range.month
-    //         //         `;
-    //         queryParams.push(startEpoch, endEpoch);
-    //         if (groupByColumns.length > 0) {
-    //             queryText += `
-    //                 GROUP BY ${groupByColumns.join(', ')}
-    //             `;
-    //         }
-    //         console.log(queryText, 'queryText');
-    //         console.log(queryParams, 'queryParams');
-    //         const result = await query(queryText, queryParams);
-    //         let datatyperesult = await dataTypeCheck(result);
-    //         let dashboaddata = [Object.keys(datatyperesult[0])]
-    //         datatyperesult.sort((a, b) => {
-    //             if (a.year !== b.year) {
-    //                 return parseInt(a.year) - parseInt(b.year);
-    //             }
-    //             return monthToNumber(a.month) - monthToNumber(b.month);
-    //         });
-    //         console.log(datatyperesult, 'sorted datatyperesult');
-    //         datatyperesult.forEach(async (row) => {
-    //             row.year = Number(row.year)
-    //             let fullmonth = await getFullMonth(row.month)
-    //             row.month = fullmonth
-    //             dashboaddata.push(Object.values(row));
-    //         });
-    //         console.log(dashboaddata, 'dashboaddata');
-    //         return dashboaddata
-    //         // Example API: /dashboard/tickets?data=2024-may,2024-july&ticketstatus&ticketpriority
-    //         // Result:
-    //         // [
-    //         //     {
-    //         //       "ticket_count": 10,
-    //         //       "ticketstatus": "open",
-    //         //       "ticketpriority": "high",
-    //         //       "month_year": "May 2024"
-    //         //     },
-    //         //     {
-    //         //       "ticket_count": 5,
-    //         //       "ticketstatus": "closed",
-    //         //       "ticketpriority": "low",
-    //         //       "month_year": "Jun 2024"
-    //         //     }
-    //         // ]
-    //     } catch (error) {
-    //         console.error("Error in getTicketCountData:", error);
-    //         return { error: { errorMessage: error.message, statusCode: 404 } };
-    //     }
-    // };
-    // export const getGroupbyValueData = async (querydata) => {
-    //     try {
-    //         const getColumns = async (tableName) => {
-    //             const columnQuery = `
-    //                 SELECT column_name
-    //                 FROM information_schema.columns
-    //                 WHERE table_schema = 'public'
-    //                 AND table_name = $1
-    //             `;
-    //             const result = await query(columnQuery, [tableName]);
-    //             return result.rows.map(row => row.column_name);
-    //         };
-    //         const orderColumns = await getColumns('orders');
-    //         const productRevoColumns = await getColumns('product_revo');
-    //         const orderColumnsSet = new Set(orderColumns);
-    //         const productRevoColumnsSet = new Set(productRevoColumns);
-    //         let selectedColumns = [];
-    //         let groupByColumns = [];
-    //         const dateRange = querydata.data ? querydata.data.split(',') : [];
-    //         let startEpoch = 0;
-    //         let endEpoch = 0;
-    //         if(querydata.data){
-    //             const dateRange = querydata.data.split(',');
-    //             ({startEpoch, endEpoch} = convertDateRangeToEpoch(dateRange))
-    //         }
-    // let updatedWhereclause:any = []
-    //         if (!startEpoch || !endEpoch) {
-    //             throw new Error('Invalid date range.');
-    //         }
-    //         for (const field of Object.keys(querydata)) {
-    //             if (field === 'data') {
-    //                 updatedWhereclause.push(`o.createddate`)
-    //                 continue; 
-    //             }
-    //             if (orderColumnsSet.has(field)) {
-    //                 selectedColumns.push(`o.${field}`);
-    //                 groupByColumns.push(`o.${field}`);
-    //                 updatedWhereclause.push(`o.createddate`)
-    //                 console.log(selectedColumns,'selectedColumns1');
-    //                 console.log(groupByColumns,'groupByColumns1');
-    //             } else if (productRevoColumnsSet.has(field)) {
-    //                 selectedColumns.push(`p.${field}`);
-    //                 groupByColumns.push(`p.${field}`);
-    //                 console.log(selectedColumns,'selectedColumns2');
-    //                 console.log(groupByColumns,'groupByColumns2');
-    //             } else {
-    //                 throw new Error(`Invalid column: ${field}`);
-    //             }
-    //         }
-    //         let valuesdata = []
-    //         const {data ,...others} = querydata
-    //         for (const field of Object.values(others)) {
-    //              valuesdata.push(field)
-    //         }
-    //         console.log(valuesdata ,'valeus');
-    //         selectedColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon') AS month");
-    //         selectedColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate)) AS year");
-    //         groupByColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon')");
-    //         groupByColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate))");
-    //         let queryText = `
-    //             SELECT
-    //                 COALESCE(SUM(o.quantity), 0) AS quantity,
-    //                 COALESCE(SUM(o.orderamount), 0) AS total_amount,
-    //                 ${selectedColumns.join(', ')}
-    //             FROM orders AS o
-    //             JOIN product_revo AS p ON o.productid = p.id
-    //             WHERE o.createddate BETWEEN $1 AND $2
-    //         `;
-    // console.log(queryText ,'Query text is ');
-    //         if (groupByColumns.length > 0) {
-    //             queryText += `
-    //                 GROUP BY ${groupByColumns.join(', ')}
-    //             `;
-    //         }
-    //         // console.log("Constructed Query:", queryText);
-    //         const result = await query(queryText, [startEpoch, endEpoch]);
-    //         return result.rows;
-    //     } catch (error) {
-    //         console.log("Error in getGroupbyValueData", error.message);
-    //         return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
-    //     }
-    // };
-    //1st
-    // export const getGroupbyValueData = async (querydata) => {
-    //     try {
-    //         const getColumns = async (tableName) => {
-    //             const columnQuery = `
-    //                 SELECT column_name
-    //                 FROM information_schema.columns
-    //                 WHERE table_schema = 'public'
-    //                 AND table_name = $1
-    //             `;
-    //             const result = await query(columnQuery, [tableName]);
-    //             return result.rows.map(row => row.column_name);
-    //         };
-    //         const orderColumns = await getColumns('orders');
-    //         const productRevoColumns = await getColumns('product_revo');
-    //         const orderColumnsSet = new Set(orderColumns);
-    //         const productRevoColumnsSet = new Set(productRevoColumns);
-    //         let selectedColumns = [];
-    //         let groupByColumns = [];
-    //         let whereClauses = [];
-    //         let queryParams = [];
-    //         let orConditions = {
-    //             o: [],
-    //             p: []
-    //         };
-    //         const dateRange = querydata.data ? querydata.data.split(',') : [];
-    //         let startEpoch = 0;
-    //         let endEpoch = 0;
-    //         if (dateRange.length === 2) {
-    //             ({ startEpoch, endEpoch } = convertDateRangeToEpoch(dateRange));
-    //         } else {
-    //             throw new Error('Invalid date range.');
-    //         }
-    //         whereClauses.push(`o.createddate BETWEEN $1 AND $2`);
-    //         queryParams.push(startEpoch, endEpoch);
-    //         // Collect conditions for each field
-    //         for (const [field, values] of Object.entries(querydata)) {
-    //             if (field === 'data') continue; // skip date range parameter
-    //             if (Array.isArray(values)) {
-    //                 // Multiple values for the same field
-    //                 if (orderColumnsSet.has(field)) {
-    //                     orConditions['o'].push(`o.${field} IN (${values.map((_, i) => `$${queryParams.length + i + 1}`).join(', ')})`);
-    //                     queryParams.push(...values);
-    //                     selectedColumns.push(`o.${field}`);
-    //                     groupByColumns.push(`o.${field}`);
-    //                 } else if (productRevoColumnsSet.has(field)) {
-    //                     orConditions['p'].push(`p.${field} IN (${values.map((_, i) => `$${queryParams.length + i + 1}`).join(', ')})`);
-    //                     queryParams.push(...values);
-    //                     selectedColumns.push(`p.${field}`);
-    //                     groupByColumns.push(`p.${field}`);
-    //                 } else {
-    //                     throw new Error(`Invalid column: ${field}`);
-    //                 }
-    //             } else {
-    //                 // Single value
-    //                 if (orderColumnsSet.has(field)) {
-    //                     whereClauses.push(`o.${field} = $${queryParams.length + 1}`);
-    //                     queryParams.push(values);
-    //                     selectedColumns.push(`o.${field}`);
-    //                     groupByColumns.push(`o.${field}`);
-    //                 } else if (productRevoColumnsSet.has(field)) {
-    //                     whereClauses.push(`p.${field} = $${queryParams.length + 1}`);
-    //                     queryParams.push(values);
-    //                     selectedColumns.push(`p.${field}`);
-    //                     groupByColumns.push(`p.${field}`);
-    //                 } else {
-    //                     throw new Error(`Invalid column: ${field}`);
-    //                 }
-    //             }
-    //         }
-    //         // Add OR conditions to WHERE clause
-    //         if (orConditions.o.length > 0) {
-    //             whereClauses.push(`(${orConditions.o.join(' OR ')})`);
-    //         }
-    //         if (orConditions.p.length > 0) {
-    //             whereClauses.push(`(${orConditions.p.join(' OR ')})`);
-    //         }
-    //         selectedColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon') AS month");
-    //         selectedColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate)) AS year");
-    //         groupByColumns.push("TO_CHAR(to_timestamp(o.createddate), 'Mon')");
-    //         groupByColumns.push("EXTRACT(YEAR FROM to_timestamp(o.createddate))");
-    //         let queryText = `
-    //             SELECT
-    //                 COALESCE(SUM(o.quantity), 0) AS quantity,
-    //                 COALESCE(SUM(o.orderamount), 0) AS total_amount,
-    //                 ${selectedColumns.join(', ')}
-    //             FROM orders AS o
-    //             JOIN product_revo AS p ON o.productid = p.id
-    //             WHERE ${whereClauses.join(' AND ')}
-    //         `;
-    //         if (groupByColumns.length > 0) {
-    //             queryText += `
-    //                 GROUP BY ${groupByColumns.join(', ')}
-    //             `;
-    //         }
-    //         const result = await query(queryText, queryParams);
-    //         return result.rows;
-    //     } catch (error) {
-    //         console.error("Error in getGroupbyValueData", error.message);
-    //         return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
-    //     }
-    // };
-    //2nd
     dashboardservice.getCountData2 = async (querydata) => {
         try {
             const dateRange = querydata.data ? querydata.data.split(',') : [];
@@ -836,8 +413,6 @@ ORDER BY
                 ORDER BY ds.month
             `;
             const queryParams = [...orderStatuses, startEpoch, endEpoch];
-            // console.log('Query Text:', queryText);
-            // console.log('Query Parameters:', queryParams);
             const result = await query(queryText, queryParams);
             result.rows.pop();
             return result.rows;
@@ -1185,13 +760,10 @@ ORDER BY
                     ds.month_start
             `;
             const queryParams = [startEpoch, endEpoch, ...statusesToInclude];
-            console.log('Query Text:', queryText);
-            console.log('Query Params:', queryParams);
             const result = await query(queryText, queryParams);
             const formattedResult = result.rows.map(row => {
                 const newRow = {};
                 for (let [key, value] of Object.entries(row)) {
-                    console.log(key, '   ', value);
                     if (key != 'Month') {
                         value = Number(value);
                     }
@@ -1208,7 +780,6 @@ ORDER BY
             formattedResult.forEach((e) => {
                 formattedResult1.push(Object.values(e));
             });
-            console.log(formattedResult1, 'formattedResult1');
             return formattedResult1;
         }
         catch (error) {
@@ -1216,97 +787,6 @@ ORDER BY
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
-    // export const getOrderStstusDashboardQuantityData = async (querydata) => {
-    //     try {
-    //         const { data, orderstatus } = querydata;
-    //         const dateRange = data ? data.split(',') : [];
-    //         let startEpoch = 0;
-    //         let endEpoch = 0;
-    //         if (dateRange.length === 2) {
-    //             ({ startEpoch, endEpoch } = convertDateRangeToEpoch(dateRange));
-    //         } else {
-    //             throw new Error('Invalid date range.');
-    //         }
-    //         const allStatuses = ['ordered', 'ready_to_dispatch', 'returned', 'delivered', 'cancelled', 'dispatched'];
-    //         let statusesToInclude;
-    //         if (Array.isArray(orderstatus)) {
-    //             statusesToInclude = orderstatus.filter(status => allStatuses.includes(status));
-    //         } else if (orderstatus === 'all') {
-    //             statusesToInclude = allStatuses;
-    //         } else if (allStatuses.includes(orderstatus)) {
-    //             statusesToInclude = [orderstatus];
-    //         } else {
-    //             throw new Error('Invalid orderstatus value(s)');
-    //         }
-    //         const formatColumnName = (name) => {
-    //             return name.split('_')
-    //                 .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    //                 .join(' ');
-    //         };
-    //         const selectClauses = statusesToInclude.flatMap(status => [
-    //             `COALESCE(SUM(CASE WHEN o.orderstatus = '${status}' THEN o.quantity ELSE 0 END), 0) AS "${formatColumnName(status)} Quantity"`
-    //         ]);
-    //         if (statusesToInclude.length === allStatuses.length) {
-    //             selectClauses.push(
-    //                 `COALESCE(SUM(o.quantity), 0) AS "Total Quantity"`
-    //             );
-    //         }
-    //         let queryText = `
-    //             WITH date_series AS (
-    //                 SELECT generate_series(
-    //                     date_trunc('month', to_timestamp($1)),
-    //                     date_trunc('month', to_timestamp($2)) + '1 month'::interval - '1 day'::interval,
-    //                     '1 month'::interval
-    //                 ) AS month_start
-    //             )
-    //             SELECT
-    //                 TO_CHAR(ds.month_start, 'Mon') AS "Month",
-    //                 EXTRACT(YEAR FROM ds.month_start) AS "Year",
-    //                 ${selectClauses.join(',\n                ')}
-    //             FROM
-    //                 date_series ds
-    //             LEFT JOIN
-    //                 orders AS o ON date_trunc('month', to_timestamp(o.createddate)) = ds.month_start
-    //                 AND o.orderstatus IN (${statusesToInclude.map((_, i) => `$${i + 3}`).join(', ')})
-    //             WHERE
-    //                 ds.month_start < date_trunc('month', to_timestamp($2)) 
-    //             GROUP BY
-    //                 ds.month_start
-    //             ORDER BY
-    //                 ds.month_start
-    //         `;
-    //         const queryParams = [startEpoch, endEpoch, ...statusesToInclude];
-    //         // console.log('Query Text:', queryText);
-    //         // console.log('Query Params:', queryParams);
-    //         const result = await query(queryText, queryParams);
-    //         const formattedResult = result.rows.map(row => {
-    //             const newRow = {};
-    //             for (let [key, value] of Object.entries(row)) {
-    //                 console.log(key, '   ', value);
-    //                 if (key != 'Month') {
-    //                     value = Number(value)
-    //                 }
-    //                 else {
-    //                     value = value
-    //                 }
-    //                 if (key != 'Year') {
-    //                     newRow[formatColumnName(key)] = value;
-    //                 }
-    //             }
-    //             return newRow;
-    //         });
-    //         let formattedResult1 = [Object.keys(formattedResult[0])]
-    //         formattedResult.forEach((e) => {
-    //             formattedResult1.push(Object.values(e))
-    //         })
-    //         console.log(formattedResult1, 'formattedResult1');
-    //         return formattedResult1;
-    //         // API - /dashboard/quantity?data=2024-july,2024-july&orderstatus=all
-    //     } catch (error) {
-    //         console.error("Error in getDashboardFinalData", error.message);
-    //         return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
-    //     }
-    // };
     dashboardservice.getOrderStstusDashboardQuantityData = async (querydata) => {
         try {
             const { data, orderstatus } = querydata;
@@ -1474,8 +954,6 @@ ORDER BY
   GROUP BY ds.month_start
   ORDER BY ds.month_start
 `;
-            // console.log('Query Text:', queryText);
-            // console.log('Query Params:', queryParams);
             const result = await query(queryText, queryParams);
             const formattedResult = result.rows.map(row => {
                 const newRow = {};
@@ -1560,7 +1038,6 @@ ORDER BY
             result.rows.pop();
             const formattedResult = [];
             result.rows.forEach(row => {
-                console.log(row);
                 statusesToInclude.forEach(status => {
                     const formattedStatus = formatColumnName(status);
                     formattedResult.push([
@@ -1731,8 +1208,6 @@ ORDER BY
                 queryParams.push(location);
             }
             queryText += ` AND o.ticketstatus IN (${statusesToInclude.map((_, i) => `$${i + 3}`).join(', ')})`;
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             const formattedResult = [];
             if (result.rows.length > 0) {
@@ -1906,8 +1381,6 @@ ORDER BY
                     date_trunc('day', to_timestamp(createddate)) = date_trunc('day', CURRENT_TIMESTAMP)
             `;
             const result = await query(queryText, []);
-            console.log("Generated Query:", queryText);
-            console.log("Query Result:", result.rows);
             const formatColumnName = (name) => name
                 .split(' ')
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -1950,7 +1423,6 @@ ORDER BY
                 GROUP BY s.category, s.subcategory;
             `;
             const result = await query(queryText, []);
-            console.log('Result', result.rows);
             // Predefined categories
             const categories = [
                 'New Laptop',
@@ -1985,7 +1457,6 @@ ORDER BY
     dashboardservice.getAvailableCountTotalLocationBasedData = async (querydata) => {
         try {
             const { location } = querydata;
-            console.log('Location', location);
             if (!location) {
                 throw new Error('Location parameter is required.');
             }
@@ -2011,8 +1482,6 @@ ORDER BY
                 GROUP BY s.category, s.subcategory;
             `;
             const result = await query(queryText, [location]);
-            console.log(queryText, 'QUERY TEXT');
-            console.log('Result', result.rows);
             const categories = [
                 'new laptop',
                 'refurbished laptop',
@@ -2105,7 +1574,6 @@ ORDER BY
                     AND removefromrecyclebin = FALSE
                 GROUP BY category, subcategory
             `;
-            console.log(queryText, 'QUERY TEXT ');
             const result = await query(queryText, [location]);
             const categories = [
                 'new laptop',
@@ -2144,7 +1612,6 @@ ORDER BY
     dashboardservice.getRevenueQuarterData = async (querydata) => {
         try {
             const { data } = querydata;
-            console.log('Query Data: ', querydata);
             const queryText = `
                 SELECT
                     CASE

@@ -51,7 +51,6 @@ export module phonePay  {
 
     export const paymentConfirmation =async (request : any)=>{
         try {
-            console.log('status');
             const merchantTransactionId = request.query.id;
             const merchantId = MERCHANT_ID;
             const keyIndex = 1;

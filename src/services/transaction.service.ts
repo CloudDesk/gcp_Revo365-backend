@@ -153,10 +153,6 @@ export module transactionService {
           }`;
           queryParams.push(offset, recordCount);
         }
-
-        console.log("Query Text:", queryText);
-        console.log("Query Params:", queryParams);
-
         const result = await query(queryText, queryParams);
         let datatypeCheckResult = await dataTypeCheck(result);
         return datatypeCheckResult;
@@ -168,93 +164,8 @@ export module transactionService {
       }
     } catch (error) {}
   };
-  // export const paymentInitialization = async (request: any) => {
-  //     try {
-  //         let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor } = request.body.transaction;
-  //         console.log(transactionfor, 'Transaction For is');
-  //         console.log(productid, 'Product Id is');
-  //         console.log(JSON.stringify(request.body), 'Request Body is');
-  //         let orderdata = request.body.order;
-  //         dummyorderdata = orderdata.map((element: any) => ({ ...element }));
-  //         let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false)
-
-  //         const productId = productid && productid.map((_, index) => `$${index + 1}`).join(', ');
-  //         console.log(productId, 'Product Id is');
-  //         console.log(productid, 'Product Id is');
-  //         const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
-  //         const result = await query(queryText, productid);
-  //         console.log(result.rows, 'Result from product');;
-  //         const allQuantitiesAvailable = result.rows.every(product => (Number(product.availablequantity) - Number(product.lock_qty) >= 0) && (Number(product.availablequantity - Number(product.orderedquantity)) >= 0));
-  //         console.log(allQuantitiesAvailable, 'Quantity Check');
-  //         if (!allQuantitiesAvailable) {
-  //             return {
-  //                 status: 400,
-  //                 message: "One or more products are out of stock. Please try again later."
-  //             }
-  //         }
-  //         console.log(merchanttransactionId);
-  //         transactionDataset = request.body
-  //         const data = {
-  //             merchantId: MERCHANT_ID,
-  //             merchantTransactionId: merchanttransactionId,
-  //             name: name,
-  //             amount: Number(amount) * 100,
-  //             redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}&transactionfor=${transactionfor}&orderdata=${orderdata}`,
-  //             redirectMode: "POST",
-  //             mobileNumber: mobilenumber,
-  //             paymentInstrument: {
-  //                 type: "PAY_PAGE",
-  //             },
-  //         };
-  //         const payload = JSON.stringify(data);
-  //         const payloadMain = Buffer.from(payload).toString("base64");
-  //         const string = payloadMain + "/pg/v1/pay" + SALT_KEY;
-  //         const sha256 = crypto.createHash("sha256").update(string).digest("hex");
-  //         const checksum = sha256 + "###" + keyIndex;
-
-  //         console.log("SHA256 Hash:", sha256);
-  //         console.log("Checksum:", checksum);
-  //         console.log("Encoded Payload:", payloadMain);
-
-  //         const prod_url = "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
-
-  //         const options = {
-  //             method: "POST",
-  //             url: prod_url,
-  //             headers: {
-  //                 accept: "application/json",
-  //                 "Content-Type": "application/json",
-  //                 "X-VERIFY": checksum,
-  //             },
-  //             data: {
-  //                 request: payloadMain,
-  //             },
-  //         };
-
-  //         const response = await axios(options);
-
-  //         request.body.order.forEach((e) => {
-  //             e.merchanttransactionid = response.data.data.merchantTransactionId
-  //         })
-
-  //         console.log(request.body.order, 'BEFORE INSERT DATA IS ');
-
-  //         let insertorderdata = await ordersService.bulkInsertOrder(request.body.order)
-  //         console.log(insertorderdata, 'REsult for insert Order data is ');
-  //         insersertdordderdatawithprocessing = insertorderdata.rows;
-
-  //         return response.data.data.instrumentResponse.redirectInfo.url;
-  //         // return 'test'
-  //     } catch (error) {
-  //         console.error("Query Execution Error: IN paymentInitialization", error);
-  //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-  //         console.log(ErrorMessage);
-  //         return ErrorMessage
-  //     }
-  // }
   export const paymentInitialization = async (request: any) => {
     try {
-      console.log("Inside PaymentInitialization");
       let {
         merchanttransactionId,
         name,
@@ -264,7 +175,6 @@ export module transactionService {
         productid,
         transactionfor,
       } = request.body.transaction;
-      console.log(request.body.order, "Order Data is");
       console.log(request.body.order, "Order Data is");
       let orderdata = request.body.order;
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
@@ -278,7 +188,6 @@ export module transactionService {
         productid && productid.map((_, index) => `$${index + 1}`).join(", ");
       const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
       const result = await query(queryText, productid);
-      console.log(">>>", result, ">>>");
       const allQuantitiesAvailable = result.rows.every(
         (product) =>
           Number(product.availablequantity) - Number(product.lock_qty) >= 0 &&
@@ -304,7 +213,6 @@ export module transactionService {
       console.log(
         `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}`
       );
-      console.log("test");
       const data = {
         merchantId: MERCHANT_ID,
         merchantTransactionId: merchanttransactionId,
@@ -318,15 +226,10 @@ export module transactionService {
         },
       };
       const payload = JSON.stringify(data);
-      console.log(payload, "Payload");
       const payloadMain = Buffer.from(payload).toString("base64");
       const string = payloadMain + "/pg/v1/pay" + SALT_KEY;
       const sha256 = crypto.createHash("sha256").update(string).digest("hex");
       const checksum = sha256 + "###" + keyIndex;
-
-      // console.log("SHA256 Hash:", sha256);
-      // console.log("Checksum:", checksum);
-      // console.log("Encoded Payload:", payloadMain);
       console.log(payload, "PAYLOAD IS");
 
       const prod_url =
@@ -350,7 +253,6 @@ export module transactionService {
       } catch (error) {
         console.log(JSON.stringify(error.message));
         console.log(error.response ? error.response.data : error.message);
-        console.log("test");
       }
 
       request.body.order.forEach((e) => {
@@ -360,8 +262,6 @@ export module transactionService {
       request.body.order.forEach((e) => {
         cartIddata.push(e.cartId);
       });
-      console.log(cartIddata, "Cartß ID DATA IS");
-
       console.log(response.data.data.merchantTransactionId, "BEFOR TASK");
       try {
         let createHttpTaskResult = await createHttpTask(

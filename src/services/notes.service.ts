@@ -43,8 +43,6 @@ export module notesService {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text: Notes", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;

@@ -17,7 +17,6 @@ export module cartservice {
             keys.forEach((key, index) => {
                 if (key !== 'page' && key !== 'count') {
                     const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
-                    console.log(paramValues, " Param values are ");
                     if (index !== 0) {
                         whereClause += " AND ";
                     }
@@ -26,7 +25,6 @@ export module cartservice {
                     queryParams.push(...paramValues);
                 }
             });
-            console.log(whereClause, " Where clause is ");
             if (pageNumber && recordcount) {
                 offset = (pageNumber - 1) * recordcount;
             }
@@ -51,11 +49,8 @@ export module cartservice {
             if (offset && recordcount) {
                 queryParams.push(offset, recordcount);
             }
-            console.log(queryText, "Query Text is ");
-            console.log(queryParams, " query Params data ");
             const result: QueryResult = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result)
-            // console.log(datatypecheckResult, 'Data Type Check Result');
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getCartDatatest", error);
@@ -90,13 +85,6 @@ export module cartservice {
                 offset = (pageNumber - 1) * recordcount;
             }
 
-            console.log(whereClause ,'Where Clause');
-
-            // let queryText = `SELECT c.id as cartid ,c.quantity as quantity,c.productid as c_productid,c.userid,
-            // c.createddate as c_createddate,c.iscart as iscart,c.iswishlist, p.*
-            // FROM cart c
-            // INNER JOIN products p ON p.id = c.productid where iscart = true  and iswishlist = false`;
-
             let queryText = `SELECT c.id as id ,c.quantity as quantity,c.productid as c_productid,c.userid,
             c.createddate as c_createddate,c.iscart as iscart,c.iswishlist,  p.id AS products_id,
             p.productname AS products_productname,
@@ -123,11 +111,6 @@ export module cartservice {
             p.discount AS products_discount
             FROM cart c
             INNER JOIN product_revo p ON p.id = c.productid where iscart = true  and iswishlist = false`;
-            // console.log(pageNumber ,'Page Number');
-            // console.log(recordcount ,'recordcount Number');
-            // console.log(whereClause ,'Where Clause');
-            // console.log(offset ,);
-            // console.log(recordcount);
             if (whereClause && pageNumber && recordcount) {
                 queryText += ` AND ${whereClause} ORDER BY c.modifieddate DESC  OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
             }
@@ -142,20 +125,15 @@ export module cartservice {
                 queryText += ` ORDER BY c.modifieddate DESC Limit 500`;
             }
             if (offset >= 0 && recordcount) {
-                console.log('IONSIDE DATA');
                 queryParams.push(offset, recordcount);
             }
-            console.log(queryParams, ' Query Params is ');
-            console.log(queryText);
 
             const result: QueryResult = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result)
-            // console.log(datatypecheckResult, 'Data Type Check Result');
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getCartData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -170,9 +148,6 @@ export module cartservice {
 
             const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
             const queryText = `DELETE FROM cart WHERE id IN (${placeholders})`;
-            console.log(queryText);
-            console.log(placeholders)
-            console.log('test');;
             const result: any = await query(queryText, ids);
             if (result.rowCount != 0) {
                 return `${result.rowCount} Cart items deleted successfully`;
@@ -228,29 +203,21 @@ export module cartservice {
         try {
             console.log(cartData, "cartData upsert cart qty")
             const { productid, availablequantity } = cartData;
-            console.log()
             let getcartData = `select * from cart where productid = ${productid}`
             let result = await query(getcartData, [])
             let updates = []
             let updateQuantityNullData = []
-            console.log(JSON.stringify(result), 'Result is')
             console.log(JSON.stringify(result.rows), 'Result is Row');
             if (result.rows.length > 0) {
                 result.rows.forEach((e) => {
-                    console.log(e.quantity, 'Array Quantity')
-                    console.log(availablequantity, 'Available Quantity')
-
                     if (Number(e.quantity) !== 0 && (Number(e.quantity) > availablequantity)) {
                         updates.push({ id: e.id, quantity: availablequantity })
                     }
-
                     if (Number(e.quantity) === 0 && availablequantity > 0) {
-                        console.log('inside condition')
                         updateQuantityNullData.push({ id: e.id, quantity: 1 })
                     }
                 })
             }
-            console.log(updateQuantityNullData, ' null quantity');
             if (updates.length > 0) {
                 const ids = updates.map((_, index) => `$${index * 2 + 1}`).join(", ");
                 console.log(ids, 'IDS are');
@@ -261,11 +228,7 @@ export module cartservice {
                 const queryParams = updates.flatMap(update => [update.id, update.quantity]);
 
                 const querydata = `UPDATE cart SET quantity = CASE ${cases} ELSE quantity END WHERE id IN (${ids});`;
-
-                console.log(querydata);
-                console.log(queryParams);
                 let data = await query(querydata, queryParams)
-                console.log(data)
                 if (data.command === 'update') {
                     return "Cart Quantity Updated Successfully";
                 }
@@ -277,7 +240,6 @@ export module cartservice {
 
             if (updateQuantityNullData.length > 0) {
                 const ids = updateQuantityNullData.map((_, index) => `$${index * 2 + 1}`).join(", ");
-                console.log(ids, 'IDS are');
                 let cases = ''
                 cases = updateQuantityNullData
                     .map((_, index) => `WHEN id = $${index * 2 + 1} THEN $${index * 2 + 2}`)
@@ -285,11 +247,7 @@ export module cartservice {
                 const queryParams = updateQuantityNullData.flatMap(update => [update.id, update.quantity]);
 
                 const querydata = `UPDATE cart SET quantity = CASE ${cases} ELSE quantity END WHERE id IN (${ids});`;
-
-                console.log(querydata);
-                console.log(queryParams);
                 let data = await query(querydata, queryParams)
-                console.log(data)
                 if (data.command === 'update') {
                     return "Cart Quantity Updated Successfully";
                 }
@@ -304,7 +262,6 @@ export module cartservice {
         } catch (error) {
             console.error("Query Execution Error: IN upsertCart", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

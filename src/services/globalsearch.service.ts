@@ -7,12 +7,8 @@ export module globalserachService {
     export const getGlobalData = async (request) => {
         try {
             const { globalSearch, subcategory, sortby, page, recordcount } = request.query;
-            console.log("Global Search:", globalSearch);
-            console.log("Subcategory:", subcategory);
-            console.log("Sort By:", sortby);
             const searchTerms = globalSearch.split(' ');
             console.log(searchTerms, 'Search Terms ');
-
             // Construct the SQL query dynamically based on the global search term
             let searchQuery;
             let results;
@@ -56,7 +52,6 @@ export module globalserachService {
             }
 
             if (page && recordcount) {
-                console.log('Pagination enabled');
                 if (subcategory !== "All" && subcategory !== undefined) {
 
                     searchQuery = `SELECT * FROM products WHERE subcategory = $2 AND ${condition} ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
@@ -69,7 +64,6 @@ export module globalserachService {
             }
 
             else {
-                console.log('Fetch all data');
                 if (subcategory !== "All" && subcategory !== undefined) {
                     searchQuery = `SELECT * FROM products WHERE  subcategory = $2 AND ${condition} ${orderBy}`;
                 }
@@ -77,23 +71,14 @@ export module globalserachService {
                     searchQuery = `SELECT * FROM products WHERE ${condition} ${orderBy}`;
                 }
             }
-
-            // Flatten params array if needed
-            console.log(params, 'params');
-            // params = params.flat();
-            // console.log(params, 'flattend');
-
-            // Execute the query with repeatedParams
             results = await query(searchQuery, params);
 
             const searchResults = results;
             let checkingData = await dataTypeCheck(searchResults);
-            console.log("Checking Data Length:", checkingData.length);
             return checkingData;
         } catch (error) {
             console.error("Query Execution Error: IN getGlobalData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -101,18 +86,14 @@ export module globalserachService {
 
     export const getGlobalProductData = async (request, reply) => {
         try {
-            console.log(request.query);
             const { globalsearch, subcategory, sortby, page, recordcount } = request.query;
             console.log(globalsearch, 'globalsearch');
             const searchTerms = globalsearch.split(' ').join(' & ');
             let newSearch = globalsearch.split(' ');
-            console.log(newSearch.length, 'newSearch length');
             if (newSearch.length === 1) {
-                console.log(newSearch, 'data is')
                 newSearch = newSearch[0] + ':*';
             } else {
                 let a = []
-                console.log(newSearch, 'New Search daata')
                 newSearch.forEach((e, index) => {
                if (e) {
                         a.push(e)
@@ -125,8 +106,6 @@ export module globalserachService {
                     newSearch = a.join(':* & ') + ':*';
                 }
             }
-            console.log(newSearch, 'newSearch data');
-            console.log(searchTerms);
             let queryText = `
                 SELECT * 
                 FROM product_revo 
@@ -150,53 +129,36 @@ export module globalserachService {
             } else {
                 queryText += ` ORDER BY ${orderBy} ${orderBydirection}`;
             }
-            console.log(page, 'page');
-            console.log(recordcount, 'record Count');
             if (page && recordcount) {
                 queryText += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
                 params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
             }
 
-            console.log('Final query:', queryText);
-            console.log('Params:', params);
-
             // Execute the query
             const resultData = await query(queryText, params);
-
-            console.log(resultData.rows.length);
             return resultData.rows;
         } catch (error) {
             console.error("Query Execution Error: IN getGlobalProductData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
     
     export const getGlobalStockOrderTicketData = async (request, reply) => {
         try {
-            console.log(request.query);
-            const { globalsearch, subcategory, sortby, page, recordcount } = request.query;
-            console.log(globalsearch, 'globalsearch');
-    
-            let newSearch = globalsearch.split(' ');
-            console.log(newSearch.length, 'newSearch length');
-            
+            const { globalsearch, subcategory, sortby, page, recordcount } = request.query;    
+            let newSearch = globalsearch.split(' ');            
             if (newSearch.length === 1) {
-                console.log(newSearch, 'data is');
                 newSearch = newSearch[0] + ':*';
             } else {
                 let a = [];
-                console.log(newSearch, 'New Search data');
                 newSearch.forEach((e) => {
                     if (e) {
                         a.push(e);
                     }
                 });
                 newSearch = a.length === 1 ? a[0] + ':*' : a.join(':* & ') + ':*';
-            }
-            console.log(newSearch, 'newSearch data');
-    
+            }    
             const queries = {
                 stock: {
                     text: `
@@ -252,23 +214,13 @@ export module globalserachService {
             Object.values(queries).forEach(query => {
                 query.text += ` ORDER BY ${orderBy} ${orderBydirection}`;
             });
-    
-            console.log(page, 'page');
-            console.log(recordcount, 'record Count');
             if (page && recordcount) {
                 Object.values(queries).forEach(query => {
                     query.text += ` LIMIT $${query.params.length + 1} OFFSET $${query.params.length + 2}`;
                     query.params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
                 });
             }
-    
-            Object.entries(queries).forEach(([key, query]) => {
-                console.log(`${key} Final query:`, query.text);
-                console.log(`${key} Params:`, query.params);
-            });
-    
-            // Execute all queries
-            const [stockResult, productRevoResult, ticketsResult] = await Promise.all([
+                const [stockResult, productRevoResult, ticketsResult] = await Promise.all([
                 query(queries.stock.text, queries.stock.params),
                 query(queries.product.text, queries.product.params), 
                 query(queries.tickets.text, queries.tickets.params)

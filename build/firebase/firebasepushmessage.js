@@ -6,22 +6,14 @@ admin.initializeApp({
     credential: admin.credential.cert(serviceData),
 });
 export const messageinitialization = async (userid, messageData) => {
-    console.log('INside Message IInit');
     try {
-        console.log(userid, 'USER ID IN PUSH NOTIFICATION IS');
         const queryText = `SELECT * FROM users where id = $1`;
         const dataresult = await query(queryText, [userid]);
         if (dataresult.rows.length > 0) {
             if (dataresult.rows[0].fcmid && dataresult.rows[0].fcmid != null) {
-                console.log(dataresult.rows[0].fcmid, 'DATA IS ');
                 userTokenData = dataresult.rows[0].fcmid;
                 const userToken = userTokenData;
-                // const messageData = {
-                //   title: "Hello User",
-                //   body: "User Push notification",
-                // };
                 let data = await sendPushNotification(userToken, messageData);
-                console.log(data, 'FInal Result is ');
             }
             else {
                 return 'No Push Notification Method Present ';

@@ -13,7 +13,6 @@ export module quoteController {
     export const upsertQuotes = async (request: any, reply: any) => {
         try {
             let upsertQuoteData = await quoteService.upsertQuotes(request.body)
-            console.log(upsertQuoteData, "upsertQuoteData")
             if (upsertQuoteData.command === "UPDATE" || upsertQuoteData.command === "INSERT") {
                 let message: any = {}
                 message = {
@@ -25,7 +24,6 @@ export module quoteController {
                 reply.status(200).send(message)
             }
             else {
-                console.log("else upsertQuoteData Error")
                 console.log(upsertQuoteData)
                 reply.status(404).send({ error: [upsertQuoteData] })
             }

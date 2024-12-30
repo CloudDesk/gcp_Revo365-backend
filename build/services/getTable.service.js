@@ -4,10 +4,8 @@ export var getTables;
 (function (getTables) {
     getTables.getTable = async (request) => {
         try {
-            console.log('test Data is ');
             let querystring = "SELECT table_name  as table FROM information_schema.tables WHERE table_schema='public'";
             let result = await query(querystring, []);
-            console.log(result.rows);
             const labels = {
                 home: "Home",
                 stock_revo: "Stock",
@@ -16,22 +14,17 @@ export var getTables;
                 notes: "Notes",
                 revoinvoice: "Revo Invoice",
                 inventoryusers: "Inventory Users",
-                // users: "Users",
                 supplier: "Supplier",
-                // address: "Address",
                 product_revo: "Products",
                 tickets: "Service Requests",
                 orders: "Orders",
                 poinvoice: "Supplier Invoice",
-                // rating: "Rating",
                 purchaserequest: "Purchase Request",
-                // cart: "Cart",
                 transaction: "Transaction",
                 quotes: "Quotes",
                 permissions: "Permissions"
             };
             result.rows.unshift({ table: 'home' });
-            console.log(JSON.stringify(result.rows));
             result = result.rows
                 .map((element) => {
                 const label = labels[element.table];
@@ -47,7 +40,6 @@ export var getTables;
     };
     getTables.getUserTable = async (request) => {
         try {
-            console.log(request.params);
             let allowedTables = [];
             let notALlowedTables = [];
             let getPermissions = await query("select * from permissions where role = $1", [request.params.role]);
@@ -61,7 +53,6 @@ export var getTables;
                     }
                 });
             });
-            console.log(notALlowedTables, 'Not allowd Tabls');
             return allowedTables;
         }
         catch (error) {

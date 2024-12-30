@@ -1,5 +1,5 @@
 import pkg from "pg";
-import { POSTGRES_HOST, POSTGRES_PASSWORD, POSTGRES_PORT, POSTGRES_USER, POSTGRES__DATABASE, } from "../config/config.js";
+import { POSTGRESS_QUERY_API, POSTGRES_HOST, POSTGRES_PASSWORD, POSTGRES_PORT, POSTGRES_USER, POSTGRES__DATABASE, } from "../config/config.js";
 import axios from "axios";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 const pool = new pkg.Pool({
@@ -39,33 +39,24 @@ export const query = async (stmt, options) => {
         // let res = await pool.query(stmt, options)
         // return res
         try {
-            console.log(querydata, "querydata if");
-            console.log(params, "querydata if");
-            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata, params });
-            console.log(res.data, "Result from app engine is ");
+            let res = await axios.post(POSTGRESS_QUERY_API, { querydata, params });
             return res.data;
         }
         catch (error) {
             console.log("Errpr in query data", error.response.data);
-            console.log("Errpr in query response", error);
             let errorResult = await ErrorHandler.checkErrorMessage(error.response.data);
             console.log(errorResult, "Error Result is ");
             throw errorResult;
         }
     }
     else {
-        // console.log("else latest");
-        // return await pool.query(stmt);
         try {
-            console.log(querydata, "querydata else");
-            let res = await axios.post("https://docblitz-437213.uc.r.appspot.com/execute-query", { querydata });
+            let res = await axios.post(POSTGRESS_QUERY_API, { querydata });
             return res.data;
         }
         catch (error) {
             console.log("Errpr in query data else ", error.response.data);
-            console.log("Errpr in query response else ", error);
             let errorResult = await ErrorHandler.checkErrorMessage(error.response.data);
-            console.log(errorResult, "Error Result is else");
             throw errorResult;
         }
     }
