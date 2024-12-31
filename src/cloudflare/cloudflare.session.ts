@@ -8,7 +8,7 @@ export async function getSession(request, reply) {
         //let sessionId = request.cookies.sessionId
         let sessionId = request.headers.authorization
         const response = await axios.get(`${workerUrl}/session/get?sessionId=${sessionId}`);
-        let data: any = {}
+        // let data: any = {}
         if (response.data.error) {
             return reply.status(401).send({ error: 'Unauthorized: No valid session' });
             //return true
@@ -31,14 +31,14 @@ export async function saveSession(sessionId, sessionData) {
                 'Content-Type': 'application/json'
             }
         });
-        console.log('Session saved: ', response.data);
+        // console.log('Session saved: ', response.data);
         if (response.data) {
             return { sucess: true, data: response.data }
         }
         
     } catch (error) {
         console.log(error);
-        console.error('Error saving session:', error.message);
+        // console.error('Error saving session:', error.message);
         
 
     }
