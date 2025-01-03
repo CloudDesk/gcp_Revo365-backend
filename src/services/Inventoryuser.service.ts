@@ -6,6 +6,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from "uuid";
 import { saveSession } from "./session.service.js";
+import { getOtp, saveOtp } from "./otp.service.js";
 
 let generatedotp;
 export module userInventoryService {
@@ -23,12 +24,9 @@ export module userInventoryService {
       let orderByDirection = "DESC";
 
       keys.forEach((key, index) => {
-        const paramValues: any = Array.isArray(values[index])
-          ? values[index]
-          : [values[index]];
+        const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
         if (key === "name") {
-          values[index] =
-            values[index].charAt(0).toUpperCase() + values[index].slice(1);
+          values[index] = values[index].charAt(0).toUpperCase() + values[index].slice(1);
         } else if (key === "sortby") {
           const [fieldName, direction] = paramValues[0].split("-");
           orderByField = fieldName;
@@ -38,18 +36,16 @@ export module userInventoryService {
           whereClauses.push(`(${key} != $${parameterIndex})`);
           queryParams.push(cleanValue);
           parameterIndex++;
-        } else if (key !== "page" && key !== "count") {
-          const clauses = paramValues.map(
-            (_, idx) => `${key} = $${parameterIndex + idx}`
-          );
+        }
+        else if (key !== "page" && key !== "count") {
+          const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
           whereClauses.push(`(${clauses.join(" OR ")})`);
           queryParams.push(...paramValues);
           parameterIndex += paramValues.length;
         }
       });
       const offset = (pageNumber - 1) * recordCount;
-      const whereClause =
-        whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
+      const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
       const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
 
       let queryText = `SELECT * FROM Inventoryusers ${whereClause} ${orderByClause}`;
@@ -288,6 +284,8 @@ return {
         request.body.text =
           "Your otp code to Reset Password For Revo Site is " + generatedotp;
         request.body.to = request.body.useremail;
+        let otpsave = await saveOtp(request.query.useremail, generatedotp);
+        console.log(otpsave);
         let finduser = await getInventoryUsersData(request, reply);
         if (finduser && finduser.length > 0) {
           let emailresult = await sendMail(request, generatedotp);
@@ -301,14 +299,20 @@ return {
         }
       } else if (request.body.otp) {
         let finduser = await getInventoryUsersData(request, reply);
-        if (request.body.otp == generatedotp) {
+        console.log('DAAAN',generatedotp,'==',Number(request.body.otp))
+        let optmatch = await getOtp(request.query.useremail, request.body.otp);
+        if (optmatch) {
           return {
             status: "success",
             message: "Entered otp is correct",
             data: finduser,
           };
         } else {
-          return { status: "failure", message: "please enter correct OTP" };
+          return {
+            status: "failure",
+            message:
+              "Invalid or expired OTP. Please regenerate or enter the correct OTP.",
+          };
         }
       }
     } catch (error) {
