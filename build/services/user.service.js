@@ -6,6 +6,7 @@ import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from 'uuid';
 import { saveSession } from "./session.service.js";
 import { REDIRECT_INVENTORY_URL } from "../config/config.js";
+import { getOtp, saveOtp } from "./otp.service.js";
 let generatedotp;
 export var userService;
 (function (userService) {
@@ -80,15 +81,19 @@ export var userService;
     userService.forgotuser = async (request) => {
         try {
             request.query.useremail = request.body.useremail;
+            let data = { email: request.body.useremail };
             if (!request.body.otp) {
                 generatedotp = Math.floor(1000 + Math.random() * 9000);
                 request.body.subject = "OTP Verification Code";
                 request.body.text =
                     "Your otp code to Reset Password For Revo Site is " + generatedotp;
                 request.body.to = request.body.useremail;
+                let otpsave = await saveOtp(request.query.useremail, generatedotp);
+                console.log(otpsave);
                 let finduser = await userService.getUsersData(request);
                 console.log(finduser, "FInd User is ");
                 if (finduser && finduser.length > 0) {
+                    data.otp = generatedotp;
                     let emailresult = await sendMail(request, generatedotp);
                     console.log(emailresult);
                     return { status: "success", Message: "OTP sent Successfuly" };
@@ -101,10 +106,11 @@ export var userService;
                 }
             }
             else if (request.body.otp) {
-                console.log("else if  value of generatedotp is " + generatedotp);
+                console.log("else if  value of generatedotp is " + request.body.otp);
                 let finduser = await userService.getUsersData(request);
+                let optmatch = await getOtp(request.query.useremail, request.body.otp);
                 console.log(finduser, "FInd User is ");
-                if (request.body.otp == generatedotp) {
+                if (optmatch) {
                     return {
                         status: "success",
                         Message: "Entered otp is correct",
@@ -112,7 +118,7 @@ export var userService;
                     };
                 }
                 else {
-                    return { status: "failure", Message: "please enter correct OTP" };
+                    return { status: "failure", Message: "Invalid or expired OTP. Please regenerate or enter the correct OTP." };
                 }
             }
         }
@@ -123,6 +129,49 @@ export var userService;
             return ErrorMessage;
         }
     };
+    // export const forgotuser = async (request: any) => {
+    //   try {
+    //     request.query.useremail = request.body.useremail;
+    //     if (!request.body.otp) {
+    //       generatedotp = Math.floor(1000 + Math.random() * 9000);
+    //       request.body.subject = "OTP Verification Code";
+    //       request.body.text =
+    //         "Your otp code to Reset Password For Revo Site is " + generatedotp;
+    //       request.body.to = request.body.useremail;
+    //       let finduser = await getUsersData(request);
+    //       console.log(finduser, "FInd User is ");
+    //       if (finduser && finduser.length > 0) {
+    //         let emailresult = await sendMail(request, generatedotp);
+    //         console.log(emailresult);
+    //         return { status: "success", Message: "OTP sent Successfuly" };
+    //       } else {
+    //         return {
+    //           status: "failure",
+    //           Message:
+    //             "Entered User Email Is wrong.please Enter correct Email to Reset Password",
+    //         };
+    //       }
+    //     } else if (request.body.otp) {
+    //       console.log("else if  value of generatedotp is " + generatedotp);
+    //       let finduser = await getUsersData(request);
+    //       console.log(finduser, "FInd User is ");
+    //       if (request.body.otp == generatedotp) {
+    //         return {
+    //           status: "success",
+    //           Message: "Entered otp is correct",
+    //           data: finduser,
+    //         };
+    //       } else {
+    //         return { status: "failure", Message: "please enter correct OTP" };
+    //       }
+    //     }
+    //   } catch (error) {
+    //     console.error("Query Execution Error: IN getproductsData", error);
+    //     let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //     console.log(ErrorMessage);
+    //     return ErrorMessage;
+    //   }
+    // };
     // export const getLoggedInUsersData = async (request, reply) => {
     //   try {
     //     const queryString = `SELECT * FROM users where useremail = '${request.params.useremail}'`;

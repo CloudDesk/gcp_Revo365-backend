@@ -6,6 +6,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from "uuid";
 import { saveSession } from "./session.service.js";
+import { getOtp, saveOtp } from "./otp.service.js";
 let generatedotp;
 export var userInventoryService;
 (function (userInventoryService) {
@@ -21,12 +22,9 @@ export var userInventoryService;
             let orderByField = "modifieddate";
             let orderByDirection = "DESC";
             keys.forEach((key, index) => {
-                const paramValues = Array.isArray(values[index])
-                    ? values[index]
-                    : [values[index]];
+                const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
                 if (key === "name") {
-                    values[index] =
-                        values[index].charAt(0).toUpperCase() + values[index].slice(1);
+                    values[index] = values[index].charAt(0).toUpperCase() + values[index].slice(1);
                 }
                 else if (key === "sortby") {
                     const [fieldName, direction] = paramValues[0].split("-");
@@ -250,6 +248,8 @@ export var userInventoryService;
                 request.body.text =
                     "Your otp code to Reset Password For Revo Site is " + generatedotp;
                 request.body.to = request.body.useremail;
+                let otpsave = await saveOtp(request.query.useremail, generatedotp);
+                console.log(otpsave);
                 let finduser = await userInventoryService.getInventoryUsersData(request, reply);
                 if (finduser && finduser.length > 0) {
                     let emailresult = await sendMail(request, generatedotp);
@@ -264,7 +264,9 @@ export var userInventoryService;
             }
             else if (request.body.otp) {
                 let finduser = await userInventoryService.getInventoryUsersData(request, reply);
-                if (request.body.otp == generatedotp) {
+                console.log('DAAAN', generatedotp, '==', Number(request.body.otp));
+                let optmatch = await getOtp(request.query.useremail, request.body.otp);
+                if (optmatch) {
                     return {
                         status: "success",
                         message: "Entered otp is correct",
@@ -272,7 +274,10 @@ export var userInventoryService;
                     };
                 }
                 else {
-                    return { status: "failure", message: "please enter correct OTP" };
+                    return {
+                        status: "failure",
+                        message: "Invalid or expired OTP. Please regenerate or enter the correct OTP.",
+                    };
                 }
             }
         }
