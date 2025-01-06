@@ -309,10 +309,15 @@ export module transactionService {
   export const paymentConfirmation = async (request: any, reply: any) => {
     try {
       console.log("inside payment confirmation");
-      console.log(REDIRECT_URL_SUCCESS, "REDIRECT URL SUCCESS");
-      console.log(REDIRECT_URL_FAILURE, "REDIRECT URL FAILURE");
+      // console.log(REDIRECT_URL_SUCCESS, "REDIRECT URL SUCCESS");
+      // console.log(REDIRECT_URL_FAILURE, "REDIRECT URL FAILURE");
       // console.log('status');
       const merchantTransactionId = request.query.id;
+      const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,[merchantTransactionId])
+            if(checkMerchantId.rows.length === 0){
+                console.log('Merchant Transaction ID not found, Payment timed out');
+                return { message: "Payment timed out, try again." };
+            }
       const cloudflaretoken = request.query.token;
       const transactionfor = request.query.transactionfor;
       const merchantId = MERCHANT_ID;
