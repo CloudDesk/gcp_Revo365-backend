@@ -17,8 +17,8 @@ export var notesController;
                 let message = {};
                 message = {
                     message: upsertnotesData.command === "UPDATE"
-                        ? `notes Updated successfully`
-                        : `notes Inserted successfully`,
+                        ? `Notes Updated successfully`
+                        : `Notes Inserted successfully`,
                     Data: upsertnotesData.rows[0]
                 };
                 reply.status(200).send(message);

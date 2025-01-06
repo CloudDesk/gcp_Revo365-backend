@@ -4,7 +4,7 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
 import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
-import { REDIRECT_URL_FAILURE, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
+import { REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
@@ -252,10 +252,15 @@ export var transactionService;
     transactionService.paymentConfirmation = async (request, reply) => {
         try {
             console.log("inside payment confirmation");
-            console.log(REDIRECT_URL_SUCCESS, "REDIRECT URL SUCCESS");
-            console.log(REDIRECT_URL_FAILURE, "REDIRECT URL FAILURE");
+            // console.log(REDIRECT_URL_SUCCESS, "REDIRECT URL SUCCESS");
+            // console.log(REDIRECT_URL_FAILURE, "REDIRECT URL FAILURE");
             // console.log('status');
             const merchantTransactionId = request.query.id;
+            const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId]);
+            if (checkMerchantId.rows.length === 0) {
+                console.log('Merchant Transaction ID not found, Payment timed out');
+                return { message: "Payment timed out, try again." };
+            }
             const cloudflaretoken = request.query.token;
             const transactionfor = request.query.transactionfor;
             const merchantId = MERCHANT_ID;

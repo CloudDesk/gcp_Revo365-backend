@@ -842,7 +842,7 @@ ORDER BY
                     orderline AS ol ON date_trunc('month', to_timestamp(ol.createddate)) = ds.month_start
                 AND ol.orderstatus IN (${statusesToInclude.map((_, i) => `$${i + 3}`).join(', ')})
                 WHERE
-                    ds.month_start < date_trunc('month', to_timestamp($2)) 
+                    ds.month_start <= date_trunc('month', to_timestamp($2)) 
                 GROUP BY
                     ds.month_start
                 ORDER BY
@@ -856,6 +856,7 @@ ORDER BY
                 headerRow.push('Total Quantity');
             }
             // Prepare the data rows
+            console.log('Result - ', result.rows);
             const dataRows = result.rows.map(row => {
                 const rowData = [row.Month];
                 statusesToInclude.forEach(status => {
@@ -868,6 +869,9 @@ ORDER BY
                 return rowData;
             });
             const finalResult = [headerRow, ...dataRows];
+            console.log('1Final Result:', finalResult);
+            console.log('1header Row:', headerRow);
+            console.log('1data row:', dataRows);
             return finalResult;
         }
         catch (error) {
