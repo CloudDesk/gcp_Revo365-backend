@@ -38,42 +38,64 @@ pool.on("error", (err: any) => {
   console.log("error is ");
   console.error("Error connecting to the database:", err.message);
 });
-export const query = async (stmt: any, options: any) => {
-  let querydata = stmt;
-  let params = options;
 
-  if (Object.keys(options).length > 0 || options.length > 0) {
-    // let res = await pool.query(stmt, options)
-    // return res
-    try {
-      let res = await axios.post(
-        POSTGRESS_QUERY_API,
-        { querydata, params }
-      );
-      return res.data;
-    } catch (error) {
-      console.log("Errpr in query data", error.response.data);
-      let errorResult = await ErrorHandler.checkErrorMessage(
-        error.response.data
-      );
-      console.log(errorResult, "Error Result is ");
-      throw errorResult;
+//App Engine
+// export const query = async (stmt: any, options: any) => {
+//   let querydata = stmt;
+//   let params = options;
+
+//   if (Object.keys(options).length > 0 || options.length > 0) {
+//     // let res = await pool.query(stmt, options)
+//     // return res
+//     try {
+//       let res = await axios.post(
+//         POSTGRESS_QUERY_API,
+//         { querydata, params }
+//       );
+//       return res.data;
+//     } catch (error) {
+//       console.log("Errpr in query data", error.response.data);
+//       let errorResult = await ErrorHandler.checkErrorMessage(
+//         error.response.data
+//       );
+//       console.log(errorResult, "Error Result is ");
+//       throw errorResult;
+//     }
+//   } else {
+//     try {
+//       let res = await axios.post(
+//         POSTGRESS_QUERY_API,
+//         { querydata }
+//       );
+//       return res.data;
+//     } catch (error) {
+//       console.log("Errpr in query data else ", error.response.data);
+//       let errorResult = await ErrorHandler.checkErrorMessage(
+//         error.response.data
+//       );
+//       throw errorResult;
+//     }
+//   }
+// };
+
+
+
+export const query = async (stmt: any, options: any) => {
+    if (Object.keys(options).length > 0 || options.length > 0) {
+        let res = await pool.query(stmt, options)
+        return res
+    } else {
+        console.log("else latest");
+        return await pool.query(stmt);
     }
-  } else {
-    try {
-      let res = await axios.post(
-        POSTGRESS_QUERY_API,
-        { querydata }
-      );
-      return res.data;
-    } catch (error) {
-      console.log("Errpr in query data else ", error.response.data);
-      let errorResult = await ErrorHandler.checkErrorMessage(
-        error.response.data
-      );
-      throw errorResult;
-    }
-  }
 };
+
+
+
+
+
+
+
+
 
 export default pool;
