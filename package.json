@@ -8,9 +8,11 @@
     "dev": "npx tsx src/index",
     "build": "tsc",
     "test": "npm run test",
-    "docker-build": "docker build -t revo365-dev-backend .",
-    "docker-tag": "docker tag revo365-dev-backend gcr.io/revo-dev-and-test/revo365-dev-backend",
-    "docker-push": "docker push gcr.io/revo-dev-and-test/revo365-dev-backend"
+    "revo-backend-build": "docker build -t revo365-sit-backend .",
+    "revo-backend-tag": "docker tag revo365-dev-backend gcr.io/revo-dev-and-test/revo365-sit-backend",
+    "revo-backend-push": "docker push gcr.io/revo-dev-and-test/revo365-sit-backend",
+    "revo-backend-deploy": "gcloud run deploy revo365-sit --image gcr.io/revo-dev-and-test/revo365-sit-backend:latest --platform managed --region us-central1 --allow-unauthenticated --port 5600 --service-account revodevbackend@revo-dev-and-test.iam.gserviceaccount.com"
+
   },
   "repository": {
     "type": "git",

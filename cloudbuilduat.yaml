@@ -7,21 +7,21 @@ steps:
       - 'config'
       - 'set'
       - 'project'
-      - 'revo-prod-445604'
+      - 'revo-dev-and-test'
 
   # Step 3: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/revo-prod-445604/revo-backend-prodenv:latest'
+      - 'gcr.io/revo-dev-and-test/revo-backend-uat:latest'
       - '.'
 
   # Step 4: Push the Docker image to Google Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/revo-prod-445604/revo-backend-prodenv:latest'
+      - 'gcr.io/revo-dev-and-test/revo-backend-uat:latest'
 
   # Step 5: Deploy the image to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -29,18 +29,18 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'revo-backend'
+      - 'revo365-uat'
       - '--image'
-      - 'gcr.io/revo-prod-445604/revo-backend-prodenv:latest'
+      - 'gcr.io/revo-dev-and-test/revo-backend-uat:latest'
       - '--region'
       - 'us-central1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
       - '--port'
-      - '5600'
+      - '5700'
       - '--service-account'
-      - 'revo-prod@revo-prod-445604.iam.gserviceaccount.com'
+      - 'revotestbackend@revo-dev-and-test.iam.gserviceaccount.com'
       - '--set-env-vars'
       - 'GCP_PROJECT_ID=${_GCP_PROJECT_ID}, GCP_PROJECT_LOCATION=${_GCP_PROJECT_LOCATION},GCP_PROJECT_QUEUE=${_GCP_PROJECT_QUEUE},GCP_TASK_URL=${_GCP_TASK_URL},GMAIL_AUTH_PASSWORD=${_GMAIL_AUTH_PASSWORD},GMAIL_AUTH_USER=${_GMAIL_AUTH_USER},GMAIL_HOST=${_GMAIL_HOST},GMAIL_PORT=${_GMAIL_PORT},GMAIL_SERVICE=${_GMAIL_SERVICE},POSTGRES__DATABASE=${_POSTGRES__DATABASE},POSTGRES_HOST=${_POSTGRES_HOST},POSTGRES_PASSWORD=${_POSTGRES_PASSWORD},POSTGRES_PORT=${_POSTGRES_PORT},POSTGRES_USER=${_POSTGRES_USER},POSTGRESS_QUERY_API=${_POSTGRESS_QUERY_API},REDIRECT_INVENTORY_URL=${_REDIRECT_INVENTORY_URL},REDIRECT_URL_FAILURE=${_REDIRECT_URL_FAILURE},REDIRECT_URL_PAYMENT_STATUS=${_REDIRECT_URL_PAYMENT_STATUS},REDIRECT_URL_SUCCESS=${_REDIRECT_URL_SUCCESS},REDIS_EMAIL_OTPEXPSEC=${_REDIS_EMAIL_OTPEXPSEC},REDIS_HOST=${_REDIS_HOST},REDIS_PASSWORD=${_REDIS_PASSWORD},REDIS_PORT=${_REDIS_PORT},REDIS_SESSIONEXSEC=${_REDIS_SESSIONEXSEC}'
 
