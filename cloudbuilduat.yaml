@@ -39,6 +39,8 @@ steps:
       - '--allow-unauthenticated'
       - '--port'
       - '5700'
+      - '--execution-environment'
+      - 'gen2'
       - '--service-account'
       - 'revotestbackend@revo-dev-and-test.iam.gserviceaccount.com'
       - '--set-env-vars'
