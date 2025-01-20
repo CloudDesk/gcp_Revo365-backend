@@ -107,7 +107,7 @@ fastify.addHook("onReady", async () => {
   }
 });
 
-fastify.listen({ port: PORT,host:"0.0.0.0"
+fastify.listen({ port: PORT || 5600,host:"0.0.0.0"
 }, (err, address) => {
   try {
     if (err) {
