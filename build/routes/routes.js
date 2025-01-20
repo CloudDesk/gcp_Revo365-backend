@@ -44,6 +44,7 @@ import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
 // import { getSession } from "../database/redis.session.js";
 // import { getSession } from "../cloudflare/cloudflare.session.js";
+console.log('test');
 const Revo365Routes = async function (fastify, opts) {
     console.log('Routes called ');
     //product version 1
