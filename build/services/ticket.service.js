@@ -301,6 +301,8 @@ export var ticketService;
             return result;
         }
         catch (error) {
+            console.log(error, " error in upsertTickets");
+            console.log(error.message, " error in upsertTickets");
             let ErrorData = ErrorHandler.handleQueryError(error);
             return ErrorData;
         }
