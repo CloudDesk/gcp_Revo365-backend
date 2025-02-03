@@ -282,6 +282,8 @@ export module ticketService {
           .join(", ")}) RETURNING *`;
         params = fieldValues;
       }
+      console.log(querydata, " querydata in Upsert Normal Tickets");
+
       const result = await query(querydata, params);
       console.log(result.rows ,'INSERTED DATA');
       if (result && result.rows.length > 0) {
@@ -340,6 +342,7 @@ export module ticketService {
           .join(", ")}) RETURNING *`;
         params = fieldValues;
       }
+      console.log(querydata, " querydata in Upsert GCP Tickets");
       const result = await query(querydata, params);
       console.log(result.rows ,'INSERTED DATA');
       if (result && result.rows.length > 0) {
