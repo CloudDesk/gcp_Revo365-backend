@@ -258,6 +258,8 @@ export module ticketService {
           .join(", ")}) RETURNING *`;
         params = fieldValues;
       }
+      console.log(querydata, " querydata in Upsert Normal Tickets");
+
       const result = await query(querydata, params);
       if (result && result.rows.length > 0) {
         let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
@@ -310,6 +312,7 @@ export module ticketService {
           .join(", ")}) RETURNING *`;
         params = fieldValues;
       }
+      console.log(querydata, " querydata in Upsert GCP Tickets");
       const result = await query(querydata, params);
       if (result && result.rows.length > 0) {
         let userdata = await query(`SELECT * FROM users WHERE id = $1`, [

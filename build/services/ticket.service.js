@@ -265,6 +265,7 @@ export var ticketService;
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
+            console.log(querydata, " querydata in Upsert Normal Tickets");
             const result = await query(querydata, params);
             console.log(result.rows, 'INSERTED DATA');
             if (result && result.rows.length > 0) {
@@ -300,6 +301,8 @@ export var ticketService;
             return result;
         }
         catch (error) {
+            console.log(error, " error in upsertTickets");
+            console.log(error.message, " error in upsertTickets");
             let ErrorData = ErrorHandler.handleQueryError(error);
             return ErrorData;
         }
@@ -324,6 +327,7 @@ export var ticketService;
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
+            console.log(querydata, " querydata in Upsert GCP Tickets");
             const result = await query(querydata, params);
             console.log(result.rows, 'INSERTED DATA');
             if (result && result.rows.length > 0) {
