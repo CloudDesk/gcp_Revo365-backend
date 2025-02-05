@@ -12,6 +12,7 @@ export module productrevoController {
             let getProductRevoResult = await productrevoService.getproductsData(request);
             reply.send(getProductRevoResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getProductsrevoData', error);
             reply.status(500).send(error.message);
         }
     }
@@ -20,6 +21,7 @@ export module productrevoController {
             let getProductRevoResult = await productrevoService.getEcomProducts(request);
             reply.send(getProductRevoResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getProductsEcomrevoData', error);
             reply.send(error.message);
         }
     }
@@ -28,6 +30,7 @@ export module productrevoController {
             let getProductsResult = await productrevoService.getSimilarProducts(request)
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getSimilarProducts', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -37,6 +40,7 @@ export module productrevoController {
             let getProductsResult = await productrevoService.bulkupsertProducttosetZero(request.body, true)
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller upsertlockqty', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -45,6 +49,7 @@ export module productrevoController {
             let getProductsResult = await productrevoService.getArcheivedProductsrevo(request)
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getArcheivedProductsRevo', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -56,6 +61,7 @@ export module productrevoController {
             let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id))
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getEachProductsRevo', error);
             reply.send(`${error.message} error in get Each Products`)
         }
     }
@@ -66,6 +72,7 @@ export module productrevoController {
             let getProductsResult = await productrevoService.updateOrderedQuantityarray(request.body)
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller updateOrderedQuantityarray', error);
             reply.send(`${error.message} error in get Each Products`)
         }
     }
@@ -75,6 +82,7 @@ export module productrevoController {
             let deleteProductRevoResult = await productrevoService.deleteProductrevo(Number(id));
             reply.send(deleteProductRevoResult);
         } catch (error) {
+            console.error('ERROR IN  Controller deleteProductrevo', error);
             reply.send(error.message);
         }
     }
@@ -82,7 +90,6 @@ export module productrevoController {
         try {
             const productrevoData = request.body;
             let upsertProductRevoResult = await productrevoService.upsertProductrevo(productrevoData)
-            console.log(JSON.stringify(upsertProductRevoResult));
             if (upsertProductRevoResult.command === "UPDATE" || upsertProductRevoResult.command === "INSERT") {
                 let message: any = {}
                 message = {
@@ -93,10 +100,10 @@ export module productrevoController {
                 reply.status(200).send(message)
             }
             else {
-                console.log(upsertProductRevoResult)
                 reply.status(404).send({ error: [upsertProductRevoResult] })
             }
         } catch (error) {
+            console.error('ERROR IN  Controller upsertProductrevo', error);
             reply.send(error.message)
         }
     }
@@ -109,7 +116,6 @@ export module productrevoController {
                 let message: any = {}
                 let productId = productUpsertResult.productid
                 if (productId) {
-                    console.log(productId);
                     let result = await uploadtos3(productUpsertResult.pathurldatas, productId)
                 }
                 message = {
@@ -120,7 +126,7 @@ export module productrevoController {
                 reply.status(200).send(message)
             }
         } catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error('ERROR IN  Controller upsertProductwithfileRevo', error);
             reply.send(` Error in upsert Product : ${error.message}`)
         }
     }
@@ -139,7 +145,7 @@ export module productrevoController {
             }
             // reply.send('Success')
         } catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error('ERROR IN  Controller upsertProductwithfileRevogcp', error);
             reply.send(` Error in upsert Product : ${error.message}`)
         }
     }
@@ -162,6 +168,7 @@ export module productrevoController {
             }
 
         } catch (error) {
+            console.error('ERROR IN  Controller rearrangeImageRevo', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -171,19 +178,9 @@ export module productrevoController {
             let resultremoverecyclebin = await productrevoService.updateRemoveFromRecyclebinRevo()
             reply.send(resultremoverecyclebin)
         } catch (error) {
+            console.error('ERROR IN  Controller updateRemovedFromRecyclebinRevo', error);
             reply.send(`Error in updating recyclebin : ${error.message}`)
         }
     }
-
-
-    // export const upsertCountFields = async (request: any, reply: any) => {
-    //     try {
-    //         let upsertCount = await productrevoService.upsertQuantityFields(request)
-    //         reply.send(upsertCount)
-
-    //     } catch (error) {
-    //         reply.send(error.message)
-    //     }
-    // }
 
 }

@@ -6,15 +6,16 @@ export module supplierController {
             let getSupplierResult = await supplierSerivce.getSupplierData(request);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplier Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
-    //lookup
     export const getSupplierName = async (request, reply) => {
         try {
             let getSupplierResult = await supplierSerivce.getSupplierName(request.query);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplierName Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
@@ -23,6 +24,7 @@ export module supplierController {
             let getSupplierResult = await supplierSerivce.getSupplierProductdata(request.params.id);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplierProductdata Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
@@ -41,6 +43,7 @@ export module supplierController {
                 reply.status(200).send(message);
             }
         } catch (error) {
+            console.error('Error in upsertSupplier Controller', error);
             reply.send(error.message, 'Error in upsert Supplier Data Controller')
         }
     }
@@ -50,6 +53,7 @@ export module supplierController {
             let deleteSupplierResult = await supplierSerivce.deleteSupplierData(request.params.id);
             reply.send(deleteSupplierResult)
         } catch (error) {
+            console.error('Error in deleteSupplier Controller', error);
             reply.send(error.message, 'Error in delete Supplier Data Controller')
         }
     }

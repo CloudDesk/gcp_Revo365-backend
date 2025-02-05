@@ -37,7 +37,6 @@ export const  sendMail = async (request, reply) => {
 
     transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
-            console.error("Error sending email: ", error);
             if (reply) {
                 reply.status(404).send('Error Sending Email')
             }

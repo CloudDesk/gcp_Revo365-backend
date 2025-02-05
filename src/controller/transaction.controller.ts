@@ -7,24 +7,17 @@ export module transactionController {
       let transactionData = await transactionService.paymentInitialization(
         request
       );
-      console.log(transactionData, "Transacion data is ===>> ");
       if (transactionData?.status == 400) {
         reply.status(404).send(transactionData.message);
       } else {
-        console.log(transactionData);
         reply.send(transactionData);
       }
     } catch (error) {
-      console.error(
-        "Query Execution Error: IN paymentInitialization Controller",
-        error
-      );
+      console.error("Query Execution Error: IN paymentInitialization Controller",error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
-  // Just for me
   export const inserttransaction = async (request: any, reply: any) => {
     try {
       const transactionReqData = request.body;
@@ -35,13 +28,11 @@ export module transactionController {
       if (transactionData?.status == 400) {
         reply.status(404).send(transactionData.message);
       } else {
-        console.log(transactionData);
         reply.send(transactionData);
       }
     } catch (error) {
-      console.error("Query Execution Error: IN ticketinsert Controller", error);
+      console.error("Query Execution Error: IN inserttransaction Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -51,15 +42,13 @@ export module transactionController {
         request,
         reply
       );
-      console.log(transactionData);
       reply.send(transactionData);
     } catch (error) {
       console.error(
-        "Query Execution Error: IN paymentInitialization Controller",
+        "Query Execution Error: IN paymentConfirmation Controller",
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -74,7 +63,6 @@ export module transactionController {
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

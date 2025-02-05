@@ -8,6 +8,7 @@ export module constEstimationController {
             reply.send(getCostEstimationDataResult);
 
         } catch (error) {
+            console.error('ERROR IN  Controller getCostEstimationData', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -29,6 +30,7 @@ export module constEstimationController {
                 reply.status(500).send(upsertCostEstimationResult);
             }
         } catch (error) {
+            console.error('ERROR IN  Controller upsertCostEstimation', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -51,6 +53,7 @@ export module constEstimationController {
                 reply.status(500).send(upsertCostEstimationResult);
             }
         } catch (error) {
+            console.error('ERROR IN  Controller upsertGcpCostEstimation', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

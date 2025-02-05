@@ -18,7 +18,6 @@ export module stockRevoService {
 
             keys.forEach((key, index) => {
                 const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
-                console.log(paramValues, 'paramValues');
                 if (key === "displaysize" || key === "price") {
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
@@ -34,7 +33,6 @@ export module stockRevoService {
                 } else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
                     whereClauses.push(`(${key} != $${parameterIndex} OR ${key} IS NULL)`);
-                    console.log(whereClauses, 'whereClause');
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 } else if (key !== "page" && key !== "count") {
@@ -53,37 +51,29 @@ export module stockRevoService {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result)
             return datatypecheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getStockRevoData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
     export const getEachStockRevoData = async (request: any) => {
         try {
             const { id } = request.params
-            console.log("getEachProducts call 1");
-            console.log(id);
             const result: any = await query(
                 `SELECT * FROM stock_revo where id=${id}`,
                 []
             );
             let getvalues = { objectName: "null" };
             getvalues.objectName = "products";
-            // let data = await picklistservice.getProductPicklist(getvalues);
-            // console.log(data);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getEachStockRevoData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -91,10 +81,8 @@ export module stockRevoService {
         try {
             let querydata: string;
             let params: any[];
-            console.log(stockRevoData.manufacturedyear);
             if (stockRevoData.manufacturedyear) {
                 let converttoutc = await DateCustomize.ConvertDDMMYYYtoutc(stockRevoData.manufacturedyear)
-                console.log(converttoutc, 'Convert to utc ');
                 stockRevoData.manufacturedyear = converttoutc
             }
             if (stockRevoData.releaseyear) {
@@ -120,21 +108,16 @@ export module stockRevoService {
                 command = "INSERT";
             }
 
-            console.log(querydata, 'querydata');
             const result = await query(querydata, params);
-            console.log('<<<<<',result, '<<<<<');
             const puc = result.rows[0].puc;
-            console.log('-- RESULT', puc, 'RESULT --');
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
             const totalCount = parseInt(countResult.rows[0].count, 10);
-            console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
             return { command, result: result, totalCount };
         } catch (error) {
             console.error("Query Execution Error: IN upsertStockRevoData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -156,7 +139,6 @@ export module stockRevoService {
                             whereClause += " AND ";
                         }
                     }
-                    console.log(whereClause, 'Data set');
                     whereClause += `(${paramValues
                         .map((_, idx) => `${key} = $${parameterIndex + idx}`)
                         .join(" OR ")})`;
@@ -166,8 +148,6 @@ export module stockRevoService {
             });
             const offset = (pageNumber - 1) * recordCount;
             let queryText = `SELECT * FROM stock_revo`;
-            console.log(whereClause, 'whereClause');
-            console.log(queryParams, 'queryParams');
             if (whereClause) {
                 queryText += ` WHERE ${whereClause} AND isdeleted = true AND removefromrecyclebin = false AND ewaste = false OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
                     }`;
@@ -182,15 +162,12 @@ export module stockRevoService {
             else {
                 queryText += ` isdeleted = true AND removefromrecyclebin = false AND ewaste = false`;
             }
-            console.log(queryText, 'Query text is');
-            console.log(queryParams, 'params');
             const result: any = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
-            console.error("Query Execution Error: IN getArcheivedStocksrevo", error);
+            console.error("Query Execution Error: IN getDeletedStocksrevo", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -199,7 +176,6 @@ export module stockRevoService {
     export const updateEwaste = async (id: number) => { 
         try {
             const result = await query(`UPDATE stock_revo SET ewaste = true WHERE id = $1`, [id]);
-            // console.log('<<<',result,'<<<');
             if (result.command == 'UPDATE') {
                 return { message: 'E-waste updated successfully', rowCount: result.rowCount };
             } else {
@@ -229,7 +205,6 @@ export module stockRevoService {
                             whereClause += " AND ";
                         }
                     }
-                    console.log(whereClause, 'Data set');
                     whereClause += `(${paramValues
                         .map((_, idx) => `${key} = $${parameterIndex + idx}`)
                         .join(" OR ")})`;
@@ -239,8 +214,6 @@ export module stockRevoService {
             });
             const offset = (pageNumber - 1) * recordCount;
             let queryText = `SELECT * FROM stock_revo`;
-            console.log(whereClause, 'whereClause');
-            console.log(queryParams, 'queryParams');
             if (whereClause) {
                 queryText += ` WHERE ${whereClause} AND ewaste = true OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
                     }`;
@@ -255,15 +228,12 @@ export module stockRevoService {
             else {
                 queryText += ` WHERE ewaste = true`;
             }
-            console.log(queryText, 'Query text is');
-            console.log(queryParams, 'params');
             const result: any = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getEwasteStocksrevo", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -286,23 +256,19 @@ export module stockRevoService {
             } else {
                 return { message: "Id is required to delete the stock", status: 400 };
             }
-            console.log(querydata, 'querydata');
             const result = await query(querydata, params);
             if (result.rows.length === 0) {
                 return { message: "No stock found with this id", status: 400 };
             }
             const puc = result.rows[0].puc;
-            console.log('-- RESULT', puc, 'RESULT --');
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
             const totalCount = parseInt(countResult.rows[0].count, 10);
-            console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
             return { command, result: result, totalCount };
         } catch (error) {
             console.error("Query Execution Error: IN upsertStockRevoDatadelete", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -325,42 +291,32 @@ export module stockRevoService {
                 return { message: "Id is required to Archive the stock", status: 400 };
             }
 
-            console.log(querydata, 'querydata');
             const result = await query(querydata, params);
             if (result.rows.length === 0) {
                 return { message: "No stock found with this id", status: 400 };
             }
             const puc = result.rows[0].puc;
-            console.log('-- RESULT', puc, 'RESULT --');
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
             const totalCount = parseInt(countResult.rows[0].count, 10);
-            console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
             return { command, result: result, totalCount };
         } catch (error) {
-            console.error("Query Execution Error: IN upsertStockRevoDatadelete", error);
+            console.error("Query Execution Error: IN upsertStockRevoDataarchive", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
     export const upsertBulkStockRevoData = async (jsonresult: any) => {
         try {
             let totalRecords = jsonresult.length;
-            let successCount = 0;
-            let failureCount = 0;
-            console.log(totalRecords, 'TOTAL RECORD IS ');
-            console.log(jsonresult.length, 'Json Result Length is');
             for (let i = 0; i < jsonresult.length; i++) {
                 if (jsonresult[i].manufacturedyear) {
                     let convertDateToUTC = await DateCustomize.ConvertDDMMYYYtoutc(jsonresult[i].manufacturedyear)
-                    console.log(convertDateToUTC, 'Manufctured Year Conversion')
                     jsonresult[i].manufacturedyear = convertDateToUTC
                 }
                 if (jsonresult[i].releaseyear) {
                     let convertDateToUTC = await DateCustomize.ConvertDDMMYYYtoutc(jsonresult[i].releaseyear)
-                    console.log(convertDateToUTC, 'Manufctured Year Conversion releaseyear')
                     jsonresult[i].releaseyear = convertDateToUTC
                 }
             }
@@ -376,89 +332,24 @@ export module stockRevoService {
             let result;
             try {
                 result = await query(querydata, values);
-                console.log('<<<<',JSON.stringify(result),'<<<<');
-                console.log(JSON.stringify(result.rowCount), 'Result is');
                 let successCount = result?.rowCount
-                console.log(successCount, 'sucess Count');
                 const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
                 const countParams = [result.rows[0]?.puc];
                 const countResult = await query(countQuery, countParams);
                 const totalCount = parseInt(countResult.rows[0].count, 10);
-                console.log(totalCount);
                 return { result, totalCount, totalRecords, successCount };
             } catch (error) {
-                console.error("Query Execution Error: upsertBulkStockRevoData result", error);
+                console.error("Query Execution Error: upsertBulkStockRevoData", error);
                 let ErrorMessage = await ErrorHandler.handleQueryError(error)
-                console.log(ErrorMessage);
                 return ErrorMessage
             }
 
         } catch (error) {
-            console.error("Query Execution Error: IN upsertBulkStockRevoData FINAL", error);
+            console.error("Query Execution Error: IN upsertBulkStockRevoData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
-    // export const updateQuantity = async (puc: string) => {
-    //     // console.log('puc inside updatequantity',puc);
-    //     try {
-    //         const qunatityQuery = `
-    //             SELECT 
-    //                 COUNT(*) FILTER (
-    //                     WHERE puc = $1
-    //                     AND (isdeleted = false or isdeleted is null)
-    //                     AND (isarchive = false or isarchive is null) 
-    //                     AND (removefromrecyclebin = false or removefromrecyclebin is null)
-    //                 ) AS quantity,
-    //                 COUNT(*) FILTER (
-    //                     WHERE puc = $1
-    //                     AND (isdeleted = false or isdeleted is null)
-    //                     AND (isarchive = false or isarchive is null)
-    //                     AND (removefromrecyclebin = false or removefromrecyclebin is null)
-    //                     AND ecompublish = true
-    //                 ) as ecompublishedquantity,
-    //                 COUNT(*) FILTER (
-    //                     WHERE puc = $1
-    //                     AND (isdeleted = false or isdeleted is null)
-    //                     AND (isarchive = false or isarchive is null)
-    //                     AND (removefromrecyclebin = false or removefromrecyclebin is null)
-    //                     AND ecompublish = true AND stockstatus = 'Sold'
-    //                 ) AS soldquantity,
-    //                 COUNT(*) FILTER (
-    //                     WHERE puc = $1
-    //                     AND (isdeleted = false or isdeleted is null)
-    //                     AND (isarchive = false or isarchive is null)
-    //                     AND (removefromrecyclebin = false or removefromrecyclebin is null)
-    //                     AND ecompublish = true AND stockstatus = 'Available'
-    //                 ) AS availablequantity
-    //             FROM stock_revo`;
-
-    //         const quantityResult = await query(qunatityQuery, [puc])
-    //         const totalCount = parseInt(quantityResult.rows[0].quantity, 10)
-    //         const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10)
-    //         const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10)
-    //         const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10)
-    //         const quantities = {
-    //             quantity: totalCount,
-    //             ecompublishedquantity: ecomPublishedQuantity,
-    //             soldquantity: soldQuantity,
-    //             availablequantity: availableQuantity,
-    //             puc: puc
-    //         }
-
-    //         console.log(quantities, 'Quntity are ');
-    //         const updateQuantityinProduct = await productrevoService.upsertQuantityFields(quantities);
-
-    //         return updateQuantityinProduct;
-
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN updateQuantity", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage
-    //     }
-    // };
 
     export const updateQuantity = async (pucs: string[], orderedquantity = 0, issold = false) => {
         try {
@@ -511,7 +402,6 @@ export module stockRevoService {
                     puc: puc
                 };
 
-                console.log(quantities, 'Quantities for PUC:', puc);
                 quantitiesList.push(quantities);
             }
 
@@ -527,7 +417,6 @@ export module stockRevoService {
         } catch (error) {
             console.error("Query Execution Error: IN updateQuantity", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -542,7 +431,6 @@ export module stockRevoService {
             `;
             const locationsResult = await query(locationsQuery, [pucs]);
             const locations = locationsResult.rows.map(row => row.location);
-            console.log(locations, 'LOCATIONS ARE ==>');
             const quantityQuery = `
                 SELECT 
                     puc,
@@ -583,14 +471,12 @@ export module stockRevoService {
                 soldquantity: parseInt(row.soldquantity, 10),
                 availablequantity: parseInt(row.availablequantity, 10)
             }));
-            console.log(batchUpdateData, 'Batch update data');
             const updateResults = await productrevoService.testupsertQuantityFieldsBatch(batchUpdateData, issold);
             return updateResults;
 
         } catch (error) {
-            console.error("Query Execution Error: IN updateQuantity", error);
+            console.error("Query Execution Error: IN testinupdateQuantity", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -609,7 +495,6 @@ export module stockRevoService {
         } catch (error) {
             console.error("Query Execution Error: IN deleteStockrevo", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -631,7 +516,6 @@ export module stockRevoService {
                             whereClause += " AND ";
                         }
                     }
-                    console.log(whereClause, 'Data set');
                     whereClause += `(${paramValues
                         .map((_, idx) => `${key} = $${parameterIndex + idx}`)
                         .join(" OR ")})`;
@@ -641,8 +525,6 @@ export module stockRevoService {
             });
             const offset = (pageNumber - 1) * recordCount;
             let queryText = `SELECT * FROM stock_revo`;
-            console.log(whereClause, 'whereClause');
-            console.log(queryParams, 'queryParams');
             if (whereClause) {
                 queryText += ` WHERE ${whereClause} AND isarchive = true AND removefromrecyclebin = false  OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
                     }`;
@@ -657,15 +539,12 @@ export module stockRevoService {
             else {
                 queryText += ` WHERE isarchive = true AND removefromrecyclebin = false`;
             }
-            console.log(queryText, 'Query text is');
-            console.log(queryParams, 'params');
             const result: any = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getArcheivedStocksrevo", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -673,7 +552,6 @@ export module stockRevoService {
 
 
     export const updateRemoveFromRecyclebin = async () => {
-        console.log("inside update recycle bin");
         const updateQuery = `
         UPDATE stock_revo
         SET removefromrecyclebin = true
@@ -685,63 +563,8 @@ export module stockRevoService {
     };
 
 
-    // export const upsertStockRevoDatarfid = async (rfid: any, productid: any, orderid: any) => {
-    //     try {
-    //         let querydata: string;
-    //         let params: any[];
-    //         //    'SELECT parents.id AS parent_id, parents.name AS parent_name, children.id AS child_id, children.name AS child_name
-    //         //     FROM parents
-    //         //     INNER JOIN children ON parents.id = children.parent_id'
-
-
-    //         let stockData: any = `SELECT stock_revo.* FROM stock_revo left join product_revo ON stock_revo.puc = product_revo.puc WHERE product_revo.id = $${1} and stock_revo.rfid= $${2};`
-    //         let value = [productid, rfid]
-    //         console.log(stockData)
-    //         console.log(value)
-    //         let data = await query(stockData, value)
-    //         let command: string;
-
-    //         console.log(data.rows);
-    //         if (data.rows.length === 1) {
-    //             if (data.rows[0].rfid) {
-    //                 querydata = `UPDATE stock_revo SET orderid = $${1} , rfid = $${2},stockstatus = $${3} where rfid =$${4} RETURNING *`;
-    //                 params = [orderid, null, 'Sold', String(data.rows[0].rfid)];
-    //                 command = "UPDATE";
-    //             } else {
-    //                 return { error: `Without RFid could't change status.Please Contact Admin` }
-    //             }
-
-    //             console.log(querydata, 'querydata');
-    //             const result = await query(querydata, params);
-    //             const puc = result.rows[0].puc;
-    //             console.log('-- RESULT', puc, 'RESULT --');
-
-    //             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
-    //             const countParams = [puc];
-    //             const countResult = await query(countQuery, countParams);
-
-    //             const totalCount = parseInt(countResult.rows[0].count, 10);
-    //             console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
-
-    //             return { command, result: result, totalCount };
-    //         }
-    //         else {
-    //             return { error: 'For The Ordered Product The given RFID is Not Assigned SO Please Scan the Correct RFID' }
-    //         }
-
-
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN upsertStockRevoData", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-    //         console.log(ErrorMessage);
-    //         return ErrorMessage
-    //     }
-    // };
-
-
     export const upsertStockRevoDatarfid = async (rfidDataArray: any) => {
         try {
-            console.log('inside upsert Stock Revo Data rfid');
             let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
             let arraylength = rfidDataArray.length;
@@ -749,9 +572,7 @@ export module stockRevoService {
             let caseStatementsOrderId = rfidDataArray.map((item) => {
                 return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;
             }).join(' ');
-            
-            console.log(caseStatementsOrderId, 'caseStatementsOrderId');
-            
+                        
             let updateQuery = `
                 UPDATE stock_revo 
                 SET 
@@ -765,12 +586,8 @@ export module stockRevoService {
                 RETURNING *;
             `;
     
-            console.log(updateQuery);
-            console.log(productid);
-    
             let result = await query(updateQuery, [productid]);
             
-            // Check if all RFIDs were successfully updated
             if (result.rows.length !== rfidValues.length) {
                 return { 
                     error: 'Error in RFID scan. Ensure all RFIDs are valid.',
@@ -787,8 +604,6 @@ export module stockRevoService {
                 const countResult = await query(countQuery, countParams);
     
                 const totalCount = parseInt(countResult.rows[0].count, 10);
-                console.log('-- TOTAL COUNT', totalCount, 'TOTAL COUNT --');
-                console.log('-- TOTAL COUNT', result, 'TOTAL COUNT --');
     
                 return { 
                     command: "UPDATE", 
@@ -801,9 +616,8 @@ export module stockRevoService {
             }
     
         } catch (error) {
-            console.error("Query Execution Error: IN upsertStockRevoData", error);
+            console.error("Query Execution Error: IN upsertStockRevoDatarfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

@@ -6,6 +6,7 @@ export module notesController {
             let fetchnotesData = await notesService.getNotesData(request)
             reply.send(fetchnotesData)
         } catch (error) {
+            console.error('ERROR IN  Controller getnotes', error);
             reply.status(404).send(error.message)
         }
     }
@@ -24,11 +25,10 @@ export module notesController {
                 reply.status(200).send(message)
             }
             else {
-                console.log("else upsertnotesData Error")
-                console.log(upsertnotesData)
                 reply.status(404).send({ error: [upsertnotesData] })
             }
         } catch (error) {
+            console.error('ERROR IN  Controller upsertnotes', error);
             reply.status(404).send(error.message)
         }
     }

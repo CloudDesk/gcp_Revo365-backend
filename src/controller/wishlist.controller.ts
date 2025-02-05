@@ -12,6 +12,7 @@ export module wishListController {
             let getWishlistDataResult = await wishListService.getWishlistData(request)
             reply.send(getWishlistDataResult)
         } catch (error) {
+            console.error("Error in getWishlistData", error)
             reply.send(error.message)
         }
     }
@@ -20,6 +21,7 @@ export module wishListController {
             let getWishlistDataResult = await wishListService.getUserWishlistData(request)
             reply.send(getWishlistDataResult)
         } catch (error) {
+            console.error("Error in getUserWishlistData", error)    
             reply.send(error.message)
         }
     }
@@ -30,6 +32,7 @@ export module wishListController {
             let deleteFromWishlistResult = await wishListService.deleteFromWishlist(Number(id));
             reply.send(deleteFromWishlistResult);
         } catch (error) {
+            console.error("Error in deleteFromWishlist", error);
             reply.send(error.message);
         }
     }
@@ -48,6 +51,7 @@ export module wishListController {
                 reply.status(200).send(message);
             }
         } catch (error) {
+            console.error("Error in upsertToWishlist", error);
             reply.send(error.message);
         }
     }

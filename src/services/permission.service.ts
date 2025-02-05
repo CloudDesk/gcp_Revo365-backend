@@ -5,7 +5,6 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 export module permssionservice {
     export const getPermissions = async (request: any) => {
         try {
-            console.log('get Inventory User function call');
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
@@ -43,12 +42,10 @@ export module permssionservice {
             }
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
-            console.log(datatypeCheckResult, "datatypeCheckResult");
             return datatypeCheckResult
         } catch (error) {
-            console.error("Query Execution Error: IN Get Permissions User", error);
+            console.error("Query Execution Error: IN getPermissions", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -62,7 +59,6 @@ export module permssionservice {
                 const checkRoleQuery = `SELECT * FROM permissions WHERE role = $1`;
                 const checkRoleParams = [role];
                 const existingRole = await query(checkRoleQuery, checkRoleParams);
-                console.log(existingRole, 'Existing role is ');
                 if (existingRole.rows.length > 0) {
                     return { error: "Role already exists", existingRole: existingRole.rows[0] };
                 }
@@ -88,9 +84,8 @@ export module permssionservice {
             const result = await query(querydata, params);
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsert Permissiona", error);
+            console.error("Query Execution Error: IN upsertPermissiona", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

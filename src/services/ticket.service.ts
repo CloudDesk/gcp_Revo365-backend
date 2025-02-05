@@ -20,18 +20,13 @@ export module ticketService {
             if (key !== 'page' && key !== 'count') {
                 const paramValues = Array.isArray(value) ? value : [value];
                 if (key === "createddate" || key === "modifieddate") {
-                    console.log('inside created Date');
                     let rangeWhereClause = paramValues
                         .map((range) => {
-                            console.log(range);
                             const [lowerBound, upperBound] = range.split("-");
-                            console.log(lowerBound);
-                            console.log(upperBound);
                             queryParams.push(lowerBound, upperBound);
                             const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
                                 })`;
                             parameterIndex += 2;
-                            console.log(clause, ' Clause Data is');
                             return clause;
                         })
                         .join(" OR ");
@@ -39,12 +34,11 @@ export module ticketService {
 
                 }
                 else {
-                    // const formattedKey = key.toLowerCase() === 'userid' ? key : key;
                     whereClauses.push(
                         `(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`
                     );
                     queryParams.push(...paramValues);
-                    parameterIndex += paramValues.length; // Increment parameter index 
+                    parameterIndex += paramValues.length; 
                 }
 
             }
@@ -67,11 +61,9 @@ export module ticketService {
             queryParams.push(offset, recordCount);
         }
 
-        console.log(querydata);
         let data = await query(querydata, queryParams)
 
         if (keys.length == 1 && keys[0] == 'userid') {
-            console.log('Inside IF>>');
             const invoiceQuery = `
                 SELECT DISTINCT r.invoiceurl, t.ticketnumber, t.userid
                 FROM revoinvoice AS r 
@@ -79,26 +71,20 @@ export module ticketService {
                 WHERE t.userid = $1 AND r.invoicefor = 'service';
             `
             const invoiceurldata = await query(invoiceQuery, [userid])
-            console.log('>>>>',invoiceurldata.rows);
-
-            // Create a map of ticketnumber to invoiceurl
             const invoiceMap = new Map(invoiceurldata.rows.map(row => [row.ticketnumber, row.invoiceurl]));
 
-            // Merge invoice URLs into the main data
             data.rows = data.rows.map(row => ({
                 ...row,
                 invoiceurl: invoiceMap.get(row.ticketnumber) || null
             }));
         }
         else {
-            console.log("Inside ELSE>>");
         }
 
         return data.rows
     } catch (error) {
         console.error("Query Execution Error: IN getTicketDynamic", error);
         let ErrorMessage = await ErrorHandler.handleQueryError(error)
-        console.log(ErrorMessage);
         return ErrorMessage
     }
 }
@@ -118,7 +104,6 @@ export module ticketService {
         const paramValues: any = Array.isArray(values[index])
           ? values[index]
           : [values[index]];
-        console.log(paramValues, "paramValues");
         if (key === "range") {
           const rangeClauses = paramValues.map((range) => {
             const [lowerBound, upperBound] = range.split("-");
@@ -136,7 +121,6 @@ export module ticketService {
         } else if (paramValues[0].startsWith("NOT ")) {
           const cleanValue = paramValues[0].slice(4);
           whereClauses.push(`(${key} != $${parameterIndex})`);
-          console.log(cleanValue, "cleanValue");
           queryParams.push(cleanValue);
           parameterIndex++;
         } else if (key !== "page" && key !== "count") {
@@ -172,8 +156,6 @@ export module ticketService {
         queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
         queryParams.push(offset, recordCount);
       }
-      console.log("Query Text:", queryText);
-      console.log("Query Params:", queryParams);
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
       return datatypeCheckResult;
@@ -199,7 +181,6 @@ export module ticketService {
         const paramValues: any = Array.isArray(values[index])
           ? values[index]
           : [values[index]];
-        console.log(paramValues, "paramValues");
         if (key === "range") {
           const rangeClauses = paramValues.map((range) => {
             const [lowerBound, upperBound] = range.split("-");
@@ -215,10 +196,8 @@ export module ticketService {
           orderByField = fieldName;
           orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
         } else if (paramValues[0].startsWith("NOT ")) {
-          console.log(paramValues + 'PAR');
           const cleanValue = paramValues[0].slice(4);
           whereClauses.push(`(${key} != $${parameterIndex})`);
-          console.log(cleanValue, "cleanValue");
           queryParams.push(cleanValue);
           parameterIndex++;
         } else if (key !== "page" && key !== "count") {
@@ -244,8 +223,6 @@ export module ticketService {
         queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
         queryParams.push(offset, recordCount);
       }
-      console.log("Query Text:", queryText);
-      console.log("Query Params:", queryParams);
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
       return datatypeCheckResult;
@@ -259,7 +236,6 @@ export module ticketService {
     try {
       let querydata: string;
       let params: any[];
-      console.log(ticketData, "ticketData");
       const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
       if (files && files.length > 0) {
         for (const file of files) {
@@ -283,18 +259,14 @@ export module ticketService {
         params = fieldValues;
       }
       const result = await query(querydata, params);
-      console.log(result.rows ,'INSERTED DATA');
       if (result && result.rows.length > 0) {
         let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
           result.rows[0].userid,
         ]);
         if (userdata && userdata.rows.length > 0) {
-          console.log(result.rows[0].ticketstatus, "Ticket Status Product");
           const ticketStatus = result.rows[0].ticketstatus;
           const ticketNumber = result.rows[0].ticketnumber;
-          console.log(ticketStatus, "ticketStatus");
           if (emailTemplates.tickets[ticketStatus]) {
-            console.log(emailTemplates.tickets[ticketStatus], "emailTemplates");
             const { subject, text } = emailTemplates.tickets[ticketStatus];
             let maildata = {
               body: {
@@ -305,16 +277,15 @@ export module ticketService {
             };
             try {
               let sendingmail = await sendMail(maildata, false);
-              console.log(sendingmail, "sendingmail");
             } catch (error) {
               console.log(error.message || error, "error in sending mail");
             }
-            console.log(maildata, "maildata");
           }
         }
       }
       return result;
     } catch (error) {
+      console.error("Query Execution Error: IN upsertTickets", error);
       let ErrorData = ErrorHandler.handleQueryError(error);
       return ErrorData;
     }
@@ -323,7 +294,6 @@ export module ticketService {
     try {
       let querydata: string;
       let params: any[];
-      console.log(ticketData, "ticketData");
       const { id, ...upsertFields } = ticketData;
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
@@ -341,18 +311,14 @@ export module ticketService {
         params = fieldValues;
       }
       const result = await query(querydata, params);
-      console.log(result.rows ,'INSERTED DATA');
       if (result && result.rows.length > 0) {
         let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
           result.rows[0].userid,
         ]);
         if (userdata && userdata.rows.length > 0) {
-          console.log(result.rows[0].ticketstatus, "Ticket Status Product");
           const ticketStatus = result.rows[0].ticketstatus;
           const ticketNumber = result.rows[0].ticketnumber;
-          console.log(ticketStatus, "ticketStatus");
           if (emailTemplates.tickets[ticketStatus]) {
-            console.log(emailTemplates.tickets[ticketStatus], "emailTemplates");
             const { subject, text } = emailTemplates.tickets[ticketStatus];
             let maildata = {
               body: {
@@ -363,16 +329,15 @@ export module ticketService {
             };
             try {
               let sendingmail = await sendMail(maildata, false);
-              console.log(sendingmail, "sendingmail");
             } catch (error) {
               console.log(error.message || error, "error in sending mail");
             }
-            console.log(maildata, "maildata");
           }
         }
       }
       return result;
     } catch (error) {
+      console.error("Query Execution Error: IN upsertGcpTickets", error);
       let ErrorData = ErrorHandler.handleQueryError(error);
       return ErrorData;
     }
@@ -411,6 +376,7 @@ export module ticketService {
       const result = await query(querydata, params);
       return result;
     } catch (error) {
+      console.error("Query Execution Error: IN upsertTicketspayment", error);
       let ErrorData = ErrorHandler.handleQueryError(error);
       return ErrorData;
     }
@@ -434,6 +400,7 @@ export module ticketService {
       const result = await query(querydata, params);
       return result;
     } catch (error) {
+      console.error("Query Execution Error: IN upsertTicketstatus", error);
       let ErrorData = ErrorHandler.handleQueryError(error);
       return ErrorData;
     }

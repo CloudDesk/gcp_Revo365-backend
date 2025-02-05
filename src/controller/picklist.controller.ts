@@ -8,6 +8,7 @@ export module picklistControler {
             let getPicklistData = await picklistservice.getProductPicklist(request)
             reply.send(getPicklistData)
         } catch (error) {
+            console.error('ERROR IN  Controller getPicklistforobject', error);
             reply.send(error.message)
         } 
     }
@@ -17,6 +18,7 @@ export module picklistControler {
             let getPicklistData = await picklistservice.getAllPicklist(request)
             reply.send(getPicklistData)
         } catch (error) {
+            console.error('ERROR IN  Controller getAllPicklist', error);
             reply.send(error.message)
         } 
     }

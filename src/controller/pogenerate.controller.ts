@@ -8,6 +8,7 @@ export module generatePurchaseOrderController {
             reply.send(poresult);
 
         } catch (error) {
+            console.error('ERROR IN  Controller purchaseOrderData', error);
             reply.status(404).send(error.message);
         }
     }
