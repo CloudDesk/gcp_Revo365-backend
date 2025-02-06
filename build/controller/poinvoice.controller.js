@@ -7,6 +7,7 @@ export var poinvoicecontroller;
             reply.send(PoinvoiceResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getPOInvoice', error);
             reply.status(404).send(error.message);
         }
     };
@@ -28,6 +29,7 @@ export var poinvoicecontroller;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertPoInvoice', error);
             reply.status(404).send(error.message);
         }
     };
@@ -38,6 +40,7 @@ export var poinvoicecontroller;
             reply.send(deleteStockResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller deletePoInvoice', error);
             reply.send(error.message);
         }
     };
@@ -59,6 +62,7 @@ export var poinvoicecontroller;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertGcpPoInvoice', error);
             reply.status(404).send(error.message);
         }
     };

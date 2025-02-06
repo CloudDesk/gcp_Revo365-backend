@@ -7,6 +7,7 @@ export var purcahseRequestController;
             reply.send(getPurchaseRequestResult);
         }
         catch (error) {
+            console.error("Error in 'getPurchaseRequestData':", error);
             reply.status(404).send(error.message);
         }
     };
@@ -25,12 +26,11 @@ export var purcahseRequestController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else upsertPurchaseRequest");
-                console.log(upsertPurchaseRequest);
                 reply.status(404).send({ error: [upsertPurchaseRequest] });
             }
         }
         catch (error) {
+            console.error("Error in 'upsertPurchaseRequestData':", error);
             reply.status(404).send(error.message);
         }
     };

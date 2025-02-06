@@ -41,16 +41,13 @@ export module purchaseRequestService {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
             return datatypeCheckResult
         } 
         catch (error) {
-            console.error("Query Execution Error: IN getPurchaseRequest", error);
+            console.error("Query Execution Error: IN getPurchaseRequestData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -66,7 +63,6 @@ export module purchaseRequestService {
             }
             if (upsertFields.prdata) {
                 prdataJsonString = ensureJsonString(upsertFields.prdata);
-                console.log(prdataJsonString);
                 upsertFields.prdata = prdataJsonString
             }
 
@@ -88,9 +84,8 @@ export module purchaseRequestService {
             const result = await query(querydata, params)
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsertProductrevo", error);
+            console.error("Query Execution Error: IN upsertPurchaseRequestData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -119,9 +114,8 @@ export module purchaseRequestService {
             const result = await query(querydata, params)
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsertProductrevo", error);
+            console.error("Query Execution Error: IN upsertstatusfield", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 

@@ -14,7 +14,6 @@ export module addressService {
         } catch (error) {
             console.error("Query Execution Error: IN getAddressData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -29,7 +28,6 @@ export module addressService {
         } catch (error) {
             console.error("Query Execution Error: IN getUserAddressData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -45,7 +43,6 @@ export module addressService {
         } catch (error) {
             console.error("Query Execution Error: IN deleteAddress", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -77,7 +74,6 @@ export module addressService {
         } catch (error) {
             console.error("Query Execution Error: IN upsertAddress", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };

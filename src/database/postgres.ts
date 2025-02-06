@@ -27,7 +27,6 @@ export const checkDatabaseConnection = () => {
         console.error("Error connecting to the database:", err.message);
         reject(err);
       } else {
-        console.log("Database connected");
         release();
         resolve("Database Connected");
       }
@@ -35,7 +34,6 @@ export const checkDatabaseConnection = () => {
   });
 };
 pool.on("error", (err: any) => {
-  console.log("error is ");
   console.error("Error connecting to the database:", err.message);
 });
 
@@ -85,7 +83,6 @@ export const query = async (stmt: any, options: any) => {
         let res = await pool.query(stmt, options)
         return res
     } else {
-        console.log("else latest");
         return await pool.query(stmt);
     }
 };

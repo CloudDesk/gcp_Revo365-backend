@@ -14,6 +14,7 @@ export module ordersController {
             let getstock = await ordersService.getOrderlineDynamic(request)
             reply.send(getstock)
         } catch (error) {
+            console.error("Query Execution Error: IN getOrderlineDynamicData Controller", error);
             reply.send(error.message)
         }
     }
@@ -43,7 +44,7 @@ export module ordersController {
                 reply.status(400).send(upsertOrderlineResult)
             }
         } catch (error) {
-            console.error("Query Execution Error: IN getOrderData Controller", error);
+            console.error("Query Execution Error: IN updateorderlineitem Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -144,7 +145,7 @@ export module ordersController {
             //     reply.status(400).send(upsertOrderResult)
             // }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderv2", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -169,7 +170,7 @@ export module ordersController {
                 reply.status(400).send(upsertOrderResult)
             }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderrfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -192,7 +193,7 @@ export module ordersController {
                 reply.status(400).send(upsertOrderResult)
             }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderlinerfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -202,7 +203,7 @@ export module ordersController {
             let getOrderDataResult = await ordersService.getOrderDataForMerchantid(request.body)
             reply.send(getOrderDataResult)
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller deleteBasedOnMerchantId", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }

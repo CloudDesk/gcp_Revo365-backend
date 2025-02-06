@@ -89,7 +89,6 @@ export module ErrorHandler {
 
           if (error.detail) {
             const match = error.detail.match(/column "(.*?)"/);
-            console.log(match, "Match is");
             if (match) {
               errorDetails.push({
                 key: match[1],

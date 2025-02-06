@@ -15,7 +15,7 @@ export module cartController {
             let getCartDataResult = await cartservice.getCartData(request);
             reply.send(getCartDataResult);
         } catch (error) {
-            console.log("ERROR IN Controller getCartData");
+            console.log("ERROR IN Controller getCartData", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -25,7 +25,7 @@ export module cartController {
             let getCartDataResult = await cartservice.getCartData(request);
             reply.send(getCartDataResult);
         } catch (error) {
-            console.log("ERROR IN  Controller getUserCartData");
+            console.log("ERROR IN  Controller getUserCartData", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -42,7 +42,7 @@ export module cartController {
             let deleteCartResult = await cartservice.deleteCart(iddata);
             reply.send(deleteCartResult);
         } catch (error) {
-            console.log("ERROR IN Controller deleteCart");
+            console.log("ERROR IN Controller deleteCart", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -52,7 +52,6 @@ export module cartController {
         try {
             const cartData = request.body;
             let upsertCartResult = await cartservice.upsertCart(cartData);
-            console.log(upsertCartResult);
             if (
                 upsertCartResult.command === "UPDATE" ||
                 upsertCartResult.command === "INSERT"
@@ -69,7 +68,7 @@ export module cartController {
                 reply.status(404).send(upsertCartResult);
             }
         } catch (error) {
-            console.log("ERROR IN Controller upsertCart");
+            console.log("ERROR IN Controller upsertCart", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -80,7 +79,7 @@ export module cartController {
             let result = await cartservice.upsertCartQuantity(request.body);
             reply.send(result);
         } catch (error) {
-            console.log("ERROR IN Controller UPDATE CART QUANTITY");
+            console.log("ERROR IN Controller UPDATE CART QUANTITY", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             return errordata;
         }

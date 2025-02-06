@@ -125,7 +125,6 @@ export var dataLoaderService;
                                 }
                             }
                             else if (stockBoolean.includes(key)) {
-                                console.log(e[key]);
                                 if (e[key] === "FALSE" ||
                                     e[key] === "false" ||
                                     e[key] === "False") {
@@ -201,7 +200,6 @@ export var dataLoaderService;
         catch (error) {
             console.error("Query Execution Error: IN getDataLoaderDataStock", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

@@ -55,7 +55,6 @@ export module cartservice {
         } catch (error) {
             console.error("Query Execution Error: IN getCartDatatest", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -157,7 +156,6 @@ export module cartservice {
         } catch (error) {
             console.error("Query Execution Error: IN deleteCart", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -165,7 +163,6 @@ export module cartservice {
 
     export const upsertCart = async (cartData: any) => {
         try {
-            // Implement logic to insert or update cart data
             let querydata: string;
             let params: any[];
             const { id, ...upsertFields } = cartData;
@@ -173,13 +170,11 @@ export module cartservice {
             const fieldValues = Object.values(upsertFields);
 
             if (id) {
-                // If id is provided, update the existing cart
                 querydata = `UPDATE cart SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             } else {
-                // If id is not provided, insert a new cart
                 querydata = `INSERT INTO cart (${fieldNames.join(
                     ", "
                 )}) VALUES (${fieldNames
@@ -193,7 +188,6 @@ export module cartservice {
         } catch (error) {
             console.error("Query Execution Error: IN upsertCart", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     };
@@ -201,13 +195,11 @@ export module cartservice {
     export const upsertCartQuantity = async (cartData: any) => {
 
         try {
-            console.log(cartData, "cartData upsert cart qty")
             const { productid, availablequantity } = cartData;
             let getcartData = `select * from cart where productid = ${productid}`
             let result = await query(getcartData, [])
             let updates = []
             let updateQuantityNullData = []
-            console.log(JSON.stringify(result.rows), 'Result is Row');
             if (result.rows.length > 0) {
                 result.rows.forEach((e) => {
                     if (Number(e.quantity) !== 0 && (Number(e.quantity) > availablequantity)) {
@@ -220,7 +212,6 @@ export module cartservice {
             }
             if (updates.length > 0) {
                 const ids = updates.map((_, index) => `$${index * 2 + 1}`).join(", ");
-                console.log(ids, 'IDS are');
                 let cases = ''
                 cases = updates
                     .map((_, index) => `WHEN id = $${index * 2 + 1} THEN $${index * 2 + 2}`)
@@ -255,12 +246,9 @@ export module cartservice {
                     return data
                 }
             }
-            // else {
-            //     return null
-            // }
 
         } catch (error) {
-            console.error("Query Execution Error: IN upsertCart", error);
+            console.error("Query Execution Error: IN upsertCartQuantity", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }

@@ -25,7 +25,6 @@ export module purchaseOrderService {
                 } else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
                     whereClauses.push(`(${key} != $${parameterIndex} OR ${key} IS NULL)`);
-                    console.log(whereClauses, 'whereClause');
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 } else if (key !== "page" && key !== "count") {
@@ -43,15 +42,12 @@ export module purchaseOrderService {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result)
             return datatypecheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getPurchaseOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -60,13 +56,11 @@ export module purchaseOrderService {
             const { id } = request.params
             const queryText = `SELECT * FROM purchaseorder where id = $${1}`;
             const result: QueryResult = await query(queryText, [id]);
-            // console.log(result);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getEachPurchaseOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -79,9 +73,7 @@ export module purchaseOrderService {
             request.files.forEach((element) => {
                 let fileurl = request.protocol + "://" + request.headers.host + '/' + element.filename;
                 fileurlarray.push(fileurl);
-                console.log(fileurl, 'File url is');
             });
-            console.log(fileurlarray);
             const fetchQuery = `
             SELECT invoiceurl
             FROM purchaseorder
@@ -100,7 +92,6 @@ export module purchaseOrderService {
             `;
 
             let params = [combinedUrls, id];
-            console.log(updateQuery);
 
             let data = await query(updateQuery, params);
             return data;
@@ -108,7 +99,6 @@ export module purchaseOrderService {
         catch (error) {
             console.error("Query Execution Error: IN upsertInvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -116,10 +106,6 @@ export module purchaseOrderService {
 
     export const updatePoStatus = async (ponumber, total, po_status) => {
         try {
-          console.log("Inside update PO status");
-          // console.log('PONUMBER:',ponumber)
-          // console.log('POSTATUS:',po_status)
-          // console.log('TOTAL Amount to Paid:',total)
           const purchaseordernumber = ponumber;
     
           const poinvoiceData = await query(
@@ -137,68 +123,46 @@ export module purchaseOrderService {
             (sum, amount) => sum + amount,
             0
           );
-    
-          console.log("All Payment Amounts:", allPaymentAmounts);
-          console.log("paid Amount:", paidAmount);
-          console.log("PO STATUS:", po_status);
           if (po_status === "cancelled") {
-            console.log("INSIDE CANCEl");
             const result = await query(
               `UPDATE purchaseorder SET po_status = 'cancelled' WHERE ponumber ='${purchaseordernumber}'`,
               []
             );
-            console.log("Result:", result.command);
           } else if (po_status === "void") {
-            console.log("INSIDE VOID");
             const result = await query(
               `UPDATE purchaseorder SET po_status = 'void' WHERE ponumber ='${purchaseordernumber}'`,
               []
             );
-            console.log("Result:", result.command);
           } else {
-            // console.log("INSIDE IF")
             if (paidAmount === Number(total)) {
-              console.log("INSIDE FULLFILL");
-              // po_status = 'fulfilled'
-              console.log("----", purchaseordernumber);
               const result = await query(
                 `UPDATE purchaseorder SET po_status = 'fulfilled' WHERE ponumber ='${purchaseordernumber}'`,
                 []
               );
-              console.log("RESULT:", result.command);
             } else if (paidAmount === 0 || po_status === null) {
-              console.log("INSIDE in_progress");
               const result = await query(
                 `UPDATE purchaseorder SET po_status = 'in_progress' WHERE ponumber ='${purchaseordernumber}'`,
                 []
               );
-              console.log("Result", result.command);
             } else if (paidAmount < Number(total)) {
-              console.log("INSIDE PART FULL FILL");
-              // po_status = 'partially_fulfilled'
-              console.log("----", purchaseordernumber);
               const result = await query(
                 `UPDATE purchaseorder SET po_status = 'partially_fulfilled' WHERE ponumber ='${purchaseordernumber}'`,
                 []
               );
-              console.log("RESULT:", result.command);
             }
           }
           return "Purchase Order Status Updated Successfully";
-        } catch (error) {}
+        } catch (error) {
+            console.error("Query Execution Error: IN updatePoStatus", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
       };
 
     export const upsertGcpInvoice = async (request: any) => {
 
         try {
             const { id } = request.params;
-            // let fileurlarray = [];
-            // request.files.forEach((element) => {
-            //     let fileurl = request.protocol + "://" + request.headers.host + '/' + element.filename;
-            //     fileurlarray.push(fileurl);
-            //     console.log(fileurl, 'File url is');
-            // });
-            // console.log(fileurlarray);
             const fetchQuery = `
             SELECT invoiceurl
             FROM purchaseorder
@@ -217,15 +181,13 @@ export module purchaseOrderService {
             `;
 
             let params = [combinedUrls, id];
-            console.log(updateQuery);
 
             let data = await query(updateQuery, params);
             return data;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertInvoice", error);
+            console.error("Query Execution Error: IN upsertGcpInvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -242,7 +204,6 @@ export module purchaseOrderService {
             `;
 
             let params = [invoiceUrl, id];
-            console.log(updateQuery);
 
             let data = await query(updateQuery, params);
             return data;
@@ -250,7 +211,6 @@ export module purchaseOrderService {
         catch (error) {
             console.error("Query Execution Error: IN deleteUrl", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
 
@@ -268,14 +228,12 @@ export module purchaseOrderService {
         } catch (error) {
             console.error("Query Execution Error: IN deletePurchaseOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
 
     export const upsertPurchaseOrder = async (purchaseorderData: any) => {
         try {
-            console.log(purchaseorderData, 'data in purchase order is ');
             let querydata: string;
             let params: any[];
             const { id, product, ...upsertFields } = purchaseorderData;
@@ -283,7 +241,6 @@ export module purchaseOrderService {
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
-            console.log(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
@@ -301,12 +258,10 @@ export module purchaseOrderService {
             }
 
             const result = await query(querydata, params);
-            console.log(result.command, 'Result is');
             return result;
         } catch (error) {
             console.error("Query Execution Error: IN upsertPurchaseOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

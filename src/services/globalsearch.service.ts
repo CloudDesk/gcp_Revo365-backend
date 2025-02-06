@@ -8,8 +8,6 @@ export module globalserachService {
         try {
             const { globalSearch, subcategory, sortby, page, recordcount } = request.query;
             const searchTerms = globalSearch.split(' ');
-            console.log(searchTerms, 'Search Terms ');
-            // Construct the SQL query dynamically based on the global search term
             let searchQuery;
             let results;
 
@@ -87,7 +85,6 @@ export module globalserachService {
     export const getGlobalProductData = async (request, reply) => {
         try {
             const { globalsearch, subcategory, sortby, page, recordcount } = request.query;
-            console.log(globalsearch, 'globalsearch');
             const searchTerms = globalsearch.split(' ').join(' & ');
             let newSearch = globalsearch.split(' ');
             if (newSearch.length === 1) {
@@ -134,7 +131,6 @@ export module globalserachService {
                 params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
             }
 
-            // Execute the query
             const resultData = await query(queryText, params);
             return resultData.rows;
         } catch (error) {
@@ -231,19 +227,12 @@ export module globalserachService {
                 product: productRevoResult.rows || [],
                 tickets: ticketsResult.rows || []
             };
-    
-            console.log('Results count:', {
-                tickets: formattedResults.tickets.length,
-                product: formattedResults.product.length,
-                stock: formattedResults.stock.length
-            });
             
             return formattedResults;
     
         } catch (error) {
             console.error("Query Execution Error: IN getGlobalStockOrderTicketData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

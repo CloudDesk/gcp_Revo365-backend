@@ -9,6 +9,7 @@ export module revoinvoicecontroller {
             reply.send(getRevoInvoiceDataResult);
 
         } catch (error) {
+            console.error("Query Execution Error: IN getRevoInvoiceData controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -20,6 +21,7 @@ export module revoinvoicecontroller {
             reply.send(getRevoInvoiceDataByIdResult);
 
         } catch (error) {
+            console.error("Query Execution Error: IN getRevoInvoiceDataById controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -41,6 +43,7 @@ export module revoinvoicecontroller {
                 reply.status(500).send(upsertRevoInvoiceResult);
             }
         } catch (error) {
+            console.error("Query Execution Error: IN upsertRevoInvoice controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

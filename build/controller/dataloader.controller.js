@@ -28,7 +28,6 @@ export var dataLoaderController;
                     }
                     else {
                         failureCount++;
-                        console.log(validationresult.error);
                         const errorObject = {};
                         validationresult.error.forEach(error => {
                             const key = error.instancePath.slice(1);
@@ -47,7 +46,7 @@ export var dataLoaderController;
             return { totalRecords, failureCount, successCount, failuredata };
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertDataLoaderData');
+            console.log('ERROR IN  Controller insertDataLoaderData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -82,7 +81,7 @@ export var dataLoaderController;
             reply.send(result);
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertDataLoaderDatalatest');
+            console.log('ERROR IN  Controller insertDataLoaderDatalatest', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -93,7 +92,7 @@ export var dataLoaderController;
             reply.send(jsonResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getDataLoaderData');
+            console.log('ERROR IN  Controller getDataLoaderData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -104,7 +103,7 @@ export var dataLoaderController;
             reply.send(jsonResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getDataLoaderDataStock');
+            console.log('ERROR IN  Controller getDataLoaderDataStock', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -129,13 +128,12 @@ export var dataLoaderController;
                 reply.status(200).send(message);
             }
             else {
-                console.log('ELSE');
                 reply.status(404).send({ error: [upsertStockResult] });
             }
             // return result
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertBulkDataStock');
+            console.log('ERROR IN  Controller insertBulkDataStock', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }

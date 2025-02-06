@@ -138,7 +138,6 @@ export module dataLoaderService {
                     e[key] = valueconvert;
                   }
                 } else if (stockBoolean.includes(key)) {
-                  console.log(e[key]);
                   if (
                     e[key] === "FALSE" ||
                     e[key] === "false" ||
@@ -210,7 +209,6 @@ export module dataLoaderService {
     } catch (error) {
       console.error("Query Execution Error: IN getDataLoaderDataStock", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

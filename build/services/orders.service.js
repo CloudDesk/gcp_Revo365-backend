@@ -1,4 +1,3 @@
-// orders.service.ts
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
@@ -53,7 +52,7 @@ export var ordersService;
             return datatypeCheckResult;
         }
         catch (error) {
-            console.error("Query Execution Error: IN getOrderData", error);
+            console.error("Query Execution Error: IN getlatestOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -153,7 +152,6 @@ export var ordersService;
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element) => {
                 if (element.invoiceurl) {
-                    console.log(element.invoiceurl, 'Invoice URL is');
                     element.invoiceurl = element.invoiceurl.split(',')[1];
                 }
             });
@@ -368,7 +366,6 @@ export var ordersService;
                     medium: row.medium,
                     large: row.large
                 }]));
-            // Merge product images into the main data
             data.rows = data.rows.map(row => ({
                 ...row,
                 productImages: productImageMap.get(row.productid) || {
@@ -380,7 +377,7 @@ export var ordersService;
             return data.rows;
         }
         catch (error) {
-            console.error("Query Execution Error: IN getTicketDynamic", error);
+            console.error("Query Execution Error: IN getOrderlineDynamic", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -462,7 +459,6 @@ ${whereClause} ${orderByClause}`;
                 title: "Hello User",
                 body: "Payment Done Successfully",
             };
-            //  let resut = await messageinitialization(3, messageData);
             return datatypeCheckResult;
         }
         catch (error) {
@@ -547,7 +543,7 @@ ${whereClause} ${orderByClause}`;
             return datatypeCheckResult;
         }
         catch (error) {
-            console.error("Query Execution Error: IN getOrderLineData", error);
+            console.error("Query Execution Error: IN getInvOrderLineData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -764,7 +760,7 @@ ${whereClause} ${orderByClause}`;
             return result;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertOrder", error);
+            console.error("Query Execution Error: IN updateorderlineitem", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -809,7 +805,7 @@ ${whereClause} ${orderByClause}`;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertOrder", error);
+            console.error("Query Execution Error: IN upsertOrderrfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -875,7 +871,7 @@ ${whereClause} ${orderByClause}`;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertOrder", error);
+            console.error("Query Execution Error: IN upsertOrderlinerfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -914,13 +910,13 @@ ${whereClause} ${orderByClause}`;
                 return result;
             }
             catch (error) {
-                console.error("Query Execution Error: upsertBulkStockRevoData result", error);
+                console.error("Query Execution Error: BulkinsertOrder result", error);
                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
                 return ErrorMessage;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertOrder", error);
+            console.error("Query Execution Error: IN BulkinsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -986,10 +982,7 @@ ${whereClause} ${orderByClause}`;
                     RETURNING *`;
                 }
                 const updateValues = updateValuesArray.flat();
-                console.log(updateOrderQuery, 'updateOrderQuery');
-                console.log(updateValues, 'updateValues');
                 const updatedOrderResult = await query(updateOrderQuery, updateValues);
-                console.log("Updated orders:", updatedOrderResult);
                 if (updatedOrderResult.command === 'UPDATE') {
                     let orderlinedata = {
                         orderid: updatedOrderResult.rows[0].id,
@@ -997,10 +990,8 @@ ${whereClause} ${orderByClause}`;
                     };
                     const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed);
                     if (updatedOrderLineData && updatedOrderLineData.command) {
-                        console.log(updatedOrderLineData.command, 'ORDER SINE SUCCESS??/');
                     }
                     else {
-                        console.log(updatedOrderLineData, 'ORDER SINE SUCCESS??/');
                     }
                     return { data: updatedOrderResult.rows, status: 'success' };
                 }
@@ -1014,62 +1005,6 @@ ${whereClause} ${orderByClause}`;
             throw error;
         }
     };
-    //     try {
-    //         const orders = data.order;
-    //         const transactionid = data.transactiondata.transactionid;
-    //         const emailid = data.transactiondata.name;
-    //         // console.log("Orders:", orders);
-    //         // console.log("Transaction ID:", transactionid);
-    //         const updateValuesArray = [];
-    //         for (const order of orders) {
-    //             const orderId = parseInt(order.id, 10); // Ensure it's an integer
-    //             updateValuesArray.push([transactionid, orderId]);
-    //         }
-    //         // console.log(updateValuesArray, 'UPDATED VALUES ARRAY');
-    //         if (updateValuesArray.length > 0) {
-    //             // Create the VALUES part dynamically with parameter placeholders
-    //             const valuePlaceholders = updateValuesArray
-    //                 .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2}::integer)`)
-    //                 .join(", ");
-    //             const updateOrderQuery = `
-    //                 UPDATE orders
-    //                 SET transactionid = bulk_data.transactionid,
-    //                      orderstatus= 'payment_failed',
-    //                     ispaymentsucceed = TRUE
-    //                 FROM (
-    //                     VALUES ${valuePlaceholders}
-    //                 ) AS bulk_data(transactionid, id)
-    //                 WHERE orders.id = bulk_data.id
-    //                 RETURNING *`;
-    //             // Flatten the values array for parameterized query
-    //             const updateValues = updateValuesArray.flat();
-    //             console.log(updateOrderQuery, 'updateOrderQuery');
-    //             console.log(updateValues, 'updateValues');
-    //             const updatedOrderResult = await query(updateOrderQuery, updateValues);
-    //             console.log("Updated orders:", updatedOrderResult);
-    //             if (updatedOrderResult.command === 'UPDATE') {
-    //                 let orderlinedata = {
-    //                     orderid: updatedOrderResult.rows[0].id,
-    //                     orderstatus: updatedOrderResult.rows[0].orderstatus
-    //                 }
-    //                 const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid)
-    //                 if (updatedOrderLineData && updatedOrderLineData.command) {
-    //                     console.log(updatedOrderLineData.command, 'ORDER SINE SUCCESS??/');
-    //                 }
-    //                 else {
-    //                     console.log(updatedOrderLineData, 'ORDER SINE SUCCESS??/');
-    //                 }
-    //                 return { data: updatedOrderResult.rows, status: 'success' }
-    //             }
-    //             else {
-    //                 return { data: `Orders Not Updated Please contact admin`, status: 'failure' }
-    //             }
-    //         }
-    //     } catch (error) {
-    //         console.error("Error in updateOrder:", error);
-    //         throw error;
-    //     }
-    // };
     async function updateOrderStatus(payload, emailid, paymentfailed) {
         try {
             const { orderid, orderstatus } = payload;
@@ -1084,14 +1019,7 @@ ${whereClause} ${orderByClause}`;
                 throw new Error(`No orderline found with orderid: ${orderid}`);
             }
             let orderedquantity = result.rows[0].quantity;
-            // result.rows.forEach(async (e) => {
-            //     let upsertUnorderedQuantity = await productrevoService.updateOrderedQuantity([e.productid], Number(e.quantity));
-            //     console.log(JSON.stringify(upsertUnorderedQuantity), 'Unordered Quantity Updated');
-            // })
-            console.log(emailid, 'Transaction Data');
             const template = emailTemplates.orders.orderPlaced;
-            // const orderId = result.rows[0].orderlinenumber;
-            // const orderAmount = result.rows[0].orderamount;
             let textdata = result.rows.map(e => `Order Id  : ${e.orderlinenumber} and Amount : ${e.orderamount}`).join('\n');
             let maildata;
             if (!paymentfailed) {
@@ -1121,52 +1049,35 @@ Thank You!`,
                     },
                 };
             }
-            console.log(maildata, 'Mail Data');
             let sendemail = await sendMail(maildata, false);
-            console.log(sendemail, 'Email Sent When Ordering');
-            console.log(`Order ${orderid} status updated to: ${orderstatus}`);
             return result.rows;
         }
         catch (error) {
-            console.error('Error updating order status:', error);
+            console.error('Error updateOrderStatus:', error);
             throw error;
         }
     }
     ordersService.updateOrderStatus = updateOrderStatus;
     ordersService.getOrderDataForMerchantid = async (merchantiddata) => {
         try {
-            console.log('Request:', merchantiddata);
             const { merchantid } = merchantiddata;
-            console.log('Merchant Id:', merchantid);
             const orderIdQuery = `SELECT orderid FROM orders WHERE merchanttransactionid = $1 AND ispaymentsucceed = FALSE;`;
             const orderIdResult = await query(orderIdQuery, [merchantid]);
             if (orderIdResult.rows.length === 0) {
-                console.log('No orders found for merchant id:', merchantid);
                 return;
             }
             const uniqueorderid = orderIdResult.rows[0].orderid;
-            console.log('Unique Order Id:', uniqueorderid);
             const productIdOrderlineQuery = `SELECT productid FROM orderline WHERE uniqueordderid = $1`;
             const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
-            console.log('Product Ids:', productIdOrderlineResult.rows);
             if (productIdOrderlineResult.rows.length > 0) {
                 const productIds = productIdOrderlineResult.rows.map(row => row.productid);
-                // Update lock_qty to 0 for all products associated with the order in one query
                 const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
                 await query(updateLockQtyQuery, [productIds]);
-                console.log('Updated lock_qty for product ids:', productIds);
             }
             const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueordderid = $1;`;
             await query(deleteOrderlineQuery, [uniqueorderid]);
-            console.log('Deleted order lines for order id:', uniqueorderid);
             const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1;`;
             await query(deleteOrdersQuery, [uniqueorderid]);
-            console.log('Deleted order with order id:', uniqueorderid);
-            // for (const row of productIdOrderlineResult.rows) {
-            //     const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = $1;`;
-            //     await query(updateLockQtyQuery, [row.productid]);
-            //     console.log('Updated lock_qty for product id:', row.productid);
-            // }
         }
         catch (error) {
             console.error("Error in getOrderDataForMerchantid:", error);

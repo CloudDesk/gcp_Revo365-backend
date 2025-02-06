@@ -10,77 +10,12 @@ import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
 const MERCHANT_ID = "PGTESTPAYUAT86";
-// const MERCHANT_ID = "PGTESTPAYUAT";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
-// const SALT_KEY = "099eb0cd-02cf-4e2a-8aca-3e6c6aff0399";
 const keyIndex = 1;
-// let transactionDataset: any = {
-//     transaction: {
-//         merchanttransactionId: 'U13T1727342645542',
-//         name: 'pravinsf24@gmail.com',
-//         amount: 43490,
-//         mobilenumber: '9894325540',
-//         userId: 13,
-//         productid: [170],
-//         transactionfor: 'product'
-//     },
-//     order: [
-//         {
-//             productid: 170,
-//             productname: 'OnePlus 9 Pro 5G (Stellar Black, 256 GB)  (12 GB RAM)',
-//             productcategory: 'new',
-//             productcolour: 'Stellar Black',
-//             userid: 13,
-//             addressid: 25,
-//             productamount: 44990,
-//             discountamount: 1500,
-//             orderamount: 43490,
-//             quantity: 1,
-//             cartId: 632
-//         }
-//     ]
-// }
 let transactionDataset;
 let dummyorderdata = [];
 let cartIddata = [];
-// let dummyorderdata = [{
-//     productid: 170,
-//     productname: 'OnePlus 9 Pro 5G (Stellar Black, 256 GB)  (12 GB RAM)',
-//     productcategory: 'new',
-//     productcolour: 'Stellar Black',
-//     userid: 13,
-//     addressid: 25,
-//     productamount: 44990,
-//     discountamount: 1500,
-//     orderamount: 43490,
-//     quantity: 1,
-//     cartId: 632
-// }]
 let productupdateorderqty = [];
-// let insersertdordderdatawithprocessing = [{
-//     id: 393,
-//     userid: 13,
-//     addressid: 25,
-//     createddate: '1727363580',
-//     modifieddate: '1727363580',
-//     orderamount: '43490',
-//     orderid: 'ord365-0000000393',
-//     orderstatus: 'order processing',
-//     delivereddate: null,
-//     cancelleddate: null,
-//     returneddate: null,
-//     quantity: 1,
-//     transactionid: null,
-//     readytodispatchdate: null,
-//     dispatcheddate: null,
-//     productamount: null,
-//     discountamount: null,
-//     deliveryfrom: null,
-//     orderprocessingtime: '1727363580',
-//     ispaymentsucceed: false,
-//     merchanttransactionid: 'U13T1727343778379',
-//     productid: [170]
-// }]
 let insersertdordderdatawithprocessing = [];
 export var transactionService;
 (function (transactionService) {
@@ -142,9 +77,8 @@ export var transactionService;
                 return datatypeCheckResult;
             }
             catch (error) {
-                console.error("Query Execution Error: IN getproductsData", error);
+                console.error("Query Execution Error: IN getTransactionData", error);
                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                console.log(ErrorMessage);
                 return ErrorMessage;
             }
         }
@@ -153,11 +87,9 @@ export var transactionService;
     transactionService.paymentInitialization = async (request) => {
         try {
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
-            console.log(request.body.order, "Order Data is");
             let orderdata = request.body.order;
             dummyorderdata = orderdata.map((element) => ({ ...element }));
             productupdateorderqty = orderdata.map((element) => ({ ...element }));
-            console.log(orderdata, "FINAL Order Data is");
             let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
             const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
             const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
@@ -172,9 +104,6 @@ export var transactionService;
                 };
             }
             transactionDataset = request.body;
-            console.log(transactionDataset, "Transaction Dataset IN Payment Initialization");
-            console.log(merchanttransactionId, "Merchant id IN Payment Initialization");
-            console.log(`${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}`);
             const data = {
                 merchantId: MERCHANT_ID,
                 merchantTransactionId: merchanttransactionId,
@@ -192,7 +121,6 @@ export var transactionService;
             const string = payloadMain + "/pg/v1/pay" + SALT_KEY;
             const sha256 = crypto.createHash("sha256").update(string).digest("hex");
             const checksum = sha256 + "###" + keyIndex;
-            console.log(payload, "PAYLOAD IS");
             const prod_url = "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
             const options = {
                 method: "POST",
@@ -211,17 +139,13 @@ export var transactionService;
                 response = await axios(options);
             }
             catch (error) {
-                console.log(JSON.stringify(error.message));
-                console.log(error.response ? error.response.data : error.message);
             }
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
-            console.log(request.body.order, "BEFORE INSERT DATA IS ");
             request.body.order.forEach((e) => {
                 cartIddata.push(e.cartId);
             });
-            console.log(response.data.data.merchantTransactionId, "BEFOR TASK");
             try {
                 let createHttpTaskResult = await createHttpTask(response.data.data.merchantTransactionId);
                 if (createHttpTaskResult?.success === false) {
@@ -232,33 +156,25 @@ export var transactionService;
                 }
                 let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
                 insersertdordderdatawithprocessing = insertorderdata.rows;
-                console.log(insersertdordderdatawithprocessing, "REsult for insert Order data is ");
             }
             catch (error) {
-                console.log(error.message, "Error in Task Creation");
+                console.log(error.message, "Error in Task paymentInitialization");
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
             }
-            console.log(response.data, "PAYMENT LOGS ARE ");
             return response.data.data.instrumentResponse.redirectInfo.url;
         }
         catch (error) {
             console.error("Query Execution Error: IN paymentInitialization", error.message);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
-            // console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     transactionService.paymentConfirmation = async (request, reply) => {
         try {
-            console.log("inside payment confirmation");
-            // console.log(REDIRECT_URL_SUCCESS, "REDIRECT URL SUCCESS");
-            // console.log(REDIRECT_URL_FAILURE, "REDIRECT URL FAILURE");
-            // console.log('status');
             const merchantTransactionId = request.query.id;
             const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId]);
             if (checkMerchantId.rows.length === 0) {
-                console.log('Merchant Transaction ID not found, Payment timed out');
                 return { message: "Payment timed out, try again." };
             }
             const cloudflaretoken = request.query.token;
@@ -280,21 +196,6 @@ export var transactionService;
             };
             const response = await axios(options);
             let message = {};
-            // response.data = {
-            //     "success": false,
-            //     "code": "PAYMENT_ERROR",
-            //     "message": "Payment Failed",
-            //     "data": {
-            //         "merchantId": "PGTESTPAYUAT",
-            //         "merchantTransactionId": "MT7850590068188104",
-            //         "transactionId": "T2111221437456190170379",
-            //         "amount": 100,
-            //         "state": "FAILED",
-            //         "responseCode": "ZM",
-            //         "responseCodeDescription": "Invalid m-pin entered",
-            //         "paymentInstrument": null
-            //     }
-            // }
             if (response.data.code && response.data.code == "PAYMENT_SUCCESS") {
                 transactionDataset.transaction.transactiondata = response.data;
                 message.payment = "Payment done Successfully";
@@ -303,7 +204,6 @@ export var transactionService;
                     result.orderdata.length > 0 &&
                     result.transactionData &&
                     result.transactionData.length > 0) {
-                    console.log(productupdateorderqty, "PRoduct Update Quantity");
                     if (productupdateorderqty.length > 0) {
                         let updateproductorderquantiydata = [];
                         productupdateorderqty.forEach((e) => {
@@ -312,26 +212,16 @@ export var transactionService;
                                 orderedquantity: e.quantity,
                             });
                         });
-                        console.log(updateproductorderquantiydata, "updateproductorderquantiydata");
                         const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
-                        console.log(cartIddata, "Cart ID DATA IS");
-                        console.log(cartIddata, "PAYMENT  CONFIRMATIN PAGEWß");
                         let deleteCartData = await cartservice.deleteCart(cartIddata);
                         const messageData = {
                             title: "Hello User",
                             body: "Payment Done Successfully",
                         };
-                        console.log(transactionDataset.transaction);
-                        console.log(transactionDataset.transaction.userId);
-                        console.log(messageData);
-                        console.log("test");
                         let resut = await messageinitialization(transactionDataset.transaction.userId, messageData);
-                        console.log(resut, "MESSAGE ISSS ");
                         if (updatedOrderQuantity == "UPDATE") {
-                            console.log("Ordered Quantity updated Successfully");
                         }
                         else {
-                            console.log("Order Quantity updation failed.");
                         }
                     }
                 }
@@ -341,28 +231,19 @@ export var transactionService;
                 }
             }
             else {
-                console.log("else message");
-                console.log(dummyorderdata, "Dummy Order Data is LOCK QUANTITY");
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
                 transactionDataset.transaction.transactiondata = response.data;
                 message.payment = "Payment done Successfully";
-                console.log(transactionDataset, "Transaction Data set is ");
                 const messageData = {
                     title: "Hello User",
                     body: "Payment Not Done.If Any Payment Debited it will be refunded in 5 business Days",
                 };
                 messageinitialization(transactionDataset.transaction.userId, messageData);
-                console.log(insersertdordderdatawithprocessing, "Order Data is");
                 let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing, true);
-                console.log(result, "Result in data");
             }
             const queryParams = new URLSearchParams(response.data).toString();
-            // console.log(queryParams);
             let url = REDIRECT_URL_SUCCESS;
-            console.log(cloudflaretoken, "Cloudflare Token is");
-            // Check if the response indicates failure and change the URL accordingly
             if (!response.data.success) {
-                // url = `${REDIRECT_URL_FAILURE}` + queryParams;
                 url = `${REDIRECT_URL_SUCCESS}`;
             }
             reply.redirect(url);
@@ -371,7 +252,6 @@ export var transactionService;
             let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
             console.error("Query Execution Error: IN paymentConfirmation", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -380,7 +260,6 @@ export var transactionService;
             let querydata;
             let params;
             const { id, ...upsertFields } = transactiondata;
-            console.log(upsertFields, "Upsert Fields Are");
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             querydata = `INSERT INTO transaction (${fieldNames.join(", ")}) VALUES (${fieldNames
@@ -393,7 +272,6 @@ export var transactionService;
         catch (error) {
             console.error("Query Execution Error: IN insertTransaction", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -422,7 +300,6 @@ export var transactionService;
                     order: insersertdordderdatawithprocessing,
                     transactiondata: { ...insertedTransaction },
                 };
-                console.log(finalResult, "final Reslult is ");
                 let orderupdated = await ordersService.updateOrder(finalResult, paymentfailed);
                 if (orderupdated.status === "success") {
                     return {
@@ -443,13 +320,9 @@ export var transactionService;
                     transactionData: "Order Not Updated Please contact Admin",
                 };
             }
-            // finalResult.ordercommand = orderupdated;
-            // console.log('Final Result:>>',finalResult);
-            // // console.log(orderupdated ,'orderupdated');
-            // return finalResult;
         }
         catch (error) {
-            console.error("Error inserting transaction data:", error);
+            console.error("Error insertTransactionData:", error);
             throw error;
         }
     };

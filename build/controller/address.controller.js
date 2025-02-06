@@ -8,7 +8,7 @@ export var addressController;
             reply.send(getAddressDataResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getAddressData');
+            console.log('ERROR IN  Controller getAddressData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -19,7 +19,7 @@ export var addressController;
             reply.send(getAddressDataResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getUserAddressData');
+            console.log('ERROR IN  Controller getUserAddressData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -31,7 +31,7 @@ export var addressController;
             reply.send(deleteAddressResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller deleteAddress');
+            console.log('ERROR IN  Controller deleteAddress', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -54,7 +54,7 @@ export var addressController;
             }
         }
         catch (error) {
-            console.log('ERROR IN  Controller upsertAddress');
+            console.log('ERROR IN  Controller upsertAddress', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }

@@ -48,12 +48,8 @@ import { ticketsSchema } from "../schemas/tickets.schema.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
-// import { getSession } from "../database/redis.session.js";
-// import { getSession } from "../cloudflare/cloudflare.session.js";
-console.log('test');
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
-    console.log('Routes called ');
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
     // fastify.get('/product/Archieve/:pageNumber/:recordCount', productController.getArcheivedProducts);

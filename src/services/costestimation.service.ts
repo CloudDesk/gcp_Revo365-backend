@@ -60,6 +60,7 @@ export module costEstimationService {
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
         } catch (error) {
+            console.error("Error in getCostEstimationData:", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage;
 
@@ -142,10 +143,10 @@ export module costEstimationService {
                     }
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue)
-                console.log(upsertticket, 'datas for ticket updated')
             }
             return result;
         } catch (error) {
+            console.error("Error in 'upsertCostEstimation':", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -154,7 +155,6 @@ export module costEstimationService {
 
     export const upsertGcpCostEstimation = async (request: any, costEstimationData: any) => {
         try {
-            console.log(costEstimationData, "costEstimationData");
             if (costEstimationData.productdata) {
                 costEstimationData.productdata = JSON.parse(costEstimationData.productdata)
             }
@@ -226,10 +226,10 @@ export module costEstimationService {
                     }
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue)
-                console.log(upsertticket, 'datas for ticket updated')
             }
             return result;
         } catch (error) {
+            console.error("Error in 'upsertGcpCostEstimation':", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

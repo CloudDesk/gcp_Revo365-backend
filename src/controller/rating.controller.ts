@@ -21,7 +21,6 @@ export module ratingController  {
             if (upsertRatingResult.command === "UPDATE" || upsertRatingResult.command === "INSERT") {
                 let productid = upsertRatingResult.rows[0].productid;
                 let updateAvgRating = await ratingService.updateAvgRating(productid);
-                console.log('***',updateAvgRating,'***');
                 let message: any = {}
                 message = {
                     product: upsertRatingResult.command === "UPDATE"
@@ -31,14 +30,12 @@ export module ratingController  {
                 reply.status(200).send(message)
             }
             else {
-                console.log(upsertRatingResult)
                 reply.status(404).send({ error: [upsertRatingResult] })
             }
             
         } catch (error) {
             console.error("Query Execution Error: IN upsertRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -50,7 +47,6 @@ export module ratingController  {
             if (upsertRatingResult.command === "UPDATE" || upsertRatingResult.command === "INSERT") {
                 let productid = upsertRatingResult.rows[0].productid;
                 let updateAvgRating = await ratingService.updateAvgRating(productid);
-                console.log('***',updateAvgRating,'***');
                 let message: any = {}
                 message = {
                     product: upsertRatingResult.command === "UPDATE"
@@ -60,12 +56,11 @@ export module ratingController  {
                 reply.status(200).send(message)
             }
             else {
-                console.log(upsertRatingResult)
                 reply.status(404).send({ error: [upsertRatingResult] })
             }
             
         } catch (error) {
-            console.error("Query Execution Error: IN upsertRating controller", error);
+            console.error("Query Execution Error: IN upsertGcpRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -85,12 +80,11 @@ export module ratingController  {
                 reply.status(200).send(message)
             }
             else {
-                console.log(upsertRatingResult)
                 reply.status(404).send({ error: [upsertRatingResult] })
             }
             
         } catch (error) {
-            console.error("Query Execution Error: IN upsertRating controller", error);
+            console.error("Query Execution Error: IN deleteImageRating controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }

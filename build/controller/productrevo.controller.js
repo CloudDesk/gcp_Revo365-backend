@@ -8,6 +8,7 @@ export var productrevoController;
             reply.send(getProductRevoResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getProductsrevoData', error);
             reply.status(500).send(error.message);
         }
     };
@@ -17,6 +18,7 @@ export var productrevoController;
             reply.send(getProductRevoResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getProductsEcomrevoData', error);
             reply.send(error.message);
         }
     };
@@ -26,6 +28,7 @@ export var productrevoController;
             reply.send(getProductsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getSimilarProducts', error);
             reply.send(`${error.message} error in get Products`);
         }
     };
@@ -35,6 +38,7 @@ export var productrevoController;
             reply.send(getProductsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertlockqty', error);
             reply.send(`${error.message} error in get Products`);
         }
     };
@@ -44,6 +48,7 @@ export var productrevoController;
             reply.send(getProductsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getArcheivedProductsRevo', error);
             reply.send(`${error.message} error in get Products`);
         }
     };
@@ -54,6 +59,7 @@ export var productrevoController;
             reply.send(getProductsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getEachProductsRevo', error);
             reply.send(`${error.message} error in get Each Products`);
         }
     };
@@ -64,6 +70,7 @@ export var productrevoController;
             reply.send(getProductsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller updateOrderedQuantityarray', error);
             reply.send(`${error.message} error in get Each Products`);
         }
     };
@@ -74,6 +81,7 @@ export var productrevoController;
             reply.send(deleteProductRevoResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller deleteProductrevo', error);
             reply.send(error.message);
         }
     };
@@ -81,7 +89,6 @@ export var productrevoController;
         try {
             const productrevoData = request.body;
             let upsertProductRevoResult = await productrevoService.upsertProductrevo(productrevoData);
-            console.log(JSON.stringify(upsertProductRevoResult));
             if (upsertProductRevoResult.command === "UPDATE" || upsertProductRevoResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -92,11 +99,11 @@ export var productrevoController;
                 reply.status(200).send(message);
             }
             else {
-                console.log(upsertProductRevoResult);
                 reply.status(404).send({ error: [upsertProductRevoResult] });
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertProductrevo', error);
             reply.send(error.message);
         }
     };
@@ -107,7 +114,6 @@ export var productrevoController;
                 let message = {};
                 let productId = productUpsertResult.productid;
                 if (productId) {
-                    console.log(productId);
                     let result = await uploadtos3(productUpsertResult.pathurldatas, productId);
                 }
                 message = {
@@ -119,7 +125,7 @@ export var productrevoController;
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error('ERROR IN  Controller upsertProductwithfileRevo', error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -138,7 +144,7 @@ export var productrevoController;
             // reply.send('Success')
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error('ERROR IN  Controller upsertProductwithfileRevogcp', error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -159,6 +165,7 @@ export var productrevoController;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller rearrangeImageRevo', error);
             reply.send(`${error.message} error in get Products`);
         }
     };
@@ -168,16 +175,9 @@ export var productrevoController;
             reply.send(resultremoverecyclebin);
         }
         catch (error) {
+            console.error('ERROR IN  Controller updateRemovedFromRecyclebinRevo', error);
             reply.send(`Error in updating recyclebin : ${error.message}`);
         }
     };
-    // export const upsertCountFields = async (request: any, reply: any) => {
-    //     try {
-    //         let upsertCount = await productrevoService.upsertQuantityFields(request)
-    //         reply.send(upsertCount)
-    //     } catch (error) {
-    //         reply.send(error.message)
-    //     }
-    // }
 })(productrevoController || (productrevoController = {}));
 //# sourceMappingURL=productrevo.controller.js.map

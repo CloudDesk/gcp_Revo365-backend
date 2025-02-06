@@ -7,6 +7,7 @@ export var purchaseOrderController;
             reply.send(getPurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in getPurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -16,6 +17,7 @@ export var purchaseOrderController;
             reply.send(getPurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in getPurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -26,6 +28,7 @@ export var purchaseOrderController;
             reply.send(deletePurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in deletePurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -46,7 +49,7 @@ export var purchaseOrderController;
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in upsertInvoice", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -67,7 +70,7 @@ export var purchaseOrderController;
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in upsertGcpInvoice", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -88,7 +91,7 @@ export var purchaseOrderController;
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in deleteUrl", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -111,6 +114,7 @@ export var purchaseOrderController;
             }
         }
         catch (error) {
+            console.error("Error in upsertPurchaseOrder", error);
             reply.send(error.message);
         }
     };

@@ -11,7 +11,6 @@ const uploadtos3 = async (filestoupload, productId) => {
                 const fileList = filestoupload[key];
                 for (const file of fileList) {
                     let resultofupdateds3 = await uploads3File(file, productId, folderName);
-                    console.log(resultofupdateds3, 'called data');
                     if (resultofupdateds3 !== null) {
                         successCount++;
                     }
@@ -21,7 +20,6 @@ const uploadtos3 = async (filestoupload, productId) => {
                 }
             }
         }
-        console.log("Upload complete. Success count:", successCount, "Failure count:", failureCount);
         return `Upload complete. Success count:, ${successCount}, Failure count: ${failureCount}`;
     }
     catch (error) {
@@ -33,8 +31,6 @@ async function uploads3File(filedata, productId, folderName) {
         const bucketName = "revo365";
         const { Path, file } = filedata;
         let key = `product/${productId}/${folderName}/` + file;
-        console.log(Path);
-        console.log(file);
         const fileStream = fs.createReadStream(Path);
         const params = {
             Bucket: bucketName,

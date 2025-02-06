@@ -10,12 +10,11 @@ import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
 
 import fs from "fs";
-// import { stringify } from 'csv-stringify';
 
 import { connectGetSessionredis } from "./database/redis.session.js";
 
 interface CustomRequest extends FastifyRequest {
-  startTime?: [number, number]; // Optional startTime property
+  startTime?: [number, number]; 
 }
 
 const __filename = fileURLToPath(import.meta.url);

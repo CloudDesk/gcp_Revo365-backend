@@ -8,6 +8,7 @@ export var ordersController;
             reply.send(getstock);
         }
         catch (error) {
+            console.error("Query Execution Error: IN getOrderlineDynamicData Controller", error);
             reply.send(error.message);
         }
     };
@@ -39,7 +40,7 @@ export var ordersController;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN getOrderData Controller", error);
+            console.error("Query Execution Error: IN updateorderlineitem Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -143,7 +144,7 @@ export var ordersController;
             // }
         }
         catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderv2", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -166,7 +167,7 @@ export var ordersController;
             }
         }
         catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderrfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -189,7 +190,7 @@ export var ordersController;
             }
         }
         catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderlinerfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -200,7 +201,7 @@ export var ordersController;
             reply.send(getOrderDataResult);
         }
         catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller deleteBasedOnMerchantId", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

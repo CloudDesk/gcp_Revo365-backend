@@ -14,27 +14,21 @@ export var stockService;
                 if (key !== 'page' && key !== 'count') {
                     const paramValues = Array.isArray(value) ? value : [value];
                     if (key === "createddate" || key === "modifieddate") {
-                        console.log('inside created Date');
                         let rangeWhereClause = paramValues
                             .map((range) => {
-                            console.log(range);
                             const [lowerBound, upperBound] = range.split("-");
-                            console.log(lowerBound);
-                            console.log(upperBound);
                             queryParams.push(lowerBound, upperBound);
                             const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                             parameterIndex += 2;
-                            console.log(clause, ' Clause Data is');
                             return clause;
                         })
                             .join(" OR ");
                         whereClauses.push(`(${rangeWhereClause})`);
                     }
                     else {
-                        // const formattedKey = key.toLowerCase() === 'userid' ? key : key;
                         whereClauses.push(`(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`);
                         queryParams.push(...paramValues);
-                        parameterIndex += paramValues.length; // Increment parameter index 
+                        parameterIndex += paramValues.length;
                     }
                 }
             });
@@ -52,14 +46,12 @@ export var stockService;
                 querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(querydata);
             let data = await query(querydata, queryParams);
             return data.rows;
         }
         catch (error) {
             console.error("Query Execution Error: IN getStock", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

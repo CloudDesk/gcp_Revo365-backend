@@ -7,6 +7,7 @@ export var picklistControler;
             reply.send(getPicklistData);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getPicklistforobject', error);
             reply.send(error.message);
         }
     };
@@ -16,6 +17,7 @@ export var picklistControler;
             reply.send(getPicklistData);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getAllPicklist', error);
             reply.send(error.message);
         }
     };

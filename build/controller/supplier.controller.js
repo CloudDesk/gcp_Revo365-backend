@@ -7,16 +7,17 @@ export var supplierController;
             reply.send(getSupplierResult);
         }
         catch (error) {
+            console.error('Error in getSupplier Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller');
         }
     };
-    //lookup
     supplierController.getSupplierName = async (request, reply) => {
         try {
             let getSupplierResult = await supplierSerivce.getSupplierName(request.query);
             reply.send(getSupplierResult);
         }
         catch (error) {
+            console.error('Error in getSupplierName Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller');
         }
     };
@@ -26,6 +27,7 @@ export var supplierController;
             reply.send(getSupplierResult);
         }
         catch (error) {
+            console.error('Error in getSupplierProductdata Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller');
         }
     };
@@ -44,6 +46,7 @@ export var supplierController;
             }
         }
         catch (error) {
+            console.error('Error in upsertSupplier Controller', error);
             reply.send(error.message, 'Error in upsert Supplier Data Controller');
         }
     };
@@ -53,6 +56,7 @@ export var supplierController;
             reply.send(deleteSupplierResult);
         }
         catch (error) {
+            console.error('Error in deleteSupplier Controller', error);
             reply.send(error.message, 'Error in delete Supplier Data Controller');
         }
     };
