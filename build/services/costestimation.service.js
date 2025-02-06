@@ -58,6 +58,7 @@ export var costEstimationService;
             return datatypeCheckResult;
         }
         catch (error) {
+            console.error("Error in getCostEstimationData:", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -134,18 +135,17 @@ export var costEstimationService;
                     };
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue);
-                console.log(upsertticket, 'datas for ticket updated');
             }
             return result;
         }
         catch (error) {
+            console.error("Error in 'upsertCostEstimation':", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
     };
     costEstimationService.upsertGcpCostEstimation = async (request, costEstimationData) => {
         try {
-            console.log(costEstimationData, "costEstimationData");
             if (costEstimationData.productdata) {
                 costEstimationData.productdata = JSON.parse(costEstimationData.productdata);
             }
@@ -211,11 +211,11 @@ export var costEstimationService;
                     };
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue);
-                console.log(upsertticket, 'datas for ticket updated');
             }
             return result;
         }
         catch (error) {
+            console.error("Error in 'upsertGcpCostEstimation':", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

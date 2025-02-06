@@ -36,7 +36,6 @@ export var revoinvoiceservice;
                 }
             });
             const offset = (pageNumber - 1) * recordCount;
-            //const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : '';
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT * FROM revoinvoice ${whereClause} ${orderByClause}`;
@@ -44,19 +43,17 @@ export var revoinvoiceservice;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
         }
         catch (error) {
+            console.error("Query Execution Error: IN getRevoInvoiceData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
     };
     revoinvoiceservice.generaterevoinvoice = async (request, invoicedata, reply) => {
-        console.log(JSON.stringify(invoicedata), 'podata');
         try {
             let invoicefor = invoicedata[0].invoicefor;
             let template = '';
@@ -69,16 +66,13 @@ export var revoinvoiceservice;
             else {
                 return 'Without Invoice Type you cannot create Invoice';
             }
-            console.log('template is ' + template);
             let result = await GenerateDocx(request, invoicedata, template);
-            console.log(result, "result from invoiceData");
             result.invoiceUrl = result.fileurl;
             delete result.fileurl;
             let data = {
                 id: result.id,
                 invoiceurl: result.invoiceUrl
             };
-            console.log(data);
             let insertFileinvoice = await revoinvoiceservice.upsertRevoInvoice(data);
             if (insertFileinvoice.command === "UPDATE" || insertFileinvoice.command === "INSERT") {
                 reply.send(result.invoiceUrl);
@@ -88,22 +82,19 @@ export var revoinvoiceservice;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN generatepurchaseOrderData", error);
+            console.error("Query Execution Error: IN generaterevoinvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     revoinvoiceservice.upsertRevoInvoice = async (invoicedata) => {
         try {
-            console.log(invoicedata, 'data');
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
-            console.log(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
@@ -118,12 +109,11 @@ export var revoinvoiceservice;
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata, 'Query is');
             const result = await query(querydata, params);
-            console.log(result.command, 'Result is');
             return result;
         }
         catch (error) {
+            console.error("Query Execution Error: IN upsertRevoInvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

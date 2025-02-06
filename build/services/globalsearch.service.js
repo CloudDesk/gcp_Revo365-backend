@@ -7,8 +7,6 @@ export var globalserachService;
         try {
             const { globalSearch, subcategory, sortby, page, recordcount } = request.query;
             const searchTerms = globalSearch.split(' ');
-            console.log(searchTerms, 'Search Terms ');
-            // Construct the SQL query dynamically based on the global search term
             let searchQuery;
             let results;
             const result = await query(`
@@ -75,7 +73,6 @@ export var globalserachService;
     globalserachService.getGlobalProductData = async (request, reply) => {
         try {
             const { globalsearch, subcategory, sortby, page, recordcount } = request.query;
-            console.log(globalsearch, 'globalsearch');
             const searchTerms = globalsearch.split(' ').join(' & ');
             let newSearch = globalsearch.split(' ');
             if (newSearch.length === 1) {
@@ -120,7 +117,6 @@ export var globalserachService;
                 queryText += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
                 params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
             }
-            // Execute the query
             const resultData = await query(queryText, params);
             return resultData.rows;
         }
@@ -211,17 +207,11 @@ export var globalserachService;
                 product: productRevoResult.rows || [],
                 tickets: ticketsResult.rows || []
             };
-            console.log('Results count:', {
-                tickets: formattedResults.tickets.length,
-                product: formattedResults.product.length,
-                stock: formattedResults.stock.length
-            });
             return formattedResults;
         }
         catch (error) {
             console.error("Query Execution Error: IN getGlobalStockOrderTicketData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

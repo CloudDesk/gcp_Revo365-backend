@@ -8,6 +8,7 @@ export var ticketController;
             reply.send(getstock);
         }
         catch (error) {
+            console.error("Error in 'getTicketDynamicData':", error);
             reply.send(error.message);
         }
     };
@@ -17,6 +18,7 @@ export var ticketController;
             reply.send(ticketData);
         }
         catch (error) {
+            console.error("Error in 'getTicketsData':", error);
             let ErrorDetails = ErrorHandler.handleQueryError(error);
             reply.status(404).send(ErrorDetails);
         }
@@ -27,12 +29,12 @@ export var ticketController;
             reply.send(ticketData);
         }
         catch (error) {
+            console.error("Error in 'getQueueTicketsData':", error);
             let ErrorDetails = ErrorHandler.handleQueryError(error);
             reply.status(404).send(ErrorDetails);
         }
     };
     ticketController.upsertTickets = async (request, reply) => {
-        console.log(request);
         try {
             let host = request.headers.host;
             let upsertTicket = await ticketService.upsertTickets(request.body, request.files, host);
@@ -50,12 +52,12 @@ export var ticketController;
             }
         }
         catch (error) {
+            console.error("Error in 'upsertTickets':", error);
             let ErrorDetails = ErrorHandler.handleQueryError(error);
             reply.status(404).send(ErrorDetails);
         }
     };
     ticketController.upsertGcpTickets = async (request, reply) => {
-        console.log(request);
         try {
             let host = request.headers.host;
             let upsertTicket = await ticketService.upsertGcpTickets(request.body);
@@ -73,12 +75,12 @@ export var ticketController;
             }
         }
         catch (error) {
+            console.error("Error in 'upsertGcpTickets':", error);
             let ErrorDetails = ErrorHandler.handleQueryError(error);
             reply.status(404).send(ErrorDetails);
         }
     };
     ticketController.upsertTicketspayment = async (request, host) => {
-        console.log(request);
         try {
             let host = request.headers.host;
             request.files = request.body.ticket.recipturl;
@@ -91,15 +93,14 @@ export var ticketController;
                         ? `Ticket Updated Successfully`
                         : `Ticket Raised Successfully`
                 };
-                // reply.status(200).send(message);
                 return { status: 200, message: message };
             }
             else {
-                // reply.status(400).send(upsertTicket)
                 return { status: 404, message: upsertTicket };
             }
         }
         catch (error) {
+            console.error("Error in 'upsertTicketspayment':", error);
             let ErrorDetails = ErrorHandler.handleQueryError(error);
             return { status: 404, message: ErrorDetails };
         }

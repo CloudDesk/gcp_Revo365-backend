@@ -56,6 +56,7 @@ export var getTables;
             return allowedTables;
         }
         catch (error) {
+            console.error("Error in getUserTable:", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

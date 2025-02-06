@@ -9,7 +9,6 @@ import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
 import fs from "fs";
-// import { stringify } from 'csv-stringify';
 import { connectGetSessionredis } from "./database/redis.session.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -45,16 +45,13 @@ export var quoteService;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
         }
         catch (error) {
-            console.error("Query Execution Error: IN get Quote data", error);
+            console.error("Query Execution Error: IN getQuotedata", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -65,7 +62,6 @@ export var quoteService;
             const { id, ...upsertFields } = quotedata;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
-            console.log(id, "recId");
             if (id) {
                 querydata = `UPDATE quotes SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
                 WHERE id = $${fieldNames.length + 1} 
@@ -79,16 +75,13 @@ export var quoteService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            console.log(result.rows);
             if (result.rows.length > 0) {
                 if (result.rows[0].status === "closed_won") {
                     let value = {
                         prstatus: 'Completed',
                         prnumber: result.rows[0].prnumber
                     };
-                    console.log(value, ' Value is data ');
                     let updatevalues = await purchaseRequestService.upsertstatusfield(value);
-                    console.log(JSON.stringify(updatevalues), ' Updated data');
                     if (updatevalues.rows.length > 0) {
                         let message = {
                             Quote: "Quote Inserted or Updated Successfully",
@@ -117,9 +110,8 @@ export var quoteService;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsert Service Quote data", error);
+            console.error("Query Execution Error: IN upsertQuote", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -134,9 +126,8 @@ export var quoteService;
             return result;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsert Service Quote data", error);
+            console.error("Query Execution Error: IN attachQuotefiles", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -144,11 +135,9 @@ export var quoteService;
         try {
             let querydata;
             let params;
-            console.log(quotedata.body, "quotedata.body");
             const { id, ...upsertFields } = quotedata.body;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
-            console.log(id, "recId");
             if (id) {
                 querydata = `UPDATE quotes SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
                 WHERE id = $${fieldNames.length + 1} 
@@ -161,19 +150,14 @@ export var quoteService;
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata, "querydata");
-            console.log(params, "params");
             const result = await query(querydata, params);
-            console.log(result.rows, 'Result Data is ');
             if (result && result.rows && result.rows.length > 0) {
                 if (result.rows[0].status === "closed_won") {
                     let value = {
                         prstatus: 'Completed',
                         prnumber: result.rows[0].prnumber
                     };
-                    console.log(value, ' Value is data ');
                     let updatevalues = await purchaseRequestService.upsertstatusfield(value);
-                    console.log(JSON.stringify(updatevalues), ' Updated data');
                     if (updatevalues.rows.length > 0) {
                         let message = {
                             Quote: "Quote Inserted or Updated Successfully",
@@ -202,9 +186,8 @@ export var quoteService;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsert Service Quote data", error);
+            console.error("Query Execution Error: IN attachGcpQuotefiles", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

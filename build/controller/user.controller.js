@@ -7,13 +7,13 @@ export var userController;
             reply.send(getUsersDataResult);
         }
         catch (error) {
+            console.error("Error in getUsersData", error);
             reply.send(error.message);
         }
     };
     userController.forgotuser = async (request, reply) => {
         try {
             let forgotuserData = await userService.forgotuser(request);
-            console.log(forgotuserData, 'forgotuserData');
             if (forgotuserData.status === 'success') {
                 reply.send(forgotuserData);
             }
@@ -22,14 +22,13 @@ export var userController;
             }
         }
         catch (error) {
+            console.error("Error in forgotuser", error);
             reply.send(error.message);
         }
     };
     userController.getLoggedInUsersData = async (request, reply) => {
         try {
             let getUsersDataResult = await userService.getLoggedInUsersData(request, reply);
-            console.log(getUsersDataResult, 'getUsersDataResult');
-            console.log(Array.isArray(getUsersDataResult.userdata));
             if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
                 reply.status(401).send({ error: getUsersDataResult });
             }
@@ -38,6 +37,7 @@ export var userController;
             }
         }
         catch (error) {
+            console.error("Error in getLoggedInUsersData", error);
             reply.send(error.message);
         }
     };
@@ -48,40 +48,18 @@ export var userController;
             reply.send(deleteUserResult);
         }
         catch (error) {
+            console.error("Error in deleteUserData", error);
             reply.send(error.message);
         }
     };
-    // export const upsertUser = async (request: any, reply: any) => {
-    //     try {
-    //         const userData = request.body;
-    //         let upsertUserResult = await userService.upsertUser(userData);
-    //         console.log(upsertUserResult);
-    //         if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
-    //             let message: any = {};
-    //             message = {
-    //                 user: upsertUserResult?.command === "UPDATE"
-    //                     ? ` User Updated successfully`
-    //                     : ` User signup done successfully`
-    //             };
-    //             reply.status(200).send(message);
-    //         }
-    //         else {
-    //             reply.status(500).send(upsertUserResult)
-    //         }
-    //     } catch (error) {
-    //         reply.send(error.message);
-    //     }
-    // }
     userController.upsertUser = async (request, reply) => {
         try {
             const userData = request.body;
             let upsertUserResult = await userService.upsertUser(userData);
-            console.log('>>>>>', upsertUserResult, '>>>>>');
             if (upsertUserResult.command == 'UPDATE') {
                 reply.status(200).send('User Updated successfully');
             }
             else if (upsertUserResult.command == 'INSERT') {
-                console.log('Inside Insert');
                 reply.status(200).send('User signup done successfully');
             }
             else {
@@ -89,7 +67,7 @@ export var userController;
             }
         }
         catch (error) {
-            console.log('Error:', error.message);
+            console.error("Error in upsertUser", error);
             reply.send(error.message);
         }
     };
@@ -98,10 +76,10 @@ export var userController;
             const userData = request.body;
             console.log(request.cookies.sessionId);
             let upsertUserResult = await userService.userlogout(request, reply);
-            console.log(upsertUserResult);
             reply.status(200).send('Logged Out Successfully');
         }
         catch (error) {
+            console.error("Error in userlogout", error);
             reply.send(error.message);
         }
     };
@@ -109,7 +87,6 @@ export var userController;
         try {
             const userData = request.body;
             let upsertUserResult = await userService.upsertFcmidUser(userData);
-            console.log(upsertUserResult);
             if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
                 let message = {};
                 message = {
@@ -124,6 +101,7 @@ export var userController;
             }
         }
         catch (error) {
+            console.error("Error in upsertFcmidUser", error);
             reply.send(error.message);
         }
     };

@@ -5,23 +5,19 @@ export var transactionController;
     transactionController.paymentInitialization = async (request, reply) => {
         try {
             let transactionData = await transactionService.paymentInitialization(request);
-            console.log(transactionData, "Transacion data is ===>> ");
             if (transactionData?.status == 400) {
                 reply.status(404).send(transactionData.message);
             }
             else {
-                console.log(transactionData);
                 reply.send(transactionData);
             }
         }
         catch (error) {
             console.error("Query Execution Error: IN paymentInitialization Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
-    // Just for me
     transactionController.inserttransaction = async (request, reply) => {
         try {
             const transactionReqData = request.body;
@@ -30,27 +26,23 @@ export var transactionController;
                 reply.status(404).send(transactionData.message);
             }
             else {
-                console.log(transactionData);
                 reply.send(transactionData);
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN ticketinsert Controller", error);
+            console.error("Query Execution Error: IN inserttransaction Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     transactionController.paymentConfirmation = async (request, reply) => {
         try {
             let transactionData = await transactionService.paymentConfirmation(request, reply);
-            console.log(transactionData);
             reply.send(transactionData);
         }
         catch (error) {
-            console.error("Query Execution Error: IN paymentInitialization Controller", error);
+            console.error("Query Execution Error: IN paymentConfirmation Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -62,7 +54,6 @@ export var transactionController;
         catch (error) {
             console.error("Query Execution Error: IN getTransactionData Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

@@ -54,8 +54,6 @@ export var ratingService;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
@@ -63,7 +61,6 @@ export var ratingService;
         catch (error) {
             console.error("Query Execution Error: IN getRatingData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -74,11 +71,9 @@ export var ratingService;
             let ratingData = request.body;
             let filedata = request.files;
             let url = [];
-            console.log(filedata, 'file Dat');
             filedata && filedata.length > 0 && filedata.forEach((e) => {
                 url.push(`${PROTOCOL}://${request.headers.host}/${e.filename}`);
             });
-            console.log(url, 'URL IS ');
             ratingData.url = url;
             const { id, ...upsertFields } = ratingData;
             const fieldNames = Object.keys(upsertFields);
@@ -88,9 +83,7 @@ export var ratingService;
                 const existingUrlResult = await query(fetchUrlQuery, [id]);
                 if (existingUrlResult.rows.length > 0) {
                     const existingUrls = existingUrlResult.rows[0].url;
-                    console.log(existingUrls, 'Existing URL');
                     const updatedUrls = existingUrls.concat(url);
-                    console.log(updatedUrls);
                     upsertFields.url = updatedUrls;
                     const fieldNames = Object.keys(upsertFields);
                     const fieldValues = Object.values(upsertFields);
@@ -113,9 +106,8 @@ export var ratingService;
             return result;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertProductrevo", error);
+            console.error("Query Execution Error: IN upsertRating", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -132,9 +124,7 @@ export var ratingService;
                 const existingUrlResult = await query(fetchUrlQuery, [id]);
                 if (existingUrlResult.rows.length > 0) {
                     const existingUrls = existingUrlResult.rows[0].url;
-                    console.log(existingUrls, 'Existing URL');
                     const updatedUrls = existingUrls.concat(ratingData.url);
-                    console.log(updatedUrls);
                     upsertFields.url = updatedUrls;
                     const fieldNames = Object.keys(upsertFields);
                     const fieldValues = Object.values(upsertFields);
@@ -157,9 +147,8 @@ export var ratingService;
             return result;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertProductrevo", error);
+            console.error("Query Execution Error: IN upsertGcpRating", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -168,7 +157,6 @@ export var ratingService;
             let querydata = '';
             let params;
             let ratingData = request.body;
-            console.log(ratingData, 'Rating Data is');
             const { id, ...upsertFields } = ratingData;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
@@ -178,15 +166,12 @@ export var ratingService;
                     .join(', ')} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
-            console.log(querydata, 'Query Data is ');
-            console.log(params, 'Params is');
             const result = await query(querydata, params);
             return result;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertProductrevo", error);
+            console.error("Query Execution Error: IN deleteImage", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -203,7 +188,6 @@ export var ratingService;
         catch (error) {
             console.error("Query Execution Error: IN deleteRating", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -217,16 +201,13 @@ export var ratingService;
             }
             const totalRating = result.rows[0].totalrating;
             const ratingCount = result.rows[0].ratingcount;
-            console.log(`Total Rating: ${totalRating}, Rating Count: ${ratingCount}`);
             const avgRating = parseFloat((totalRating / ratingCount).toFixed(1));
-            console.log(typeof (avgRating), avgRating, '-- AVG Rating');
             const updateAvgRatingInProductrevo = await productrevoService.updateAvgRatingProductrevo(avgRating, productid);
             return updateAvgRatingInProductrevo;
         }
         catch (error) {
             console.error("Query Execution Error: IN updateAvgRating", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
