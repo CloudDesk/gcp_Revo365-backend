@@ -89,7 +89,7 @@ export module stockRevoController {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoData(request.body);
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
-                const puc = upsertStockResult.result.puc; // Get the puc from the result
+                const puc = upsertStockResult.result.puc; 
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
@@ -111,10 +111,9 @@ export module stockRevoController {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoDatadelete(request.body);
             if (upsertStockResult?.command === "UPDATE" || upsertStockResult?.command === "INSERT") {
-                const puc = upsertStockResult.result.puc; // Get the puc from the result
+                const puc = upsertStockResult.result.puc; 
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                  let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-              //  let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isdeleted === true
                         ? `Stock Deleted successfully`
@@ -139,13 +138,10 @@ export module stockRevoController {
                 const puc = upsertStockResult.result.puc; // Get the puc from the result
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                  let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-               // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isarchive === true
                         ? `Stock successfully archived`
                         : `Stock  successfully unarchived`,
-                    // totalCount: upsertStockResult.totalCount, // Include the total count in the response
-                    // updateQuantity
                 };
                 reply.status(200).send(message);
             } else if (upsertStockResult.status === 400) {
