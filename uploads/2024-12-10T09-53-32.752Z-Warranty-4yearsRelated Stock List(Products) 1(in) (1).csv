@@ -1,0 +1,5 @@
+puc,category,subcategory,serialnumber,ecompublish,productname,rfid,location,ewaste
+ac-nw-0000001000,new,accessories,3YEAR-002,TRUE,Warranty-4years,1111122223,head_office,FALSE
+ac-nw-0000001001,new,accessories,3YEAR-003,TRUE,Warranty-4years,1111122224,head_office,FALSE
+ac-nw-0000001002,new,accessories,3YEAR-004,TRUE,Warranty-4years,1111122225,head_office,FALSE
+ac-nw-0000001003,new,accessories,3YEAR-005,TRUE,Warranty-4years,1111122226,head_office,FALSE
