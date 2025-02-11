@@ -38,8 +38,8 @@ export var supplierController;
                 let message = {};
                 message = {
                     message: upsertSupplierResult.command === "UPDATE"
-                        ? `Data Updated successfully in supplier`
-                        : `Data Inserted successfully into supplier`,
+                        ? `Supplier data has been successfully updated.`
+                        : `Supplier data has been successfully added.`,
                     data: upsertSupplierResult.rows
                 };
                 reply.status(200).send(message);
