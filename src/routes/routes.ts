@@ -48,6 +48,10 @@ import { ticketsSchema } from "../schemas/tickets.schema.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
+import { testSendFCMNotification } from "../services/test.service.js";
+import { userService } from "../services/user.service.js";
+import { request } from "http";
+import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -69,8 +73,27 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     }
     )
 
-    fastify.get('/test', { preHandler: [getSession] }, (req, reply) => {
-        reply.status(200).send('test')
+    fastify.get('/fcmnotification', async (req, reply) => {
+        // reply.status(200).send('test')
+        console.log("first")
+        const messageData = {
+            title: "Hello there! 👋",
+            body: "Hope you're having a great day!"
+        };
+        let fcmId = (req.query as { token: string }).token; // Fetch from query params
+
+        if (!fcmId) {
+            console.error("No FCM token provided");
+            return reply.status(400).send({ error: "FCM token is required" });
+        }
+        try {
+
+            await sendPushNotification(fcmId, messageData);
+            return reply.status(200).send({ success: "Notification sent successfully" });
+        } catch (error) {
+            console.error("Error in testSendFCMNotification:", error);
+            return reply.status(500).send({ error: "Failed to send notification" });
+        }
     }
     )
     // verison 2 -> product
@@ -82,7 +105,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/product', { preHandler: [getSession] },/* { preHandler: [validateRequestBody(productInsertSchema)] } ,*/ productrevoController.upsertProductrevo);
     fastify.delete('/v2/product/:id', { preHandler: [getSession] },/* { preHandler: validateRequestBody(deleteProductSchema) } , */ productrevoController.deleteProductrevo);
     fastify.post('/v2/product-file/:productid', { preHandler: [getSession, filesUpload] }, productrevoController.upsertProductwithfileRevo);
-    fastify.post('/v3/product-file',productrevoController.upsertProductwithfileRevogcp);
+    fastify.post('/v3/product-file', productrevoController.upsertProductwithfileRevogcp);
     fastify.post('/v2/rearange-image/:productid', { preHandler: [getSession] }, productrevoController.rearrangeImageRevo);
     fastify.get('/v2/product/updaterecyclebin', { preHandler: [getSession] }, productrevoController.updateRemovedFromRecyclebinRevo);
     fastify.get(`/v2/product-ecom`, productrevoController.getProductsEcomrevoData);
@@ -230,7 +253,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/rating-ecom', ratingController.getRatingData);
     fastify.delete('/rating/:id', { preHandler: [getSession] }, ratingController.deleteRating);
     fastify.post('/rating', { preHandler: [getSession, filesUpload] }, ratingController.upsertRating);
-    fastify.post('/v2/rating',ratingController.upsertGcpRating);
+    fastify.post('/v2/rating', ratingController.upsertGcpRating);
     fastify.post('/rating-image/delete', { preHandler: [getSession] }, ratingController.deleteImageRating);
 
     // phonepe
@@ -246,7 +269,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
     //generate PR
     fastify.post('/generate/purchase-request', { preHandler: [getSession, validateRequestBody(generatePRSchema)] }, generatePRController.generatepr);
-    
+
     fastify.get('/session', sessionController.getSessionController)
 
     //quote
