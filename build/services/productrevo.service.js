@@ -565,6 +565,7 @@ export var productrevoService;
     };
     productrevoService.bulkupsertProducttosetZero = (async (data, setzero) => {
         try {
+            console.log(data + 'data for bulk upsert product to set zero');
             if (data.length === 0) {
                 return { message: 'No data to update' };
             }
@@ -592,6 +593,7 @@ export var productrevoService;
             }
             querytext += ');';
             await query(querytext, values);
+            console.log('success bulk upsert product to set zero');
             return { message: 'Bulk update successful' };
         }
         catch (error) {

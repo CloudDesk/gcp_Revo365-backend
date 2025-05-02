@@ -90,6 +90,8 @@ export var transactionService;
             let orderdata = request.body.order;
             dummyorderdata = orderdata.map((element) => ({ ...element }));
             productupdateorderqty = orderdata.map((element) => ({ ...element }));
+            console.log(orderdata, " orderdata");
+            console.log(dummyorderdata, " dummyorderdata");
             let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
             const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
             const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
