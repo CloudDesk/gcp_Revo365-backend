@@ -109,6 +109,7 @@ export module transactionService {
         transactionfor,
       } = request.body.transaction;
       let orderdata = request.body.order;
+      let orderDataProcess = request.body.order
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
       console.log(orderdata, " orderdata");
@@ -173,7 +174,9 @@ export module transactionService {
         response = await axios(options);
       } catch (error) {
       }
-
+console.log(request.body.order, " request.body.order after axios");
+console.log(orderdata, " orderdata after axios");
+console.log(orderDataProcess, " orderDataProcess after axios");
       request.body.order.forEach((e) => {
         e.merchanttransactionid = response.data.data.merchantTransactionId;
       });
