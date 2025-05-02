@@ -4,7 +4,7 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
 import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
-import { REDIRECT_URL_FAILURE, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
+import { REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
@@ -144,7 +144,7 @@ export var transactionService;
                 //   status: 400,
                 //   message: "Phonepe Payment Gateway is Failing.please try again",
                 // };
-                return REDIRECT_URL_FAILURE;
+                return REDIRECT_URL_SUCCESS;
             }
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;

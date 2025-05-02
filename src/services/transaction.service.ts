@@ -176,7 +176,7 @@ export module transactionService {
         //   message: "Phonepe Payment Gateway is Failing.please try again",
         // };
 
-        return REDIRECT_URL_FAILURE;
+        return REDIRECT_URL_SUCCESS;
       }
 
       request.body.order.forEach((e) => {
