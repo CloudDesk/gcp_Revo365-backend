@@ -4,7 +4,7 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
 import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
-import { REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
+import { REDIRECT_URL_FAILURE, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
@@ -88,11 +88,8 @@ export var transactionService;
         try {
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
-            let orderDataProcess = request.body.order;
             dummyorderdata = orderdata.map((element) => ({ ...element }));
             productupdateorderqty = orderdata.map((element) => ({ ...element }));
-            console.log(orderdata, " orderdata");
-            console.log(dummyorderdata, " dummyorderdata");
             let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
             const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
             const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
@@ -140,13 +137,15 @@ export var transactionService;
             let response;
             try {
                 response = await axios(options);
-                console.log(response?.data, " response.data");
-                console.log(response, " response in axios");
             }
             catch (error) {
                 console.log(error.message, "Error in axios options");
+                // return {
+                //   status: 400,
+                //   message: "Phonepe Payment Gateway is Failing.please try again",
+                // };
+                return REDIRECT_URL_FAILURE;
             }
-            console.log(request.body.order, " request.body.order after axios");
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
