@@ -1,6 +1,12 @@
 
 import admin from "firebase-admin"
-let userTokenData: string;
+import serviceData from './service.json'
+
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceData as admin.ServiceAccount)
+});
+
 
 export const messageinitialization = async (userid, messageData) => {
   try {
@@ -13,8 +19,8 @@ export const messageinitialization = async (userid, messageData) => {
 
 
 
-export const sendPushNotification = async (token: any, messageData: any) => {
 
+export const sendPushNotification = async (token: any, messageData: any) => {
   const message = {
     notification: {
       title: messageData.title,
@@ -24,11 +30,21 @@ export const sendPushNotification = async (token: any, messageData: any) => {
   };
 
   try {
+    console.log("Initial message:", message);
     const response = await admin.messaging().send(message);
-    return `Successfully sent message to :  ${response}`
-  } catch (error) {
-    console.error("Error sending sendPushNotification:", error);
+    console.log("Notification sent:", response);
+    return `Successfully sent message: ${response}`;
+  } catch (error: any) {
+    console.error("Error sending push notification:", error);
+
+    if (error.code === "messaging/registration-token-not-registered") {
+      console.log("Invalid token detected. Consider removing from DB.");
+      // Remove or update token logic here
+    }
+
+    return `Failed to send message: ${error.message}`;
   }
 };
+
 
 
