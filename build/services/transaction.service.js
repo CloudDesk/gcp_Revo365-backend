@@ -88,6 +88,7 @@ export var transactionService;
         try {
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
+            let orderDataProcess = request.body.order;
             dummyorderdata = orderdata.map((element) => ({ ...element }));
             productupdateorderqty = orderdata.map((element) => ({ ...element }));
             console.log(orderdata, " orderdata");
@@ -142,6 +143,9 @@ export var transactionService;
             }
             catch (error) {
             }
+            console.log(request.body.order, " request.body.order after axios");
+            console.log(orderdata, " orderdata after axios");
+            console.log(orderDataProcess, " orderDataProcess after axios");
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
