@@ -42,6 +42,7 @@ import { notesSchema } from "../schemas/notes.schems.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
+import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -59,8 +60,26 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5/', (req, reply) => {
         reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5');
     });
-    fastify.get('/test', { preHandler: [getSession] }, (req, reply) => {
-        reply.status(200).send('test');
+    fastify.get('/fcmnotification', async (req, reply) => {
+        // reply.status(200).send('test')
+        console.log("first");
+        const messageData = {
+            title: "Hello there! 👋",
+            body: "Hope you're having a great day!"
+        };
+        let fcmId = req.query.token; // Fetch from query params
+        if (!fcmId) {
+            console.error("No FCM token provided");
+            return reply.status(400).send({ error: "FCM token is required" });
+        }
+        try {
+            await sendPushNotification(fcmId, messageData);
+            return reply.status(200).send({ success: "Notification sent successfully" });
+        }
+        catch (error) {
+            console.error("Error in testSendFCMNotification:", error);
+            return reply.status(500).send({ error: "Failed to send notification" });
+        }
     });
     // verison 2 -> product
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);

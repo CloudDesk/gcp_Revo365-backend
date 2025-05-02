@@ -117,6 +117,7 @@ export var userService;
         }
     };
     userService.getLoggedInUsersData = async (request, reply) => {
+        console.log("getLoggedInUsersData", request.params);
         try {
             const ecomQuery = `SELECT * FROM users WHERE LOWER(useremail) = LOWER($1)`;
             const ecomResult = await query(ecomQuery, [request.params.useremail]);
@@ -141,6 +142,7 @@ export var userService;
                 }
             }
             else {
+                console.log("else");
                 const inventoryQuery = `SELECT * FROM inventoryusers WHERE useremail = $1`;
                 const inventoryResult = await query(inventoryQuery, [request.params.useremail]);
                 if (inventoryResult.rows.length > 0) {
@@ -227,8 +229,10 @@ export var userService;
         `;
                 const emailCheckResult = await query(checkEmailQuery, [userData.useremail]);
                 if (emailCheckResult.rows.length > 0) {
-                    return { command: 'Fail',
-                        message: "Email already exists. Please try sign in with new E-Mail" };
+                    return {
+                        command: 'Fail',
+                        message: "Email already exists. Please try sign in with new E-Mail"
+                    };
                 }
                 const hashedPassword = await hashGenerate(userData.userpassword);
                 const insertData = {

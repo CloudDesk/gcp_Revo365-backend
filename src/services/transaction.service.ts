@@ -47,9 +47,8 @@ export module transactionService {
             const rangeClauses = paramValues.map((range) => {
               const [lowerBound, upperBound] = range.split("-");
               queryParams.push(lowerBound, upperBound);
-              return `(${key} BETWEEN $${parameterIndex} AND $${
-                parameterIndex + 1
-              })`;
+              return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+                })`;
             });
             whereClauses.push(`(${rangeClauses.join(" OR ")})`);
             parameterIndex += 2 * paramValues.length;
@@ -82,9 +81,8 @@ export module transactionService {
         let queryText = `SELECT * FROM transaction ${whereClause} ${orderByClause}`;
 
         if (pageNumber && recordCount) {
-          queryText += ` OFFSET $${parameterIndex} LIMIT $${
-            parameterIndex + 1
-          }`;
+          queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
+            }`;
           queryParams.push(offset, recordCount);
         }
         const result = await query(queryText, queryParams);
@@ -95,7 +93,7 @@ export module transactionService {
         let ErrorMessage = await ErrorHandler.handleQueryError(error);
         return ErrorMessage;
       }
-    } catch (error) {}
+    } catch (error) { }
   };
   export const paymentInitialization = async (request: any) => {
     try {
@@ -126,7 +124,7 @@ export module transactionService {
         (product) =>
           Number(product.availablequantity) - Number(product.lock_qty) >= 0 &&
           Number(product.availablequantity - Number(product.orderedquantity)) >=
-            0
+          0
       );
       if (!allQuantitiesAvailable) {
         return {
@@ -172,11 +170,13 @@ export module transactionService {
       let response;
       try {
         response = await axios(options);
+        console.log(response?.data, " response.data");
+        console.log(response ," response in axios");
       } catch (error) {
+        console.log(error.message, "Error in axios options");
       }
-console.log(request.body.order, " request.body.order after axios");
-console.log(orderdata, " orderdata after axios");
-console.log(orderDataProcess, " orderDataProcess after axios");
+      console.log(request.body.order, " request.body.order after axios");
+
       request.body.order.forEach((e) => {
         e.merchanttransactionid = response.data.data.merchantTransactionId;
       });
@@ -205,6 +205,7 @@ console.log(orderDataProcess, " orderDataProcess after axios");
           true
         );
       }
+      console.log(response ," ===>> response in axios");
 
       return response.data.data.instrumentResponse.redirectInfo.url;
     } catch (error) {
@@ -223,10 +224,10 @@ console.log(orderDataProcess, " orderDataProcess after axios");
   export const paymentConfirmation = async (request: any, reply: any) => {
     try {
       const merchantTransactionId = request.query.id;
-      const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,[merchantTransactionId])
-            if(checkMerchantId.rows.length === 0){
-                return { message: "Payment timed out, try again." };
-            }
+      const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId])
+      if (checkMerchantId.rows.length === 0) {
+        return { message: "Payment timed out, try again." };
+      }
       const cloudflaretoken = request.query.token;
       const transactionfor = request.query.transactionfor;
       const merchantId = MERCHANT_ID;

@@ -140,12 +140,13 @@ export var transactionService;
             let response;
             try {
                 response = await axios(options);
+                console.log(response?.data, " response.data");
+                console.log(response, " response in axios");
             }
             catch (error) {
+                console.log(error.message, "Error in axios options");
             }
             console.log(request.body.order, " request.body.order after axios");
-            console.log(orderdata, " orderdata after axios");
-            console.log(orderDataProcess, " orderDataProcess after axios");
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
@@ -167,6 +168,7 @@ export var transactionService;
                 console.log(error.message, "Error in Task paymentInitialization");
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
             }
+            console.log(response, " ===>> response in axios");
             return response.data.data.instrumentResponse.redirectInfo.url;
         }
         catch (error) {
