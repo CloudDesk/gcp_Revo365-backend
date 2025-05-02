@@ -111,6 +111,8 @@ export module transactionService {
       let orderdata = request.body.order;
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
+      console.log(orderdata, " orderdata");
+      console.log(dummyorderdata, " dummyorderdata");
       let insertdata = await productrevoService.bulkupsertProducttosetZero(
         orderdata,
         false

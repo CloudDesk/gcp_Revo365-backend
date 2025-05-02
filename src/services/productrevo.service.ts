@@ -612,6 +612,8 @@ export module productrevoService {
 
   export const bulkupsertProducttosetZero = (async (data, setzero) => {
     try {
+
+      console.log(data + 'data for bulk upsert product to set zero');
       if (data.length === 0) {
         return { message: 'No data to update' };
       }
@@ -643,7 +645,7 @@ export module productrevoService {
       querytext += ');';
 
       await query(querytext, values);
-
+console.log('success bulk upsert product to set zero');
       return { message: 'Bulk update successful' };
     } catch (error) {
       console.error("Query Execution Error: bulkupsertProducttosetZero result", error);
