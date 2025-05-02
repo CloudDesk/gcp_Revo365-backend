@@ -1,5 +1,5 @@
 import admin from "firebase-admin";
-import serviceData from './service.json';
+import serviceData from './service.json' with { type: "json" };
 admin.initializeApp({
     credential: admin.credential.cert(serviceData)
 });
