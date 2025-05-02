@@ -13,6 +13,7 @@ import { productrevoService } from "./productrevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
+import { config } from "dotenv";
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
 
@@ -107,11 +108,8 @@ export module transactionService {
         transactionfor,
       } = request.body.transaction;
       let orderdata = request.body.order;
-      let orderDataProcess = request.body.order
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
-      console.log(orderdata, " orderdata");
-      console.log(dummyorderdata, " dummyorderdata");
       let insertdata = await productrevoService.bulkupsertProducttosetZero(
         orderdata,
         false
@@ -170,12 +168,16 @@ export module transactionService {
       let response;
       try {
         response = await axios(options);
-        console.log(response?.data, " response.data");
-        console.log(response ," response in axios");
+
       } catch (error) {
         console.log(error.message, "Error in axios options");
+        // return {
+        //   status: 400,
+        //   message: "Phonepe Payment Gateway is Failing.please try again",
+        // };
+
+        return REDIRECT_URL_FAILURE;
       }
-      console.log(request.body.order, " request.body.order after axios");
 
       request.body.order.forEach((e) => {
         e.merchanttransactionid = response.data.data.merchantTransactionId;
@@ -205,7 +207,7 @@ export module transactionService {
           true
         );
       }
-      console.log(response ," ===>> response in axios");
+      console.log(response, " ===>> response in axios");
 
       return response.data.data.instrumentResponse.redirectInfo.url;
     } catch (error) {
