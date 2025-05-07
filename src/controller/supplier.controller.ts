@@ -32,18 +32,19 @@ export module supplierController {
     export const upsertSupplier = async (request, reply) => {
         try {
             let upsertSupplierResult = await supplierSerivce.upsertSupplierData(request.body);
+            console.log(upsertSupplierResult, "upsertSupplierResult")
             if (upsertSupplierResult.command === "UPDATE" || upsertSupplierResult.command === "INSERT") {
                 let message: any = {};
                 message = {
                     message: upsertSupplierResult.command === "UPDATE"
                         ? `Supplier data has been successfully updated.`
                         : `Supplier data has been successfully added.`,
-                        data:upsertSupplierResult.rows
+                    data: upsertSupplierResult.rows
                 };
                 reply.status(200).send(message);
             }
-            else{
-                reply.status(400).send({ error:upsertSupplierResult.errorMessage });
+            else {
+                reply.status(400).send({ error: upsertSupplierResult.errorDetails[0].message });
             }
         } catch (error) {
             console.error('Error in upsertSupplier Controller', error);

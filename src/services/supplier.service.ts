@@ -86,6 +86,7 @@ export module supplierSerivce {
             return ErrorMessage
         }
     }
+
     export const upsertSupplierData = async (supplierData: any) => {
         try {
             let querydata: string;
@@ -111,9 +112,11 @@ export module supplierSerivce {
         } catch (error) {
             console.error("Query Execution Error: IN upsertSupplierData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            console.log(ErrorMessage, "errormessaage from catch")
             return ErrorMessage
         }
     }
+
     export const deleteSupplierData = async (id: number) => {
         try {
             const result: any = await query(`DELETE FROM supplier WHERE id = $1`, [id]);
