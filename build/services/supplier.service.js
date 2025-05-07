@@ -108,6 +108,7 @@ export var supplierSerivce;
         catch (error) {
             console.error("Query Execution Error: IN upsertSupplierData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            console.log(ErrorMessage, "errormessaage from catch");
             return ErrorMessage;
         }
     };

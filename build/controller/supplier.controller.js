@@ -34,6 +34,7 @@ export var supplierController;
     supplierController.upsertSupplier = async (request, reply) => {
         try {
             let upsertSupplierResult = await supplierSerivce.upsertSupplierData(request.body);
+            console.log(upsertSupplierResult, "upsertSupplierResult");
             if (upsertSupplierResult.command === "UPDATE" || upsertSupplierResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -43,6 +44,9 @@ export var supplierController;
                     data: upsertSupplierResult.rows
                 };
                 reply.status(200).send(message);
+            }
+            else {
+                reply.status(400).send({ error: upsertSupplierResult.errorDetails[0].message });
             }
         }
         catch (error) {
