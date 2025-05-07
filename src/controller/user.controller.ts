@@ -34,7 +34,7 @@ export module userController {
     export const getLoggedInUsersData = async (request: FastifyRequest, reply: FastifyReply) => {
 
         try {
-            let getUsersDataResult:any = await userService.getLoggedInUsersData(request, reply);
+            let getUsersDataResult: any = await userService.getLoggedInUsersData(request, reply);
             if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
                 reply.status(401).send({ error: getUsersDataResult })
             }
@@ -61,14 +61,14 @@ export module userController {
     export const upsertUser = async (request: any, reply: any) => {
         try {
             const userData = request.body;
-            let upsertUserResult : any = await userService.upsertUser(userData);
+            let upsertUserResult: any = await userService.upsertUser(userData);
             if (upsertUserResult.command == 'UPDATE') {
                 reply.status(200).send('User Updated successfully');
-            } else if(upsertUserResult.command == 'INSERT'){
-                reply.status(200).send('User signup done successfully');
+            } else if (upsertUserResult.command == 'INSERT') {
+                reply.status(200).send({ message: 'User signup done successfully', data: upsertUserResult.rows });
             }
             else {
-    
+
                 reply.status(401).send(upsertUserResult.message)
             }
         } catch (error) {
@@ -76,14 +76,14 @@ export module userController {
             reply.send(error.message);
         }
     }
-    
+
     export const userlogout = async (request: any, reply: any) => {
         try {
             const userData = request.body;
             console.log(request.cookies.sessionId
             );
-            let upsertUserResult = await userService.userlogout(request,reply);           
-                reply.status(200).send('Logged Out Successfully')
+            let upsertUserResult = await userService.userlogout(request, reply);
+            reply.status(200).send('Logged Out Successfully')
         } catch (error) {
             console.error("Error in userlogout", error);
             reply.send(error.message);
