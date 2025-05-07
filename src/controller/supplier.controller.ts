@@ -42,6 +42,9 @@ export module supplierController {
                 };
                 reply.status(200).send(message);
             }
+            else{
+                reply.status(400).send({ message:upsertSupplierResult.errorMessage });
+            }
         } catch (error) {
             console.error('Error in upsertSupplier Controller', error);
             reply.send(error.message, 'Error in upsert Supplier Data Controller')

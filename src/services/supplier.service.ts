@@ -88,7 +88,6 @@ export module supplierSerivce {
     }
     export const upsertSupplierData = async (supplierData: any) => {
         try {
-
             let querydata: string;
             let params: any[];
             const { id, ...upsertFields } = supplierData;
