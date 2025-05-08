@@ -60,7 +60,7 @@ export var userController;
                 reply.status(200).send('User Updated successfully');
             }
             else if (upsertUserResult.command == 'INSERT') {
-                reply.status(200).send('User signup done successfully');
+                reply.status(200).send({ message: 'User signup done successfully', data: upsertUserResult.rows });
             }
             else {
                 reply.status(401).send(upsertUserResult.message);

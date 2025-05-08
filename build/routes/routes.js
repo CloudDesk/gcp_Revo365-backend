@@ -159,7 +159,7 @@ const Revo365Routes = async function (fastify, opts) {
     //address
     fastify.get('/address', { preHandler: [getSession] }, addressController.getAddressData);
     fastify.get('/address/:userId', { preHandler: [getSession] }, addressController.getUserAddressData);
-    fastify.post('/address', { preHandler: [getSession, validateRequestBody(inventoryusersSchema)] }, addressController.upsertAddress);
+    fastify.post('/address', { preHandler: [validateRequestBody(inventoryusersSchema)] }, addressController.upsertAddress);
     fastify.delete('/address/:id', { preHandler: [getSession] }, addressController.deleteAddress);
     //orders
     // fastify.get('/orders', ordersController.getOrderData)
