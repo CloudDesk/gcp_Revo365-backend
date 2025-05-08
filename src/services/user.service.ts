@@ -67,7 +67,7 @@ export module userService {
         queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
         queryParams.push(offset, recordCount);
       }
-
+      console.log(queryText, queryParams, "queryText and QueryParams")
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
       return datatypeCheckResult;
@@ -253,7 +253,10 @@ export module userService {
           lastname: userData.lastname,
           useremail: userData.useremail,
           userpassword: hashedPassword,
-          usermobilenumber: userData.usermobilenumber
+          usermobilenumber: userData.usermobilenumber,
+          isbusinessuser: userData.isbusinessuser,
+          gstnumber: userData.gstnumber,
+
         };
 
         const insertFields = Object.keys(insertData);
