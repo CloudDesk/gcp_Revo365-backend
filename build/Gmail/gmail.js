@@ -9,7 +9,7 @@ let mailOptions;
 export const sendMail = async (request, reply) => {
     const { to, cc, subject, text } = request.body;
     mailOptions = {
-        from: '"Revo" <pravinsf24@gmail.com>',
+        from: '"TEQIT" <teqitcontact@gmail.com>',
         to: to,
         cc: cc,
         subject: subject,
