@@ -112,6 +112,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product-similar', { preHandler: [getSession] }, productrevoController.getSimilarProducts);
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
+    fastify.post('/v2/product/bulk', {preHandler:[getSession]},productrevoController.insertBulkProduct)
 
     //version 2 -> stock
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);

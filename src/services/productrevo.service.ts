@@ -262,6 +262,53 @@ export module productrevoService {
 
   }
 
+  export const insertBulkProduct = async (productrevoDataArray: any[]) => {
+  try {
+    console.log('In insertBulkProduct', productrevoDataArray);
+    if (!productrevoDataArray.length) {
+      return { success: false, error: 'No products to insert', errors: [] };
+    }
+
+    const results = [];
+    const errors = [];
+
+    for (let i = 0; i < productrevoDataArray.length; i++) {
+      const productData = productrevoDataArray[i];
+      const fieldNames = Object.keys(productData).filter(
+        (key) => productData[key] !== null && productData[key] !== undefined
+      );
+      const fieldValues = fieldNames.map((name) => productData[name]);
+
+      let queryStr = `INSERT INTO product_revo (${fieldNames.join(', ')}) VALUES (${fieldNames
+        .map((_, index) => `$${index + 1}`)
+        .join(', ')}) RETURNING *`;
+
+      try {
+        const result = await query(queryStr, fieldValues);
+        if (result.command === 'INSERT') {
+          results.push(result);
+        } else {
+          errors.push({ index: i, error: 'Failed to insert product' });
+        }
+      } catch (err) {
+        console.error(`Error inserting product at index ${i}:`, err);
+        errors.push({ index: i, error: (err as Error).message || 'Database error' });
+      }
+    }
+
+    const insertedCount = results.length;
+    return {
+      success: insertedCount > 0,
+      insertedCount,
+      errors: errors.length > 0 ? errors : [],
+    };
+  } catch (error) {
+    console.error('Query Execution Error: IN insertBulkProduct', error);
+    let errorMessage = await ErrorHandler.handleQueryError(error);
+    return { success: false, error: errorMessage, errors: [{ index: -1, error: errorMessage }] };
+  }
+};
+
   export const getArcheivedProductsrevo = async (request: any) => {
     try {
       const pageNumber = request.query.page || 1

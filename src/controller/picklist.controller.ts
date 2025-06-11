@@ -5,6 +5,7 @@ export module picklistControler {
 
     export const getPicklistforobject = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
+            console.log('Get Product picklist')
             let getPicklistData = await picklistservice.getProductPicklist(request)
             reply.send(getPicklistData)
         } catch (error) {

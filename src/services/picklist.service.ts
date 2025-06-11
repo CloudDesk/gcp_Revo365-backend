@@ -9,6 +9,8 @@ interface objectName {
 export module picklistservice {
   export const getProductPicklist = async (request: any) => {
     try {
+      console.log('Get Product picklist')
+      console.log("request.params", request.params);
       let sortedData
       let objectName: string;
       let quoteobject = false
@@ -25,6 +27,7 @@ export module picklistservice {
         `select * from picklist where object = $1`,
         [objectName]
       );
+      console.log("picklistResult11", picklistResult);
       let datatypecheckResult = await dataTypeCheck(picklistResult);
       const groupedData = {};
       for (const value of datatypecheckResult) {
