@@ -735,6 +735,25 @@ console.log('success bulk upsert product to set zero');
     }
   };
 
+  export async function updateOnCatalogueqty (puc) {
+    console.log('puc:', puc);
+    // const { puc } = request.body;
+    const queryText = `select count(id) from stock_revo where stocktype = 'on_catalogue_product' and ecompublish = true and stockstatus = 'Available' and isdeleted = false and isarchive = false and removefromrecyclebin = false and ewaste = false and puc = '${puc}'`;
+    console.log('queryText:', queryText);
+    let result = await query(queryText, []);
+    console.log('result:', result.rows);
+    const onCatalogueCount = result.rows[0].count;
+    const updateQuery = `update product_revo set oncatalogueqty = ${onCatalogueCount} where puc = '${puc}'`;
+    console.log('updateQuery:', updateQuery);
+    let updateResult = await query(updateQuery, []);
+    console.log('updateResult:', updateResult.command);
+    if (result.rows.length > 0) {
+      return result.rows[0].count;
+    } else{
+      return { message: 'No data Found' };
+    }
+  }
+
 
   export async function updateCancelledOrderedQuantity(productIds: Array<number>, quantitydata: number) {
 

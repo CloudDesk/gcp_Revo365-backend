@@ -890,6 +890,7 @@ ${whereClause} ${orderByClause}`;
     };
     export const upsertOrderlinerfid = async (orderData: any) => {
         try {
+            console.log("Order Data in upsertOrderlinerfid:", orderData);
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
@@ -923,7 +924,7 @@ ${whereClause} ${orderByClause}`;
                 };
             }
     
-            
+            console.log('Before upsertStockRevoDatarfid:', orderData);
             let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);    
             if (updateStock.error) {
                 return { error: updateStock.error };

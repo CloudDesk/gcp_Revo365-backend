@@ -210,4 +210,15 @@ export module productrevoController {
         }
     }
 
+    export const updateOnCatalogueqty = async (request: FastifyRequest, reply: FastifyReply) => {
+        try{
+            
+            let resultupdateOnCatalogueqty = await productrevoService.updateOnCatalogueqty(request)
+            reply.send(resultupdateOnCatalogueqty)
+        } catch (error){
+            console.error('ERROR IN  Controller updateOnCatalogueqty', error);
+            reply.send(`Error in updating on catalogue qty : ${error.message}`)
+        }
+    }
+
 }
