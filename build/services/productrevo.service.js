@@ -242,6 +242,48 @@ export var productrevoService;
             return ErrorMessage;
         }
     };
+    productrevoService.insertBulkProduct = async (productrevoDataArray) => {
+        try {
+            console.log('In insertBulkProduct', productrevoDataArray);
+            if (!productrevoDataArray.length) {
+                return { success: false, error: 'No products to insert', errors: [] };
+            }
+            const results = [];
+            const errors = [];
+            for (let i = 0; i < productrevoDataArray.length; i++) {
+                const productData = productrevoDataArray[i];
+                const fieldNames = Object.keys(productData).filter((key) => productData[key] !== null && productData[key] !== undefined);
+                const fieldValues = fieldNames.map((name) => productData[name]);
+                let queryStr = `INSERT INTO product_revo (${fieldNames.join(', ')}) VALUES (${fieldNames
+                    .map((_, index) => `$${index + 1}`)
+                    .join(', ')}) RETURNING *`;
+                try {
+                    const result = await query(queryStr, fieldValues);
+                    if (result.command === 'INSERT') {
+                        results.push(result);
+                    }
+                    else {
+                        errors.push({ index: i, error: 'Failed to insert product' });
+                    }
+                }
+                catch (err) {
+                    console.error(`Error inserting product at index ${i}:`, err);
+                    errors.push({ index: i, error: err.message || 'Database error' });
+                }
+            }
+            const insertedCount = results.length;
+            return {
+                success: insertedCount > 0,
+                insertedCount,
+                errors: errors.length > 0 ? errors : [],
+            };
+        }
+        catch (error) {
+            console.error('Query Execution Error: IN insertBulkProduct', error);
+            let errorMessage = await ErrorHandler.handleQueryError(error);
+            return { success: false, error: errorMessage, errors: [{ index: -1, error: errorMessage }] };
+        }
+    };
     productrevoService.getArcheivedProductsrevo = async (request) => {
         try {
             const pageNumber = request.query.page || 1;
@@ -633,6 +675,45 @@ export var productrevoService;
     }
     productrevoService.updateOrderedQuantityarray = updateOrderedQuantityarray;
     ;
+    async function updateCatalogueQuantities(puc) {
+        console.log('puc:', puc);
+        const queryText = `
+        WITH counts AS (
+            SELECT 
+                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' THEN 1 ELSE 0 END), 0) AS off_catalogue_count
+            FROM stock_revo 
+            WHERE 
+                puc = $1
+                AND ecompublish = true 
+                AND stockstatus = 'Available' 
+                AND isdeleted = false 
+                AND isarchive = false 
+                AND removefromrecyclebin = false 
+                AND ewaste = false
+        )
+        UPDATE product_revo 
+        SET 
+            oncatalogueqty = counts.on_catalogue_count,
+            offcatalogueqty = counts.off_catalogue_count
+        FROM counts
+        WHERE puc = $1
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count;
+    `;
+        console.log('queryText:', queryText);
+        let result = await query(queryText, [puc]);
+        console.log('result:', result.rows);
+        if (result.rows.length > 0) {
+            return {
+                onCatalogueCount: result.rows[0].on_catalogue_count,
+                offCatalogueCount: result.rows[0].off_catalogue_count
+            };
+        }
+        else {
+            return { message: 'No data Found' };
+        }
+    }
+    productrevoService.updateCatalogueQuantities = updateCatalogueQuantities;
     async function updateCancelledOrderedQuantity(productIds, quantitydata) {
         try {
             const queryvalue = `UPDATE product_revo SET orderedquantity = orderedquantity - ${quantitydata} 

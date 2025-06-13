@@ -107,6 +107,32 @@ export var productrevoController;
             reply.send(error.message);
         }
     };
+    productrevoController.insertBulkProduct = async (request, reply) => {
+        try {
+            console.log('insertBulkProduct controller called');
+            const productrevoDataArray = request.body;
+            if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
+                return reply.status(400).send({ error: 'Invalid input: Expected a non-empty array of products' });
+            }
+            const result = await productrevoService.insertBulkProduct(productrevoDataArray);
+            if (result.success) {
+                reply.status(200).send({
+                    message: `${result.insertedCount} product(s) inserted successfully`,
+                    errors: result.errors.length > 0 ? result.errors : undefined,
+                });
+            }
+            else {
+                reply.status(400).send({
+                    error: 'Failed to insert products',
+                    details: result.errors,
+                });
+            }
+        }
+        catch (error) {
+            console.error('ERROR IN Controller insertBulkProduct', error);
+            reply.status(500).send({ error: `Error in bulk product insert: ${error.message}` });
+        }
+    };
     productrevoController.upsertProductwithfileRevo = async (request, reply) => {
         try {
             let productUpsertResult = await productrevoService.upsertProductwithFileRevo(request);

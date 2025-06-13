@@ -111,6 +111,8 @@ export var stockRevoService;
             }
             const result = await query(querydata, params);
             const puc = result.rows[0].puc;
+            const updateCatalogueQuantities = await productrevoService.updateCatalogueQuantities(puc);
+            console.log("updateCatalogueQuantities", updateCatalogueQuantities);
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
@@ -295,6 +297,8 @@ export var stockRevoService;
                 return { message: "No stock found with this id", status: 400 };
             }
             const puc = result.rows[0].puc;
+            const updateCatalogueQuantities = await productrevoService.updateCatalogueQuantities(puc);
+            console.log("updateCatalogueQuantities", updateCatalogueQuantities);
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
@@ -545,6 +549,7 @@ export var stockRevoService;
     };
     stockRevoService.upsertStockRevoDatarfid = async (rfidDataArray) => {
         try {
+            console.log("RFID Data Array:", rfidDataArray);
             let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
             let arraylength = rfidDataArray.length;
@@ -556,6 +561,7 @@ export var stockRevoService;
                 SET 
                     orderlinenumber = CASE ${caseStatementsOrderId} END,
                     stockstatus = 'Sold',
+                    stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END,
                     rfid = NULL
                 WHERE 
                     rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
@@ -572,6 +578,9 @@ export var stockRevoService;
                 };
             }
             const puc = result.rows.length > 0 ? result.rows[0].puc : null;
+            console.log("PUC Result:", puc);
+            let updateOnCatalogueqty = await productrevoService.updateCatalogueQuantities(puc);
+            console.log("Update On Catalogue Quantity Result:", updateOnCatalogueqty);
             if (puc) {
                 const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
                 const countParams = [puc];

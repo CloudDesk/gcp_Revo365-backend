@@ -3,6 +3,7 @@ export var picklistControler;
 (function (picklistControler) {
     picklistControler.getPicklistforobject = async (request, reply) => {
         try {
+            console.log('Get Product picklist');
             let getPicklistData = await picklistservice.getProductPicklist(request);
             reply.send(getPicklistData);
         }

@@ -718,6 +718,7 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.updateorderlineitem = async (orderlineData) => {
         try {
+            console.log('Inside updateorderlineitem function with data:', orderlineData);
             let querydata;
             let params;
             const { id, ...upsertFields } = orderlineData.body;
@@ -812,6 +813,7 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.upsertOrderlinerfid = async (orderData) => {
         try {
+            console.log("Order Data in upsertOrderlinerfid:", orderData);
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
@@ -843,6 +845,7 @@ ${whereClause} ${orderByClause}`;
                     statusCode: 400
                 };
             }
+            console.log('Before upsertStockRevoDatarfid:', orderData);
             let updateStock = await stockRevoService.upsertStockRevoDatarfid(orderData);
             if (updateStock.error) {
                 return { error: updateStock.error };
@@ -923,6 +926,7 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.bulkInsertOrderlines = async (orderData) => {
         try {
+            console.log('Inside update bulkInsertOrderlines with orderData:', orderData);
             const fields = Object.keys(orderData[0]);
             const fieldNames = fields.join(", ");
             const baseQuery = `INSERT INTO orderline (${fieldNames}) VALUES `;

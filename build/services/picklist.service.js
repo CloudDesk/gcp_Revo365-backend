@@ -5,6 +5,8 @@ export var picklistservice;
 (function (picklistservice) {
     picklistservice.getProductPicklist = async (request) => {
         try {
+            console.log('Get Product picklist');
+            console.log("request.params", request.params);
             let sortedData;
             let objectName;
             let quoteobject = false;
@@ -18,6 +20,7 @@ export var picklistservice;
                 quoteobject = true;
             }
             const picklistResult = await query(`select * from picklist where object = $1`, [objectName]);
+            console.log("picklistResult11", picklistResult);
             let datatypecheckResult = await dataTypeCheck(picklistResult);
             const groupedData = {};
             for (const value of datatypecheckResult) {
