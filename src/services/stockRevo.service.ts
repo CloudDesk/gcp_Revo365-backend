@@ -110,6 +110,8 @@ export module stockRevoService {
 
             const result = await query(querydata, params);
             const puc = result.rows[0].puc;
+            const updateCatalogueQuantities = await productrevoService.updateCatalogueQuantities(puc);
+            console.log("updateCatalogueQuantities", updateCatalogueQuantities);
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
@@ -296,6 +298,8 @@ export module stockRevoService {
                 return { message: "No stock found with this id", status: 400 };
             }
             const puc = result.rows[0].puc;
+            const updateCatalogueQuantities = await productrevoService.updateCatalogueQuantities(puc)
+            console.log("updateCatalogueQuantities", updateCatalogueQuantities);
             const countQuery = 'SELECT COUNT(*) FROM stock_revo WHERE puc = $1';
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
@@ -601,7 +605,7 @@ export module stockRevoService {
             const puc = result.rows.length > 0 ? result.rows[0].puc : null;
 
             console.log("PUC Result:", puc);
-            let updateOnCatalogueqty = await productrevoService.updateOnCatalogueqty(puc)
+            let updateOnCatalogueqty = await productrevoService.updateCatalogueQuantities(puc)
 
             console.log("Update On Catalogue Quantity Result:", updateOnCatalogueqty);
     

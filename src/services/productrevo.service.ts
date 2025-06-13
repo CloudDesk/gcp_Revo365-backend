@@ -735,24 +735,44 @@ console.log('success bulk upsert product to set zero');
     }
   };
 
-  export async function updateOnCatalogueqty (puc) {
+  export async function updateCatalogueQuantities(puc) {
     console.log('puc:', puc);
-    // const { puc } = request.body;
-    const queryText = `select count(id) from stock_revo where stocktype = 'on_catalogue_product' and ecompublish = true and stockstatus = 'Available' and isdeleted = false and isarchive = false and removefromrecyclebin = false and ewaste = false and puc = '${puc}'`;
+    const queryText = `
+        WITH counts AS (
+            SELECT 
+                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' THEN 1 ELSE 0 END), 0) AS off_catalogue_count
+            FROM stock_revo 
+            WHERE 
+                puc = $1
+                AND ecompublish = true 
+                AND stockstatus = 'Available' 
+                AND isdeleted = false 
+                AND isarchive = false 
+                AND removefromrecyclebin = false 
+                AND ewaste = false
+        )
+        UPDATE product_revo 
+        SET 
+            oncatalogueqty = counts.on_catalogue_count,
+            offcatalogueqty = counts.off_catalogue_count
+        FROM counts
+        WHERE puc = $1
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count;
+    `;
     console.log('queryText:', queryText);
-    let result = await query(queryText, []);
+    let result = await query(queryText, [puc]);
     console.log('result:', result.rows);
-    const onCatalogueCount = result.rows[0].count;
-    const updateQuery = `update product_revo set oncatalogueqty = ${onCatalogueCount} where puc = '${puc}'`;
-    console.log('updateQuery:', updateQuery);
-    let updateResult = await query(updateQuery, []);
-    console.log('updateResult:', updateResult.command);
+    
     if (result.rows.length > 0) {
-      return result.rows[0].count;
-    } else{
-      return { message: 'No data Found' };
+        return {
+            onCatalogueCount: result.rows[0].on_catalogue_count,
+            offCatalogueCount: result.rows[0].off_catalogue_count
+        };
+    } else {
+        return { message: 'No data Found' };
     }
-  }
+}
 
 
   export async function updateCancelledOrderedQuantity(productIds: Array<number>, quantitydata: number) {

@@ -785,6 +785,7 @@ ${whereClause} ${orderByClause}`;
 
     export const updateorderlineitem = async (orderlineData: any) => {
         try {
+            console.log('Inside updateorderlineitem function with data:', orderlineData);
             let querydata: string;
             let params: any[];
             const { id, ...upsertFields } = orderlineData.body;
@@ -1011,6 +1012,7 @@ ${whereClause} ${orderByClause}`;
 
     export const bulkInsertOrderlines = async (orderData: any[]) => {
         try {
+            console.log('Inside update bulkInsertOrderlines with orderData:', orderData);
             const fields = Object.keys(orderData[0]);
             const fieldNames = fields.join(", ");
             const baseQuery = `INSERT INTO orderline (${fieldNames}) VALUES `;
@@ -1024,7 +1026,7 @@ ${whereClause} ${orderByClause}`;
             const values = orderData.flatMap(order =>
                 fields.map(field => order[field])
             );
-            const result = await query(querydata, values);
+            const result = await query(querydata, values);           
 
             return result;
 

@@ -244,8 +244,6 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/purchase-Order/update/invoice/:id', { preHandler: [getSession] }, purchaseOrderController.deleteUrl);
     fastify.delete('/purchase-order/:id', { preHandler: [getSession] }, purchaseOrderController.deletePurchaseOrder);
 
-    fastify.post('/test1', productrevoController.updateOnCatalogueqty)
-
     // productrevo
     fastify.get('/productrevo', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
     fastify.delete('/productrevo/:id', { preHandler: [getSession] }, productrevoController.deleteProductrevo);
