@@ -263,51 +263,51 @@ export module productrevoService {
   }
 
   export const insertBulkProduct = async (productrevoDataArray: any[]) => {
-  try {
-    console.log('In insertBulkProduct', productrevoDataArray);
-    if (!productrevoDataArray.length) {
-      return { success: false, error: 'No products to insert', errors: [] };
-    }
-
-    const results = [];
-    const errors = [];
-
-    for (let i = 0; i < productrevoDataArray.length; i++) {
-      const productData = productrevoDataArray[i];
-      const fieldNames = Object.keys(productData).filter(
-        (key) => productData[key] !== null && productData[key] !== undefined
-      );
-      const fieldValues = fieldNames.map((name) => productData[name]);
-
-      let queryStr = `INSERT INTO product_revo (${fieldNames.join(', ')}) VALUES (${fieldNames
-        .map((_, index) => `$${index + 1}`)
-        .join(', ')}) RETURNING *`;
-
-      try {
-        const result = await query(queryStr, fieldValues);
-        if (result.command === 'INSERT') {
-          results.push(result);
-        } else {
-          errors.push({ index: i, error: 'Failed to insert product' });
-        }
-      } catch (err) {
-        console.error(`Error inserting product at index ${i}:`, err);
-        errors.push({ index: i, error: (err as Error).message || 'Database error' });
+    try {
+      console.log('In insertBulkProduct', productrevoDataArray);
+      if (!productrevoDataArray.length) {
+        return { success: false, error: 'No products to insert', errors: [] };
       }
-    }
 
-    const insertedCount = results.length;
-    return {
-      success: insertedCount > 0,
-      insertedCount,
-      errors: errors.length > 0 ? errors : [],
-    };
-  } catch (error) {
-    console.error('Query Execution Error: IN insertBulkProduct', error);
-    let errorMessage = await ErrorHandler.handleQueryError(error);
-    return { success: false, error: errorMessage, errors: [{ index: -1, error: errorMessage }] };
-  }
-};
+      const results = [];
+      const errors = [];
+
+      for (let i = 0; i < productrevoDataArray.length; i++) {
+        const productData = productrevoDataArray[i];
+        const fieldNames = Object.keys(productData).filter(
+          (key) => productData[key] !== null && productData[key] !== undefined
+        );
+        const fieldValues = fieldNames.map((name) => productData[name]);
+
+        let queryStr = `INSERT INTO product_revo (${fieldNames.join(', ')}) VALUES (${fieldNames
+          .map((_, index) => `$${index + 1}`)
+          .join(', ')}) RETURNING *`;
+
+        try {
+          const result = await query(queryStr, fieldValues);
+          if (result.command === 'INSERT') {
+            results.push(result);
+          } else {
+            errors.push({ index: i, error: 'Failed to insert product' });
+          }
+        } catch (err) {
+          console.error(`Error inserting product at index ${i}:`, err);
+          errors.push({ index: i, error: (err as Error).message || 'Database error' });
+        }
+      }
+
+      const insertedCount = results.length;
+      return {
+        success: insertedCount > 0,
+        insertedCount,
+        errors: errors.length > 0 ? errors : [],
+      };
+    } catch (error) {
+      console.error('Query Execution Error: IN insertBulkProduct', error);
+      let errorMessage = await ErrorHandler.handleQueryError(error);
+      return { success: false, error: errorMessage, errors: [{ index: -1, error: errorMessage }] };
+    }
+  };
 
   export const getArcheivedProductsrevo = async (request: any) => {
     try {
@@ -363,6 +363,7 @@ export module productrevoService {
 
   }
 
+  //get
   export const getEachProductsRevo = async function (request: any, id: Number) {
     try {
       const result: QueryResult = await query(
@@ -670,29 +671,29 @@ export module productrevoService {
 
       data.forEach((item, index) => {
         if (setzero) {
-          const idPlaceholder = index + 1;  
+          const idPlaceholder = index + 1;
           querytext += `WHEN $${idPlaceholder} THEN 0 `;
-          values.push(item.productid);  
+          values.push(item.productid);
         } else {
-          const idPlaceholder = index * 2 + 1;  
-          const quantityPlaceholder = index * 2 + 2;  
+          const idPlaceholder = index * 2 + 1;
+          const quantityPlaceholder = index * 2 + 2;
           querytext += `WHEN $${idPlaceholder} THEN lock_qty + $${quantityPlaceholder} `;
-          values.push(item.productid, item.quantity);  
+          values.push(item.productid, item.quantity);
         }
       });
 
       querytext += 'ELSE lock_qty END WHERE id IN (';
 
       if (setzero) {
-        querytext += data.map((_, index) => `$${index + 1}`).join(', '); 
+        querytext += data.map((_, index) => `$${index + 1}`).join(', ');
       } else {
-        querytext += data.map((_, index) => `$${index * 2 + 1}`).join(', '); 
+        querytext += data.map((_, index) => `$${index * 2 + 1}`).join(', ');
       }
 
       querytext += ');';
 
       await query(querytext, values);
-console.log('success bulk upsert product to set zero');
+      console.log('success bulk upsert product to set zero');
       return { message: 'Bulk update successful' };
     } catch (error) {
       console.error("Query Execution Error: bulkupsertProducttosetZero result", error);
@@ -763,16 +764,16 @@ console.log('success bulk upsert product to set zero');
     console.log('queryText:', queryText);
     let result = await query(queryText, [puc]);
     console.log('result:', result.rows);
-    
+
     if (result.rows.length > 0) {
-        return {
-            onCatalogueCount: result.rows[0].on_catalogue_count,
-            offCatalogueCount: result.rows[0].off_catalogue_count
-        };
+      return {
+        onCatalogueCount: result.rows[0].on_catalogue_count,
+        offCatalogueCount: result.rows[0].off_catalogue_count
+      };
     } else {
-        return { message: 'No data Found' };
+      return { message: 'No data Found' };
     }
-}
+  }
 
 
   export async function updateCancelledOrderedQuantity(productIds: Array<number>, quantitydata: number) {

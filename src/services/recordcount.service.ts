@@ -36,9 +36,8 @@ export module recordCountService {
               .map((range) => {
                 const [lowerBound, upperBound] = range.split("-");
                 queryParams.push(lowerBound, upperBound);
-                const clause = `(${key} BETWEEN $${parameterIndex} AND $${
-                  parameterIndex + 1
-                })`;
+                const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+                  })`;
                 parameterIndex += 2;
                 return clause;
               })
@@ -190,9 +189,8 @@ export module recordCountService {
             .map((range) => {
               const [lowerBound, upperBound] = range.split("-");
               queryParamsList.push(lowerBound, upperBound);
-              const clause = `(${key} BETWEEN $${parameterIndex} AND $${
-                parameterIndex + 1
-              })`;
+              const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+                })`;
               parameterIndex += 2;
               return clause;
             })
@@ -246,7 +244,7 @@ export module recordCountService {
       console.log(objectName, "object Name is");
       console.log(objectName.toLowerCase(), "object name is ");
       const getCountQuery = async (queryStr: string, params: any[]) => {
-        console.log(queryStr, "query string");
+        console.log(queryStr, "Count query string");
         const result: QueryResult = await query(queryStr, params);
         return result.rows[0].count;
       };
@@ -260,12 +258,11 @@ export module recordCountService {
         !ewaste
       ) {
         console.log("1 st condition");
-        const baseQuery = `select count(*) from ${objectName} where ${
-          objectName.toLowerCase() === "product_revo" ||
-          objectName.toLowerCase() === "stock_revo"
+        const baseQuery = `select count(*) from ${objectName} where ${objectName.toLowerCase() === "product_revo" ||
+            objectName.toLowerCase() === "stock_revo"
             ? "removefromrecyclebin = false AND "
             : ""
-        } ${whereClause}`;
+          } ${whereClause}`;
         const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
         let dat = await getCountQuery(
           objectName.toLowerCase() === "product_revo" ||
@@ -343,8 +340,7 @@ export module recordCountService {
         console.log("inside archive count");
         console.log(queryParamsList, "query params list");
         return await getCountQuery(
-          `select count(*) from ${objectName} where ${
-            whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
+          `select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
           } isarchive = true AND removefromrecyclebin = false`,
           queryParamsList
         );
@@ -353,8 +349,7 @@ export module recordCountService {
       if (recyclebin) {
         console.log("Inside recyclebin");
         return await getCountQuery(
-          `select count(*) from ${objectName} where ${
-            whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
+          `select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
           } isdeleted = TRUE AND removefromrecyclebin = false`,
           queryParamsList
         );
@@ -362,8 +357,7 @@ export module recordCountService {
       if (ewaste) {
         console.log("Inside ewaste");
         return await getCountQuery(
-          `select count(*) from ${objectName} where ${
-            whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
+          `select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""
           } isdeleted = false AND removefromrecyclebin = false AND ewaste = TRUE`,
           queryParamsList
         );
@@ -479,9 +473,8 @@ export module recordCountService {
             .map((range) => {
               const [lowerBound, upperBound] = range.split("-");
               queryParams.push(lowerBound, upperBound);
-              const clause = `(${key} BETWEEN $${parameterIndex} AND $${
-                parameterIndex + 1
-              })`;
+              const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+                })`;
               parameterIndex += 2;
               return clause;
             })
