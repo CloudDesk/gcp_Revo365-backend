@@ -12,6 +12,7 @@ export var productrevoController;
             reply.status(500).send(error.message);
         }
     };
+    //get
     productrevoController.getProductsEcomrevoData = async (request, reply) => {
         try {
             let getProductRevoResult = await productrevoService.getEcomProducts(request);

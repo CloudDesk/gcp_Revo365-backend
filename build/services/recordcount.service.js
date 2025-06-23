@@ -233,7 +233,7 @@ export var recordCountService;
             console.log(objectName, "object Name is");
             console.log(objectName.toLowerCase(), "object name is ");
             const getCountQuery = async (queryStr, params) => {
-                console.log(queryStr, "query string");
+                console.log(queryStr, "Count query string");
                 const result = await query(queryStr, params);
                 return result.rows[0].count;
             };

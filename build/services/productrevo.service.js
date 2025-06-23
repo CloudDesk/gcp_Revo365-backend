@@ -330,6 +330,7 @@ export var productrevoService;
             return ErrorMessage;
         }
     };
+    //get
     productrevoService.getEachProductsRevo = async function (request, id) {
         try {
             const result = await query(`SELECT * FROM product_revo where id=${id}`, []);
@@ -487,8 +488,33 @@ export var productrevoService;
             return ErrorMessage;
         }
     };
+    productrevoService.updateoverallAvailableQuantity = async (puc) => {
+        try {
+            const quertTogetThirdpartyproduct = await query(`SELECT id, thirdpartyquantity from stock_revo where puc = $1 and stocktype = 'third_party_product'`, [puc]);
+            console.log('quertTogetThirdpartyproduct', quertTogetThirdpartyproduct.rows);
+            if (quertTogetThirdpartyproduct.rows.length > 0) {
+                const stockid = quertTogetThirdpartyproduct.rows[0].id;
+                const thirdpartyquantity = quertTogetThirdpartyproduct.rows[0].thirdpartyquantity;
+                const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = (${thirdpartyquantity} + availablequantity) WHERE puc = $1  RETURNING *`;
+                const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
+                console.log("result of update overall available quantity", result.rows);
+                return result.rows[0];
+            }
+            else {
+                const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = availablequantity WHERE puc = $1  RETURNING *`;
+                const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
+                return result.rows[0];
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN updateoverallAvailableQuantity", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
     productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold) => {
-        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, orderedquantity } = upsertData;
+        console.log('--upsertQuantityFields', upsertData);
+        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty } = upsertData;
         try {
             let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
             let orderedquantityvalue = productquery.rows[0].orderedquantity;
@@ -504,24 +530,24 @@ export var productrevoService;
             }
             let orderedquantityNumber = Number(orderedquantitydata);
             let updateQueryBase = `UPDATE product_revo SET quantity = $1, ecompublishedquantity = $2, soldquantity = $3, 
-        availablequantity = $4, productstatus = $5`;
+        availablequantity = $4, productstatus = $5, overallavailableqty=$6`;
             let updateQuery = '';
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateQueryBase += `, orderedquantity = orderedquantity - $6`;
-                updateQuery = `${updateQueryBase} WHERE puc = $7 RETURNING *`;
+                updateQueryBase += `, orderedquantity = orderedquantity - $7`;
+                updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
             }
             else if (!issold && isNaN(orderedquantityNumber)) {
-                updateQuery = `${updateQueryBase} WHERE puc = $6 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $7 RETURNING *`;
             }
             else {
-                updateQuery = `${updateQueryBase} WHERE puc = $6 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $7 RETURNING *`;
             }
             let updateParams = [];
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, orderedquantityNumber, puc];
+                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, orderedquantityNumber, puc];
             }
             else {
-                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, puc];
+                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, puc];
             }
             const updateResult = await query(updateQuery, updateParams);
             let cartData = {

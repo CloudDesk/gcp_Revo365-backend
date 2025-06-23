@@ -43,6 +43,7 @@ import { locationhistrorycontroller } from "../controller/locationhistory.contro
 import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
 import { sendPushNotification } from "../firebase/firebasepushmessage.js";
+import { thirdPartyController } from "../controller/thirdparty.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -174,6 +175,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/orders', { preHandler: [getSession] }, ordersController.upsertOrder);
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
     fastify.delete('/orders/:id', { preHandler: [getSession] }, ordersController.deleteOrder);
+    //third party orders - inventory
+    fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
     fastify.post('/test/task', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray);
     fastify.post('/test/updateorderquantity', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray);
     //supplier

@@ -359,6 +359,36 @@ export var stockRevoService;
         try {
             const quantitiesList = [];
             for (const puc of pucs) {
+                // const quantityQuery = `
+                //     SELECT 
+                //         COUNT(*) FILTER (
+                //             WHERE puc = $1
+                //             AND (isdeleted = false OR isdeleted IS NULL)
+                //             AND (isarchive = false OR isarchive IS NULL) 
+                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                //         ) AS quantity,
+                //         COUNT(*) FILTER (
+                //             WHERE puc = $1
+                //             AND (isdeleted = false OR isdeleted IS NULL)
+                //             AND (isarchive = false OR isarchive IS NULL)
+                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                //             AND ecompublish = true
+                //         ) AS ecompublishedquantity,
+                //         COUNT(*) FILTER (
+                //             WHERE puc = $1
+                //             AND (isdeleted = false OR isdeleted IS NULL)
+                //             AND (isarchive = false OR isarchive IS NULL)
+                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                //             AND ecompublish = true AND stockstatus = 'Sold'
+                //         ) AS soldquantity,
+                //         COUNT(*) FILTER (
+                //             WHERE puc = $1
+                //             AND (isdeleted = false OR isdeleted IS NULL)
+                //             AND (isarchive = false OR isarchive IS NULL)
+                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                //             AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
+                //         ) AS availablequantity
+                //     FROM stock_revo`;
                 const quantityQuery = `
                     SELECT 
                         COUNT(*) FILTER (
@@ -386,22 +416,41 @@ export var stockRevoService;
                             AND (isdeleted = false OR isdeleted IS NULL)
                             AND (isarchive = false OR isarchive IS NULL)
                             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Available'
-                        ) AS availablequantity
-                         
+                            AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
+                        ) AS availablequantity,
+                         (
+        COALESCE(
+            SUM(thirdpartyquantity) FILTER (
+                WHERE puc = $1
+            ), 0
+        ) +
+        COUNT(*) FILTER (
+            WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND ecompublish = true 
+                AND stockstatus = 'Available' 
+                AND stocktype <> 'third_party_product'
+        )
+    ) AS overallavailableqty
+                        
                     FROM stock_revo`;
                 const quantityResult = await query(quantityQuery, [puc]);
                 const totalCount = parseInt(quantityResult.rows[0].quantity, 10);
                 const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10);
                 const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10);
                 const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
+                const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
                 const quantities = {
                     quantity: totalCount,
                     ecompublishedquantity: ecomPublishedQuantity,
                     soldquantity: soldQuantity,
                     availablequantity: availableQuantity,
-                    puc: puc
+                    puc: puc,
+                    overallavailableqty: overallavailableqty
                 };
+                console.log("--quantities", quantities);
                 quantitiesList.push(quantities);
             }
             const updateQuantityResults = await Promise.all(quantitiesList.map(quantities => productrevoService.upsertQuantityFields(quantities, orderedquantity, issold)));

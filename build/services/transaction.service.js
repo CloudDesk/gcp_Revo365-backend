@@ -9,6 +9,7 @@ import { productrevoService } from "./productrevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
+import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
 const keyIndex = 1;
@@ -86,16 +87,18 @@ export var transactionService;
     };
     transactionService.paymentInitialization = async (request) => {
         try {
+            console.log('Inside paymentInitialization service');
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
             dummyorderdata = orderdata.map((element) => ({ ...element }));
             productupdateorderqty = orderdata.map((element) => ({ ...element }));
             let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
             const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-            const queryText = `SELECT id, availablequantity,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
+            const queryText = `SELECT id, overallavailableqty,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
             const result = await query(queryText, productid);
-            const allQuantitiesAvailable = result.rows.every((product) => Number(product.availablequantity) - Number(product.lock_qty) >= 0 &&
-                Number(product.availablequantity - Number(product.orderedquantity)) >=
+            console.log('-->', result.rows);
+            const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+                Number(product.overallavailableqty - Number(product.orderedquantity)) >=
                     0);
             if (!allQuantitiesAvailable) {
                 return {
@@ -146,6 +149,8 @@ export var transactionService;
                 // };
                 return REDIRECT_URL_SUCCESS;
             }
+            console.log('==>', request.body);
+            console.log('==>', request.body.order);
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
@@ -160,8 +165,12 @@ export var transactionService;
                         message: "Task Not Created For Making Order.Please contact Admin",
                     };
                 }
+                console.log('==>', request.body.transaction);
+                console.log('==>', request.body.order);
                 let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
                 insersertdordderdatawithprocessing = insertorderdata.rows;
+                console.log('====>', insersertdordderdatawithprocessing);
+                console.log('empty3');
             }
             catch (error) {
                 console.log(error.message, "Error in Task paymentInitialization");
@@ -179,6 +188,7 @@ export var transactionService;
     };
     transactionService.paymentConfirmation = async (request, reply) => {
         try {
+            console.log('Inside paymentConfirmation service');
             const merchantTransactionId = request.query.id;
             const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId]);
             if (checkMerchantId.rows.length === 0) {
@@ -307,8 +317,23 @@ export var transactionService;
                     order: insersertdordderdatawithprocessing,
                     transactiondata: { ...insertedTransaction },
                 };
-                let orderupdated = await ordersService.updateOrder(finalResult, paymentfailed);
-                if (orderupdated.status === "success") {
+                console.log('===>', finalResult);
+                console.log('Wait');
+                // Split orders based on orderid starting with 'TEQIT'
+                const orderdata = {
+                    order: finalResult.order.filter(order => order.orderid && order.orderid.startsWith('TEQIT')),
+                    transactiondata: finalResult.transactiondata,
+                };
+                const thirdpartyorderdata = {
+                    order: finalResult.order.filter(order => !order.orderid || !order.orderid.startsWith('TEQIT')),
+                    transactiondata: finalResult.transactiondata,
+                };
+                console.log('Order Data:', orderdata);
+                console.log('Third Party Order Data:', thirdpartyorderdata);
+                console.log('Wait1');
+                let orderupdated = await ordersService.updateOrder(orderdata, paymentfailed);
+                let thirdpartyorderupdate = await thirdPartyOrdersService.updateThirdPartyOrder(thirdpartyorderdata, paymentfailed);
+                if (orderupdated.status === "success" && thirdpartyorderupdate.status === "success") {
                     return {
                         orderdata: orderupdated.data,
                         transactionData: [finalResult.transactiondata],

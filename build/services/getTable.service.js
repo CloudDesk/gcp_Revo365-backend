@@ -53,6 +53,7 @@ export var getTables;
                     }
                 });
             });
+            console.log("Allowed Tables:", allowedTables);
             return allowedTables;
         }
         catch (error) {
