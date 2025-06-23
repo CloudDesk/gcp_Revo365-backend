@@ -52,6 +52,7 @@ import { testSendFCMNotification } from "../services/test.service.js";
 import { userService } from "../services/user.service.js";
 import { request } from "http";
 import { sendPushNotification } from "../firebase/firebasepushmessage.js";
+import { thirdPartyController } from "../controller/thirdparty.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -207,6 +208,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
     fastify.delete('/orders/:id', { preHandler: [getSession] }, ordersController.deleteOrder);
 
+    //third party orders - inventory
+    fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
 
     fastify.post('/test/task', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray)
 
