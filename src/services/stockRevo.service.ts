@@ -116,6 +116,7 @@ export module stockRevoService {
             const countParams = [puc];
             const countResult = await query(countQuery, countParams);
             const totalCount = parseInt(countResult.rows[0].count, 10);
+            console.log("Total Count:", countResult);
             return { command, result: result, totalCount };
         } catch (error) {
             console.error("Query Execution Error: IN upsertStockRevoData", error);
