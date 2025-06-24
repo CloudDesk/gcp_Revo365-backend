@@ -72,6 +72,7 @@ console.log(parentDir, "INDEX PATH 2");
 fastify.register(fastifyStatic, {
     root: join(parentDir, "/uploads"),
 });
+console.log('test Data');
 fastify.addHook("onReady", async () => {
     try {
         let data = await checkDatabaseConnection();
