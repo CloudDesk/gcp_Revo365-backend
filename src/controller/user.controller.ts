@@ -60,6 +60,7 @@ export module userController {
 
     export const upsertUser = async (request: any, reply: any) => {
         try {
+            // console.log("Request Body in upsertUser:", request.body);
             const userData = request.body;
             let upsertUserResult: any = await userService.upsertUser(userData);
             if (upsertUserResult.command == 'UPDATE') {

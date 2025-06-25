@@ -99,7 +99,7 @@ export module transactionService {
   };
   export const paymentInitialization = async (request: any) => {
     try {
-      console.log('Inside paymentInitialization service')
+      // console.log('Inside paymentInitialization service')
       let {
         merchanttransactionId,
         name,
@@ -120,7 +120,7 @@ export module transactionService {
         productid && productid.map((_, index) => `$${index + 1}`).join(", ");
       const queryText = `SELECT id, overallavailableqty,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
       const result = await query(queryText, productid);
-      console.log('-->',result.rows)
+      // console.log('-->',result.rows)
       const allQuantitiesAvailable = result.rows.every(
         (product) =>
           Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
@@ -181,8 +181,8 @@ export module transactionService {
 
         return REDIRECT_URL_SUCCESS;
       }
-      console.log('==>',request.body)
-      console.log('==>',request.body.order)
+      // console.log('==>',request.body)
+      // console.log('==>',request.body.order)
       request.body.order.forEach((e) => {
         e.merchanttransactionid = response.data.data.merchantTransactionId;
       });
@@ -199,15 +199,15 @@ export module transactionService {
             message: "Task Not Created For Making Order.Please contact Admin",
           };
         }
-        console.log('==>',request.body.transaction)
-        console.log('==>',request.body.order)
+        // console.log('==>',request.body.transaction)
+        // console.log('==>',request.body.order)
         let insertorderdata = await ordersService.bulkInsertOrder(
           request.body.transaction,
           request.body.order
         );
         insersertdordderdatawithprocessing = insertorderdata.rows;
-        console.log('====>',insersertdordderdatawithprocessing)
-        console.log('empty3')
+        // console.log('====>',insersertdordderdatawithprocessing)
+        // console.log('empty3')
       } catch (error) {
         console.log(error.message, "Error in Task paymentInitialization");
         let insertdata = await productrevoService.bulkupsertProducttosetZero(
@@ -233,7 +233,7 @@ export module transactionService {
   };
   export const paymentConfirmation = async (request: any, reply: any) => {
     try {
-      console.log('Inside paymentConfirmation service')
+      // console.log('Inside paymentConfirmation service')
       const merchantTransactionId = request.query.id;
       const checkMerchantId = await query(`SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId])
       if (checkMerchantId.rows.length === 0) {
@@ -372,6 +372,9 @@ export module transactionService {
     paymentfailed = false
   ) => {
     try {
+      // console.log('Inside insertTransactionData service')
+      // console.log('=>', transactionData)
+      // console.log('==>', insersertdordderdatawithprocessing)
       const {
         merchanttransactionId,
         name,
@@ -402,6 +405,7 @@ export module transactionService {
       ];
 
       const transactionResult = await query(insertTransactionQuery, values);
+      // console.log('===>Result', transactionResult)
       if (transactionResult.command === "INSERT") {
         const insertedTransaction = transactionResult.rows[0];
         const finalResult = {
@@ -409,7 +413,7 @@ export module transactionService {
           transactiondata: { ...insertedTransaction },
         } as any;
         console.log('===>',finalResult)
-        console.log('Wait')
+        // console.log('Wait')
 
         // Split orders based on orderid starting with 'TEQIT'
 const orderdata = {
@@ -424,26 +428,49 @@ const thirdpartyorderdata = {
 
 console.log('Order Data:', orderdata);
 console.log('Third Party Order Data:', thirdpartyorderdata);
-console.log('Wait1')
+// console.log('Wait1');
 
-        let orderupdated = await ordersService.updateOrder(
-          orderdata,
-          paymentfailed
-        );
-        let thirdpartyorderupdate = await thirdPartyOrdersService.updateThirdPartyOrder(thirdpartyorderdata,paymentfailed)
+let orderupdated = { status: null, data: null };
+let thirdpartyorderupdate = { status: null, data: null };
 
-        if (orderupdated.status === "success" && thirdpartyorderupdate.status === "success") {
-          return {
-            orderdata: orderupdated.data,
-            transactionData: [finalResult.transactiondata],
-          };
-        } else {
-          return {
-            orderdata: "Order Not Updated Please contact Admin",
-            transactionData: finalResult.transactiondata,
-          };
-        }
+// Track if update functions should be called
+const shouldUpdateOrder = orderdata.order && orderdata.order.length > 0;
+const shouldUpdateThirdPartyOrder = thirdpartyorderdata.order && thirdpartyorderdata.order.length > 0;
+
+if (shouldUpdateOrder) {
+  console.log('Going to update order');
+  orderupdated = await ordersService.updateOrder(orderdata, paymentfailed);
+}
+
+if (shouldUpdateThirdPartyOrder) {
+  console.log('Going to update third party order');
+  thirdpartyorderupdate = await thirdPartyOrdersService.updateThirdPartyOrder(
+    thirdpartyorderdata,
+    paymentfailed
+  );
+}
+// console.log('Order details:', shouldUpdateOrder, orderupdated.status);
+// console.log('Third Order details:', shouldUpdateThirdPartyOrder, thirdpartyorderupdate.status);
+// Check success based on which updates were attempted
+const isOrderUpdateSuccess = shouldUpdateOrder ? orderupdated.status === "success" : true;
+const isThirdPartyUpdateSuccess = shouldUpdateThirdPartyOrder ? thirdpartyorderupdate.status === "success" : true;
+// console.log('Order Update Success:', isOrderUpdateSuccess);
+// console.log('Third Party Update Success:', isThirdPartyUpdateSuccess);
+if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
+  // console.log('Both orders updated successfully');
+  return {
+    orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
+    transactionData: [finalResult.transactiondata],
+  };
+} else {
+  console.log('Order update failed');
+  return {
+    orderdata: "Order Not Updated Please contact Admin",
+    transactionData: finalResult.transactiondata,
+  };
+}
       } else {
+        console.log("Transaction Not Inserted");
         return {
           orderdata: "Order Not Updated Please contact Admin",
           transactionData: "Order Not Updated Please contact Admin",
