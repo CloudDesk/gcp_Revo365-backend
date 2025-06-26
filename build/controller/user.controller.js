@@ -54,6 +54,7 @@ export var userController;
     };
     userController.upsertUser = async (request, reply) => {
         try {
+            // console.log("Request Body in upsertUser:", request.body);
             const userData = request.body;
             let upsertUserResult = await userService.upsertUser(userData);
             if (upsertUserResult.command == 'UPDATE') {

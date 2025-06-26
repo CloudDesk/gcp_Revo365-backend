@@ -95,7 +95,7 @@ export var thirdPartyOrdersService;
     };
     thirdPartyOrdersService.updateThirdPartyOrder = async (data, paymentfailed) => {
         try {
-            console.log('Inside thirdPartyOrder with data:', data);
+            // console.log('Inside thirdPartyOrder with data:', data);
             const orders = data.order;
             const transactionid = data.transactiondata.transactionid;
             const emailid = data.transactiondata.name;
@@ -104,6 +104,7 @@ export var thirdPartyOrdersService;
                 const orderId = parseInt(order.id, 10); // Ensure it's an integer
                 updateValuesArray.push([transactionid, orderId]);
             }
+            // console.log('Update Values Array>>:', updateValuesArray);
             if (updateValuesArray.length > 0) {
                 // Create the VALUES part dynamically with parameter placeholders
                 const valuePlaceholders = updateValuesArray
@@ -111,6 +112,7 @@ export var thirdPartyOrdersService;
                     .join(", ");
                 let updateOrderQuery;
                 if (!paymentfailed) {
+                    console.log("Inside !paymentfailed condition", valuePlaceholders);
                     updateOrderQuery = `
                         UPDATE thirdpartyorders
                         SET transactionid = bulk_data.transactionid,
@@ -123,6 +125,7 @@ export var thirdPartyOrdersService;
                         RETURNING *`;
                 }
                 else {
+                    console.log("Inside paymentfailed condition", valuePlaceholders);
                     updateOrderQuery = `
                         UPDATE thirdpartyorders
                         SET transactionid = bulk_data.transactionid,
@@ -136,19 +139,26 @@ export var thirdPartyOrdersService;
                 }
                 const updateValues = updateValuesArray.flat();
                 const updatedOrderResult = await query(updateOrderQuery, updateValues);
+                // console.log('-->Updated Order Result:', updatedOrderResult);   
                 if (updatedOrderResult.command === 'UPDATE') {
+                    console.log('Inside if');
                     let orderlinedata = {
                         orderid: updatedOrderResult.rows[0].id,
                         orderstatus: updatedOrderResult.rows[0].orderstatus
                     };
                     const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed);
-                    console.log('Updated Order Line Data in third party:', updatedOrderLineData);
-                    console.log('Updated Order line after third party');
+                    // console.log('Updated Order Line Data in third party:', updatedOrderLineData);
+                    // console.log('Updated Order line after third party');
                     return { data: updatedOrderResult.rows, status: 'success' };
                 }
                 else {
+                    // console.log('Inside else')
                     return { data: `Orders Not Updated Please contact admin`, status: 'failure' };
                 }
+            }
+            else {
+                // console.log('Update Values Array is empty, no orders to update.');
+                return { data: `No orders to update`, status: 'failure' };
             }
         }
         catch (error) {

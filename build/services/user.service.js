@@ -223,6 +223,7 @@ export var userService;
     userService.upsertUser = async (userData) => {
         try {
             if (!userData.id) {
+                console.log("Inserting new user data");
                 const checkEmailQuery = `
           SELECT id, 'users' as table_name FROM users WHERE useremail = $1
           UNION ALL
@@ -259,17 +260,34 @@ export var userService;
                 };
             }
             const { id, ...updateFields } = userData;
+            // console.log("Updating user data for ID:", id);
+            // console.log("Updating user data for ID2:", updateFields);
             const checkUserQuery = `
         SELECT * FROM users WHERE id = $1
       `;
             const userExists = await query(checkUserQuery, [id]);
+            console.log("User Exists:", userExists.rows);
             if (userExists.rows.length === 0) {
+                console.log("User not found with ID:");
                 return { command: 'Fail', message: "User not found" };
             }
+            // Construct updateData dynamically from updateFields
             const updateData = {};
-            if (updateFields.useremail) {
-                updateData.useremail = updateFields.useremail;
-            }
+            const allowedFields = [
+                'firstname',
+                'lastname',
+                'useremail',
+                'usermobilenumber',
+                'gender',
+                'gstnumber',
+                'isbusinessuser'
+            ];
+            allowedFields.forEach((field) => {
+                if (updateFields[field] !== undefined) {
+                    updateData[field] = updateFields[field];
+                }
+            });
+            // Handle password separately if provided
             if (updateFields.userpassword) {
                 updateData.userpassword = await hashGenerate(updateFields.userpassword);
             }
@@ -278,6 +296,8 @@ export var userService;
             }
             const updateQueryFields = Object.keys(updateData);
             const updateValues = Object.values(updateData);
+            // console.log("Update Query Fields:", updateQueryFields);
+            // console.log("Update Values:", updateValues);   
             const updateQuery = `
         UPDATE users 
         SET ${updateQueryFields.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
@@ -285,6 +305,7 @@ export var userService;
         RETURNING *
       `;
             const result = await query(updateQuery, [...updateValues, id]);
+            console.log("Update Result:", result.rows);
             return {
                 command: "UPDATE",
                 rows: result.rows
