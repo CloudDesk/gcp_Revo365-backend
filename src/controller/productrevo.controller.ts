@@ -126,7 +126,7 @@ export module productrevoController {
                 });
             } else {
                 reply.status(400).send({
-                    error: 'Failed to insert products',
+                    error: 'Failed to insert products check excel data that you uploaded',
                     details: result.errors,
                 });
             }
