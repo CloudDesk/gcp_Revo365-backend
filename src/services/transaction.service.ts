@@ -481,4 +481,140 @@ if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
       throw error;
     }
   };
+
+
+   export const paymentInitializationRazorpay = async (request: any) => {
+    try {
+      // console.log('Inside paymentInitialization service')
+      let {
+        merchanttransactionId,
+        name,
+        amount,
+        mobilenumber,
+        userid,
+        productid,
+        transactionfor,
+      } = request.body.transaction;
+      let orderdata = request.body.order;
+      dummyorderdata = orderdata.map((element: any) => ({ ...element }));
+      productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
+      let insertdata = await productrevoService.bulkupsertProducttosetZero(
+        orderdata,
+        false
+      );
+      const productId =
+        productid && productid.map((_, index) => `$${index + 1}`).join(", ");
+      const queryText = `SELECT id, overallavailableqty,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
+      const result = await query(queryText, productid);
+      // console.log('-->',result.rows)
+      const allQuantitiesAvailable = result.rows.every(
+        (product) =>
+          Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+          Number(product.overallavailableqty - Number(product.orderedquantity)) >=
+          0
+      );
+      if (!allQuantitiesAvailable) {
+        return {
+          status: 400,
+          message:
+            "One or more products are out of stock. Please try again later.",
+        };
+      }
+      transactionDataset = request.body;
+      const data = {
+        merchantId: MERCHANT_ID,
+        merchantTransactionId: merchanttransactionId,
+        name: name,
+        amount: Number(amount) * 100,
+        redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}&token=${request.headers.authorization}`,
+        redirectMode: "POST",
+        mobileNumber: mobilenumber,
+        paymentInstrument: {
+          type: "PAY_PAGE",
+        },
+      };
+      const payload = JSON.stringify(data);
+      const payloadMain = Buffer.from(payload).toString("base64");
+      const string = payloadMain + "/pg/v1/pay" + SALT_KEY;
+      const sha256 = crypto.createHash("sha256").update(string).digest("hex");
+      const checksum = sha256 + "###" + keyIndex;
+
+      const prod_url =
+        "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
+
+      const options = {
+        method: "POST",
+        url: prod_url,
+        headers: {
+          accept: "application/json",
+          "Content-Type": "application/json",
+          "X-VERIFY": checksum,
+        },
+        data: {
+          request: payloadMain,
+        },
+      };
+      let response;
+      try {
+        response = await axios(options);
+
+      } catch (error) {
+        console.log(error.message, "Error in axios options");
+        // return {
+        //   status: 400,
+        //   message: "Phonepe Payment Gateway is Failing.please try again",
+        // };
+
+        return REDIRECT_URL_SUCCESS;
+      }
+      // console.log('==>',request.body)
+      // console.log('==>',request.body.order)
+      request.body.order.forEach((e) => {
+        e.merchanttransactionid = response.data.data.merchantTransactionId;
+      });
+      request.body.order.forEach((e) => {
+        cartIddata.push(e.cartId);
+      });
+      try {
+        let createHttpTaskResult = await createHttpTask(
+          response.data.data.merchantTransactionId
+        );
+        if (createHttpTaskResult?.success === false) {
+          return {
+            status: 400,
+            message: "Task Not Created For Making Order.Please contact Admin",
+          };
+        }
+        // console.log('==>',request.body.transaction)
+        // console.log('==>',request.body.order)
+        let insertorderdata = await ordersService.bulkInsertOrder(
+          request.body.transaction,
+          request.body.order
+        );
+        insersertdordderdatawithprocessing = insertorderdata.rows;
+        // console.log('====>',insersertdordderdatawithprocessing)
+        // console.log('empty3')
+      } catch (error) {
+        console.log(error.message, "Error in Task paymentInitialization");
+        let insertdata = await productrevoService.bulkupsertProducttosetZero(
+          dummyorderdata,
+          true
+        );
+      }
+      console.log(response, " ===>> response in axios");
+
+      return response.data.data.instrumentResponse.redirectInfo.url;
+    } catch (error) {
+      console.error(
+        "Query Execution Error: IN paymentInitialization",
+        error.message
+      );
+      let ErrorMessage = await ErrorHandler.handleQueryError(error);
+      let insertdata = await productrevoService.bulkupsertProducttosetZero(
+        dummyorderdata,
+        true
+      );
+      return ErrorMessage;
+    }
+  };
 }
