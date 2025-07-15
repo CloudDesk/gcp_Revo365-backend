@@ -70,6 +70,7 @@ export module transactionController {
 
    export const paymentInitializationRazorpay = async (request: any, reply: any) => {
     try {
+      console.log('inside razorpay');
       let transactionData = await transactionService.paymentInitializationRazorpay(
         request
       );

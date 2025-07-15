@@ -4,6 +4,7 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
 import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import razorpay from "razorpay";
 import {
   REDIRECT_URL_FAILURE,
   REDIRECT_URL_PAYMENT_STATUS,
@@ -412,63 +413,63 @@ export module transactionService {
           order: insersertdordderdatawithprocessing,
           transactiondata: { ...insertedTransaction },
         } as any;
-        console.log('===>',finalResult)
+        console.log('===>', finalResult)
         // console.log('Wait')
 
         // Split orders based on orderid starting with 'TEQIT'
-const orderdata = {
-  order: finalResult.order.filter(order => order.orderid && order.orderid.startsWith('TEQIT')),
-  transactiondata: finalResult.transactiondata,
-};
+        const orderdata = {
+          order: finalResult.order.filter(order => order.orderid && order.orderid.startsWith('TEQIT')),
+          transactiondata: finalResult.transactiondata,
+        };
 
-const thirdpartyorderdata = {
-  order: finalResult.order.filter(order => !order.orderid || !order.orderid.startsWith('TEQIT')),
-  transactiondata: finalResult.transactiondata,
-};
+        const thirdpartyorderdata = {
+          order: finalResult.order.filter(order => !order.orderid || !order.orderid.startsWith('TEQIT')),
+          transactiondata: finalResult.transactiondata,
+        };
 
-console.log('Order Data:', orderdata);
-console.log('Third Party Order Data:', thirdpartyorderdata);
-// console.log('Wait1');
+        console.log('Order Data:', orderdata);
+        console.log('Third Party Order Data:', thirdpartyorderdata);
+        // console.log('Wait1');
 
-let orderupdated = { status: null, data: null };
-let thirdpartyorderupdate = { status: null, data: null };
+        let orderupdated = { status: null, data: null };
+        let thirdpartyorderupdate = { status: null, data: null };
 
-// Track if update functions should be called
-const shouldUpdateOrder = orderdata.order && orderdata.order.length > 0;
-const shouldUpdateThirdPartyOrder = thirdpartyorderdata.order && thirdpartyorderdata.order.length > 0;
+        // Track if update functions should be called
+        const shouldUpdateOrder = orderdata.order && orderdata.order.length > 0;
+        const shouldUpdateThirdPartyOrder = thirdpartyorderdata.order && thirdpartyorderdata.order.length > 0;
 
-if (shouldUpdateOrder) {
-  console.log('Going to update order');
-  orderupdated = await ordersService.updateOrder(orderdata, paymentfailed);
-}
+        if (shouldUpdateOrder) {
+          console.log('Going to update order');
+          orderupdated = await ordersService.updateOrder(orderdata, paymentfailed);
+        }
 
-if (shouldUpdateThirdPartyOrder) {
-  console.log('Going to update third party order');
-  thirdpartyorderupdate = await thirdPartyOrdersService.updateThirdPartyOrder(
-    thirdpartyorderdata,
-    paymentfailed
-  );
-}
-// console.log('Order details:', shouldUpdateOrder, orderupdated.status);
-// console.log('Third Order details:', shouldUpdateThirdPartyOrder, thirdpartyorderupdate.status);
-// Check success based on which updates were attempted
-const isOrderUpdateSuccess = shouldUpdateOrder ? orderupdated.status === "success" : true;
-const isThirdPartyUpdateSuccess = shouldUpdateThirdPartyOrder ? thirdpartyorderupdate.status === "success" : true;
-// console.log('Order Update Success:', isOrderUpdateSuccess);
-// console.log('Third Party Update Success:', isThirdPartyUpdateSuccess);
-if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
-  // console.log('Both orders updated successfully');
-  return {
-    orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
-    transactionData: [finalResult.transactiondata],
-  };
-} else {
-  console.log('Order update failed');
-  return {
-    orderdata: "Order Not Updated Please contact Admin",
-    transactionData: finalResult.transactiondata,
-  };
-}
+        if (shouldUpdateThirdPartyOrder) {
+          console.log('Going to update third party order');
+          thirdpartyorderupdate = await thirdPartyOrdersService.updateThirdPartyOrder(
+            thirdpartyorderdata,
+            paymentfailed
+          );
+        }
+        // console.log('Order details:', shouldUpdateOrder, orderupdated.status);
+        // console.log('Third Order details:', shouldUpdateThirdPartyOrder, thirdpartyorderupdate.status);
+        // Check success based on which updates were attempted
+        const isOrderUpdateSuccess = shouldUpdateOrder ? orderupdated.status === "success" : true;
+        const isThirdPartyUpdateSuccess = shouldUpdateThirdPartyOrder ? thirdpartyorderupdate.status === "success" : true;
+        // console.log('Order Update Success:', isOrderUpdateSuccess);
+        // console.log('Third Party Update Success:', isThirdPartyUpdateSuccess);
+        if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
+          // console.log('Both orders updated successfully');
+          return {
+            orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
+            transactionData: [finalResult.transactiondata],
+          };
+        } else {
+          console.log('Order update failed');
+          return {
+            orderdata: "Order Not Updated Please contact Admin",
+            transactionData: finalResult.transactiondata,
+          };
+        }
       } else {
         console.log("Transaction Not Inserted");
         return {
@@ -483,7 +484,7 @@ if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
   };
 
 
-   export const paymentInitializationRazorpay = async (request: any) => {
+  export const paymentInitializationRazorpay = async (request: any) => {
     try {
       // console.log('Inside paymentInitialization service')
       let {
@@ -495,115 +496,87 @@ if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
         productid,
         transactionfor,
       } = request.body.transaction;
-      let orderdata = request.body.order;
-      dummyorderdata = orderdata.map((element: any) => ({ ...element }));
-      productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
-      let insertdata = await productrevoService.bulkupsertProducttosetZero(
-        orderdata,
-        false
-      );
-      const productId =
-        productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-      const queryText = `SELECT id, overallavailableqty,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
-      const result = await query(queryText, productid);
-      // console.log('-->',result.rows)
-      const allQuantitiesAvailable = result.rows.every(
-        (product) =>
-          Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-          Number(product.overallavailableqty - Number(product.orderedquantity)) >=
-          0
-      );
-      if (!allQuantitiesAvailable) {
-        return {
-          status: 400,
-          message:
-            "One or more products are out of stock. Please try again later.",
-        };
-      }
-      transactionDataset = request.body;
-      const data = {
-        merchantId: MERCHANT_ID,
-        merchantTransactionId: merchanttransactionId,
-        name: name,
-        amount: Number(amount) * 100,
-        redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}&token=${request.headers.authorization}`,
-        redirectMode: "POST",
-        mobileNumber: mobilenumber,
-        paymentInstrument: {
-          type: "PAY_PAGE",
-        },
-      };
-      const payload = JSON.stringify(data);
-      const payloadMain = Buffer.from(payload).toString("base64");
-      const string = payloadMain + "/pg/v1/pay" + SALT_KEY;
-      const sha256 = crypto.createHash("sha256").update(string).digest("hex");
-      const checksum = sha256 + "###" + keyIndex;
+      // let orderdata = request.body.order;
+      // dummyorderdata = orderdata.map((element: any) => ({ ...element }));
+      // productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
+      // let insertdata = await productrevoService.bulkupsertProducttosetZero(
+      //   orderdata,
+      //   false
+      // );
+      // const productId =
+      //   productid && productid.map((_, index) => `$${index + 1}`).join(", ");
+      // const queryText = `SELECT id, overallavailableqty,orderedquantity,lock_qty FROM product_revo WHERE id IN (${productId})`;
+      // const result = await query(queryText, productid);
+      // // console.log('-->',result.rows)
+      // const allQuantitiesAvailable = result.rows.every(
+      //   (product) =>
+      //     Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+      //     Number(product.overallavailableqty - Number(product.orderedquantity)) >=
+      //     0
+      // );
+      // if (!allQuantitiesAvailable) {
+      //   return {
+      //     status: 400,
+      //     message:
+      //       "One or more products are out of stock. Please try again later.",
+      //   };
+      // }
+      // transactionDataset = request.body;
 
-      const prod_url =
-        "https://api-preprod.phonepe.com/apis/pg-sandbox/pg/v1/pay";
+      var instance = new razorpay
+        (
+          {
+            key_id: 'rzp_test_NWDLOWRf5ShqNr',
+            key_secret: 'WxQWpSHvMCrPfknCWsTUrR2X'
+          }
+        )
 
-      const options = {
-        method: "POST",
-        url: prod_url,
-        headers: {
-          accept: "application/json",
-          "Content-Type": "application/json",
-          "X-VERIFY": checksum,
-        },
-        data: {
-          request: payloadMain,
-        },
-      };
-      let response;
+      console.log(instance, "instance of razorpay");
+      let order = await instance.orders.create({
+        amount: amount * 100,
+        currency: "INR",
+        receipt: name,
+      })
+      console.log("order is : " + JSON.stringify(order));
       try {
-        response = await axios(options);
-
+        // response = await axios(options);
       } catch (error) {
         console.log(error.message, "Error in axios options");
-        // return {
-        //   status: 400,
-        //   message: "Phonepe Payment Gateway is Failing.please try again",
-        // };
-
         return REDIRECT_URL_SUCCESS;
       }
-      // console.log('==>',request.body)
-      // console.log('==>',request.body.order)
-      request.body.order.forEach((e) => {
-        e.merchanttransactionid = response.data.data.merchantTransactionId;
-      });
-      request.body.order.forEach((e) => {
-        cartIddata.push(e.cartId);
-      });
-      try {
-        let createHttpTaskResult = await createHttpTask(
-          response.data.data.merchantTransactionId
-        );
-        if (createHttpTaskResult?.success === false) {
-          return {
-            status: 400,
-            message: "Task Not Created For Making Order.Please contact Admin",
-          };
-        }
-        // console.log('==>',request.body.transaction)
-        // console.log('==>',request.body.order)
-        let insertorderdata = await ordersService.bulkInsertOrder(
-          request.body.transaction,
-          request.body.order
-        );
-        insersertdordderdatawithprocessing = insertorderdata.rows;
-        // console.log('====>',insersertdordderdatawithprocessing)
-        // console.log('empty3')
-      } catch (error) {
-        console.log(error.message, "Error in Task paymentInitialization");
-        let insertdata = await productrevoService.bulkupsertProducttosetZero(
-          dummyorderdata,
-          true
-        );
-      }
-      console.log(response, " ===>> response in axios");
 
-      return response.data.data.instrumentResponse.redirectInfo.url;
+      // request.body.order.forEach((e) => {
+      //   e.merchanttransactionid = '1234556kjfdslajgkljsfhnnhjkggh';
+      // });
+      // request.body.order.forEach((e) => {
+      //   cartIddata.push(e.cartId);
+      // });
+      // try {
+      //   let createHttpTaskResult = { success: false };
+      //   if (createHttpTaskResult?.success === false) {
+      //     return {
+      //       status: 400,
+      //       message: "Task Not Created For Making Order.Please contact Admin",
+      //     };
+      //   }
+
+      //   let insertorderdata = await ordersService.bulkInsertOrder(
+      //     request.body.transaction,
+      //     request.body.order
+      //   );
+      //   insersertdordderdatawithprocessing = insertorderdata.rows;
+
+      // } catch (error) {
+      //   console.log(error.message, "Error in Task paymentInitialization");
+      //   let insertdata = await productrevoService.bulkupsertProducttosetZero(
+      //     dummyorderdata,
+      //     true
+      //   );
+      // }
+
+
+      return order;
+
     } catch (error) {
       console.error(
         "Query Execution Error: IN paymentInitialization",
