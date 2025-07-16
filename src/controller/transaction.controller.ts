@@ -70,14 +70,14 @@ export module transactionController {
 
    export const paymentInitializationRazorpay = async (request: any, reply: any) => {
     try {
-      console.log('inside razorpay');
-      let transactionData = await transactionService.paymentInitializationRazorpay(
+      let transactionData :any = await transactionService.paymentInitializationRazorpay(
         request
       );
-      if (transactionData?.status == 400) {
-        reply.status(404).send(transactionData.message);
-      } else {
+      console.log("transactionData", transactionData);
+      if (transactionData && transactionData.status == 200) {
         reply.send(transactionData);
+      } else {
+        reply.status(transactionData.status).send('Transaction initialization failed');
       }
     } catch (error) {
       console.error("Query Execution Error: IN paymentInitialization Controller",error);
@@ -87,20 +87,22 @@ export module transactionController {
   };
 
 
-   export const paymentConfirmationRazorpay = async (request: any, reply: any) => {
+   export const paymentConfirmationRazorpay = async (request, reply) => {
     try {
-      let transactionData = await transactionService.paymentConfirmation(
-        request,
-        reply
-      );
-      reply.send(transactionData);
+      console.log('inside razorpay confirmation controller');
+      let transactionData = await transactionService.paymentConfirmationRazorpay(request);
+      if (transactionData?.status == 400 || transactionData?.status == 500) {
+        reply.status(transactionData.status).send({
+          message: transactionData.message,
+          data: transactionData.data || {},
+        });
+      } else {
+        reply.send(transactionData);
+      }
     } catch (error) {
-      console.error(
-        "Query Execution Error: IN paymentConfirmation Controller",
-        error
-      );
+      console.error("Query Execution Error: IN paymentConfirmationRazorpay Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      return ErrorMessage;
+      reply.send(ErrorMessage);
     }
   };
 }
