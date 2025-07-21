@@ -53,6 +53,7 @@ import { userService } from "../services/user.service.js";
 import { request } from "http";
 import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 import { thirdPartyController } from "../controller/thirdparty.controller.js";
+import { demandrequestController } from "../controller/demandrequest.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -161,6 +162,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.delete('/cart/:id', { preHandler: [getSession] }, cartController.deleteCart);
     fastify.post('/cart', { preHandler: [getSession, validateRequestBody(cartInsertSchema)] }, cartController.upsertCart);
     fastify.post('/cart/quantity', { preHandler: [getSession] }, cartController.updateCartQuantity);
+
+    fastify.get('/demandrequest', { preHandler: [getSession] }, demandrequestController.getDemandRequest);
+    fastify.post('/demandrequest', { preHandler: [getSession] }, demandrequestController.upsertDemandRequest);
 
     //wishlist
     fastify.get('/wishlist', { preHandler: [getSession] }, wishListController.getWishlistData);

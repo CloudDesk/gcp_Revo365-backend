@@ -98,6 +98,9 @@ export module purchaseRequestService {
             const { prnumber, ...upsertFields } = prData;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
+            console.log("Field Names:", fieldNames);
+            console.log("Field Values:", fieldValues);
+            console.log('Sample')
             if (prnumber) {
                 querydata = `UPDATE purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
                 WHERE prnumber = $${fieldNames.length + 1} 

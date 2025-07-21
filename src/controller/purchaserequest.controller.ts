@@ -16,6 +16,7 @@ export module purcahseRequestController {
     export const upsertPurchaseRequestData = async (request, reply) => {
         try {
             const prData = request.body;
+            console.log("Request Body in upsertPurchaseRequestData:", prData);
             let upsertPurchaseRequest = await purchaseRequestService.upsertPurchaseRequestData(prData)
             if (upsertPurchaseRequest.command === "UPDATE" || upsertPurchaseRequest.command === "INSERT") {
                 let message: any = {}
