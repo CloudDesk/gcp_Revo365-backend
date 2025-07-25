@@ -62,6 +62,7 @@
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "pizzip": "^3.1.7",
+    "razorpay": "^2.9.6",
     "redis": "^4.7.0",
     "revo-365_backend": "file:",
     "tsx": "^4.19.1",
