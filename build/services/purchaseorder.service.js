@@ -215,6 +215,15 @@ export var purchaseOrderService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            const pr = result.rows[0].prnumber;
+            const drStatus = result.rows[0].po_status;
+            const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
+            console.log("Query Result in upsertQuote:", queryPr.rows);
+            if (queryPr.rows.length > 0 && queryPr.rows[0].isdemandrequest === true) {
+                const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, queryPr.rows[0].demandrequestid]);
+                console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
+                console.log("Quote Upserted Successfully");
+            }
             return result;
         }
         catch (error) {

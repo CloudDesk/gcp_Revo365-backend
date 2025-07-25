@@ -44,6 +44,7 @@ import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
 import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 import { thirdPartyController } from "../controller/thirdparty.controller.js";
+import { demandrequestController } from "../controller/demandrequest.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -137,6 +138,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.delete('/cart/:id', { preHandler: [getSession] }, cartController.deleteCart);
     fastify.post('/cart', { preHandler: [getSession, validateRequestBody(cartInsertSchema)] }, cartController.upsertCart);
     fastify.post('/cart/quantity', { preHandler: [getSession] }, cartController.updateCartQuantity);
+    fastify.get('/demandrequest', { preHandler: [getSession] }, demandrequestController.getDemandRequest);
+    fastify.post('/demandrequest', { preHandler: [getSession] }, demandrequestController.upsertDemandRequest);
     //wishlist
     fastify.get('/wishlist', { preHandler: [getSession] }, wishListController.getWishlistData);
     fastify.get('/wishlist/:userId', { preHandler: [getSession] }, wishListController.getUserWishlistData);
@@ -217,6 +220,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/rating-image/delete', { preHandler: [getSession] }, ratingController.deleteImageRating);
     // phonepe
     fastify.post('/payment', { preHandler: [getSession] }, transactionController.paymentInitialization);
+    fastify.post('/payment/razorpay', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpay);
+    fastify.post('/payment/confirmation-razorpay', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpay);
     fastify.post('/payment/status', transactionController.paymentConfirmation);
     //transaction
     fastify.get('/transaction', { preHandler: [getSession] }, transactionController.getTransactionData);

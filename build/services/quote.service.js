@@ -75,8 +75,19 @@ export var quoteService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            console.log("Result in upsertQuote:", result.rows);
+            const pr = result.rows[0].prnumber;
+            const quoteStatus = result.rows[0].status;
+            const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
+            console.log("Query Result in upsertQuote:", queryPr.rows);
+            if (queryPr.rows.length > 0 && queryPr.rows[0].isdemandrequest === true) {
+                const updateDR = await query(`UPDATE demandrequest SET quotestatus = $1 WHERE id = $2 RETURNING *`, [quoteStatus, queryPr.rows[0].demandrequestid]);
+                console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
+                console.log("Quote Upserted Successfully");
+            }
             if (result.rows.length > 0) {
                 if (result.rows[0].status === "closed_won") {
+                    console.log("Quote Status is closed_won, updating purchase request status");
                     let value = {
                         prstatus: 'Completed',
                         prnumber: result.rows[0].prnumber

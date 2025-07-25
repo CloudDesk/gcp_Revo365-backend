@@ -1,6 +1,7 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import { demandrequestService } from "./demandrequest.service.js";
 export var purchaseRequestService;
 (function (purchaseRequestService) {
     purchaseRequestService.getPurchaseRequestData = async (request) => {
@@ -54,6 +55,8 @@ export var purchaseRequestService;
         }
     };
     purchaseRequestService.upsertPurchaseRequestData = async (prData) => {
+        delete prData.suppliercode;
+        console.log("Data in upsertPurchaseRequestData:", prData);
         try {
             let querydata;
             let params;
@@ -81,6 +84,12 @@ export var purchaseRequestService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            console.log("Result in upsertPurchaseRequestData:", result.rows);
+            if (result.rows.length > 0 && result.rows[0].isdemandrequest === true) {
+                const demandrequestData = { id: result.rows[0].demandrequestid, prstatus: result.rows[0].prstatus, prnumber: result.rows[0].prnumber };
+                console.log("Demand Request Data in upsertPurchaseRequestData:", demandrequestData);
+                await demandrequestService.upsertDemandRequest(demandrequestData);
+            }
             return result;
         }
         catch (error) {
@@ -91,13 +100,17 @@ export var purchaseRequestService;
     };
     purchaseRequestService.upsertstatusfield = async (prData) => {
         try {
+            console.log("Request Body in upsertstatusfield:", prData);
             let querydata;
             let params;
             const { prnumber, ...upsertFields } = prData;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
+            console.log("Field Names:", fieldNames);
+            console.log("Field Values:", fieldValues);
+            console.log('Sample');
             if (prnumber) {
-                querydata = `UPDATE purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+                querydata = `update purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
                 WHERE prnumber = $${fieldNames.length + 1} 
                 RETURNING *`;
                 params = [...fieldValues, prnumber];
@@ -109,6 +122,10 @@ export var purchaseRequestService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            console.log("Result in upsertstatusfield:", result.rows);
+            const drData = { id: result.rows[0].demandrequestid, prstatus: result.rows[0].prstatus };
+            await demandrequestService.upsertDemandRequest(drData);
+            console.log('Stop');
             return result;
         }
         catch (error) {

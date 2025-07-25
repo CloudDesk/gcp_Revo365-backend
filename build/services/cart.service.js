@@ -246,6 +246,7 @@ export var cartservice;
                 const puc = findPuc.rows[0]?.puc || null;
                 console.log("--PUC--", puc);
                 const updateoverallAvailableQty = await productrevoService.updateoverallAvailableQuantity(puc);
+                console.log("updateoverallAvailableQty--", updateoverallAvailableQty);
                 if (!puc) {
                     console.log(`No PUC found for productid: ${productid}`);
                     thirdPartyQuantities[productid] = 0;
@@ -329,6 +330,7 @@ export var cartservice;
             // Execute the final query (unchanged as per your instruction)
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
+            console.log("Final Query Result:", datatypecheckResult);
             return datatypecheckResult;
         }
         catch (error) {
