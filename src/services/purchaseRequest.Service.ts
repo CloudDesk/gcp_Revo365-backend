@@ -1,6 +1,7 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import { demandrequestService } from "./demandrequest.service.js";
 
 export module purchaseRequestService {
     export const getPurchaseRequestData = async (request: any) => {
@@ -53,6 +54,8 @@ export module purchaseRequestService {
     }
 
     export const upsertPurchaseRequestData = async (prData: any) => {
+        delete prData.suppliercode;
+        console.log("Data in upsertPurchaseRequestData:", prData);
         try {
             let querydata: string;
             let params: any[];
@@ -82,6 +85,12 @@ export module purchaseRequestService {
                 params = fieldValues;
             }
             const result = await query(querydata, params)
+            console.log("Result in upsertPurchaseRequestData:", result.rows);
+            if(result.rows.length > 0 && result.rows[0].isdemandrequest===true) {
+                const demandrequestData = {id: result.rows[0].demandrequestid,prstatus:result.rows[0].prstatus,prnumber:result.rows[0].prnumber}
+                console.log("Demand Request Data in upsertPurchaseRequestData:", demandrequestData);
+                await demandrequestService.upsertDemandRequest(demandrequestData);
+            }
             return result;
         } catch (error) {
             console.error("Query Execution Error: IN upsertPurchaseRequestData", error);
@@ -93,6 +102,7 @@ export module purchaseRequestService {
 
     export const upsertstatusfield = async (prData: any) => {
         try {
+            console.log("Request Body in upsertstatusfield:", prData);
             let querydata: string;
             let params: any[];
             const { prnumber, ...upsertFields } = prData;
@@ -102,7 +112,7 @@ export module purchaseRequestService {
             console.log("Field Values:", fieldValues);
             console.log('Sample')
             if (prnumber) {
-                querydata = `UPDATE purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+                querydata = `update purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
                 WHERE prnumber = $${fieldNames.length + 1} 
                 RETURNING *`;
                 params = [...fieldValues, prnumber];
@@ -115,6 +125,10 @@ export module purchaseRequestService {
                 params = fieldValues;
             }
             const result = await query(querydata, params)
+            console.log("Result in upsertstatusfield:", result.rows);
+            const drData ={id: result.rows[0].demandrequestid, prstatus: result.rows[0].prstatus}
+            await demandrequestService.upsertDemandRequest(drData);
+            console.log('Stop')
             return result;
         } catch (error) {
             console.error("Query Execution Error: IN upsertstatusfield", error);

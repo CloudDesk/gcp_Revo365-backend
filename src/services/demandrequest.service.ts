@@ -42,7 +42,7 @@ export module demandrequestService{
                 }
      
                 const result = await query(querydata, params);
-                console.log("Query Result in upsertDemandRequest:", result);
+                console.log("Query Result in upsertDemandRequest:", result.rows);
                 return result;
             } catch (error) {
                 console.error("Query Execution Error: IN upsertDemandRequest", error);
