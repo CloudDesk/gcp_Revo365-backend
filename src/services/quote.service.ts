@@ -56,6 +56,7 @@ export module quoteService {
 
     export const upsertQuotes = async (quotedata: any) => {
         try {
+            console.log("Quotedata in upsertQuote:", quotedata);
             let querydata: string;
             let params: any[];
             const { id, ...upsertFields } = quotedata;
@@ -81,6 +82,7 @@ export module quoteService {
             const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
             console.log("Query Result in upsertQuote:", queryPr.rows);
             if(queryPr.rows.length>0 && queryPr.rows[0].isdemandrequest === true){
+                console.log('inside demand request update');
                 const updateDR = await query(`UPDATE demandrequest SET quotestatus = $1 WHERE id = $2 RETURNING *`, [quoteStatus, queryPr.rows[0].demandrequestid]);
                 console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
                 console.log("Quote Upserted Successfully");
