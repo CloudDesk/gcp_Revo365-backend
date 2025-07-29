@@ -6,6 +6,8 @@ import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import Razorpay from "razorpay";
 import {
+  ENV_RAZORPAY_KEY_ID,
+  ENV_RAZORPAY_KEY_SECRET,
   REDIRECT_URL_FAILURE,
   REDIRECT_URL_PAYMENT_STATUS,
   REDIRECT_URL_SUCCESS,
@@ -19,10 +21,11 @@ import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
 //razorpay pay
-const RAZORPAY_KEY_ID = "rzp_test_NWDLOWRf5ShqNr";
-const RAZORPAY_KEY_SECRET = "WxQWpSHvMCrPfknCWsTUrR2X";
+const RAZORPAY_KEY_ID = ENV_RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = ENV_RAZORPAY_KEY_SECRET;
 const keyIndex = 1;
-
+console.log("Razorpay Key ID:", RAZORPAY_KEY_ID);
+console.log("Razorpay Key Secret:", RAZORPAY_KEY_SECRET);
 let transactionDataset: any = {};
 let dummyorderdata: any[] = [];
 let cartIddata: any[] = [];
