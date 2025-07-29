@@ -6,8 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx src/index",
-    "build": "tsc",
     "test": "npm run test",
+
+    "build": "tsc",
+    "authgcp":"gcloud auth login",
+    "set-project":"gcloud config set project revo-dev-and-test",
     "revo-backend-build": "docker build -t revo365-sit-backend .",
     "revo-backend-tag": "docker tag revo365-sit-backend gcr.io/revo-dev-and-test/revo365-sit-backend",
     "revo-backend-push": "docker push gcr.io/revo-dev-and-test/revo365-sit-backend",

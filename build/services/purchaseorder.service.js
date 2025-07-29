@@ -192,11 +192,55 @@ export var purchaseOrderService;
             return ErrorMessage;
         }
     };
+    // export const upsertPurchaseOrder = async (purchaseorderData: any) => {
+    //     try {
+    //         console.log("Received purchaseorderData:", purchaseorderData);
+    //         let querydata: string;
+    //         let params: any[];
+    //         const { id, product, ...upsertFields } = purchaseorderData;
+    //         if (product) {
+    //             upsertFields.product = JSON.stringify(product);
+    //         }
+    //         const fieldNames = Object.keys(upsertFields);
+    //         const fieldValues = Object.values(upsertFields);
+    //         if (id) {
+    //             querydata = `UPDATE purchaseorder SET ${fieldNames
+    //                 .map((field, index) => `${field} = $${index + 1}`)
+    //                 .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+    //             params = [...fieldValues, id];
+    //         } else {
+    //             querydata = `INSERT INTO purchaseorder (${fieldNames.join(
+    //                 ", "
+    //             )}) VALUES (${fieldNames
+    //                 .map((_, index) => `$${index + 1}`)
+    //                 .join(", ")}) RETURNING *`;
+    //             params = fieldValues;
+    //         }
+    //         const result = await query(querydata, params);
+    //         console.log("Query Result in upsertPurchaseOrder:", result.rows);
+    //         const pr = result.rows[0].prnumber;
+    //         const drStatus = result.rows[0].po_status;
+    //         const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
+    //         console.log("Query Result in upsertQuote:", queryPr.rows);
+    //         if(queryPr.rows.length>0 && queryPr.rows[0].isdemandrequest === true){
+    //             const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, queryPr.rows[0].demandrequestid]);
+    //             console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
+    //             console.log("Quote Upserted Successfully");
+    //         }
+    //         return result;
+    //     } catch (error) {
+    //         console.error("Query Execution Error: IN upsertPurchaseOrder", error);
+    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
+    //         return ErrorMessage
+    //     }
+    // }
     purchaseOrderService.upsertPurchaseOrder = async (purchaseorderData) => {
         try {
+            console.log("Received purchaseorderData:", purchaseorderData);
             let querydata;
             let params;
             const { id, product, ...upsertFields } = purchaseorderData;
+            // Always store product as a string (database consistency)
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
@@ -215,14 +259,57 @@ export var purchaseOrderService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            const pr = result.rows[0].prnumber;
-            const drStatus = result.rows[0].po_status;
+            console.log("Query Result in upsertPurchaseOrder:", result.rows);
+            if (!result.rows.length)
+                throw new Error("No rows returned from po upsert.");
+            const row = result.rows[0];
+            const ponumber = row.ponumber;
+            const poid = row.id;
+            const pr = row.prnumber;
+            const drStatus = row.po_status;
+            // Find related demand request via purchasing request table
             const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
             console.log("Query Result in upsertQuote:", queryPr.rows);
-            if (queryPr.rows.length > 0 && queryPr.rows[0].isdemandrequest === true) {
-                const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, queryPr.rows[0].demandrequestid]);
+            if (queryPr.rows.length > 0 &&
+                queryPr.rows[0].isdemandrequest === true) {
+                const demandRequestId = queryPr.rows[0].demandrequestid;
+                // Update postatus on demandrequest (as before)
+                const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, demandRequestId]);
                 console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
-                console.log("Quote Upserted Successfully");
+                // Fetch demandrequestdata array
+                const demandReqRes = await query(`SELECT demandrequestdata FROM demandrequest WHERE id = $1`, [demandRequestId]);
+                if (!demandReqRes.rows.length)
+                    throw new Error(`Demand request ${demandRequestId} not found.`);
+                let demandrequestdata = demandReqRes.rows[0].demandrequestdata;
+                if (!demandrequestdata)
+                    demandrequestdata = [];
+                if (typeof demandrequestdata === "string") {
+                    try {
+                        demandrequestdata = JSON.parse(demandrequestdata);
+                    }
+                    catch {
+                        demandrequestdata = [];
+                    }
+                }
+                // Patch ponumber and poid ONLY for matching prnumber
+                let updated = false;
+                if (Array.isArray(demandrequestdata)) {
+                    demandrequestdata = demandrequestdata.map(item => {
+                        if (item.prnumber === pr) {
+                            updated = true;
+                            return {
+                                ...item,
+                                ponumber,
+                                poid
+                            };
+                        }
+                        return item;
+                    });
+                }
+                if (updated) {
+                    await query(`UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2`, [JSON.stringify(demandrequestdata), demandRequestId]);
+                    console.log("Updated demandrequestdata with ponumber and poid for prnumber:", pr);
+                }
             }
             return result;
         }

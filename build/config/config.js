@@ -26,7 +26,9 @@ const config = {
     REDIRECT_INVENTORY_URL: process.env.REDIRECT_INVENTORY_URL,
     REDIS_SESSIONEXSEC: +process.env.REDIS_SESSIONEXSEC,
     REDIS_EMAIL_OTPEXPSEC: +process.env.REDIS_EMAIL_OTPEXPSEC,
-    POSTGRESS_QUERY_API: process.env.POSTGRESS_QUERY_API
+    POSTGRESS_QUERY_API: process.env.POSTGRESS_QUERY_API,
+    ENV_RAZORPAY_KEY_ID: process.env.ENV_RAZORPAY_KEY_ID,
+    ENV_RAZORPAY_KEY_SECRET: process.env.ENV_RAZORPAY_KEY_SECRET
 };
 export const { ACCESSKEYID } = config;
 export const { SECRETACCESSKEY } = config;
@@ -54,4 +56,6 @@ export const { REDIRECT_INVENTORY_URL } = config;
 export const { REDIS_SESSIONEXSEC } = config;
 export const { REDIS_EMAIL_OTPEXPSEC } = config;
 export const { POSTGRESS_QUERY_API } = config;
+export const { ENV_RAZORPAY_KEY_ID } = config;
+export const { ENV_RAZORPAY_KEY_SECRET } = config;
 //# sourceMappingURL=config.js.map

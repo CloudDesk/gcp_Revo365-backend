@@ -54,6 +54,79 @@ export var purchaseRequestService;
             return ErrorMessage;
         }
     };
+    //     export const upsertPurchaseRequestData = async (prData: any) => {
+    //         delete prData.suppliercode;
+    //         console.log("Data in upsertPurchaseRequestData:", prData);
+    //         try {
+    //             let querydata: string;
+    //             let params: any[];
+    //             const { id, ...upsertFields } = prData;
+    //             let prdataJsonString;
+    //             function ensureJsonString(data) {
+    //                 return (typeof data === 'string' || data instanceof String) ? data : JSON.stringify(data);
+    //             }
+    //             if (upsertFields.prdata) {
+    //                 prdataJsonString = ensureJsonString(upsertFields.prdata);
+    //                 upsertFields.prdata = prdataJsonString
+    //             }
+    //             const fieldNames = Object.keys(upsertFields);
+    //             const fieldValues = Object.values(upsertFields);
+    //             if (id) {
+    //                 querydata = `UPDATE purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
+    //                 WHERE id = $${fieldNames.length + 1} 
+    //                 RETURNING *`;
+    //                 params = [...fieldValues, id];
+    //             } else {
+    //                 querydata = `INSERT INTO purchaserequest (${fieldNames.join(
+    //                     ", "
+    //                 )}) VALUES (${fieldNames
+    //                     .map((_, index) => `$${index + 1}`)
+    //                     .join(", ")}) RETURNING *`;
+    //                 params = fieldValues;
+    //             }
+    //             const result = await query(querydata, params)
+    //             const { demandrequestid, prnumber } = result.rows[0];
+    //   console.log('Demand Request ID:', demandrequestid, 'PR Number:', prnumber);
+    // // 1. Fetch the existing demandrequestdata:
+    // const demandRequestRow = await query(
+    //     'SELECT demandrequestdata FROM demandrequest WHERE id = $1',
+    //     [demandrequestid]
+    // );
+    // console.log('Demand Request Row:', demandRequestRow.rows[0]);
+    // let demandrequestdata = demandRequestRow.rows[0]?.demandrequestdata;
+    // console.log('Demand Request Data:', demandrequestdata);
+    // if (!demandrequestdata) demandrequestdata = [];
+    // if (typeof demandrequestdata === 'string') {
+    //     try { demandrequestdata = JSON.parse(demandrequestdata); }
+    //     catch { demandrequestdata = []; }
+    // }
+    // // 2. Patch prnumber into each demandrequestdata item:
+    // if (Array.isArray(demandrequestdata)) {
+    //     demandrequestdata = demandrequestdata.map(item => ({
+    //         ...item,
+    //         prnumber
+    //     }));
+    // }
+    // console.log('Updated Demand Request Data:', demandrequestdata);
+    // // 3. Update the field back in the demandrequest row:
+    // await query(
+    //     'UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2',
+    //     [JSON.stringify(demandrequestdata), demandrequestid]
+    // );
+    //             // console.log("Result in upsertPurchaseRequestData:", result.rows);
+    //             // if(result.rows.length > 0 && result.rows[0].isdemandrequest===true) {
+    //             //     const demandrequestData = {id: result.rows[0].demandrequestid,prstatus:result.rows[0].prstatus,prnumber:result.rows[0].prnumber}
+    //             //     console.log("Demand Request Data in upsertPurchaseRequestData:", demandrequestData);
+    //             //     await demandrequestService.upsertDemandRequest(demandrequestData);
+    //             // }
+    //             console.log('End')
+    //             return result;
+    //         } catch (error) {
+    //             console.error("Query Execution Error: IN upsertPurchaseRequestData", error);
+    //             let ErrorMessage = await ErrorHandler.handleQueryError(error)
+    //             return ErrorMessage
+    //         }
+    //     }
     purchaseRequestService.upsertPurchaseRequestData = async (prData) => {
         delete prData.suppliercode;
         console.log("Data in upsertPurchaseRequestData:", prData);
@@ -61,40 +134,85 @@ export var purchaseRequestService;
             let querydata;
             let params;
             const { id, ...upsertFields } = prData;
-            let prdataJsonString;
             function ensureJsonString(data) {
-                return (typeof data === 'string' || data instanceof String) ? data : JSON.stringify(data);
+                return (typeof data === 'string' || data instanceof String) ? String(data) : JSON.stringify(data);
             }
+            // Convert prdata to JSON string if it's not a string
             if (upsertFields.prdata) {
-                prdataJsonString = ensureJsonString(upsertFields.prdata);
-                upsertFields.prdata = prdataJsonString;
+                upsertFields.prdata = ensureJsonString(upsertFields.prdata);
             }
+            // Prepare query fields and values
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
-                querydata = `UPDATE purchaserequest SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
-                WHERE id = $${fieldNames.length + 1} 
-                RETURNING *`;
+                querydata = `UPDATE purchaserequest SET ${fieldNames
+                    .map((field, index) => `${field} = $${index + 1}`)
+                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO purchaserequest (${fieldNames.join(", ")}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
+                querydata = `INSERT INTO purchaserequest (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            console.log("Result in upsertPurchaseRequestData:", result.rows);
-            if (result.rows.length > 0 && result.rows[0].isdemandrequest === true) {
-                const demandrequestData = { id: result.rows[0].demandrequestid, prstatus: result.rows[0].prstatus, prnumber: result.rows[0].prnumber };
-                console.log("Demand Request Data in upsertPurchaseRequestData:", demandrequestData);
-                await demandrequestService.upsertDemandRequest(demandrequestData);
+            if (!result.rows.length) {
+                throw new Error("No rows returned from upsert query.");
             }
+            const row = result.rows[0];
+            const { demandrequestid, prnumber } = row;
+            console.log('Demand Request ID:', demandrequestid, 'PR Number:', prnumber);
+            // 1. Fetch the existing demandrequestdata:
+            const demandRequestRow = await query('SELECT demandrequestdata FROM demandrequest WHERE id = $1', [demandrequestid]);
+            if (!demandRequestRow.rows.length) {
+                throw new Error(`Demand request with ID ${demandrequestid} not found.`);
+            }
+            let demandrequestdata = demandRequestRow.rows[0]?.demandrequestdata;
+            console.log('Demand Request Row:', demandRequestRow.rows[0]);
+            if (!demandrequestdata)
+                demandrequestdata = [];
+            if (typeof demandrequestdata === 'string') {
+                try {
+                    demandrequestdata = JSON.parse(demandrequestdata);
+                }
+                catch {
+                    demandrequestdata = [];
+                }
+            }
+            console.log('Demand Request Data:', demandrequestdata);
+            // Parse prdata from the current upsert (from your input)
+            let prdataInput = upsertFields.prdata;
+            if (typeof prdataInput === 'string') {
+                try {
+                    prdataInput = JSON.parse(prdataInput);
+                }
+                catch {
+                    prdataInput = [];
+                }
+            }
+            const purchaseRequestId = row.id; // Purchase Request ID
+            // Match via product name only
+            const prNames = Array.isArray(prdataInput)
+                ? prdataInput.map((item) => item.name)
+                : [];
+            demandrequestdata = demandrequestdata.map((item) => {
+                if (prNames.includes(item.name)) {
+                    return {
+                        ...item,
+                        prnumber,
+                        prid: purchaseRequestId
+                    };
+                }
+                return item;
+            });
+            // Update the DB
+            await query('UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2', [JSON.stringify(demandrequestdata), demandrequestid]);
+            console.log('End');
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertPurchaseRequestData", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            // Assuming ErrorHandler is globally available and used to parse errors
+            const ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
     };
