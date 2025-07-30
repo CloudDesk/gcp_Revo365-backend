@@ -356,28 +356,36 @@ export module purchaseOrderService {
                 }
             }
 
-            // Patch ponumber and poid ONLY for matching prnumber
+            // Patch ponumber, poid, and postatus ONLY for matching prnumber inside demandrequestdata.prdata
             let updated = false;
             if (Array.isArray(demandrequestdata)) {
                 demandrequestdata = demandrequestdata.map(item => {
-                    if (item.prnumber === pr) {
-                        updated = true;
-                        return {
-                            ...item,
-                            ponumber,
-                            poid
-                        };
+                    if (Array.isArray(item.prdata)) {
+                        const newPrdata = item.prdata.map(pritem => {
+                            if (pritem.prnumber === pr) {
+                                updated = true;
+                                return {
+                                    ...pritem,
+                                    ponumber,
+                                    poid,
+                                    postatus: drStatus
+                                };
+                            }
+                            return pritem;
+                        });
+                        return { ...item, prdata: newPrdata };
                     }
                     return item;
                 });
             }
+
             if (updated) {
                 await query(
                     `UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2`,
                     [JSON.stringify(demandrequestdata), demandRequestId]
                 );
                 console.log(
-                    "Updated demandrequestdata with ponumber and poid for prnumber:",
+                    "Updated demandrequestdata.prdata with ponumber, poid, and postatus for prnumber:",
                     pr
                 );
             }
@@ -390,6 +398,7 @@ export module purchaseOrderService {
         return ErrorMessage;
     }
 };
+
 
 
 }
