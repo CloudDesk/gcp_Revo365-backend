@@ -89,6 +89,7 @@ export var revoinvoiceservice;
     };
     revoinvoiceservice.upsertRevoInvoice = async (invoicedata) => {
         try {
+            console.log('In upsertRevoInvoice with data:', invoicedata);
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
@@ -97,6 +98,9 @@ export var revoinvoiceservice;
             }
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
+            console.log('-->', fieldNames);
+            console.log('-->', fieldValues);
+            console.log('Wait');
             if (id) {
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)

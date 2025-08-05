@@ -55,80 +55,6 @@ export var quoteService;
             return ErrorMessage;
         }
     };
-    // export const upsertQuotes = async (quotedata: any) => {
-    //     try {
-    //         console.log("Quotedata in upsertQuote:", quotedata);
-    //         let querydata: string;
-    //         let params: any[];
-    //         const { id, ...upsertFields } = quotedata;
-    //         const fieldNames = Object.keys(upsertFields);
-    //         const fieldValues = Object.values(upsertFields);
-    //         if (id) {
-    //             querydata = `UPDATE quotes SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
-    //             WHERE id = $${fieldNames.length + 1} 
-    //             RETURNING *`;
-    //             params = [...fieldValues, id];
-    //         } else {
-    //             querydata = `INSERT INTO quotes (${fieldNames.join(
-    //                 ", "
-    //             )}) VALUES (${fieldNames
-    //                 .map((_, index) => `$${index + 1}`)
-    //                 .join(", ")}) RETURNING *`;
-    //             params = fieldValues;
-    //         }
-    //         const result = await query(querydata, params);
-    //         console.log("Result in upsertQuote:", result.rows);
-    //         const pr = result.rows[0].prnumber;
-    //         const quoteStatus = result.rows[0].status;
-    //         const quoteid = result.rows[0].id;
-    //         const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
-    //         console.log("Query Result in upsertQuote:", queryPr.rows);
-    //         if(queryPr.rows.length>0 && queryPr.rows[0].isdemandrequest === true){
-    //             console.log('inside demand request update');
-    //             const updateDR = await query(`UPDATE demandrequest SET quotestatus = $1 WHERE id = $2 RETURNING *`, [quoteStatus, queryPr.rows[0].demandrequestid]);
-    //             console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
-    //             console.log("Quote Upserted Successfully");
-    //         }
-    //         if (result.rows.length > 0) {
-    //             if (result.rows[0].status === "closed_won") {
-    //                 console.log("Quote Status is closed_won, updating purchase request status");
-    //                 let value = {
-    //                     prstatus: 'Completed',
-    //                     prnumber: result.rows[0].prnumber
-    //                 }
-    //                 let updatevalues = await purchaseRequestService.upsertstatusfield(value);
-    //                 if (updatevalues.rows.length > 0) {
-    //                     let message = {
-    //                         Quote: "Quote Inserted or Updated Successfully",
-    //                         purchaseRequest: "Purchase Request Updated Successfully"
-    //                     }
-    //                     return result;
-    //                 }
-    //                 else {
-    //                     let message = {
-    //                         Quote: "Quote Inserted or Updated Successfully",
-    //                         purchaseRequest: "Purchase Request Updation Failed !!!"
-    //                     }
-    //                     return result
-    //                 }
-    //             }
-    //             else {
-    //                 let message = {
-    //                     Quote: "Quote Inserted or Updated Successfully",
-    //                     purchaseRequest: "Purchase Request Updation Failed !!!"
-    //                 }
-    //                 return result
-    //             }
-    //         }
-    //         else {
-    //             return result
-    //         }
-    //     } catch (error) {
-    //         console.error("Query Execution Error: IN upsertQuote", error);
-    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    //         return ErrorMessage;
-    //     }
-    // }
     quoteService.upsertQuotes = async (quotedata) => {
         try {
             console.log("Quotedata in upsertQuote:", quotedata);
@@ -139,9 +65,11 @@ export var quoteService;
             const fieldValues = Object.values(upsertFields);
             // Upsert logic for quotes table
             if (id) {
-                querydata = `UPDATE quotes SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} 
-            WHERE id = $${fieldNames.length + 1} 
-            RETURNING *`;
+                querydata = `UPDATE quotes SET ${fieldNames
+                    .map((field, index) => `${field} = $${index + 1}`)
+                    .join(", ")} 
+        WHERE id = $${fieldNames.length + 1} 
+        RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
@@ -165,7 +93,7 @@ export var quoteService;
             console.log("Query Result in upsertQuote:", queryPr.rows);
             if (queryPr.rows.length > 0 && queryPr.rows[0].isdemandrequest === true) {
                 const demandRequestId = queryPr.rows[0].demandrequestid;
-                console.log('inside demand request update');
+                console.log("inside demand request update");
                 // 1. Update quotestatus on demandrequest (as you do now)
                 const updateDR = await query(`UPDATE demandrequest SET quotestatus = $1 WHERE id = $2 RETURNING *`, [quoteStatus, demandRequestId]);
                 console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
@@ -185,16 +113,24 @@ export var quoteService;
                         demandrequestdata = [];
                     }
                 }
-                // 3. Update each matching item by prnumber with quoteid & quotenumber
+                // 3. Update each matching prdata entry with new prstatus for matching prnumber
                 let updated = false;
                 if (Array.isArray(demandrequestdata)) {
-                    demandrequestdata = demandrequestdata.map(item => {
-                        if (item.prnumber === pr) {
-                            updated = true;
+                    demandrequestdata = demandrequestdata.map((item) => {
+                        if (Array.isArray(item.prdata)) {
+                            const newPrData = item.prdata.map((prItem) => {
+                                if (prItem.prnumber === pr) {
+                                    updated = true;
+                                    return {
+                                        ...prItem,
+                                        prstatus: quoteStatus,
+                                    };
+                                }
+                                return prItem;
+                            });
                             return {
                                 ...item,
-                                quoteid,
-                                quotenumber
+                                prdata: newPrData,
                             };
                         }
                         return item;
@@ -203,7 +139,7 @@ export var quoteService;
                 // 4. If any item was updated, persist the updated array
                 if (updated) {
                     await query(`UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2`, [JSON.stringify(demandrequestdata), demandRequestId]);
-                    console.log("Updated demandrequestdata with quoteid and quotenumber for prnumber:", pr);
+                    console.log("Updated demandrequestdata prstatus for prnumber:", pr);
                 }
             }
             console.log("Quote Upserted Successfully");
@@ -212,8 +148,8 @@ export var quoteService;
                 if (result.rows[0].status === "closed_won") {
                     console.log("Quote Status is closed_won, updating purchase request status");
                     let value = {
-                        prstatus: 'Completed',
-                        prnumber: result.rows[0].prnumber
+                        prstatus: "Completed",
+                        prnumber: result.rows[0].prnumber,
                     };
                     let updatevalues = await purchaseRequestService.upsertstatusfield(value);
                     // ...rest of your message logic
