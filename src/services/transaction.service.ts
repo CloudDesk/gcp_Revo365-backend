@@ -17,6 +17,7 @@ import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
 import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
+import { stat } from "fs";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -380,7 +381,9 @@ export module transactionService {
   ) => {
     try {
       console.log("Inside insertTransactionData service");
-      const {
+      console.log("Transaction Data:", transactionData);
+
+      let {
         merchanttransactionId,
         name,
         amount,
@@ -390,12 +393,15 @@ export module transactionService {
         userId,
         transactiondata,
       } = transactionData.transaction;
-
+      if(mobilenumber === ''){
+        mobilenumber = null;
+      }
       console.log("Transaction Data:>", transactionData);
       console.log("Transaction Data:>", transactionData.transaction);
       console.log("razorpay_payment_id>", transactionData.transaction.transactiondata.id);
       console.log("razorpay_order_id>", transactionData.transaction.transactiondata.order_id);
       // console.log("razorpay_signature:>", razorpay_signature);
+      console.log('end')
 
       const razorpay_payment_id = transactionData.transaction.transactiondata.id
       const razorpay_order_id = transactionData.transaction.transactiondata.order_id
@@ -423,13 +429,15 @@ export module transactionService {
       ];
 
       const transactionResult = await query(insertTransactionQuery, values);
+      console.log("Transaction Result:", transactionResult.rows);
+      console.log('end')
       if (transactionResult.command === "INSERT") {
         const insertedTransaction = transactionResult.rows[0];
         const finalResult = {
           order: insersertdordderdatawithprocessing,
           transactiondata: { ...insertedTransaction },
         } as any;
-
+        console.log("Final Result:", finalResult);
         const orderdata = {
           order: finalResult.order.filter(
             (order) => order.orderid && order.orderid.startsWith("TEQIT")
@@ -446,6 +454,7 @@ export module transactionService {
 
         console.log("Order Data:", orderdata);
         console.log("Third Party Order Data:", thirdpartyorderdata);
+        console.log("Payment Failed:");
 
         let orderupdated = { status: null, data: null };
         let thirdpartyorderupdate = { status: null, data: null };
@@ -453,7 +462,9 @@ export module transactionService {
         const shouldUpdateOrder = orderdata.order && orderdata.order.length > 0;
         const shouldUpdateThirdPartyOrder =
           thirdpartyorderdata.order && thirdpartyorderdata.order.length > 0;
-
+        console.log("Should Update Order:", shouldUpdateOrder);
+        console.log("Should Update Third Party Order:", shouldUpdateThirdPartyOrder);
+        console.log('end')
         if (shouldUpdateOrder) {
           console.log("Going to update order");
           orderupdated = await ordersService.updateOrder(
@@ -477,7 +488,9 @@ export module transactionService {
         const isThirdPartyUpdateSuccess = shouldUpdateThirdPartyOrder
           ? thirdpartyorderupdate.status === "success"
           : true;
-
+        console.log("Is Order Update Success:", isOrderUpdateSuccess);
+        console.log("Is Third Party Update Success:", isThirdPartyUpdateSuccess);
+        console.log('end')
         if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
           return {
             orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
@@ -516,12 +529,120 @@ export module transactionService {
         transactionfor,
       } = request.body.transaction;
       let orderdata = request.body.order;
-      console.log('1111',request.body)
-      console.log('1111',request.body.transaction)
-      console.log('1111',request.body.order)
+      console.log('>>body',request.body,'>>body')
+      console.log('>>Tran',request.body.transaction,'>>Tran')
+      console.log('>>orde',request.body.order,'>>orde')
+      console.log(request.body.order[0].ordername,'Vada')
+      console.log('End')
 
+      if (request.body.order[0].ordername === 'storepurchase' && request.body.order[0].paymentmethod === 'Cash') {
+        console.log('Inside Cash')
+        dummyorderdata = orderdata.map((element: any) => ({ ...element }));
+      productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
+      let insertdata = await productrevoService.bulkupsertProducttosetZero(
+        orderdata,
+        false
+      );
 
-      // Step 1: Inventory check (same as PhonePe)
+      const productId =
+        productid && productid.map((_, index) => `$${index + 1}`).join(", ");
+      const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
+      const result = await query(queryText, productid);
+      console.log("Result from product_revo:", result.rows);
+      console.log("Result from product_revo:", result.rows);
+      const allQuantitiesAvailable = result.rows.every(
+        (product) =>
+          Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+          Number(
+            product.overallavailableqty - Number(product.orderedquantity)
+          ) >= 0
+      );
+      console.log("All quantities available:", allQuantitiesAvailable);
+      if (!allQuantitiesAvailable) {
+        return {
+          status: 400,
+          message:
+            "One or more products are out of stock. Please try again later.",
+        };
+      }
+
+      transactionDataset = request.body;
+      console.log("Transaction Data from inital:", transactionDataset);
+      console.log('Merc Id:', merchanttransactionId);
+
+        let insertorderdata = await ordersService.bulkInsertOrder(
+          request.body.transaction,
+          request.body.order
+        );
+        console.log("Insert Order Data Result:", insertorderdata.rows);
+        console.log('>>body',request.body,'>>body')
+        
+        const transactionData = {
+  ...request.body.transaction,
+  transactiondata: JSON.stringify({ Amount: request.body.transaction.amount, status: "Cash Paid" })
+};
+
+console.log("Final transactionData:", transactionData);
+console.log('>>Tran')
+let {userId, transactiondata} = transactionData
+mobilenumber===""? mobilenumber = null : mobilenumber = mobilenumber;
+const insertTransactionQuery = `
+                INSERT INTO transaction (merchanttransactionid, name, amount, mobilenumber, productid, transactionfor, userId, transactiondata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING *`;
+
+      const values = [
+        merchanttransactionId,
+        name,
+        amount,
+        mobilenumber,
+        productid,
+        transactionfor,
+        userId,
+        transactiondata
+      ];
+
+      const transactionResult = await query(insertTransactionQuery, values);
+      console.log("Transaction Result:", transactionResult.rows);
+      const updateOrderStatus = await query(`UPDATE orders SET orderstatus = 'ordered', merchanttransactionid = $1, transactionid = $3, ispaymentsucceed = true WHERE id = $2 `,[merchanttransactionId,insertorderdata.rows[0].id,transactionResult.rows[0].transactionid])
+        console.log('Update Order Status:', updateOrderStatus);
+      console.log('>>>>>',productupdateorderqty,'>>>>>')
+      console.log('---------------')
+      if (productupdateorderqty.length > 0) {
+          console.log("Come's inside if productupdateorderqty");
+          const updateproductorderquantiydata = productupdateorderqty.map(
+            (e) => ({
+              id: e.productid,
+              orderedquantity: e.quantity,
+            })
+          );
+          console.log("Update Product Order Quantity Data:", updateproductorderquantiydata);
+          console.log('ggg')
+          const updatedOrderQuantity =
+            await productrevoService.updateOrderedQuantityarray(
+              updateproductorderquantiydata
+            );
+            console.log("Updated Order Quantity:", updatedOrderQuantity);
+            console.log(cartIddata,'cart id to delete')
+          console.log('final')         
+                   
+        }
+        console.log('end')    
+        return {
+        status: 200,
+        data: {
+          status: "success",
+          message: "Order placed successfully",
+          // orderId: order.id,
+          // amount: order.amount,
+          // currency: order.currency,
+          // key: RAZORPAY_KEY_ID,
+          // redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+        },
+      };  
+      }else{
+        console.log('online pay')
+        // Step 1: Inventory check (same as PhonePe)
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
       let insertdata = await productrevoService.bulkupsertProducttosetZero(
@@ -533,7 +654,8 @@ export module transactionService {
         productid && productid.map((_, index) => `$${index + 1}`).join(", ");
       const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
       const result = await query(queryText, productid);
-
+      console.log("Result from product_revo:", result);
+      console.log("Result from product_revo:", result.rows);
       const allQuantitiesAvailable = result.rows.every(
         (product) =>
           Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
@@ -541,7 +663,7 @@ export module transactionService {
             product.overallavailableqty - Number(product.orderedquantity)
           ) >= 0
       );
-
+      console.log("All quantities available:", allQuantitiesAvailable);
       if (!allQuantitiesAvailable) {
         return {
           status: 400,
@@ -590,6 +712,7 @@ export module transactionService {
           request.body.transaction,
           request.body.order
         );
+        console.log("Insert Order Data Result:", insertorderdata.rows);
         insersertdordderdatawithprocessing = insertorderdata.rows;
       } catch (error) {
         console.log(
@@ -617,6 +740,106 @@ export module transactionService {
           redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
         },
       };
+      }
+
+      // Step 1: Inventory check (same as PhonePe)
+      // dummyorderdata = orderdata.map((element: any) => ({ ...element }));
+      // productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
+      // let insertdata = await productrevoService.bulkupsertProducttosetZero(
+      //   orderdata,
+      //   false
+      // );
+
+      // const productId =
+      //   productid && productid.map((_, index) => `$${index + 1}`).join(", ");
+      // const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
+      // const result = await query(queryText, productid);
+      // console.log("Result from product_revo:", result);
+      // console.log("Result from product_revo:", result.rows);
+      // const allQuantitiesAvailable = result.rows.every(
+      //   (product) =>
+      //     Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+      //     Number(
+      //       product.overallavailableqty - Number(product.orderedquantity)
+      //     ) >= 0
+      // );
+      // console.log("All quantities available:", allQuantitiesAvailable);
+      // if (!allQuantitiesAvailable) {
+      //   return {
+      //     status: 400,
+      //     message:
+      //       "One or more products are out of stock. Please try again later.",
+      //   };
+      // }
+
+      // transactionDataset = request.body;
+      // console.log("Transaction Data from inital:", transactionDataset);
+      // console.log('Merc Id:', merchanttransactionId);
+      // // Step 2: Create Razorpay order
+      // const order = await razorpay.orders.create({
+      //   amount: Number(transactionDataset.transaction.amount)*100,
+      //   currency: "INR",
+      //   receipt: merchanttransactionId,
+      //   notes: {
+      //     name,
+      //     mobilenumber,
+      //     userid,
+      //     transactionfor,
+      //   },
+      // });
+
+      // console.log("order is : " + JSON.stringify(order));
+      // console.log("Razorpay Order ID:", order);
+      // // Step 3: Update order data with Razorpay order ID
+      // request.body.order.forEach((e) => {
+      //   e.merchanttransactionid = merchanttransactionId; // Use Razorpay order ID
+      // });
+      // request.body.order.forEach((e) => {
+      //   cartIddata.push(e.cartId);
+      // });
+
+      // // Step 4: Create HTTP task and insert order data
+      // try {
+      //   let createHttpTaskResult = await createHttpTask(order.id);
+      //   if (createHttpTaskResult?.success === false) {
+      //     return {
+      //       status: 400,
+      //       message: "Task Not Created For Making Order. Please contact Admin",
+      //     };
+      //   }
+
+      //   let insertorderdata = await ordersService.bulkInsertOrder(
+      //     request.body.transaction,
+      //     request.body.order
+      //   );
+      //   console.log("Insert Order Data Result:", insertorderdata.rows);
+      //   insersertdordderdatawithprocessing = insertorderdata.rows;
+      // } catch (error) {
+      //   console.log(
+      //     error.message,
+      //     "Error in Task paymentInitializationRazorpay"
+      //   );
+      //   await productrevoService.bulkupsertProducttosetZero(
+      //     dummyorderdata,
+      //     true
+      //   );
+      //   return {
+      //     status: 500,
+      //     message: "Error processing order. Inventory has been reset.",
+      //   };
+      // }
+
+      // // Step 5: Return Razorpay order details for frontend
+      // return {
+      //   status: 200,
+      //   data: {
+      //     orderId: order.id,
+      //     amount: order.amount,
+      //     currency: order.currency,
+      //     key: RAZORPAY_KEY_ID,
+      //     redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+      //   },
+      // };
     } catch (error) {
       console.error(
         "Query Execution Error: IN paymentInitializationRazorpay",
@@ -632,6 +855,7 @@ export module transactionService {
     console.log("Inside paymentConfirmationRazorpay service");
     console.log(request,'Request1')
     console.log(transactionDataset,'from conform')
+    console.log('Dummy')
     try {
       const { razorpay_payment_id, razorpay_order_id, razorpay_signature } =
         request.body;
@@ -713,14 +937,16 @@ export module transactionService {
         // razorpay_signature
       );
       console.log(result, "Result after insertTransactionData");
-
+      console.log('end')
       if (
         result.orderdata &&
         result.orderdata.length > 0 &&
         result.transactionData &&
         result.transactionData.length > 0
       ) {
+        console.log("Come's inside if orderdata and transactionData");
         if (productupdateorderqty.length > 0) {
+          console.log("Come's inside if productupdateorderqty");
           const updateproductorderquantiydata = productupdateorderqty.map(
             (e) => ({
               id: e.productid,
@@ -732,8 +958,16 @@ export module transactionService {
               updateproductorderquantiydata
             );
             console.log("Updated Order Quantity:", updatedOrderQuantity);
-          const deleteCartData = await cartservice.deleteCart(cartIddata);
-          console.log('deleteCartData', deleteCartData);
+            console.log(cartIddata,'cart id to delete')
+          console.log('final')
+          if (cartIddata[0]=== undefined) {
+            console.log("No cart data to delete");
+          }else{
+            const deleteCartData = await cartservice.deleteCart(cartIddata);
+            console.log('deleteCartData', deleteCartData);
+            console.log("Message Data");
+          }
+          
           // const messageData = {
           //   title: "Hello User",
           //   body: "Payment Done Successfully",

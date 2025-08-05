@@ -649,6 +649,8 @@ export const getOrderLineData = async (request) => {
     export const getInvOrderLineData = async (request) => {
 
         try {
+            console.log('Inside getInvOrderLineData');
+            console.log("Request Query:", request.query);
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
@@ -723,6 +725,7 @@ ${whereClause} ${orderByClause}`;
                 queryParams.push(offset, recordCount);
             }
             const result = await query(queryText, queryParams);
+            console.log('Query Result:', result.rows);
             let datatypeCheckResult = await dataTypeCheck(result)
             return datatypeCheckResult
         } catch (error) {
@@ -1257,6 +1260,21 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
     try {
         console.log('Transaction data:', transactionData);
         console.log('Order data:', orderData);
+        console.log('Empty Before processing order data');
+
+        const {merchantTransactionId, userId} = transactionData;
+
+        if(orderData[0].addressid === null){
+            const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
+            console.log('getAddress:', getAddress.rows);
+            const addressId = getAddress.rows[0]?.id;
+            orderData.forEach(order => {
+    if (order.addressid === null) {
+        order.addressid = addressId;
+    }})
+        }
+        console.log('Order Data after setting addressid:', orderData);
+        console.log('Empty After processing order data');
         let cartId: number[] = [];
         let productid: number[] = [];
         orderData.forEach((e: any) => {
@@ -1274,6 +1292,7 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
             WHERE id = ANY($1)
         `;
         const quantityResult = await query(quantityQuery, [productid]);
+        console.log('Available quantities:', quantityResult.rows);
         const availableQuantities = quantityResult.rows.reduce((acc: any, row: any) => {
             acc[row.productid] = row.availablequantity;
             return acc;
@@ -1323,6 +1342,12 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
             console.log('Order quantity for orders:', orderQuantity);
             console.log('Order amount for orders:', orderAmount);
             console.log('Order product IDs:', orderProductIds);
+            console.log('Mid checkpoint: Before inserting orders');
+            const finalMerchantTransactionId =
+  merchantTransactionId != null && merchantTransactionId !== '' 
+    ? merchantTransactionId 
+    : ordersToInsert[0]?.merchanttransactionid;
+            console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
             console.log('Empty');
 
             const insertOrderQuery = `
@@ -1333,7 +1358,7 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
                 orderAmount,
                 ordersToInsert[0].userid,
                 ordersToInsert[0].addressid,
-                ordersToInsert[0].merchanttransactionid,
+                finalMerchantTransactionId,
                 orderQuantity,
                 orderProductIds
             ];
@@ -1503,6 +1528,8 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
                 const updateValues = updateValuesArray.flat();
 
                 const updatedOrderResult = await query(updateOrderQuery, updateValues);
+                console.log('Updated Order Result:', updatedOrderResult.rows);
+                console.log('end')
                 if (updatedOrderResult.command === 'UPDATE') {
                     let orderlinedata = {
                         orderid: updatedOrderResult.rows[0].id,

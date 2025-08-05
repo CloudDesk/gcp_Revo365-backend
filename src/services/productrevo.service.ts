@@ -737,28 +737,35 @@ export module productrevoService {
 
 
   export async function updateOrderedQuantityarray(updatedData) {
-    try {
+  try {
+    console.log('Inside updateorderqty');
+    console.log('Inside updateorderqty', updatedData);
 
-      let data = []
-      updatedData.forEach(async (e) => {
-        let id = e.id;
-        let orderedquantity = e.orderedquantity;
+    let data = [];
+    for (const e of updatedData) {
+      const { id, orderedquantity } = e;
+      console.log(id, orderedquantity, 'kkkk');
 
-        const queryText = `
+      const queryText = `
         UPDATE product_revo
-        SET orderedquantity = orderedquantity + ${orderedquantity},
-        lock_qty = 0 
-        WHERE id = ${id}
+        SET orderedquantity = orderedquantity + $1,
+            lock_qty = 0 
+        WHERE id = $2
         RETURNING *`;
 
-        let result = await query(queryText, [])
-        data.push(result)
-      })
-
-    } catch (error) {
-      console.error('Error in updateOrderedQuantityarray:', error);
+      let result = await query(queryText, [orderedquantity, id]);
+      console.log('---', result);
+      console.log('---', result.rows);
+      data.push(result);
     }
-  };
+
+    return data;  // return array of results
+  } catch (error) {
+    console.error('Error in updateOrderedQuantityarray:', error);
+    throw error;  // better to throw so caller knows of the error
+  }
+}
+
 
   export async function updateCatalogueQuantities(puc) {
     console.log('puc:', puc);
