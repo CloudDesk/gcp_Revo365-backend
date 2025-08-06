@@ -1351,8 +1351,8 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
             console.log('Empty');
 
             const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 RETURNING *`;
             const insertOrderValues = [
                 orderAmount,
@@ -1360,7 +1360,10 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
                 ordersToInsert[0].addressid,
                 finalMerchantTransactionId,
                 orderQuantity,
-                orderProductIds
+                orderProductIds,
+                ordersToInsert[0].ordername,
+                ordersToInsert[0].paymentmethod,
+                ordersToInsert[0].totalrentalamount
             ];
 
             try {

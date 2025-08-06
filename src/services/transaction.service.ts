@@ -535,7 +535,7 @@ export module transactionService {
       console.log(request.body.order[0].ordername,'Vada')
       console.log('End')
 
-      if (request.body.order[0].ordername === 'storepurchase' && request.body.order[0].paymentmethod === 'Cash') {
+      if (request.body.order[0].paymentmethod === 'Cash') {
         console.log('Inside Cash')
         dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
@@ -642,7 +642,7 @@ const insertTransactionQuery = `
       };  
       }else{
         console.log('online pay')
-        // Step 1: Inventory check (same as PhonePe)
+        // Step 1: Inventory check
       dummyorderdata = orderdata.map((element: any) => ({ ...element }));
       productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
       let insertdata = await productrevoService.bulkupsertProducttosetZero(
