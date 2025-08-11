@@ -129,6 +129,8 @@ export module ordersService {
                 o.productamount,
                 o.discountamount,
                 o.orderid,
+                o.sgst,
+                o.cgst,
                 invoice as invoiceurl,
                 invoicecreateddate,
                 a.name, 
@@ -1262,7 +1264,7 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
         console.log('Order data:', orderData);
         console.log('Empty Before processing order data');
 
-        const {merchantTransactionId, userId} = transactionData;
+        const {merchantTransactionId, userId, cgst, sgst} = transactionData;
 
         if(orderData[0].addressid === null){
             const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
@@ -1351,8 +1353,8 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
             console.log('Empty');
 
             const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING *`;
             const insertOrderValues = [
                 orderAmount,
@@ -1363,7 +1365,9 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
                 orderProductIds,
                 ordersToInsert[0].ordername,
                 ordersToInsert[0].paymentmethod,
-                ordersToInsert[0].totalrentalamount
+                ordersToInsert[0].totalrentalamount,
+                sgst,
+                cgst
             ];
 
             try {

@@ -605,9 +605,11 @@ const insertTransactionQuery = `
       const transactionResult = await query(insertTransactionQuery, values);
       console.log("Transaction Result:", transactionResult.rows);
       const updateOrderStatus = await query(`UPDATE orders SET orderstatus = 'ordered', merchanttransactionid = $1, transactionid = $3, ispaymentsucceed = true WHERE id = $2 `,[merchanttransactionId,insertorderdata.rows[0].id,transactionResult.rows[0].transactionid])
-        console.log('Update Order Status:', updateOrderStatus);
+      console.log('Update Order Status:', updateOrderStatus);
       console.log('>>>>>',productupdateorderqty,'>>>>>')
       console.log('---------------')
+      const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`,[merchanttransactionId, insertorderdata.rows[0].orderid] )
+      console.log('Update Orderline Status:', updateOrderlineStatus.rows);
       if (productupdateorderqty.length > 0) {
           console.log("Come's inside if productupdateorderqty");
           const updateproductorderquantiydata = productupdateorderqty.map(
