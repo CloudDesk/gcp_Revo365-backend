@@ -411,7 +411,7 @@ export var transactionService;
             console.log('>>orde', request.body.order, '>>orde');
             console.log(request.body.order[0].ordername, 'Vada');
             console.log('End');
-            if (request.body.order[0].ordername === 'storepurchase' && request.body.order[0].paymentmethod === 'Cash') {
+            if (request.body.order[0].paymentmethod === 'Cash') {
                 console.log('Inside Cash');
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
                 productupdateorderqty = orderdata.map((element) => ({ ...element }));
@@ -464,6 +464,8 @@ export var transactionService;
                 console.log('Update Order Status:', updateOrderStatus);
                 console.log('>>>>>', productupdateorderqty, '>>>>>');
                 console.log('---------------');
+                const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
+                console.log('Update Orderline Status:', updateOrderlineStatus.rows);
                 if (productupdateorderqty.length > 0) {
                     console.log("Come's inside if productupdateorderqty");
                     const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
@@ -493,7 +495,7 @@ export var transactionService;
             }
             else {
                 console.log('online pay');
-                // Step 1: Inventory check (same as PhonePe)
+                // Step 1: Inventory check
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
                 productupdateorderqty = orderdata.map((element) => ({ ...element }));
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);

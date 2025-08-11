@@ -117,6 +117,8 @@ export var ordersService;
                 o.productamount,
                 o.discountamount,
                 o.orderid,
+                o.sgst,
+                o.cgst,
                 invoice as invoiceurl,
                 invoicecreateddate,
                 a.name, 
@@ -1154,7 +1156,7 @@ ${whereClause} ${orderByClause}`;
             console.log('Transaction data:', transactionData);
             console.log('Order data:', orderData);
             console.log('Empty Before processing order data');
-            const { merchantTransactionId, userId } = transactionData;
+            const { merchantTransactionId, userId, cgst, sgst } = transactionData;
             if (orderData[0].addressid === null) {
                 const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
                 console.log('getAddress:', getAddress.rows);
@@ -1236,8 +1238,8 @@ ${whereClause} ${orderByClause}`;
                 console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
                 console.log('Empty');
                 const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING *`;
                 const insertOrderValues = [
                     orderAmount,
@@ -1245,7 +1247,12 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].addressid,
                     finalMerchantTransactionId,
                     orderQuantity,
-                    orderProductIds
+                    orderProductIds,
+                    ordersToInsert[0].ordername,
+                    ordersToInsert[0].paymentmethod,
+                    ordersToInsert[0].totalrentalamount,
+                    sgst,
+                    cgst
                 ];
                 try {
                     const orderResult = await query(insertOrderQuery, insertOrderValues);
