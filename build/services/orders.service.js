@@ -890,6 +890,76 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
+    ordersService.getInvoiceGeneratedData = async (request) => {
+        try {
+            console.log('Inside getInvoiceGeneratedData function with request:', request.params);
+            const orderId = request.params.uniqueorderid;
+            console.log('Order ID:', orderId);
+            const result = await query(`SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
+            console.log('Query Result:', result.rows);
+            if (result.rows.length === 0) {
+                return { error: "No order found for the given order ID." };
+            }
+            else {
+                const rows = result.rows;
+                const aggregated = {
+                    // If all invoicegenerated true, then true, else false
+                    invoicegenerated: rows.every(r => r.invoicegenerated === true),
+                    // Maximum generatedmonthscount among orderlines
+                    generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
+                    // Maximum rentalfor (longest rental period)
+                    rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
+                };
+                return aggregated;
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getInvoiceGeneratedData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
+    ordersService.updateInvoiceGeneratedData = async (request) => {
+        try {
+            console.log("Inside update", request.body);
+            const { uniqueorderid } = request.body;
+            console.log("Unique Order ID:", uniqueorderid);
+            // 1️⃣ Get all orderlines for this uniqueorderid
+            const { rows } = await query(`SELECT id, rentalfor, generatedmonthscount 
+       FROM orderline 
+       WHERE uniqueorderid = $1`, [uniqueorderid]);
+            console.log("Orderlines fetched:", rows);
+            if (!rows.length) {
+                return { success: false, message: "No orderlines found" };
+            }
+            // 2️⃣ Filter the orderlines that still have months left
+            const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
+            console.log("Active rentals to update:", stillActive);
+            if (!stillActive.length) {
+                return { success: false, message: "No active rental products to update" };
+            }
+            // 3️⃣ Update only active rentals
+            const idsToUpdate = stillActive.map(r => r.id);
+            console.log("IDs to update:", idsToUpdate);
+            const updateResult = await query(`UPDATE orderline
+   SET invoicegenerated = true,
+       lastgeneratedinvoicedate = CURRENT_DATE,
+       generatedmonthscount = generatedmonthscount + 1
+   WHERE id = ANY($1::int[])
+   RETURNING id, rentalfor, generatedmonthscount, invoicegenerated, lastgeneratedinvoicedate`, [idsToUpdate]);
+            console.log("Update result:", updateResult.rows);
+            return {
+                success: true,
+                message: `Updated ${idsToUpdate.length} active rental items`,
+                updatedIds: idsToUpdate
+            };
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN updateInvoiceGeneratedData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
     ordersService.upsertOrderrfid = async (orderData) => {
         try {
             let querydata;

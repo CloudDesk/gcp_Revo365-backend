@@ -45,6 +45,43 @@ export var ordersController;
             return ErrorMessage;
         }
     };
+    ordersController.getInvoiceGeneratedData = async (request, reply) => {
+        try {
+            const result = await ordersService.getInvoiceGeneratedData(request);
+            if ("error" in result) {
+                return reply.code(404).send({ success: false, message: result.error });
+            }
+            if ("errorMessage" in result) {
+                return reply.code(result.statusCode ?? 400).send({ success: false, message: result.errorMessage, details: result.errorDetails });
+            }
+            return reply.send({ success: true, data: result });
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getInvoiceGeneratedData Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
+    ordersController.updateInvoiceGeneratedData = async (request, reply) => {
+        try {
+            const result = await ordersService.updateInvoiceGeneratedData(request);
+            console.log("Result in updateInvoiceGeneratedData Controller:", result);
+            if (result?.success === false) {
+                return reply.code(400).send(result);
+            }
+            // ✅ Send success response
+            return reply.send({
+                success: true,
+                message: "Rental invoice status updated successfully",
+                data: result
+            });
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN updateInvoiceGeneratedData Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
     ordersController.getUserOrderData = async (request, reply) => {
         try {
             // const userid = request.params.userId;

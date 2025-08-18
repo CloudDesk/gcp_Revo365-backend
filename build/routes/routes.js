@@ -292,6 +292,8 @@ const Revo365Routes = async function (fastify, opts) {
     // any table
     // fastify.get('/dashboard/:objectName', dashboardController.getCountData)
     fastify.get('/dashboard/count-orderstatus', { preHandler: [getSession] }, dashboardController.getCountData);
+    fastify.get('/rental-invoice/:uniqueorderid', { preHandler: [getSession] }, ordersController.getInvoiceGeneratedData);
+    fastify.post('/rental-invoice', { preHandler: [getSession] }, ordersController.updateInvoiceGeneratedData);
     //service estimation
     fastify.get('/service-estimation', { preHandler: [getSession] }, constEstimationController.getCostEstimationData);
     fastify.post('/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertCostEstimation);
