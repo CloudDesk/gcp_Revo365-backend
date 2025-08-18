@@ -179,6 +179,14 @@ export const upsertPurchaseRequestData = async (prData: any) => {
       return (typeof data === 'string' || data instanceof String) ? String(data) : JSON.stringify(data);
     }
 
+    const supplierRes = await query(
+  'SELECT suppliername FROM supplier WHERE id = $1',
+  [prData.supplierid]
+);
+
+const suppliername = supplierRes.rows[0]?.suppliername || null;
+
+
     if (upsertFields.prdata) {
       upsertFields.prdata = ensureJsonString(upsertFields.prdata);
     }
@@ -307,7 +315,8 @@ export const upsertPurchaseRequestData = async (prData: any) => {
           const newPrEntry = {
             prnumber,
             prid: purchaseRequestId,
-            prstatus: prstatus ?? null
+            prstatus: prstatus ?? null,
+            suppliername
           };
           const existingPrData = Array.isArray(item.prdata) ? item.prdata : [];
           const prExists = existingPrData.some(pr => pr.prnumber === prnumber);
@@ -324,6 +333,11 @@ export const upsertPurchaseRequestData = async (prData: any) => {
       });
 
       console.log('Updated Demand Request Data:', demandrequestdata);
+      console.log(
+  'Updated Demand Request Data2:',
+  JSON.stringify(demandrequestdata, null, 2)
+);
+
 
       await query(
         'UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2',
