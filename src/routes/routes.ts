@@ -212,6 +212,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
     fastify.delete('/orders/:id', { preHandler: [getSession] }, ordersController.deleteOrder);
 
+    fastify.post('/v2/orders/transactions',{ preHandler:[getSession]}, ordersController.getInvoiceDataForOrderid)
+
     //third party orders - inventory
     fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
 

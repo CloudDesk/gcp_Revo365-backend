@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { ordersService } from "../services/orders.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { request } from "http";
 
 interface idparams {
     id: number
@@ -131,6 +132,19 @@ export module ordersController {
             console.error("Error IN Controller getUserOrderData1", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
+        }
+    }
+
+    export const getInvoiceDataForOrderid = async (request: any, reply: any) => {
+        try {
+            console.log('Request in Controller getInvoiceDataForOrderid:', request);
+            let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request)
+            reply.send(getInvoiceDataResult)
+        } catch (error) {
+            console.error("Error IN Controller getInvoiceDataForOrderid", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+            
         }
     }
 
