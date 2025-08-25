@@ -419,6 +419,13 @@ export module stockRevoService {
                             AND (isdeleted = false OR isdeleted IS NULL)
                             AND (isarchive = false OR isarchive IS NULL)
                             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                            AND ecompublish = true AND stockstatus = 'Rental Sold'
+                        ) AS rentalsoldquantity,
+                        COUNT(*) FILTER (
+                            WHERE puc = $1
+                            AND (isdeleted = false OR isdeleted IS NULL)
+                            AND (isarchive = false OR isarchive IS NULL)
+                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
                             AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
                         ) AS availablequantity,
                          (
@@ -445,6 +452,7 @@ export module stockRevoService {
                 const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10);
                 const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
                 const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
+                const rentalsoldquantity = parseInt(quantityResult.rows[0].rentalsoldquantity, 10);
 
                 const quantities = {
                     quantity: totalCount,
@@ -452,7 +460,8 @@ export module stockRevoService {
                     soldquantity: soldQuantity,
                     availablequantity: availableQuantity,
                     puc: puc,
-                    overallavailableqty: overallavailableqty
+                    overallavailableqty: overallavailableqty,
+                    rentalsoldquantity: rentalsoldquantity
                 };
                 console.log("--quantities", quantities);
 
@@ -623,6 +632,9 @@ export module stockRevoService {
             let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
             let arraylength = rfidDataArray.length;
+            let ordername = rfidDataArray[0].ordername;
+
+            let stockStatusValue = ordername === 'rental' ? 'Rental Sold' : 'Sold';
             
             let caseStatementsOrderId = rfidDataArray.map((item) => {
                 return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;
@@ -632,7 +644,7 @@ export module stockRevoService {
                 UPDATE stock_revo 
                 SET 
                     orderlinenumber = CASE ${caseStatementsOrderId} END,
-                    stockstatus = 'Sold',
+                    stockstatus = '${stockStatusValue}',
                     stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END,
                     rfid = NULL
                 WHERE 
