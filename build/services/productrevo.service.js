@@ -514,7 +514,7 @@ export var productrevoService;
     };
     productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold) => {
         console.log('--upsertQuantityFields', upsertData);
-        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty } = upsertData;
+        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity } = upsertData;
         try {
             let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
             let orderedquantityvalue = productquery.rows[0].orderedquantity;
@@ -530,24 +530,24 @@ export var productrevoService;
             }
             let orderedquantityNumber = Number(orderedquantitydata);
             let updateQueryBase = `UPDATE product_revo SET quantity = $1, ecompublishedquantity = $2, soldquantity = $3, 
-        availablequantity = $4, productstatus = $5, overallavailableqty=$6`;
+        availablequantity = $4, productstatus = $5, overallavailableqty=$6, rentalsoldquantity = $7`;
             let updateQuery = '';
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateQueryBase += `, orderedquantity = orderedquantity - $7`;
-                updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
+                updateQueryBase += `, orderedquantity = orderedquantity - $8`;
+                updateQuery = `${updateQueryBase} WHERE puc = $9 RETURNING *`;
             }
             else if (!issold && isNaN(orderedquantityNumber)) {
-                updateQuery = `${updateQueryBase} WHERE puc = $7 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
             }
             else {
-                updateQuery = `${updateQueryBase} WHERE puc = $7 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
             }
             let updateParams = [];
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, orderedquantityNumber, puc];
+                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, rentalsoldquantity, orderedquantityNumber, puc];
             }
             else {
-                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, puc];
+                updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue, overallavailableqty, rentalsoldquantity, puc];
             }
             const updateResult = await query(updateQuery, updateParams);
             let cartData = {

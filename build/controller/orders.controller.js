@@ -128,6 +128,18 @@ export var ordersController;
             return ErrorMessage;
         }
     };
+    ordersController.getInvoiceDataForOrderid = async (request, reply) => {
+        try {
+            console.log('Request in Controller getInvoiceDataForOrderid:', request);
+            let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request);
+            reply.send(getInvoiceDataResult);
+        }
+        catch (error) {
+            console.error("Error IN Controller getInvoiceDataForOrderid", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
     ordersController.deleteOrder = async (request, reply) => {
         try {
             const { id } = request.params;

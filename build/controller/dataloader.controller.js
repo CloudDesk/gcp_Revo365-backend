@@ -115,7 +115,6 @@ export var dataLoaderController;
                 const puc = upsertStockResult.result.rows[0].puc;
                 const pucArray = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-                // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
                 let message = {
                     Stock: upsertStockResult?.result?.command === "UPDATE"
                         ? `Stock Updated successfully`
@@ -123,7 +122,6 @@ export var dataLoaderController;
                     "Total Records": upsertStockResult.totalRecords,
                     "Success Count": upsertStockResult.successCount
                     // totalCount: upsertStockResult.totalCount, // Include the total count in the response
-                    // updateQuantity
                 };
                 reply.status(200).send(message);
             }

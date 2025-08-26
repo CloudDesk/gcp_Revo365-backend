@@ -674,6 +674,7 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.getUserOrderData1 = async (request) => {
         try {
+            console.log("Request Query:", request.query);
             const userId = request.query.userid;
             const pageNumber = request.query.page;
             const recordCount = request.query.count;
@@ -767,7 +768,7 @@ ${whereClause} ${orderByClause}`;
             FROM 
                 orders o
             JOIN 
-            product_revo p ON o.productid = p.id
+            product_revo p ON p.id = ANY(o.productid)
             JOIN 
                 address a ON o.addressid = a.id
             Left JOIN 
@@ -1226,7 +1227,7 @@ ${whereClause} ${orderByClause}`;
             console.log('Transaction data:', transactionData);
             console.log('Order data:', orderData);
             console.log('Empty Before processing order data');
-            const { merchantTransactionId, userId, cgst, sgst } = transactionData;
+            const { merchantTransactionId, userId, cgst, sgst, storelocation } = transactionData;
             if (orderData[0].addressid === null) {
                 const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
                 console.log('getAddress:', getAddress.rows);
@@ -1308,8 +1309,8 @@ ${whereClause} ${orderByClause}`;
                 console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
                 console.log('Empty');
                 const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING *`;
                 const insertOrderValues = [
                     orderAmount,
@@ -1322,7 +1323,8 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].paymentmethod,
                     ordersToInsert[0].totalrentalamount,
                     sgst,
-                    cgst
+                    cgst,
+                    storelocation
                 ];
                 try {
                     const orderResult = await query(insertOrderQuery, insertOrderValues);
@@ -1574,6 +1576,20 @@ Thank You!`,
         }
         catch (error) {
             console.error("Error in getOrderDataForMerchantid:", error);
+            throw error;
+        }
+    };
+    ordersService.getInvoiceDataForOrderid = async (orderid) => {
+        try {
+            const uniqueOrderIds = [...new Set(orderid.body)];
+            console.log("Unique orderIds:", uniqueOrderIds);
+            const placeholders = uniqueOrderIds.map((_, index) => `$${index + 1}`).join(", ");
+            const invoiceQuery = await query(`SELECT * FROM revoinvoice WHERE orderid IN (${placeholders})`, uniqueOrderIds);
+            console.log("Invoice Query Result:", invoiceQuery.rows);
+            return invoiceQuery;
+        }
+        catch (error) {
+            console.error("Error in getInvoiceDataForOrderid:", error);
             throw error;
         }
     };
