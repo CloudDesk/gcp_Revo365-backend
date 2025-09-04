@@ -298,7 +298,7 @@ export var transactionService;
             console.log("Inside insertTransactionData service");
             console.log("Transaction Data:", transactionData);
             let { merchanttransactionId, name, amount, mobilenumber, productid, transactionfor, userId, transactiondata, } = transactionData.transaction;
-            if (mobilenumber === '') {
+            if (mobilenumber === "") {
                 mobilenumber = null;
             }
             console.log("Transaction Data:>", transactionData);
@@ -306,7 +306,7 @@ export var transactionService;
             console.log("razorpay_payment_id>", transactionData.transaction.transactiondata.id);
             console.log("razorpay_order_id>", transactionData.transaction.transactiondata.order_id);
             // console.log("razorpay_signature:>", razorpay_signature);
-            console.log('end');
+            console.log("end");
             const razorpay_payment_id = transactionData.transaction.transactiondata.id;
             const razorpay_order_id = transactionData.transaction.transactiondata.order_id;
             const razorpay_signature = transactionData.transaction.razorpay_signature;
@@ -326,11 +326,11 @@ export var transactionService;
                 transactiondata,
                 razorpay_payment_id,
                 razorpay_order_id,
-                razorpay_signature
+                razorpay_signature,
             ];
             const transactionResult = await query(insertTransactionQuery, values);
             console.log("Transaction Result:", transactionResult.rows);
-            console.log('end');
+            console.log("end");
             if (transactionResult.command === "INSERT") {
                 const insertedTransaction = transactionResult.rows[0];
                 const finalResult = {
@@ -355,7 +355,7 @@ export var transactionService;
                 const shouldUpdateThirdPartyOrder = thirdpartyorderdata.order && thirdpartyorderdata.order.length > 0;
                 console.log("Should Update Order:", shouldUpdateOrder);
                 console.log("Should Update Third Party Order:", shouldUpdateThirdPartyOrder);
-                console.log('end');
+                console.log("end");
                 if (shouldUpdateOrder) {
                     console.log("Going to update order");
                     orderupdated = await ordersService.updateOrder(orderdata, paymentfailed);
@@ -373,7 +373,7 @@ export var transactionService;
                     : true;
                 console.log("Is Order Update Success:", isOrderUpdateSuccess);
                 console.log("Is Third Party Update Success:", isThirdPartyUpdateSuccess);
-                console.log('end');
+                console.log("end");
                 if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
                     return {
                         orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
@@ -406,22 +406,25 @@ export var transactionService;
             console.log("Inside paymentInitializationRazorpay service");
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
-            console.log('>>body', request.body, '>>body');
-            console.log('>>Tran', request.body.transaction, '>>Tran');
-            console.log('>>orde', request.body.order, '>>orde');
-            console.log(request.body.order[0].ordername, 'Vada');
-            console.log('End');
-            if (request.body.order[0].paymentmethod === 'Cash') {
-                console.log('Inside Cash');
+            console.log(">>body", request.body, ">>body");
+            console.log(">>Tran", request.body.transaction, ">>Tran");
+            console.log(">>orde", request.body.order, ">>orde");
+            console.log(request.body.order[0].ordername, "Vada");
+            console.log("End");
+            if (request.body.order[0].paymentmethod === "Cash") {
+                console.log("Inside Cash");
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
-                productupdateorderqty = orderdata.map((element) => ({ ...element }));
+                productupdateorderqty = orderdata.map((element) => ({
+                    ...element,
+                }));
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
                 const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
                 const result = await query(queryText, productid);
                 console.log("Result from product_revo:", result.rows);
                 console.log("Result from product_revo:", result.rows);
-                const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+                const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >=
+                    0 &&
                     Number(product.overallavailableqty - Number(product.orderedquantity)) >= 0);
                 console.log("All quantities available:", allQuantitiesAvailable);
                 if (!allQuantitiesAvailable) {
@@ -432,18 +435,23 @@ export var transactionService;
                 }
                 transactionDataset = request.body;
                 console.log("Transaction Data from inital:", transactionDataset);
-                console.log('Merc Id:', merchanttransactionId);
+                console.log("Merc Id:", merchanttransactionId);
                 let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
                 console.log("Insert Order Data Result:", insertorderdata.rows);
-                console.log('>>body', request.body, '>>body');
+                console.log(">>body", request.body, ">>body");
                 const transactionData = {
                     ...request.body.transaction,
-                    transactiondata: JSON.stringify({ Amount: request.body.transaction.amount, status: "Cash Paid" })
+                    transactiondata: JSON.stringify({
+                        Amount: request.body.transaction.amount,
+                        status: "Cash Paid",
+                    }),
                 };
                 console.log("Final transactionData:", transactionData);
-                console.log('>>Tran');
+                console.log(">>Tran");
                 let { userId, transactiondata } = transactionData;
-                mobilenumber === "" ? mobilenumber = null : mobilenumber = mobilenumber;
+                mobilenumber === ""
+                    ? (mobilenumber = null)
+                    : (mobilenumber = mobilenumber);
                 const insertTransactionQuery = `
                 INSERT INTO transaction (merchanttransactionid, name, amount, mobilenumber, productid, transactionfor, userId, transactiondata)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -456,16 +464,20 @@ export var transactionService;
                     productid,
                     transactionfor,
                     userId,
-                    transactiondata
+                    transactiondata,
                 ];
                 const transactionResult = await query(insertTransactionQuery, values);
                 console.log("Transaction Result:", transactionResult.rows);
-                const updateOrderStatus = await query(`UPDATE orders SET orderstatus = 'ordered', merchanttransactionid = $1, transactionid = $3, ispaymentsucceed = true WHERE id = $2 `, [merchanttransactionId, insertorderdata.rows[0].id, transactionResult.rows[0].transactionid]);
-                console.log('Update Order Status:', updateOrderStatus);
-                console.log('>>>>>', productupdateorderqty, '>>>>>');
-                console.log('---------------');
+                const updateOrderStatus = await query(`UPDATE orders SET orderstatus = 'ordered', merchanttransactionid = $1, transactionid = $3, ispaymentsucceed = true WHERE id = $2 `, [
+                    merchanttransactionId,
+                    insertorderdata.rows[0].id,
+                    transactionResult.rows[0].transactionid,
+                ]);
+                console.log("Update Order Status:", updateOrderStatus);
+                console.log(">>>>>", productupdateorderqty, ">>>>>");
+                console.log("---------------");
                 const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
-                console.log('Update Orderline Status:', updateOrderlineStatus.rows);
+                console.log("Update Orderline Status:", updateOrderlineStatus.rows);
                 if (productupdateorderqty.length > 0) {
                     console.log("Come's inside if productupdateorderqty");
                     const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
@@ -473,13 +485,13 @@ export var transactionService;
                         orderedquantity: e.quantity,
                     }));
                     console.log("Update Product Order Quantity Data:", updateproductorderquantiydata);
-                    console.log('ggg');
+                    console.log("ggg");
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
                     console.log("Updated Order Quantity:", updatedOrderQuantity);
-                    console.log(cartIddata, 'cart id to delete');
-                    console.log('final');
+                    console.log(cartIddata, "cart id to delete");
+                    console.log("final");
                 }
-                console.log('end');
+                console.log("end");
                 return {
                     status: 200,
                     data: {
@@ -494,17 +506,20 @@ export var transactionService;
                 };
             }
             else {
-                console.log('online pay');
+                console.log("online pay");
                 // Step 1: Inventory check
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
-                productupdateorderqty = orderdata.map((element) => ({ ...element }));
+                productupdateorderqty = orderdata.map((element) => ({
+                    ...element,
+                }));
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
                 const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
                 const result = await query(queryText, productid);
                 console.log("Result from product_revo:", result);
                 console.log("Result from product_revo:", result.rows);
-                const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+                const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >=
+                    0 &&
                     Number(product.overallavailableqty - Number(product.orderedquantity)) >= 0);
                 console.log("All quantities available:", allQuantitiesAvailable);
                 if (!allQuantitiesAvailable) {
@@ -515,7 +530,7 @@ export var transactionService;
                 }
                 transactionDataset = request.body;
                 console.log("Transaction Data from inital:", transactionDataset);
-                console.log('Merc Id:', merchanttransactionId);
+                console.log("Merc Id:", merchanttransactionId);
                 // Step 2: Create Razorpay order
                 const order = await razorpay.orders.create({
                     amount: Number(transactionDataset.transaction.amount) * 100,
@@ -672,9 +687,9 @@ export var transactionService;
     };
     transactionService.paymentConfirmationRazorpay = async (request) => {
         console.log("Inside paymentConfirmationRazorpay service");
-        console.log(request, 'Request1');
-        console.log(transactionDataset, 'from conform');
-        console.log('Dummy');
+        console.log(request, "Request1");
+        console.log(transactionDataset, "from conform");
+        console.log("Dummy");
         try {
             const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = request.body;
             console.log(request.body, "Request body in paymentConfirmationRazorpay");
@@ -694,7 +709,7 @@ export var transactionService;
             console.log(generatedSignature, "Generated Signature");
             console.log(razorpay_signature, "Existing Signature");
             transactionDataset.transaction.razorpay_signature = razorpay_signature;
-            console.log('updated', transactionDataset);
+            console.log("updated", transactionDataset);
             if (generatedSignature !== razorpay_signature) {
                 console.log("Come's inside invalid signature");
                 await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
@@ -725,9 +740,11 @@ export var transactionService;
             console.log(transactionDataset.transaction.transactiondata, "===", payment);
             transactionDataset.transaction.transactiondata = payment;
             const message = { payment: "Payment done successfully" };
-            const result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing);
+            const result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing
+            // razorpay_signature
+            );
             console.log(result, "Result after insertTransactionData");
-            console.log('end');
+            console.log("end");
             if (result.orderdata &&
                 result.orderdata.length > 0 &&
                 result.transactionData &&
@@ -741,14 +758,14 @@ export var transactionService;
                     }));
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
                     console.log("Updated Order Quantity:", updatedOrderQuantity);
-                    console.log(cartIddata, 'cart id to delete');
-                    console.log('final');
+                    console.log(cartIddata, "cart id to delete");
+                    console.log("final");
                     if (cartIddata[0] === undefined) {
                         console.log("No cart data to delete");
                     }
                     else {
                         const deleteCartData = await cartservice.deleteCart(cartIddata);
-                        console.log('deleteCartData', deleteCartData);
+                        console.log("deleteCartData", deleteCartData);
                         console.log("Message Data");
                     }
                     // const messageData = {
@@ -788,6 +805,129 @@ export var transactionService;
         catch (error) {
             console.error("Query Execution Error: IN paymentConfirmationRazorpay", error);
             await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+            return { status: 500, message: "Error verifying Razorpay payment" };
+        }
+    };
+    transactionService.paymentInitializationRazorpayTicket = async (request) => {
+        try {
+            console.log("Inside paymentInitializationRazorpayTicket service");
+            // Extract the amount payable from servicetype in the request body
+            const amount = Number(request.body.servicetype); // amount in paise for Razorpay
+            // Generate a unique receipt id, can use any unique string generator or timestamp here
+            const receiptId = `ticket_receipt_${Date.now()}`;
+            // Create Razorpay order
+            const order = await razorpay.orders.create({
+                amount: Number(amount) * 100,
+                currency: "INR",
+                receipt: receiptId,
+                notes: {
+                    userid: request.body.userid || "unknown",
+                    tickettype: request.body.tickettype || "unknown",
+                },
+            });
+            console.log("Razorpay order created:", order);
+            console.log('Vanakam');
+            // Return the order info for the frontend to initiate payment
+            return {
+                status: 200,
+                data: {
+                    status: 200,
+                    orderId: order.id,
+                    amount: order.amount,
+                    currency: order.currency,
+                    key: RAZORPAY_KEY_ID,
+                    redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+                },
+            };
+        }
+        catch (error) {
+            console.error("Error in paymentInitializationRazorpayTicket:", error.message);
+            // Handle errors appropriately
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
+    transactionService.paymentConfirmationRazorpayTicket = async (request) => {
+        console.log("Inside paymentConfirmationRazorpay service");
+        console.log("Dummy");
+        try {
+            let transactionDataset = request.body.transactionData;
+            const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = request.body;
+            console.log(request.body, "Request body in paymentConfirmationRazorpay");
+            console.log(transactionDataset, "from conform");
+            console.log("end");
+            // Validate input
+            if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
+                console.log("Come's inside first if");
+                return {
+                    status: 400,
+                    message: "Missing required payment verification fields",
+                };
+            }
+            // Verify Razorpay signature
+            const generatedSignature = crypto
+                .createHmac("sha256", RAZORPAY_KEY_SECRET)
+                .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+                .digest("hex");
+            console.log(generatedSignature, "Generated Signature");
+            console.log(razorpay_signature, "Existing Signature");
+            if (generatedSignature !== razorpay_signature) {
+                console.log("Come's inside invalid signature");
+                await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+                return { status: 400, message: "Invalid payment signature" };
+            }
+            // Fetch payment details from Razorpay
+            const payment = await razorpay.payments.fetch(razorpay_payment_id);
+            payment.amount = Number(payment.amount) / 100; // Convert amount from paise to rupees
+            console.log(payment, "Payment details from Razorpay");
+            if (payment.status !== "captured") {
+                await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+                return { status: 400, message: "Payment not captured" };
+            }
+            console.log("Stop");
+            const message = { payment: "Payment done successfully" };
+            console.log("updated", transactionDataset);
+            const insertTransaction = await query(`
+        Insert into transaction (
+        transactiondata,
+        userid,
+        productid,
+        merchanttransactionid,
+        name,
+        amount,
+        mobilenumber,
+        transactionfor,
+        razorpay_payment_id,
+        razorpay_order_id,
+        razorpay_signature) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [payment,
+                transactionDataset.userId,
+                transactionDataset.productid,
+                transactionDataset.merchanttransactionId,
+                transactionDataset.name,
+                transactionDataset.amount,
+                transactionDataset.mobilenumber,
+                transactionDataset.transactionfor,
+                razorpay_payment_id,
+                razorpay_order_id,
+                razorpay_signature
+            ]);
+            console.log(insertTransaction.command, "Insert Transaction Result:");
+            console.log("end");
+            if (insertTransaction.command === "INSERT") {
+                return {
+                    status: 200,
+                    message: "Payment verified and processed successfully",
+                };
+            }
+            else {
+                return {
+                    status: 400,
+                    message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
+                };
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN paymentConfirmationRazorpay", error);
             return { status: 500, message: "Error verifying Razorpay payment" };
         }
     };

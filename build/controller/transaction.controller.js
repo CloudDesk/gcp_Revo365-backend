@@ -94,5 +94,40 @@ export var transactionController;
             reply.send(ErrorMessage);
         }
     };
+    transactionController.paymentInitializationRazorpayTicket = async (request, reply) => {
+        try {
+            let transactionData = await transactionService.paymentInitializationRazorpayTicket(request);
+            console.log("transactionData", transactionData);
+            if (transactionData && transactionData.status == 200) {
+                reply.send(transactionData);
+            }
+            else {
+                reply.status(transactionData.status).send('Transaction initialization failed');
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN paymentInitialization Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
+    transactionController.paymentConfirmationRazorpayTicket = async (request, reply) => {
+        try {
+            let transactionData = await transactionService.paymentConfirmationRazorpayTicket(request);
+            if (transactionData?.status == 400 || transactionData?.status == 500) {
+                reply.status(transactionData.status).send({
+                    message: transactionData.message,
+                });
+            }
+            else {
+                reply.send(transactionData);
+            }
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN paymentConfirmationRazorpay Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            reply.send(ErrorMessage);
+        }
+    };
 })(transactionController || (transactionController = {}));
 //# sourceMappingURL=transaction.controller.js.map
