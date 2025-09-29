@@ -7,10 +7,9 @@
   "scripts": {
     "dev": "npx tsx src/index",
     "test": "npm run test",
-
     "build": "tsc",
-    "authgcp":"gcloud auth login",
-    "set-project":"gcloud config set project revo-dev-and-test",
+    "authgcp": "gcloud auth login",
+    "set-project": "gcloud config set project revo-dev-and-test",
     "revo-backend-build": "docker build -t revo365-sit-backend .",
     "revo-backend-tag": "docker tag revo365-sit-backend gcr.io/revo-dev-and-test/revo365-sit-backend",
     "revo-backend-push": "docker push gcr.io/revo-dev-and-test/revo365-sit-backend",
@@ -77,6 +76,7 @@
     "@types/ajv": "^0.0.5",
     "@types/node": "^20.11.24",
     "@types/pino": "^7.0.5",
-    "typescript": "^5.6.3"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
   }
 }

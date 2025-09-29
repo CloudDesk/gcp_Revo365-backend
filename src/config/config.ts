@@ -29,7 +29,10 @@ const config = {
   REDIS_EMAIL_OTPEXPSEC: +process.env.REDIS_EMAIL_OTPEXPSEC,
   POSTGRESS_QUERY_API:process.env.POSTGRESS_QUERY_API,
   ENV_RAZORPAY_KEY_ID: process.env.ENV_RAZORPAY_KEY_ID,
-  ENV_RAZORPAY_KEY_SECRET: process.env.ENV_RAZORPAY_KEY_SECRET
+  ENV_RAZORPAY_KEY_SECRET: process.env.ENV_RAZORPAY_KEY_SECRET,
+  SHIPROCKET_EMAIL: process.env.SHIPROCKET_EMAIL,
+  SHIPROCKET_PASSWORD: process.env.SHIPROCKET_PASSWORD,
+  SHIPROCKET_BASE_URL: process.env.SHIPROCKET_BASE_URL,
 };
 
 export const { ACCESSKEYID } = config;
@@ -60,3 +63,6 @@ export const { REDIS_EMAIL_OTPEXPSEC } = config
 export const { POSTGRESS_QUERY_API } = config
 export const { ENV_RAZORPAY_KEY_ID } = config
 export const { ENV_RAZORPAY_KEY_SECRET } = config
+export const { SHIPROCKET_EMAIL } = config
+export const { SHIPROCKET_PASSWORD } = config
+export const { SHIPROCKET_BASE_URL } = config

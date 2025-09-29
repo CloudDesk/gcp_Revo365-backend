@@ -54,6 +54,7 @@ import { request } from "http";
 import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 import { thirdPartyController } from "../controller/thirdparty.controller.js";
 import { demandrequestController } from "../controller/demandrequest.controller.js";
+import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -127,7 +128,6 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.delete('/v2/stock/isdelete', { preHandler: [validateRequestBody(deletestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDatadelete);
     fastify.post('/v2/stock/isarchive', { preHandler: [validateRequestBody(archivestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDataarchive);
     fastify.get('/v2/stock/e-waste', stockRevoController.getEwasteStocksRevo);
-
 
     // fastify.get('/v2/stock/qty',stockRevoController.testgetArcheivedStocksRevo)
     //s3buket data
@@ -387,6 +387,49 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //location History
     fastify.get('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.getLocationHistoryData);
     fastify.post('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.upsertLocatonData);
+
+    //shiprocket
+    fastify.post('/calculate-shipping', { preHandler: [getSession] }, async (request, reply) => {
+        try {
+            const { deliveryPincode, weight, cod } = request.body as {
+                deliveryPincode: string;
+                weight?: number;
+                cod?: boolean;
+            };
+
+            if (!deliveryPincode) {
+                return reply.status(400).send({
+                    success: false,
+                    message: "Delivery pincode is required",
+                });
+            }
+
+            const shippingInfo = await shiprocketShippingService.getLowestShippingCost(
+                deliveryPincode,
+                weight || 1,
+                cod || false
+            );
+
+            return reply.status(200).send({
+                success: true,
+                data: shippingInfo,
+            });
+        } catch (error: any) {
+            console.error("Error in calculate-shipping route:", error);
+            return reply.status(500).send({
+                success: false,
+                message: error.message || "Failed to calculate shipping",
+            });
+        }
+    });
+
+    fastify.get('/test-shiprocket-diagnostics', async (request, reply) => {
+    await runShiprocketDiagnostics();
+    return reply.send({ 
+        message: 'Diagnostics completed. Check your server console for detailed output.' 
+    });
+});
+
 }
 
 export default Revo365Routes
