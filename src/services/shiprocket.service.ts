@@ -205,33 +205,7 @@ class ShiprocketShippingService {
       console.error("❌ Error calculating shipping:", error.response?.data || error.message);
 
       if (error.response?.status === 403) {
-        console.error(`
-========================================
-⚠️  403 FORBIDDEN - ACCOUNT LIMITATION
-========================================
-
-IMMEDIATE ACTIONS:
-1. Contact Shiprocket Support NOW
-   📧 Email: support@shiprocket.in
-   📞 Phone: 011-4954-2244
-   💬 Chat: https://app.shiprocket.in
-
-2. Ask them to enable "Courier Serviceability API"
-   for your account: ${process.env.SHIPROCKET_EMAIL}
-
-3. Verify these are complete:
-   ✓ KYC verification
-   ✓ Bank account linked
-   ✓ Active billing plan
-   ✓ API permissions enabled
-
-4. Check if your IP is whitelisted:
-   Your requests must come from the IPs configured
-   in your API User settings.
-
-Until resolved, using fallback rates...
-========================================
-        `);
+        console.error(`⚠️  403 FORBIDDEN - ACCOUNT LIMITATION`);
       }
 
       const fallbackRates = this.getFallbackRates(params);
