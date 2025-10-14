@@ -5,7 +5,7 @@ class ShiprocketShippingService {
     constructor() {
         this.token = null;
         this.tokenExpiry = 0;
-        this.SELLER_PINCODE = "600096";
+        this.SELLER_PINCODE = "600002";
     }
     async getAuthToken() {
         const now = Date.now();
@@ -92,11 +92,11 @@ class ShiprocketShippingService {
         const totalCharge = bestCourier.total_charge ??
             bestCourier.rate ??
             (bestCourier.freight_charge ?? 0) + (bestCourier.other_charges ?? 0);
-        console.log("🚀 Best Courier Selected Automatically:");
-        // console.log(`   Courier: ${bestCourier.courier_name}`);
-        // console.log(`   Total Charge: ₹${totalCharge}`);
-        // console.log(`   ETA: ${bestCourier.etd}`);
-        // console.log(   'ETA2:',bestCourier);
+        console.log(`🚀 Best Courier Selected Automatically:${bestCourier.courier_name}`);
+        console.log(`   Courier: ${bestCourier.courier_name}`);
+        console.log(`   Total Charge: ₹${totalCharge}`);
+        console.log(`   ETA: ${bestCourier.etd}`);
+        console.log('ETA2:', bestCourier);
         return {
             ...bestCourier,
             total_charge: Math.round(totalCharge),
