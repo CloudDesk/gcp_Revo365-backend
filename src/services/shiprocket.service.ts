@@ -30,7 +30,7 @@ interface ShippingResponse {
 class ShiprocketShippingService {
   private token: string | null = null;
   private tokenExpiry: number = 0;
-  private readonly SELLER_PINCODE = "600096";
+  private readonly SELLER_PINCODE = "600002";
 
   async getAuthToken(): Promise<string | null> {
     const now = Date.now();
@@ -139,11 +139,11 @@ class ShiprocketShippingService {
   bestCourier.rate ??
   (bestCourier.freight_charge ?? 0) + (bestCourier.other_charges ?? 0);
 
-    console.log("🚀 Best Courier Selected Automatically:");
-    // console.log(`   Courier: ${bestCourier.courier_name}`);
-    // console.log(`   Total Charge: ₹${totalCharge}`);
-    // console.log(`   ETA: ${bestCourier.etd}`);
-    // console.log(   'ETA2:',bestCourier);
+    console.log(`🚀 Best Courier Selected Automatically:${bestCourier.courier_name}`);
+    console.log(`   Courier: ${bestCourier.courier_name}`);
+    console.log(`   Total Charge: ₹${totalCharge}`);
+    console.log(`   ETA: ${bestCourier.etd}`);
+    console.log(   'ETA2:',bestCourier);
 
     return {
     ...bestCourier,

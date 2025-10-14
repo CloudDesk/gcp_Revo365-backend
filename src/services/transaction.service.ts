@@ -18,6 +18,7 @@ import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
 import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
 import { stat } from "fs";
+import loginShiprocket from "../shiprocket/shiprocketAuth.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -951,18 +952,210 @@ export module transactionService {
       }
 
       const checkMerchantId = await query(
-        `SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,
-        [merchantTransactionId]
-      );
-      console.log(checkMerchantId, "Check Merchant ID");
-      console.log(checkMerchantId.rows, "Check Merchant ID");
-      if (checkMerchantId.rows.length === 0) {
-        await productrevoService.bulkupsertProducttosetZero(
-          dummyorderdata,
-          true
-        );
-        return { status: 400, message: "Payment timed out, try again." };
-      }
+  `SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,
+  [merchantTransactionId]
+);
+console.log(checkMerchantId.rows, "Check Merchant ID in orders");
+
+// Step 2: If not found in orders, check in thirdpartyorders
+let checkMerchantIdThirdParty = { rows: [] };
+if (checkMerchantId.rows.length === 0) {
+  checkMerchantIdThirdParty = await query(
+    `SELECT merchanttransactionid FROM thirdpartyorders WHERE merchanttransactionid = $1`,
+    [merchantTransactionId]
+  );
+  console.log(
+    checkMerchantIdThirdParty.rows,
+    "Check Merchant ID in thirdpartyorders"
+  );
+}
+if (
+  checkMerchantId.rows.length === 0 &&
+  checkMerchantIdThirdParty.rows.length === 0
+) {
+  await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+  return { status: 400, message: "Payment timed out, try again." };
+}
+
+const token = await loginShiprocket();
+      // ✅ Shiprocket Payload Construction
+const orderData = transactionDataset.order[0];
+const transactionData = transactionDataset.transaction;
+
+// Fetch user & address from DB (since Shiprocket needs name, phone, address, etc.)
+const userQuery = await query(`SELECT firstname, lastname, useremail, usermobilenumber FROM users WHERE id = $1`, [transactionData.userId]);
+const addressQuery = await query(`SELECT address, city, state, pincode FROM address WHERE id = $1`, [orderData.addressid]);
+
+const user = userQuery.rows[0];
+const address = addressQuery.rows[0];
+
+// Construct payload
+const shiprocketPayload = {
+  order_id: transactionData.merchanttransactionId, // your order unique ID
+  order_date: new Date().toISOString(), // current date or order.createddate if available
+  pickup_location: "warehouse",
+  // pickup_location: orderData.storelocation || "73, Singanna Chetty St, Chindatripet, Anna Salai, Chintadripet, Chennai, Tamil Nadu 600002",
+  billing_customer_name: user?.firstname || "Customer",
+  billing_last_name: user?.lastname || "Customer",
+  billing_address: address?.address || "Not Provided",
+  billing_address_2: "Not Given",
+  billing_city: address?.city || "Unknown City",
+  billing_pincode: address?.pincode || "000000",
+  billing_state: address?.state || "Unknown State",
+  billing_country: "India",
+  billing_email: user?.useremail || transactionData.name,
+  billing_phone: user?.usermobilenumber || transactionData.mobilenumber,
+  shipping_customer_name: user?.firstname || 'Customer',
+  shipping_last_name: user?.lastname || 'Customer',
+  shipping_address: address?.address || "Not Provided",
+  shipping_address_2:'Not Given',
+  shipping_city: address?.city || "Unknown City",
+  shipping_pincode: address?.pincode || "000000",
+  shipping_state: address?.state || "Unknown State",
+  shipping_country: "India",
+  shipping_is_billing: true,
+  shipping_email: user?.useremail || transactionData.name,
+  shipping_phone: user?.usermobilenumber || transactionData.mobilenumber,
+  order_items: [
+    {
+      name: orderData.productname,
+      sku: `SKU-${orderData.productid}`,
+      units: orderData.quantity,
+      selling_price: orderData.productamount,
+    },
+  ],
+  payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
+  sub_total: orderData.orderamount,
+  length: 10,
+  breadth: 10,
+  height: 10,
+  weight: 0.5,
+};
+
+// 👇 Log payload only for verification
+console.log("🧾 Shiprocket Payload Preview ===>", JSON.stringify(shiprocketPayload, null, 2));
+console.log('Test')
+
+let shiprocketOrderData = null;
+try {
+  const shiprocketResponse = await axios.post(
+    `${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`,
+    shiprocketPayload,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  shiprocketOrderData = shiprocketResponse.data;
+  console.log("✅ Shiprocket order creation response:", shiprocketOrderData);
+  console.log('Stop After Shiprocket order creation')
+
+  // Store order + shipment data in DB
+  await query(
+    `UPDATE orders 
+     SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
+     WHERE merchanttransactionid = $6`,
+    [
+      shiprocketOrderData.order_id,
+      shiprocketOrderData.shipment_id,
+      shiprocketOrderData.status_code,
+      shiprocketOrderData.status,
+      shiprocketOrderData.channel_order_id,
+      transactionData.merchanttransactionId,
+    ]
+  );
+
+  await query(
+    `UPDATE thirdpartyorders 
+     SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
+     WHERE merchanttransactionid = $6`,
+    [
+      shiprocketOrderData.order_id,
+      shiprocketOrderData.shipment_id,
+      shiprocketOrderData.status_code,
+      shiprocketOrderData.status,
+      shiprocketOrderData.channel_order_id,
+      transactionData.merchanttransactionId,
+    ]
+  );
+  console.log("Stop after Update DB1")
+} catch (error) {
+  console.error("❌ Error creating Shiprocket order:", error.response?.data || error.message);
+}
+
+// ✅ STEP 2: Assign Courier (Generate AWB)
+// if (shiprocketOrderData?.shipment_id) {
+//   try {
+//     console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`)
+
+//     const readyToShip = await axios.post(
+//       `${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`,
+//       { shipment_id: [Number(shiprocketOrderData.shipment_id)] },
+//       {
+//         headers: {
+//           Authorization: `Bearer ${token}`,
+//           "Content-Type": "application/json",
+//         },
+//       }
+//     );
+
+//     console.log("📦 Ready to Ship Response:", readyToShip.data);
+
+//     await new Promise((r) => setTimeout(r, 15000));
+//     console.log("Order ID:", shiprocketOrderData.order_id);
+//     console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
+
+//     const courierResponse = await axios.post(
+//       `${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`,
+//       { shipment_id: Number(shiprocketOrderData.shipment_id) },
+//       {
+//         headers: {
+//           Authorization: `Bearer ${token}`,
+//           "Content-Type": "application/json",
+//         },
+//       }
+//     );
+
+//     const courierData = courierResponse.data;
+//     console.log("🚚 Courier Assigned Response:", courierData);
+//     console.log("Stop After Assign courier")
+
+//     // Update AWB & courier details in DB
+//     await query(
+//       `UPDATE orders 
+//        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
+//        WHERE merchanttransactionid = $4`,
+//       [
+//         courierData.awb_code || null,
+//         courierData.courier_name || null,
+//         courierData.courier_company_id || null,
+//         transactionData.merchanttransactionId,
+//       ]
+//     );
+
+//     await query(
+//       `UPDATE thirdpartyorders 
+//        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
+//        WHERE merchanttransactionid = $4`,
+//       [
+//         courierData.awb_code || null,
+//         courierData.courier_name || null,
+//         courierData.courier_company_id || null,
+//         transactionData.merchanttransactionId,
+//       ]
+//     );
+
+//     console.log("✅ Courier assigned and AWB updated in DB");
+//   } catch (error) {
+//     console.error("❌ Error assigning courier:", error.response?.data || error.message);
+//     console.log('Inside Error')
+//   }
+// } else {
+//   console.log("⚠️ Shipment ID missing — cannot assign courier.");
+// }
 
       // Update transaction and order data
       console.log(
