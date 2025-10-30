@@ -367,10 +367,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // fastify.post('/service-estimation',{preHandler:[validateRequestBody(servicecostestimationSchema)]},constEstimationController.upsertCostEstimation);
 
     // banner
-    fastify.get('/banner', bannerController.getAllBanner)
+    fastify.get('/banner',{preHandler:[getSession]}, bannerController.getAllBanner)
     fastify.post('/banner', bannerController.upsertBanner) 
-    //invoicedata
+    fastify.delete('/banner/:id',{preHandler:[getSession]}, bannerController.deleteBanner)
 
+    //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);

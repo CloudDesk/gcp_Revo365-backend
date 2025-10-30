@@ -62,4 +62,20 @@ export module bannerService {
         
     }
   }  
+
+  export const deleteBanner = async (id: number) => {
+    try {
+        console.log("Deleting Banner with ID:", id);
+      const result: any = await query(`DELETE FROM banner WHERE id = $1`, [id]);
+      if (result.rowCount != 0) {
+        return `Data Deleted Successfully`;
+      } else {
+        return `Banner not found with id ${id}`;
+      }
+    } catch (error) {
+      console.error("Query Execution Error: IN deleteBanner", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error)
+      return ErrorMessage
+    }
+  };
 }

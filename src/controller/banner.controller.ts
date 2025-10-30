@@ -40,5 +40,16 @@ export module bannerController {
             console.log('ERROR IN  Controller getAllBanner', error);
             let errordata  = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);        }  
-}
+    }
+
+    export const deleteBanner = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
+        try {
+            const { id } = request.params;
+            let deleteBannerResult = await bannerService.deleteBanner(Number(id));
+            reply.send(deleteBannerResult);
+        } catch (error) {
+            console.error('ERROR IN  Controller deleteBanner', error);
+            reply.send(error.message);
+        }
+    }
 }
