@@ -55,6 +55,7 @@ import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 import { thirdPartyController } from "../controller/thirdparty.controller.js";
 import { demandrequestController } from "../controller/demandrequest.controller.js";
 import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
+import { bannerController } from "../controller/banner.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -365,7 +366,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);
     // fastify.post('/service-estimation',{preHandler:[validateRequestBody(servicecostestimationSchema)]},constEstimationController.upsertCostEstimation);
 
-
+    // banner
+    fastify.get('/banner', bannerController.getAllBanner)
+    fastify.post('/banner', bannerController.upsertBanner) 
     //invoicedata
 
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
