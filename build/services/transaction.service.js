@@ -835,67 +835,55 @@ export var transactionService;
                 console.error("❌ Error creating Shiprocket order:", error.response?.data || error.message);
             }
             // ✅ STEP 2: Assign Courier (Generate AWB)
-            // if (shiprocketOrderData?.shipment_id) {
-            //   try {
-            //     console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`)
-            //     const readyToShip = await axios.post(
-            //       `${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`,
-            //       { shipment_id: [Number(shiprocketOrderData.shipment_id)] },
-            //       {
-            //         headers: {
-            //           Authorization: `Bearer ${token}`,
-            //           "Content-Type": "application/json",
-            //         },
-            //       }
-            //     );
-            //     console.log("📦 Ready to Ship Response:", readyToShip.data);
-            //     await new Promise((r) => setTimeout(r, 15000));
-            //     console.log("Order ID:", shiprocketOrderData.order_id);
-            //     console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
-            //     const courierResponse = await axios.post(
-            //       `${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`,
-            //       { shipment_id: Number(shiprocketOrderData.shipment_id) },
-            //       {
-            //         headers: {
-            //           Authorization: `Bearer ${token}`,
-            //           "Content-Type": "application/json",
-            //         },
-            //       }
-            //     );
-            //     const courierData = courierResponse.data;
-            //     console.log("🚚 Courier Assigned Response:", courierData);
-            //     console.log("Stop After Assign courier")
-            //     // Update AWB & courier details in DB
-            //     await query(
-            //       `UPDATE orders 
-            //        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
-            //        WHERE merchanttransactionid = $4`,
-            //       [
-            //         courierData.awb_code || null,
-            //         courierData.courier_name || null,
-            //         courierData.courier_company_id || null,
-            //         transactionData.merchanttransactionId,
-            //       ]
-            //     );
-            //     await query(
-            //       `UPDATE thirdpartyorders 
-            //        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
-            //        WHERE merchanttransactionid = $4`,
-            //       [
-            //         courierData.awb_code || null,
-            //         courierData.courier_name || null,
-            //         courierData.courier_company_id || null,
-            //         transactionData.merchanttransactionId,
-            //       ]
-            //     );
-            //     console.log("✅ Courier assigned and AWB updated in DB");
-            //   } catch (error) {
-            //     console.error("❌ Error assigning courier:", error.response?.data || error.message);
-            //     console.log('Inside Error')
-            //   }
-            // } else {
-            //   console.log("⚠️ Shipment ID missing — cannot assign courier.");
-            // }
+            if (shiprocketOrderData?.shipment_id) {
+                try {
+                    console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`);
+                    const readyToShip = await axios.post(`${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`, { shipment_id: [Number(shiprocketOrderData.shipment_id)] }, {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                        },
+                    });
+                    console.log("📦 Ready to Ship Response:", readyToShip.data);
+                    await new Promise((r) => setTimeout(r, 15000));
+                    console.log("Order ID:", shiprocketOrderData.order_id);
+                    console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
+                    const courierResponse = await axios.post(`${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`, { shipment_id: Number(shiprocketOrderData.shipment_id) }, {
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                        },
+                    });
+                    const courierData = courierResponse.data;
+                    console.log("🚚 Courier Assigned Response:", courierData);
+                    console.log("Stop After Assign courier");
+                    // Update AWB & courier details in DB
+                    await query(`UPDATE orders 
+       SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
+       WHERE merchanttransactionid = $4`, [
+                        courierData.awb_code || null,
+                        courierData.courier_name || null,
+                        courierData.courier_company_id || null,
+                        transactionData.merchanttransactionId,
+                    ]);
+                    await query(`UPDATE thirdpartyorders 
+       SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
+       WHERE merchanttransactionid = $4`, [
+                        courierData.awb_code || null,
+                        courierData.courier_name || null,
+                        courierData.courier_company_id || null,
+                        transactionData.merchanttransactionId,
+                    ]);
+                    console.log("✅ Courier assigned and AWB updated in DB");
+                }
+                catch (error) {
+                    console.error("❌ Error assigning courier:", error.response?.data || error.message);
+                    console.log('Inside Error');
+                }
+            }
+            else {
+                console.log("⚠️ Shipment ID missing — cannot assign courier.");
+            }
             // Update transaction and order data
             console.log(transactionDataset.transaction.transactiondata, "===", payment);
             transactionDataset.transaction.transactiondata = payment;

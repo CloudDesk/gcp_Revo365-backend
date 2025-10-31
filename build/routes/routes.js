@@ -46,6 +46,8 @@ import { sendPushNotification } from "../firebase/firebasepushmessage.js";
 import { thirdPartyController } from "../controller/thirdparty.controller.js";
 import { demandrequestController } from "../controller/demandrequest.controller.js";
 import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
+import { bannerController } from "../controller/banner.controller.js";
+import { googlereviewController } from "../controller/googlereview.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -303,6 +305,12 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertCostEstimation);
     fastify.post('/v2/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);
     // fastify.post('/service-estimation',{preHandler:[validateRequestBody(servicecostestimationSchema)]},constEstimationController.upsertCostEstimation);
+    // banner
+    fastify.get('/banner', { preHandler: [getSession] }, bannerController.getAllBanner);
+    fastify.post('/banner', bannerController.upsertBanner);
+    fastify.delete('/banner/:id', { preHandler: [getSession] }, bannerController.deleteBanner);
+    // Google Review
+    fastify.get('/reviews', { preHandler: [getSession] }, googlereviewController.getReviewsHandler);
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
