@@ -33,6 +33,11 @@ const config = {
   SHIPROCKET_EMAIL: process.env.SHIPROCKET_EMAIL,
   SHIPROCKET_PASSWORD: process.env.SHIPROCKET_PASSWORD,
   SHIPROCKET_BASE_URL: process.env.SHIPROCKET_BASE_URL,
+  ENV_GOOGLE_LOCATION_ID: process.env.ENV_GOOGLE_LOCATION_ID,
+  ENV_GOOGLE_API_KEY: process.env.ENV_GOOGLE_API_KEY,
+  // ENV_GOOGLE_CLIENT_ID: process.env.ENV_GOOGLE_CLIENT_ID,
+  // ENV_GOOGLE_CLIENT_SECRET: process.env.ENV_GOOGLE_CLIENT_SECRET,
+  // ENV_GOOGLE_REDIRECT_URI: process.env.ENV_GOOGLE_REDIRECT_URI,
 };
 
 export const { ACCESSKEYID } = config;
@@ -66,3 +71,8 @@ export const { ENV_RAZORPAY_KEY_SECRET } = config
 export const { SHIPROCKET_EMAIL } = config
 export const { SHIPROCKET_PASSWORD } = config
 export const { SHIPROCKET_BASE_URL } = config
+export const { ENV_GOOGLE_LOCATION_ID } = config
+export const { ENV_GOOGLE_API_KEY } = config
+// export const { ENV_GOOGLE_CLIENT_ID } = config
+// export const { ENV_GOOGLE_CLIENT_SECRET } = config  
+// export const { ENV_GOOGLE_REDIRECT_URI } = config

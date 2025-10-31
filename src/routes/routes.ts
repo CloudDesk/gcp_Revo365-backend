@@ -56,6 +56,7 @@ import { thirdPartyController } from "../controller/thirdparty.controller.js";
 import { demandrequestController } from "../controller/demandrequest.controller.js";
 import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
 import { bannerController } from "../controller/banner.controller.js";
+import { googlereviewController } from "../controller/googlereview.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -371,6 +372,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/banner', bannerController.upsertBanner) 
     fastify.delete('/banner/:id',{preHandler:[getSession]}, bannerController.deleteBanner)
 
+    // Google Review
+    fastify.get('/reviews',{preHandler:[getSession]}, googlereviewController.getReviewsHandler);
+ 
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
