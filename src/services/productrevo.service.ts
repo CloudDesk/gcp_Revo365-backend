@@ -749,7 +749,7 @@ export module productrevoService {
       const queryText = `
         UPDATE product_revo
         SET orderedquantity = orderedquantity + $1,
-            lock_qty = 0 
+            lock_qty = lock_qty - $1 
         WHERE id = $2
         RETURNING *`;
 
