@@ -322,7 +322,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
 
     // Merchant Transaction Id - 
-    fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
+    // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
+
+    fastify.post('/delete/merchantid',  ordersController.deleteFailedOrder)
 
     // Dashboard
     // orders - product_revo
