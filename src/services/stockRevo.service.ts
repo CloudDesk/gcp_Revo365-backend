@@ -356,133 +356,266 @@ export module stockRevoService {
         }
     }
 
+    // export const updateQuantity = async (pucs: string[], orderedquantity = 0, issold = false) => {
+    //     try {
+    //         const quantitiesList = [];
+    //         console.log("Inside update quantity:", pucs, orderedquantity, issold);
+    //         console.log('Stop here for debugging');
+    //         for (const puc of pucs) {
+    //             // const quantityQuery = `
+    //             //     SELECT 
+    //             //         COUNT(*) FILTER (
+    //             //             WHERE puc = $1
+    //             //             AND (isdeleted = false OR isdeleted IS NULL)
+    //             //             AND (isarchive = false OR isarchive IS NULL) 
+    //             //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //             //         ) AS quantity,
+    //             //         COUNT(*) FILTER (
+    //             //             WHERE puc = $1
+    //             //             AND (isdeleted = false OR isdeleted IS NULL)
+    //             //             AND (isarchive = false OR isarchive IS NULL)
+    //             //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //             //             AND ecompublish = true
+    //             //         ) AS ecompublishedquantity,
+    //             //         COUNT(*) FILTER (
+    //             //             WHERE puc = $1
+    //             //             AND (isdeleted = false OR isdeleted IS NULL)
+    //             //             AND (isarchive = false OR isarchive IS NULL)
+    //             //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //             //             AND ecompublish = true AND stockstatus = 'Sold'
+    //             //         ) AS soldquantity,
+    //             //         COUNT(*) FILTER (
+    //             //             WHERE puc = $1
+    //             //             AND (isdeleted = false OR isdeleted IS NULL)
+    //             //             AND (isarchive = false OR isarchive IS NULL)
+    //             //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //             //             AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
+    //             //         ) AS availablequantity
+                        
+    //             //     FROM stock_revo`;
+    //             const quantityQuery = `
+    //                 SELECT 
+    //                     COUNT(*) FILTER (
+    //                         WHERE puc = $1
+    //                         AND (isdeleted = false OR isdeleted IS NULL)
+    //                         AND (isarchive = false OR isarchive IS NULL) 
+    //                         AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //                     ) AS quantity,
+    //                     COUNT(*) FILTER (
+    //                         WHERE puc = $1
+    //                         AND (isdeleted = false OR isdeleted IS NULL)
+    //                         AND (isarchive = false OR isarchive IS NULL)
+    //                         AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //                         AND ecompublish = true
+    //                     ) AS ecompublishedquantity,
+    //                     COUNT(*) FILTER (
+    //                         WHERE puc = $1
+    //                         AND (isdeleted = false OR isdeleted IS NULL)
+    //                         AND (isarchive = false OR isarchive IS NULL)
+    //                         AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //                         AND ecompublish = true AND stockstatus = 'Sold'
+    //                     ) AS soldquantity,
+    //                     COUNT(*) FILTER (
+    //                         WHERE puc = $1
+    //                         AND (isdeleted = false OR isdeleted IS NULL)
+    //                         AND (isarchive = false OR isarchive IS NULL)
+    //                         AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //                         AND ecompublish = true AND stockstatus = 'Rental Sold'
+    //                     ) AS rentalsoldquantity,
+    //                     COUNT(*) FILTER (
+    //                         WHERE puc = $1
+    //                         AND (isdeleted = false OR isdeleted IS NULL)
+    //                         AND (isarchive = false OR isarchive IS NULL)
+    //                         AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //                         AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
+    //                     ) AS availablequantity,
+    //                      (
+    //     COALESCE(
+    //         SUM(thirdpartyquantity) FILTER (
+    //             WHERE puc = $1
+    //         ), 0
+    //     ) +
+    //     COUNT(*) FILTER (
+    //         WHERE puc = $1
+    //             AND (isdeleted = false OR isdeleted IS NULL)
+    //             AND (isarchive = false OR isarchive IS NULL)
+    //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+    //             AND ecompublish = true 
+    //             AND stockstatus = 'Available' 
+    //             AND stocktype <> 'third_party_product'
+    //     )
+    // ) AS overallavailableqty
+                        
+    //                 FROM stock_revo`;
+    //             const quantityResult = await query(quantityQuery, [puc]);
+    //             const totalCount = parseInt(quantityResult.rows[0].quantity, 10);
+    //             const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10);
+    //             const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10);
+    //             const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
+    //             const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
+    //             const rentalsoldquantity = parseInt(quantityResult.rows[0].rentalsoldquantity, 10);
+
+    //             const quantities = {
+    //                 quantity: totalCount,
+    //                 ecompublishedquantity: ecomPublishedQuantity,
+    //                 soldquantity: soldQuantity,
+    //                 availablequantity: availableQuantity,
+    //                 puc: puc,
+    //                 overallavailableqty: overallavailableqty,
+    //                 rentalsoldquantity: rentalsoldquantity
+    //             };
+    //             console.log("--quantities", quantities);
+
+    //             quantitiesList.push(quantities);
+    //         }
+
+    //         const updateQuantityResults = await Promise.all(
+    //             quantitiesList.map(quantities => productrevoService.upsertQuantityFields(quantities, orderedquantity, issold))
+    //         );
+
+
+    //         let result = testinupdateQuantity(pucs, issold);
+
+    //         return updateQuantityResults;
+
+    //     } catch (error) {
+    //         console.error("Query Execution Error: IN updateQuantity", error);
+    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //         return ErrorMessage;
+    //     }
+    // };
+
     export const updateQuantity = async (pucs: string[], orderedquantity = 0, issold = false) => {
-        try {
-            const quantitiesList = [];
+    try {
+        const quantitiesList = [];
+        console.log("Inside update quantity:", pucs, orderedquantity, issold);
+        console.log('Stop here for debugging');
 
-            for (const puc of pucs) {
-                // const quantityQuery = `
-                //     SELECT 
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL) 
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //         ) AS quantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true
-                //         ) AS ecompublishedquantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true AND stockstatus = 'Sold'
-                //         ) AS soldquantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
-                //         ) AS availablequantity
-                        
-                //     FROM stock_revo`;
-                const quantityQuery = `
-                    SELECT 
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL) 
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        ) AS quantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true
-                        ) AS ecompublishedquantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Sold'
-                        ) AS soldquantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Rental Sold'
-                        ) AS rentalsoldquantity,
+        for (const puc of pucs) {
+            const quantityQuery = `
+                SELECT 
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL) 
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                    ) AS quantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true
+                    ) AS ecompublishedquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true AND stockstatus = 'Sold'
+                    ) AS soldquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true AND stockstatus = 'Rental Sold'
+                    ) AS rentalsoldquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype <> 'third_party_product'
+                    ) AS availablequantity,
+
+                    (
+                        COALESCE(
+                            SUM(thirdpartyquantity) FILTER (
+                                WHERE puc = $1
+                            ), 0
+                        ) +
                         COUNT(*) FILTER (
                             WHERE puc = $1
                             AND (isdeleted = false OR isdeleted IS NULL)
                             AND (isarchive = false OR isarchive IS NULL)
                             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
-                        ) AS availablequantity,
-                         (
-        COALESCE(
-            SUM(thirdpartyquantity) FILTER (
-                WHERE puc = $1
-            ), 0
-        ) +
-        COUNT(*) FILTER (
-            WHERE puc = $1
-                AND (isdeleted = false OR isdeleted IS NULL)
-                AND (isarchive = false OR isarchive IS NULL)
-                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                AND ecompublish = true 
-                AND stockstatus = 'Available' 
-                AND stocktype <> 'third_party_product'
-        )
-    ) AS overallavailableqty
-                        
-                    FROM stock_revo`;
-                const quantityResult = await query(quantityQuery, [puc]);
-                const totalCount = parseInt(quantityResult.rows[0].quantity, 10);
-                const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10);
-                const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10);
-                const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
-                const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
-                const rentalsoldquantity = parseInt(quantityResult.rows[0].rentalsoldquantity, 10);
+                            AND ecompublish = true 
+                            AND stockstatus = 'Available' 
+                            AND stocktype <> 'third_party_product'
+                        )
+                    ) AS overallavailableqty,
 
-                const quantities = {
-                    quantity: totalCount,
-                    ecompublishedquantity: ecomPublishedQuantity,
-                    soldquantity: soldQuantity,
-                    availablequantity: availableQuantity,
-                    puc: puc,
-                    overallavailableqty: overallavailableqty,
-                    rentalsoldquantity: rentalsoldquantity
-                };
-                console.log("--quantities", quantities);
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype = 'on_catalogue_product'
+                    ) AS oncatalogueqty,
 
-                quantitiesList.push(quantities);
-            }
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype = 'off_catalogue_product'
+                    ) AS offcatalogueqty
 
-            const updateQuantityResults = await Promise.all(
-                quantitiesList.map(quantities => productrevoService.upsertQuantityFields(quantities, orderedquantity, issold))
-            );
+                FROM stock_revo`;
 
+            const quantityResult = await query(quantityQuery, [puc]);
 
-            let result = testinupdateQuantity(pucs, issold);
+            const totalCount = parseInt(quantityResult.rows[0].quantity, 10);
+            const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10);
+            const soldQuantity = parseInt(quantityResult.rows[0].soldquantity, 10);
+            const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
+            const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
+            const rentalsoldquantity = parseInt(quantityResult.rows[0].rentalsoldquantity, 10);
+            const oncatalogueqty = parseInt(quantityResult.rows[0].oncatalogueqty, 10);
+            const offcatalogueqty = parseInt(quantityResult.rows[0].offcatalogueqty, 10);
 
-            return updateQuantityResults;
+            const quantities = {
+                quantity: totalCount,
+                ecompublishedquantity: ecomPublishedQuantity,
+                soldquantity: soldQuantity,
+                availablequantity: availableQuantity,
+                puc: puc,
+                overallavailableqty: overallavailableqty,
+                rentalsoldquantity: rentalsoldquantity,
+                oncatalogueqty: oncatalogueqty,
+                offcatalogueqty: offcatalogueqty
+            };
 
-        } catch (error) {
-            console.error("Query Execution Error: IN updateQuantity", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+            console.log("--quantities", quantities);
+            quantitiesList.push(quantities);
         }
-    };
+
+        const updateQuantityResults = await Promise.all(
+            quantitiesList.map(quantities =>
+                productrevoService.upsertQuantityFields(quantities, orderedquantity, issold)
+            )
+        );
+
+        let result = testinupdateQuantity(pucs, issold);
+        return updateQuantityResults;
+
+    } catch (error) {
+        console.error("Query Execution Error: IN updateQuantity", error);
+        let ErrorMessage = await ErrorHandler.handleQueryError(error);
+        return ErrorMessage;
+    }
+};
 
 
     export const testinupdateQuantity = async (pucs: string[], issold: boolean) => {

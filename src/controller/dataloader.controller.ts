@@ -121,6 +121,8 @@ export module dataLoaderController {
             if (upsertStockResult?.result?.command === "UPDATE" || upsertStockResult?.result?.command === "INSERT") {
                 const puc = upsertStockResult.result.rows[0].puc;
                 const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
+                console.log("PUC Array for updateQuantity:", pucArray);
+                console.log('Stop here for debugging');
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
                     Stock: upsertStockResult?.result?.command === "UPDATE"

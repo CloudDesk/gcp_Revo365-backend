@@ -558,69 +558,176 @@ export module productrevoService {
     }
   }
 
+  // export const upsertQuantityFields = async (upsertData: any, orderedquantitydata, issold: boolean) => {
+  //   console.log('--upsertQuantityFields', upsertData);
+  //   const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty,rentalsoldquantity } = upsertData;
+  //   try {
+  //     let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
+  //     let orderedquantityvalue = productquery.rows[0].orderedquantity;
+  //     let productStatusValue: string
+  //     if (availablequantity > 5) {
+  //       productStatusValue = 'in_stock'
+  //     }
+  //     else if (availablequantity > 0 && availablequantity <= 5) {
+  //       productStatusValue = 'low_stock'
+  //     }
+  //     else if (availablequantity === 0) {
+  //       productStatusValue = 'out_of_stock'
+  //     }
+  //     let orderedquantityNumber = Number(orderedquantitydata);
+
+  //     let updateQueryBase = `UPDATE product_revo SET quantity = $1, ecompublishedquantity = $2, soldquantity = $3, 
+  //       availablequantity = $4, productstatus = $5, overallavailableqty=$6, rentalsoldquantity = $7`;
+  //     let updateQuery = ''
+  //     if (issold && !isNaN(orderedquantityNumber)) {
+  //       updateQueryBase += `, orderedquantity = orderedquantity - $8`;
+  //       updateQuery = `${updateQueryBase} WHERE puc = $9 RETURNING *`;
+  //     } else if (!issold && isNaN(orderedquantityNumber)) {
+  //       updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
+  //     }
+  //     else {
+  //       updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
+
+  //     }
+
+  //     let updateParams = []
+  //     if (issold && !isNaN(orderedquantityNumber)) {
+  //       updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue,overallavailableqty, rentalsoldquantity, orderedquantityNumber, puc]
+
+  //     }
+  //     else {
+  //       updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue,overallavailableqty, rentalsoldquantity, puc]
+
+  //     }
+  //     const updateResult = await query(updateQuery, updateParams);
+  //     let cartData = {
+  //       productid: updateResult.rows[0].id,
+  //       availablequantity
+  //     }
+  //     const updateCartQuantity = await cartservice.upsertCartQuantity(cartData)
+  //     if (updateCartQuantity?.command === 'UPDATE' || updateCartQuantity === null) {
+  //       return updateResult.rows[0];
+  //     }
+  //     else {
+  //       let message = {
+  //         product: updateResult.rows[0],
+  //         cart: 'Problem In Cart Quantity Updaations.Please contact support Team'
+  //       }
+  //       return message
+  //     }
+  //   } catch (error) {
+  //     console.error("Query Execution Error: IN upsertQuantityFields", error);
+  //     let ErrorMessage = await ErrorHandler.handleQueryError(error)
+  //     return ErrorMessage
+  //   }
+  // };
+
   export const upsertQuantityFields = async (upsertData: any, orderedquantitydata, issold: boolean) => {
-    console.log('--upsertQuantityFields', upsertData);
-    const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty,rentalsoldquantity } = upsertData;
-    try {
-      let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
-      let orderedquantityvalue = productquery.rows[0].orderedquantity;
-      let productStatusValue: string
-      if (availablequantity > 5) {
-        productStatusValue = 'in_stock'
-      }
-      else if (availablequantity > 0 && availablequantity <= 5) {
-        productStatusValue = 'low_stock'
-      }
-      else if (availablequantity === 0) {
-        productStatusValue = 'out_of_stock'
-      }
-      let orderedquantityNumber = Number(orderedquantitydata);
+  console.log('--upsertQuantityFields', upsertData);
+  const { 
+    quantity, 
+    ecompublishedquantity, 
+    soldquantity, 
+    availablequantity, 
+    puc, 
+    overallavailableqty, 
+    rentalsoldquantity,
+    oncatalogueqty,
+    offcatalogueqty
+  } = upsertData;
 
-      let updateQueryBase = `UPDATE product_revo SET quantity = $1, ecompublishedquantity = $2, soldquantity = $3, 
-        availablequantity = $4, productstatus = $5, overallavailableqty=$6, rentalsoldquantity = $7`;
-      let updateQuery = ''
-      if (issold && !isNaN(orderedquantityNumber)) {
-        updateQueryBase += `, orderedquantity = orderedquantity - $8`;
-        updateQuery = `${updateQueryBase} WHERE puc = $9 RETURNING *`;
-      } else if (!issold && isNaN(orderedquantityNumber)) {
-        updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
-      }
-      else {
-        updateQuery = `${updateQueryBase} WHERE puc = $8 RETURNING *`;
+  try {
+    let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
+    let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
+    let productStatusValue: string;
 
-      }
-
-      let updateParams = []
-      if (issold && !isNaN(orderedquantityNumber)) {
-        updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue,overallavailableqty, rentalsoldquantity, orderedquantityNumber, puc]
-
-      }
-      else {
-        updateParams = [quantity, ecompublishedquantity, soldquantity, availablequantity, productStatusValue,overallavailableqty, rentalsoldquantity, puc]
-
-      }
-      const updateResult = await query(updateQuery, updateParams);
-      let cartData = {
-        productid: updateResult.rows[0].id,
-        availablequantity
-      }
-      const updateCartQuantity = await cartservice.upsertCartQuantity(cartData)
-      if (updateCartQuantity?.command === 'UPDATE' || updateCartQuantity === null) {
-        return updateResult.rows[0];
-      }
-      else {
-        let message = {
-          product: updateResult.rows[0],
-          cart: 'Problem In Cart Quantity Updaations.Please contact support Team'
-        }
-        return message
-      }
-    } catch (error) {
-      console.error("Query Execution Error: IN upsertQuantityFields", error);
-      let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      return ErrorMessage
+    if (availablequantity > 5) {
+      productStatusValue = 'in_stock';
+    } else if (availablequantity > 0 && availablequantity <= 5) {
+      productStatusValue = 'low_stock';
+    } else {
+      productStatusValue = 'out_of_stock';
     }
-  };
+
+    let orderedquantityNumber = Number(orderedquantitydata);
+
+    let updateQueryBase = `
+      UPDATE product_revo 
+      SET quantity = $1, 
+          ecompublishedquantity = $2, 
+          soldquantity = $3, 
+          availablequantity = $4, 
+          productstatus = $5, 
+          overallavailableqty = $6, 
+          rentalsoldquantity = $7,
+          oncatalogueqty = $8,
+          offcatalogueqty = $9
+    `;
+
+    let updateQuery = '';
+    if (issold && !isNaN(orderedquantityNumber)) {
+      updateQueryBase += `, orderedquantity = orderedquantity - $10`;
+      updateQuery = `${updateQueryBase} WHERE puc = $11 RETURNING *`;
+    } else {
+      updateQuery = `${updateQueryBase} WHERE puc = $10 RETURNING *`;
+    }
+
+    let updateParams = [];
+    if (issold && !isNaN(orderedquantityNumber)) {
+      updateParams = [
+        quantity, 
+        ecompublishedquantity, 
+        soldquantity, 
+        availablequantity, 
+        productStatusValue, 
+        overallavailableqty, 
+        rentalsoldquantity,
+        oncatalogueqty,
+        offcatalogueqty,
+        orderedquantityNumber,
+        puc
+      ];
+    } else {
+      updateParams = [
+        quantity, 
+        ecompublishedquantity, 
+        soldquantity, 
+        availablequantity, 
+        productStatusValue, 
+        overallavailableqty, 
+        rentalsoldquantity,
+        oncatalogueqty,
+        offcatalogueqty,
+        puc
+      ];
+    }
+
+    const updateResult = await query(updateQuery, updateParams);
+
+    // update cart quantities
+    let cartData = {
+      productid: updateResult.rows[0].id,
+      availablequantity
+    };
+
+    const updateCartQuantity = await cartservice.upsertCartQuantity(cartData);
+
+    if (updateCartQuantity?.command === 'UPDATE' || updateCartQuantity === null) {
+      return updateResult.rows[0];
+    } else {
+      let message = {
+        product: updateResult.rows[0],
+        cart: 'Problem In Cart Quantity Updation. Please contact support team'
+      };
+      return message;
+    }
+
+  } catch (error) {
+    console.error("Query Execution Error: IN upsertQuantityFields", error);
+    let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    return ErrorMessage;
+  }
+};
 
   export const testupsertQuantityFieldsBatch = async (batchData: any[], issold: boolean) => {
     try {
