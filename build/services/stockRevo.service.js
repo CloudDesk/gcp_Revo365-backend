@@ -360,90 +360,87 @@ export var stockRevoService;
         try {
             const quantitiesList = [];
             for (const puc of pucs) {
-                // const quantityQuery = `
-                //     SELECT 
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL) 
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //         ) AS quantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true
-                //         ) AS ecompublishedquantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true AND stockstatus = 'Sold'
-                //         ) AS soldquantity,
-                //         COUNT(*) FILTER (
-                //             WHERE puc = $1
-                //             AND (isdeleted = false OR isdeleted IS NULL)
-                //             AND (isarchive = false OR isarchive IS NULL)
-                //             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                //             AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
-                //         ) AS availablequantity
-                //     FROM stock_revo`;
                 const quantityQuery = `
-                    SELECT 
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL) 
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        ) AS quantity,
+                SELECT 
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL) 
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                    ) AS quantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true
+                    ) AS ecompublishedquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true AND stockstatus = 'Sold'
+                    ) AS soldquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true AND stockstatus = 'Rental Sold'
+                    ) AS rentalsoldquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype <> 'third_party_product'
+                    ) AS availablequantity,
+
+                    (
+                        COALESCE(
+                            SUM(thirdpartyquantity) FILTER (
+                                WHERE puc = $1
+                            ), 0
+                        ) +
                         COUNT(*) FILTER (
                             WHERE puc = $1
                             AND (isdeleted = false OR isdeleted IS NULL)
                             AND (isarchive = false OR isarchive IS NULL)
                             AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true
-                        ) AS ecompublishedquantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Sold'
-                        ) AS soldquantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Rental Sold'
-                        ) AS rentalsoldquantity,
-                        COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND ecompublish = true AND stockstatus = 'Available' AND stocktype <> 'third_party_product'
-                        ) AS availablequantity,
-                         (
-        COALESCE(
-            SUM(thirdpartyquantity) FILTER (
-                WHERE puc = $1
-            ), 0
-        ) +
-        COUNT(*) FILTER (
-            WHERE puc = $1
-                AND (isdeleted = false OR isdeleted IS NULL)
-                AND (isarchive = false OR isarchive IS NULL)
-                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                AND ecompublish = true 
-                AND stockstatus = 'Available' 
-                AND stocktype <> 'third_party_product'
-        )
-    ) AS overallavailableqty
-                        
-                    FROM stock_revo`;
+                            AND ecompublish = true 
+                            AND stockstatus = 'Available' 
+                            AND stocktype <> 'third_party_product'
+                        )
+                    ) AS overallavailableqty,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype = 'on_catalogue_product'
+                    ) AS oncatalogueqty,
+
+                    COUNT(*) FILTER (
+                        WHERE puc = $1
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND ecompublish = true 
+                        AND stockstatus = 'Available' 
+                        AND stocktype = 'off_catalogue_product'
+                    ) AS offcatalogueqty
+
+                FROM stock_revo`;
                 const quantityResult = await query(quantityQuery, [puc]);
                 const totalCount = parseInt(quantityResult.rows[0].quantity, 10);
                 const ecomPublishedQuantity = parseInt(quantityResult.rows[0].ecompublishedquantity, 10);
@@ -451,6 +448,8 @@ export var stockRevoService;
                 const availableQuantity = parseInt(quantityResult.rows[0].availablequantity, 10);
                 const overallavailableqty = parseInt(quantityResult.rows[0].overallavailableqty, 10);
                 const rentalsoldquantity = parseInt(quantityResult.rows[0].rentalsoldquantity, 10);
+                const oncatalogueqty = parseInt(quantityResult.rows[0].oncatalogueqty, 10);
+                const offcatalogueqty = parseInt(quantityResult.rows[0].offcatalogueqty, 10);
                 const quantities = {
                     quantity: totalCount,
                     ecompublishedquantity: ecomPublishedQuantity,
@@ -458,7 +457,9 @@ export var stockRevoService;
                     availablequantity: availableQuantity,
                     puc: puc,
                     overallavailableqty: overallavailableqty,
-                    rentalsoldquantity: rentalsoldquantity
+                    rentalsoldquantity: rentalsoldquantity,
+                    oncatalogueqty: oncatalogueqty,
+                    offcatalogueqty: offcatalogueqty
                 };
                 console.log("--quantities", quantities);
                 quantitiesList.push(quantities);
