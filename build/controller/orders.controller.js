@@ -255,5 +255,16 @@ export var ordersController;
             return ErrorMessage;
         }
     };
+    ordersController.deleteFailedOrder = async (request, reply) => {
+        try {
+            const getOrderDataResult = await ordersService.deleteFailedOrder(request.body.merchantid);
+            reply.send(getOrderDataResult);
+        }
+        catch (error) {
+            console.error("Error IN Controller deleteBasedOnMerchantId", error);
+            const ErrorMessage = await ErrorHandler.handleQueryError(error);
+            reply.code(500).send(ErrorMessage);
+        }
+    };
 })(ordersController || (ordersController = {}));
 //# sourceMappingURL=orders.controller.js.map

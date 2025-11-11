@@ -1593,5 +1593,55 @@ Thank You!`,
             throw error;
         }
     };
+    ordersService.deleteFailedOrder = async (merchantid) => {
+        try {
+            console.log("Deleting failed order for merchantid:", merchantid);
+            // Step 1: Fetch orders with merchanttransactionid (unpaid & no transactionid)
+            const orderIdQuery = `
+      SELECT orderid, transactionid  FROM orders 
+      WHERE merchanttransactionid = $1 
+      AND ispaymentsucceed = FALSE 
+      AND transactionid IS NULL;
+    `;
+            const orderIdResult = await query(orderIdQuery, [merchantid]);
+            console.log("Order IDs fetched:", orderIdResult.rows);
+            if (orderIdResult.rows.length === 0) {
+                return { status: 200, message: 'Merchant Id Payment is successful or no pending orders' };
+            }
+            const uniqueorderid = orderIdResult.rows[0].orderid;
+            console.log("Unique Order ID to delete:", uniqueorderid);
+            // Step 2: Get all product ids associated with order lines
+            const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
+            console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
+            if (productIdOrderlineResult.rows.length > 0) {
+                console.log("Updating lock_qty for products associated with the order");
+                const products = productIdOrderlineResult.rows;
+                console.log("Products to update:", products);
+                // Iterate through each product and update individually
+                for (const product of products) {
+                    console.log(`Updating lock_qty for product ID: ${product}`);
+                    const updateLockQtyQuery = `
+      UPDATE product_revo
+      SET lock_qty = lock_qty - $1
+      WHERE id = $2
+    `;
+                    const res = await query(updateLockQtyQuery, [product.quantity, product.productid]);
+                    console.log(`lock_qty updated for product ID:`, res);
+                }
+            }
+            // Step 4: Delete orderline entries for this order
+            const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1`;
+            await query(deleteOrderlineQuery, [uniqueorderid]);
+            // Step 5: Delete the order record
+            const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1`;
+            await query(deleteOrdersQuery, [uniqueorderid]);
+            return { status: 200, message: 'Data Deleted Successfully' };
+        }
+        catch (error) {
+            console.error("Error in getOrderDataForMerchantid Service:", error);
+            return { status: 500, message: 'Error processing order cleanup' };
+        }
+    };
 })(ordersService || (ordersService = {}));
 //# sourceMappingURL=orders.service.js.map
