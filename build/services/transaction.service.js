@@ -555,7 +555,7 @@ export var transactionService;
                 });
                 // Step 4: Create HTTP task and insert order data
                 try {
-                    let createHttpTaskResult = await createHttpTask(order.id);
+                    let createHttpTaskResult = await createHttpTask(merchanttransactionId);
                     if (createHttpTaskResult?.success === false) {
                         return {
                             status: 400,
