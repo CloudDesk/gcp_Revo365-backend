@@ -180,6 +180,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/users', userController.upsertUser);
     fastify.post('/users/fcmid', userController.upsertFcmidUser);
     fastify.get('/users/logout', userController.userlogout);
+    fastify.post('/customers', userController.getCustomersData)
 
     fastify.delete('/users/:id', userController.deleteUserData);
     fastify.post('/user-forgot', userController.forgotuser);

@@ -78,6 +78,25 @@ export module userService {
     }
   };
 
+  export const getCustomersData = async (request: any) => {
+    try {
+      console.log('Inside get customer')
+      console.log(request)
+      const ids = request
+
+      const uniqueIds = [...new Set(ids)];
+
+      const placeholders = uniqueIds.map((_, i) => `$${i+1}`).join(', ');
+      const queryText = `SELECT * FROM users WHERE id IN (${placeholders})`;
+      const users = await query(queryText, uniqueIds); 
+      console.log(users.rows,'Damm')
+      return users.rows
+      
+    } catch (error) {
+      
+    }
+  }
+
   export const forgotuser = async (request: any) => {
     try {
       request.query.useremail = request.body.useremail;

@@ -16,6 +16,15 @@ export module userController {
             reply.send(error.message);
         }
     }
+    export const getCustomersData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            let getCustomerDataResult = await userService.getCustomersData(request.body);
+            console.log(getCustomerDataResult)
+            reply.send(getCustomerDataResult); 
+        } catch (error) {
+            
+        }
+    }
     export const forgotuser = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             let forgotuserData: any = await userService.forgotuser(request);
