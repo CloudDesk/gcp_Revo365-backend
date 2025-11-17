@@ -1749,13 +1749,14 @@ Thank You!`,
 
     export const getInvoiceDataForOrderid = async (orderid: any) => {
         try {
-            const uniqueOrderIds = [...new Set(orderid.body)];
-            console.log("Unique orderIds:", uniqueOrderIds);
+            const customerId = orderid.body
+            // const uniqueOrderIds = [...new Set(orderid.body)];
+            // console.log("Unique orderIds:", uniqueOrderIds);
 
-            const placeholders = uniqueOrderIds.map((_, index) => `$${index + 1}`).join(", ");
+            // const placeholders = uniqueOrderIds.map((_, index) => `$${index + 1}`).join(", ");
         const invoiceQuery = await query(
-            `SELECT * FROM revoinvoice WHERE orderid IN (${placeholders})`,
-            uniqueOrderIds
+            `SELECT * FROM revoinvoice WHERE customerId = $1`,
+            [customerId]
         );
         console.log("Invoice Query Result:", invoiceQuery.rows);
         return invoiceQuery; 

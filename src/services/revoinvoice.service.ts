@@ -97,6 +97,7 @@ export module revoinvoiceservice {
     export const upsertRevoInvoice = async (invoicedata: any) => {
         try {
             console.log('In upsertRevoInvoice with data:', invoicedata);
+            console.log('Stop')
             let querydata: string;
             let params: any[];
             const { id, product, ...upsertFields } = invoicedata;
