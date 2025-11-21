@@ -66,6 +66,13 @@ export var ordersController;
         try {
             const result = await ordersService.updateInvoiceGeneratedData(request);
             console.log("Result in updateInvoiceGeneratedData Controller:", result);
+            if ("errorMessage" in result) {
+                return reply.code(result.statusCode ?? 400).send({
+                    success: false,
+                    message: result.errorMessage,
+                    details: result.errorDetails
+                });
+            }
             if (result?.success === false) {
                 return reply.code(400).send(result);
             }

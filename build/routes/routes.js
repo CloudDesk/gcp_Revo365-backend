@@ -48,6 +48,7 @@ import { demandrequestController } from "../controller/demandrequest.controller.
 import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
 import { bannerController } from "../controller/banner.controller.js";
 import { googlereviewController } from "../controller/googlereview.controller.js";
+import { blogscontroller } from "../controller/blogs.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -154,6 +155,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/users', userController.upsertUser);
     fastify.post('/users/fcmid', userController.upsertFcmidUser);
     fastify.get('/users/logout', userController.userlogout);
+    fastify.post('/customers', userController.getCustomersData);
     fastify.delete('/users/:id', userController.deleteUserData);
     fastify.post('/user-forgot', userController.forgotuser);
     //Invetroyusers
@@ -310,6 +312,10 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/banner', bannerController.getAllBanner);
     fastify.post('/banner', bannerController.upsertBanner);
     fastify.delete('/banner/:id', { preHandler: [getSession] }, bannerController.deleteBanner);
+    //blogs
+    fastify.get('/blogs', blogscontroller.getAllBlogs);
+    fastify.post('/blogs', blogscontroller.upsertBlogs);
+    fastify.delete('/blog/:id', { preHandler: [getSession] }, blogscontroller.deleteBlog);
     // Google Review
     fastify.get('/reviews', googlereviewController.getReviewsHandler);
     //invoicedata

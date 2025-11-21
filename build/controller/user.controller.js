@@ -11,6 +11,15 @@ export var userController;
             reply.send(error.message);
         }
     };
+    userController.getCustomersData = async (request, reply) => {
+        try {
+            let getCustomerDataResult = await userService.getCustomersData(request.body);
+            console.log(getCustomerDataResult);
+            reply.send(getCustomerDataResult);
+        }
+        catch (error) {
+        }
+    };
     userController.forgotuser = async (request, reply) => {
         try {
             let forgotuserData = await userService.forgotuser(request);

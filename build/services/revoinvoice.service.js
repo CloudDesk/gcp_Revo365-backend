@@ -90,6 +90,7 @@ export var revoinvoiceservice;
     revoinvoiceservice.upsertRevoInvoice = async (invoicedata) => {
         try {
             console.log('In upsertRevoInvoice with data:', invoicedata);
+            console.log('Stop');
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
