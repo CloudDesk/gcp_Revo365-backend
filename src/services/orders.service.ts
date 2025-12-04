@@ -521,7 +521,9 @@ export const getOrderLineData = async (request) => {
         const pageNumber = parseInt(request.query.page) || 1;
         const recordCount = parseInt(request.query.count) || 5000;
         const keys = Object.keys(request.query);
+        console.log("keys", keys);
         const values = Object.values(request.query);
+        console.log("values", values);
 
         let whereClauses: string[] = [];
         let parameterIndex = 1;

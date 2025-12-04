@@ -237,6 +237,8 @@ export module ticketService {
       let querydata: string;
       let params: any[];
       const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
+      console.log(id,inventoryuserid,product_warranty, "id,inventoryuserid,product_warranty");
+      console.log("Upsert Fields", upsertFields);
       if (files && files.length > 0) {
         for (const file of files) {
           upsertFields.recipturl =
@@ -244,13 +246,18 @@ export module ticketService {
         }
       }
       const fieldNames = Object.keys(upsertFields);
+      console.log("Field Names", fieldNames);
       const fieldValues = Object.values(upsertFields);
+      console.log("Field Values", fieldValues);
       if (id) {
         querydata = `UPDATE tickets SET ${fieldNames
           .map((field, index) => `${field} = $${index + 1}`)
           .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
         params = [...fieldValues, id];
-      } else {
+        console.log("Query Data", querydata);
+      } 
+      
+      else {
         querydata = `INSERT INTO tickets (${fieldNames.join(
           ", "
         )}) VALUES (${fieldNames
@@ -258,7 +265,7 @@ export module ticketService {
           .join(", ")}) RETURNING *`;
         params = fieldValues;
       }
-      console.log(querydata, " querydata in Upsert Normal Tickets");
+      console.log(querydata, "querydata in Upsert Normal Tickets");
 
       const result = await query(querydata, params);
       if (result && result.rows.length > 0) {

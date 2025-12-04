@@ -1,6 +1,6 @@
 import { revoinvoiceservice } from "../services/revoinvoice.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import exp from "constants";
+
 
 export module revoinvoicecontroller {
     export const getRevoInvoiceData = async (request: any, reply: any) => {
@@ -30,6 +30,7 @@ export module revoinvoicecontroller {
     export const upsertRevoInvoice = async (request: any, reply: any) => {
         try {
             let upsertRevoInvoiceResult = await revoinvoiceservice.upsertRevoInvoice(request.body);
+            console.log(request.body, "request.body in upsertRevoInvoice controller");
             if (upsertRevoInvoiceResult.command === "UPDATE" || upsertRevoInvoiceResult.command === "INSERT") {
                 let message: any = {};
                 message = {

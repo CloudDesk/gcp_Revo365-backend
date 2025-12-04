@@ -1251,10 +1251,11 @@ if (shiprocketOrderData?.shipment_id) {
   export const paymentInitializationRazorpayTicket = async (request: any) => {
   try {
     console.log("Inside paymentInitializationRazorpayTicket service");
+    console.log(request.body, "req values")
 
     // Extract the amount payable from servicetype in the request body
     const amount = Number(request.body.servicetype); // amount in paise for Razorpay
-
+     console.log(amount, "amount")
     // Generate a unique receipt id, can use any unique string generator or timestamp here
     const receiptId = `ticket_receipt_${Date.now()}`;
 
