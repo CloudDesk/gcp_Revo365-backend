@@ -10,7 +10,9 @@ export var blogService;
                 let querydata, params;
                 const { id, ...upsertFields } = blogs;
                 const fieldNames = Object.keys(upsertFields);
+                console.log(fieldNames, "fieldNames");
                 const fieldValues = Object.values(upsertFields);
+                console.log(fieldValues, "fieldValues");
                 if (id) {
                     querydata = `UPDATE blogs SET ${fieldNames
                         .map((field, index) => `${field} = $${index + 1}`)
@@ -24,6 +26,9 @@ export var blogService;
                     params = fieldValues;
                 }
                 const result = await query(querydata, params);
+                console.log(result, "result");
+                console.log(querydata, "querydata");
+                console.log(params, "params");
                 results.push(result);
             }
             const allCommands = results.map(r => r.command);

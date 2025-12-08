@@ -103,18 +103,21 @@ export var revoinvoiceservice;
             console.log('-->', fieldValues);
             console.log('Wait');
             if (id) {
+                console.log('inside if');
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
+                console.log('inside else');
                 querydata = `INSERT INTO revoinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames
                     .map((_, index) => `$${index + 1}`)
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            console.log(result, "result in upsertRevoInvoice");
             return result;
         }
         catch (error) {

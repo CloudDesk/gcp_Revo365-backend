@@ -72,6 +72,9 @@ export var userController;
             else if (upsertUserResult.command == 'INSERT') {
                 reply.status(200).send({ message: 'User signup done successfully', data: upsertUserResult.rows });
             }
+            else if (upsertUserResult.errorMessage === 'Duplicate Key Exist') {
+                reply.status(404).send(upsertUserResult.errorDetails[0].message);
+            }
             else {
                 reply.status(401).send(upsertUserResult.message);
             }

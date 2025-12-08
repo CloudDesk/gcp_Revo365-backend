@@ -27,6 +27,7 @@ export var revoinvoicecontroller;
     revoinvoicecontroller.upsertRevoInvoice = async (request, reply) => {
         try {
             let upsertRevoInvoiceResult = await revoinvoiceservice.upsertRevoInvoice(request.body);
+            console.log(request.body, "request.body in upsertRevoInvoice controller");
             if (upsertRevoInvoiceResult.command === "UPDATE" || upsertRevoInvoiceResult.command === "INSERT") {
                 let message = {};
                 message = {

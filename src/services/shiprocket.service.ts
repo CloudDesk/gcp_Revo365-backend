@@ -16,6 +16,7 @@ interface ShippingRate {
   cod_charges: number;
   other_charges: number;
   total_charge: number;
+  rate?: number;
   etd: string;
 }
 

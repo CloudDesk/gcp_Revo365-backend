@@ -104,6 +104,7 @@ export var ordersController;
     ordersController.getorderlinedata = async (request) => {
         try {
             let data = await ordersService.getOrderLineData(request);
+            console.log("data", data);
             return data;
         }
         catch (error) {
