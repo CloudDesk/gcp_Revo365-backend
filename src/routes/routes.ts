@@ -118,7 +118,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product-similar', { preHandler: [getSession] }, productrevoController.getSimilarProducts);
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
-    fastify.post('/v2/product/bulk', {preHandler:[getSession]},productrevoController.insertBulkProduct)
+    fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct)
 
     //version 2 -> stock
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
@@ -216,7 +216,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
     fastify.delete('/orders/:id', { preHandler: [getSession] }, ordersController.deleteOrder);
 
-    fastify.post('/v2/orders/transactions',{ preHandler:[getSession]}, ordersController.getInvoiceDataForOrderid)
+    fastify.post('/v2/orders/transactions', { preHandler: [getSession] }, ordersController.getInvoiceDataForOrderid)
 
     //third party orders - inventory
     fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
@@ -326,7 +326,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
 
-    fastify.post('/delete/merchantid',  ordersController.deleteFailedOrder)
+    fastify.post('/delete/merchantid', ordersController.deleteFailedOrder)
 
     // Dashboard
     // orders - product_revo
@@ -362,8 +362,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // fastify.get('/dashboard/:objectName', dashboardController.getCountData)
     fastify.get('/dashboard/count-orderstatus', { preHandler: [getSession] }, dashboardController.getCountData)
 
-    fastify.get('/rental-invoice/:uniqueorderid',{preHandler: [getSession]}, ordersController.getInvoiceGeneratedData)
-    fastify.post('/rental-invoice',{preHandler: [getSession]}, ordersController.updateInvoiceGeneratedData)
+    fastify.get('/rental-invoice/:uniqueorderid', { preHandler: [getSession] }, ordersController.getInvoiceGeneratedData)
+    fastify.post('/rental-invoice', { preHandler: [getSession] }, ordersController.updateInvoiceGeneratedData)
 
     //service estimation
     fastify.get('/service-estimation', { preHandler: [getSession] }, constEstimationController.getCostEstimationData);
@@ -373,17 +373,17 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     // banner
     fastify.get('/banner', bannerController.getAllBanner)
-    fastify.post('/banner', bannerController.upsertBanner) 
-    fastify.delete('/banner/:id',{preHandler:[getSession]}, bannerController.deleteBanner)
-   
+    fastify.post('/banner', bannerController.upsertBanner)
+    fastify.delete('/banner/:id', { preHandler: [getSession] }, bannerController.deleteBanner)
+
     //blogs
-    fastify.get('/blogs',blogscontroller.getAllBlogs)
-    fastify.post('/blogs', blogscontroller.upsertBlogs) 
-    fastify.delete('/blog/:id',{preHandler:[getSession]}, blogscontroller.deleteBlog)
+    fastify.get('/blogs', blogscontroller.getAllBlogs)
+    fastify.post('/blogs', blogscontroller.upsertBlogs)
+    fastify.delete('/blog/:id', { preHandler: [getSession] }, blogscontroller.deleteBlog)
 
     // Google Review
     fastify.get('/reviews', googlereviewController.getReviewsHandler);
- 
+
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
@@ -441,11 +441,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     });
 
     fastify.get('/test-shiprocket-diagnostics', async (request, reply) => {
-    await runShiprocketDiagnostics();
-    return reply.send({ 
-        message: 'Diagnostics completed. Check your server console for detailed output.' 
+        await runShiprocketDiagnostics();
+        return reply.send({
+            message: 'Diagnostics completed. Check your server console for detailed output.'
+        });
     });
-});
 
 }
 
