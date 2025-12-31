@@ -147,6 +147,11 @@ export module recordCountService {
           console.log("stock section");
           getcount = await query(`select count(*) from ${objectName}`, []);
         }
+        else if (objectName === "revoinvoice") {
+          console.log("revoinvoice section");
+          getcount = await query(`select count(*) from ${objectName}`, []);
+          console.log("ObjectName", objectName)
+        }
       }
 
       return getcount.rows[0].count;
@@ -259,9 +264,9 @@ export module recordCountService {
       ) {
         console.log("1 st condition");
         const baseQuery = `select count(*) from ${objectName} where ${objectName.toLowerCase() === "product_revo" ||
-            objectName.toLowerCase() === "stock_revo"
-            ? "removefromrecyclebin = false AND "
-            : ""
+          objectName.toLowerCase() === "stock_revo"
+          ? "removefromrecyclebin = false AND "
+          : ""
           } ${whereClause}`;
         const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
         let dat = await getCountQuery(
