@@ -72,8 +72,9 @@ export module ordersService {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
+            console.log("keys", keys)
             const values = Object.values(request.query);
-
+            console.log("values", values)
             let whereClauses: string[] = [];
             let parameterIndex = 1;
             const queryParams: any[] = [];
@@ -165,6 +166,7 @@ export module ordersService {
             }
 
             const result = await query(queryText, queryParams);
+            console.log("result", result)
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element: any) => {
                 if (element.invoiceurl) {
@@ -321,7 +323,7 @@ export module ordersService {
         }
     };
 
-   
+
 
     export const getOrderlineDynamic = async (request) => {
         try {
@@ -425,147 +427,147 @@ export module ordersService {
         }
     }
 
-//     export const getOrderLineData = async (request) => {
+    //     export const getOrderLineData = async (request) => {
 
-//         try {
-//             const pageNumber = parseInt(request.query.page) || 1;
-//             const recordCount = parseInt(request.query.count) || 5000;
-//             const keys = Object.keys(request.query);
-//             const values = Object.values(request.query);
+    //         try {
+    //             const pageNumber = parseInt(request.query.page) || 1;
+    //             const recordCount = parseInt(request.query.count) || 5000;
+    //             const keys = Object.keys(request.query);
+    //             const values = Object.values(request.query);
 
-//             let whereClauses: string[] = [];
-//             let parameterIndex = 1;
-//             const queryParams: any[] = [];
-//             let orderByField = "modifieddate";
-//             let orderByDirection = "DESC";
+    //             let whereClauses: string[] = [];
+    //             let parameterIndex = 1;
+    //             const queryParams: any[] = [];
+    //             let orderByField = "modifieddate";
+    //             let orderByDirection = "DESC";
 
-//             keys.forEach((key, index) => {
-//                 const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
-//                 if (key === "delivereddate" || key === "price") {
-//                     const rangeClauses = paramValues.map(range => {
-//                         const [lowerBound, upperBound] = range.split("-");
-//                         queryParams.push(lowerBound, upperBound);
-//                         return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
-//                     });
-//                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
-//                     parameterIndex += 2 * paramValues.length;
-//                 } else if (key === "sortby") {
-//                     const [fieldName, direction] = paramValues[0].split("-");
-//                     orderByField = fieldName;
-//                     orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
-//                 } else if (paramValues[0].startsWith("NOT ")) {
-//                     const cleanValue = paramValues[0].slice(4);
-//                     whereClauses.push(`(${key} != $${parameterIndex})`);
-//                     queryParams.push(cleanValue);
-//                     parameterIndex++;
-//                 } else if (key !== "page" && key !== "count") {
-//                     if (key === "userid") {
-//                         key = "orderline.userid";
+    //             keys.forEach((key, index) => {
+    //                 const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+    //                 if (key === "delivereddate" || key === "price") {
+    //                     const rangeClauses = paramValues.map(range => {
+    //                         const [lowerBound, upperBound] = range.split("-");
+    //                         queryParams.push(lowerBound, upperBound);
+    //                         return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+    //                     });
+    //                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
+    //                     parameterIndex += 2 * paramValues.length;
+    //                 } else if (key === "sortby") {
+    //                     const [fieldName, direction] = paramValues[0].split("-");
+    //                     orderByField = fieldName;
+    //                     orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
+    //                 } else if (paramValues[0].startsWith("NOT ")) {
+    //                     const cleanValue = paramValues[0].slice(4);
+    //                     whereClauses.push(`(${key} != $${parameterIndex})`);
+    //                     queryParams.push(cleanValue);
+    //                     parameterIndex++;
+    //                 } else if (key !== "page" && key !== "count") {
+    //                     if (key === "userid") {
+    //                         key = "orderline.userid";
 
-//                     }
-//                     const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
-//                     whereClauses.push(`(${clauses.join(" OR ")})`);
-//                     queryParams.push(...paramValues);
-//                     parameterIndex += paramValues.length;
-//                 }
-//             });
+    //                     }
+    //                     const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+    //                     whereClauses.push(`(${clauses.join(" OR ")})`);
+    //                     queryParams.push(...paramValues);
+    //                     parameterIndex += paramValues.length;
+    //                 }
+    //             });
 
-//             const offset = (pageNumber - 1) * recordCount;
-//             const baseConditions = `orderline.orderstatus !=  'payment_failed' AND orderline.orderstatus !=  'order_processing' `;
-//             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
-//             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-//             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
-//             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
-//             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city
-// FROM orderline
-// JOIN  address a on orderline.addressid = a.id
-// LEFT JOIN (
-//     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
-//     FROM (
-//         SELECT orderid, invoiceurl, createddate,
-//                ROW_NUMBER() OVER (PARTITION BY orderid ORDER BY createddate DESC) AS rn
-//         FROM revoinvoice
-//     ) AS ranked
-//     WHERE rn = 1
-// ) AS invoice ON orderline.uniqueorderid = invoice.orderid
+    //             const offset = (pageNumber - 1) * recordCount;
+    //             const baseConditions = `orderline.orderstatus !=  'payment_failed' AND orderline.orderstatus !=  'order_processing' `;
+    //             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
+    //             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
+    //             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
+    //             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
+    //             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city
+    // FROM orderline
+    // JOIN  address a on orderline.addressid = a.id
+    // LEFT JOIN (
+    //     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
+    //     FROM (
+    //         SELECT orderid, invoiceurl, createddate,
+    //                ROW_NUMBER() OVER (PARTITION BY orderid ORDER BY createddate DESC) AS rn
+    //         FROM revoinvoice
+    //     ) AS ranked
+    //     WHERE rn = 1
+    // ) AS invoice ON orderline.uniqueorderid = invoice.orderid
 
-// LEFT JOIN (
-//     SELECT starrating, productid,id,orderlineid,comments,url
-//     FROM rating
-// ) AS revorating ON revorating.orderlineid = orderline.id
-// ${whereClause} ${orderByClause}`;
+    // LEFT JOIN (
+    //     SELECT starrating, productid,id,orderlineid,comments,url
+    //     FROM rating
+    // ) AS revorating ON revorating.orderlineid = orderline.id
+    // ${whereClause} ${orderByClause}`;
 
 
-//             if (pageNumber && recordCount) {
-//                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
-//                 queryParams.push(offset, recordCount);
-//             }
+    //             if (pageNumber && recordCount) {
+    //                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+    //                 queryParams.push(offset, recordCount);
+    //             }
 
-//             const result = await query(queryText, queryParams);
-//             let datatypeCheckResult = await dataTypeCheck(result)
-//             const messageData = {
-//                 title: "Hello User",
-//                 body: "Payment Done Successfully",
-//             };
-//             console.log("Dam Dam", datatypeCheckResult);
-//             return datatypeCheckResult
-//         } catch (error) {
-//             console.error("Query Execution Error: IN getOrderLineData", error);
-//             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-//             return ErrorMessage
-//         }
+    //             const result = await query(queryText, queryParams);
+    //             let datatypeCheckResult = await dataTypeCheck(result)
+    //             const messageData = {
+    //                 title: "Hello User",
+    //                 body: "Payment Done Successfully",
+    //             };
+    //             console.log("Dam Dam", datatypeCheckResult);
+    //             return datatypeCheckResult
+    //         } catch (error) {
+    //             console.error("Query Execution Error: IN getOrderLineData", error);
+    //             let ErrorMessage = await ErrorHandler.handleQueryError(error)
+    //             return ErrorMessage
+    //         }
 
-//     }
-export const getOrderLineData = async (request) => {
-    try {
-        const pageNumber = parseInt(request.query.page) || 1;
-        const recordCount = parseInt(request.query.count) || 5000;
-        const keys = Object.keys(request.query);
-        console.log("keys", keys);
-        const values = Object.values(request.query);
-        console.log("values", values);
+    //     }
+    export const getOrderLineData = async (request) => {
+        try {
+            const pageNumber = parseInt(request.query.page) || 1;
+            const recordCount = parseInt(request.query.count) || 5000;
+            const keys = Object.keys(request.query);
+            console.log("keys", keys);
+            const values = Object.values(request.query);
+            console.log("values", values);
 
-        let whereClauses: string[] = [];
-        let parameterIndex = 1;
-        const queryParams: any[] = [];
-        let orderByField = "modifieddate";
-        let orderByDirection = "DESC";
+            let whereClauses: string[] = [];
+            let parameterIndex = 1;
+            const queryParams: any[] = [];
+            let orderByField = "modifieddate";
+            let orderByDirection = "DESC";
 
-        keys.forEach((key, index) => {
-            const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
-            if (key === "delivereddate" || key === "price") {
-                const rangeClauses = paramValues.map(range => {
-                    const [lowerBound, upperBound] = range.split("-");
-                    queryParams.push(lowerBound, upperBound);
-                    return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
-                });
-                whereClauses.push(`(${rangeClauses.join(" OR ")})`);
-                parameterIndex += 2 * paramValues.length;
-            } else if (key === "sortby") {
-                const [fieldName, direction] = paramValues[0].split("-");
-                orderByField = fieldName;
-                orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
-            } else if (paramValues[0].startsWith("NOT ")) {
-                const cleanValue = paramValues[0].slice(4);
-                whereClauses.push(`(${key} != $${parameterIndex})`);
-                queryParams.push(cleanValue);
-                parameterIndex++;
-            } else if (key !== "page" && key !== "count") {
-                if (key === "userid") {
-                    key = "orderline.userid";
+            keys.forEach((key, index) => {
+                const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+                if (key === "delivereddate" || key === "price") {
+                    const rangeClauses = paramValues.map(range => {
+                        const [lowerBound, upperBound] = range.split("-");
+                        queryParams.push(lowerBound, upperBound);
+                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                    });
+                    whereClauses.push(`(${rangeClauses.join(" OR ")})`);
+                    parameterIndex += 2 * paramValues.length;
+                } else if (key === "sortby") {
+                    const [fieldName, direction] = paramValues[0].split("-");
+                    orderByField = fieldName;
+                    orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
+                } else if (paramValues[0].startsWith("NOT ")) {
+                    const cleanValue = paramValues[0].slice(4);
+                    whereClauses.push(`(${key} != $${parameterIndex})`);
+                    queryParams.push(cleanValue);
+                    parameterIndex++;
+                } else if (key !== "page" && key !== "count") {
+                    if (key === "userid") {
+                        key = "orderline.userid";
+                    }
+                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    whereClauses.push(`(${clauses.join(" OR ")})`);
+                    queryParams.push(...paramValues);
+                    parameterIndex += paramValues.length;
                 }
-                const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
-                whereClauses.push(`(${clauses.join(" OR ")})`);
-                queryParams.push(...paramValues);
-                parameterIndex += paramValues.length;
-            }
-        });
+            });
 
-        const offset = (pageNumber - 1) * recordCount;
-        const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' `;
-        const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
-        const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-        let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
+            const offset = (pageNumber - 1) * recordCount;
+            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' `;
+            const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
+            const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
+            let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city
         FROM orderline
@@ -585,15 +587,15 @@ export const getOrderLineData = async (request) => {
         ) AS revorating ON revorating.orderlineid = orderline.id
         ${whereClause} ${orderByClause}`;
 
-        if (pageNumber && recordCount) {
-            queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
-            queryParams.push(offset, recordCount);
-        }
+            if (pageNumber && recordCount) {
+                queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
 
-        const result = await query(queryText, queryParams);
+            const result = await query(queryText, queryParams);
 
-        // Simple query for third-party orders
-        let thirdPartyQueryText = `SELECT orderline.*, NULL AS invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
+            // Simple query for third-party orders
+            let thirdPartyQueryText = `SELECT orderline.*, NULL AS invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city
         FROM orderline
@@ -604,51 +606,51 @@ export const getOrderLineData = async (request) => {
         ) AS revorating ON revorating.orderlineid = orderline.id
         WHERE orderline.ordertype = 'Third Party Orders' AND orderline.thirdpartyorderid IS NOT NULL`;
 
-        const thirdPartyQueryParams: any[] = [];
-        let thirdPartyParameterIndex = 1;
+            const thirdPartyQueryParams: any[] = [];
+            let thirdPartyParameterIndex = 1;
 
-        // Add userid filter if provided
-        if (request.query.userid) {
-            thirdPartyQueryText += ` AND orderline.userid = $${thirdPartyParameterIndex}`;
-            thirdPartyQueryParams.push(request.query.userid);
-            thirdPartyParameterIndex++;
+            // Add userid filter if provided
+            if (request.query.userid) {
+                thirdPartyQueryText += ` AND orderline.userid = $${thirdPartyParameterIndex}`;
+                thirdPartyQueryParams.push(request.query.userid);
+                thirdPartyParameterIndex++;
+            }
+
+            // Add thirdpartyorderid filter if provided
+            if (request.query.thirdpartyorderid) {
+                thirdPartyQueryText += ` AND orderline.thirdpartyorderid = $${thirdPartyParameterIndex}`;
+                thirdPartyQueryParams.push(request.query.thirdpartyorderid);
+                thirdPartyParameterIndex++;
+            }
+
+            thirdPartyQueryText += ` ${orderByClause}`;
+
+            if (pageNumber && recordCount) {
+                thirdPartyQueryText += ` OFFSET $${thirdPartyParameterIndex} LIMIT $${thirdPartyParameterIndex + 1}`;
+                thirdPartyQueryParams.push(offset, recordCount);
+            }
+
+            const thirdPartyResult = await query(thirdPartyQueryText, thirdPartyQueryParams);
+
+            // Combine results
+            const combinedResult = {
+                rows: [...result.rows, ...thirdPartyResult.rows]
+                // rowCount: result.rowCount + thirdPartyResult.rowCount
+            };
+            console.log("Combined Result:", combinedResult);
+            // let datatypeCheckResult = await dataTypeCheck(combinedResult);
+            // const messageData = {
+            //     title: "Hello User",
+            //     body: "Payment Done Successfully",
+            // };
+            // console.log("Order Line Data:", datatypeCheckResult);
+            return combinedResult.rows;
+        } catch (error) {
+            console.error("Query Execution Error: IN getOrderLineData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
         }
-
-        // Add thirdpartyorderid filter if provided
-        if (request.query.thirdpartyorderid) {
-            thirdPartyQueryText += ` AND orderline.thirdpartyorderid = $${thirdPartyParameterIndex}`;
-            thirdPartyQueryParams.push(request.query.thirdpartyorderid);
-            thirdPartyParameterIndex++;
-        }
-
-        thirdPartyQueryText += ` ${orderByClause}`;
-
-        if (pageNumber && recordCount) {
-            thirdPartyQueryText += ` OFFSET $${thirdPartyParameterIndex} LIMIT $${thirdPartyParameterIndex + 1}`;
-            thirdPartyQueryParams.push(offset, recordCount);
-        }
-
-        const thirdPartyResult = await query(thirdPartyQueryText, thirdPartyQueryParams);
-
-        // Combine results
-        const combinedResult = {
-            rows: [...result.rows, ...thirdPartyResult.rows]
-            // rowCount: result.rowCount + thirdPartyResult.rowCount
-        };
-        console.log("Combined Result:", combinedResult);
-        // let datatypeCheckResult = await dataTypeCheck(combinedResult);
-        // const messageData = {
-        //     title: "Hello User",
-        //     body: "Payment Done Successfully",
-        // };
-        // console.log("Order Line Data:", datatypeCheckResult);
-        return combinedResult.rows;
-    } catch (error) {
-        console.error("Query Execution Error: IN getOrderLineData", error);
-        let ErrorMessage = await ErrorHandler.handleQueryError(error);
-        return ErrorMessage;
-    }
-};
+    };
 
     export const getInvOrderLineData = async (request) => {
 
@@ -982,87 +984,87 @@ ${whereClause} ${orderByClause}`;
             console.log('Inside getInvoiceGeneratedData function with request:', request.params);
             const orderId = request.params.uniqueorderid;
             console.log('Order ID:', orderId);
-            const result = await query( `SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
+            const result = await query(`SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
             console.log('Query Result:', result.rows);
             if (result.rows.length === 0) {
                 return { error: "No order found for the given order ID." };
-            } else{
+            } else {
                 const rows = result.rows;
 
-const aggregated = {
-  // If all invoicegenerated true, then true, else false
-  invoicegenerated: rows.every(r => r.invoicegenerated === true),
+                const aggregated = {
+                    // If all invoicegenerated true, then true, else false
+                    invoicegenerated: rows.every(r => r.invoicegenerated === true),
 
-  // Maximum generatedmonthscount among orderlines
-  generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
+                    // Maximum generatedmonthscount among orderlines
+                    generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
 
-  // Maximum rentalfor (longest rental period)
-  rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
-};
+                    // Maximum rentalfor (longest rental period)
+                    rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
+                };
 
-return aggregated;
+                return aggregated;
 
             }
         } catch (error) {
             console.error("Query Execution Error: IN getInvoiceGeneratedData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
-            
+
         }
     }
 
     export const updateInvoiceGeneratedData = async (request: any) => {
-  try {
-    console.log("Inside update", request.body);
-    const { uniqueorderid } = request.body;
-    console.log("Unique Order ID:", uniqueorderid);
+        try {
+            console.log("Inside update", request.body);
+            const { uniqueorderid } = request.body;
+            console.log("Unique Order ID:", uniqueorderid);
 
-    // 1️⃣ Get all orderlines for this uniqueorderid
-    const { rows } = await query(
-      `SELECT id, rentalfor, generatedmonthscount 
+            // 1️⃣ Get all orderlines for this uniqueorderid
+            const { rows } = await query(
+                `SELECT id, rentalfor, generatedmonthscount 
        FROM orderline 
        WHERE uniqueorderid = $1`,
-      [uniqueorderid]
-    );
-    console.log("Orderlines fetched:", rows);
-    if (!rows.length) {
-      return { success: false, message: "No orderlines found" };
-    }
+                [uniqueorderid]
+            );
+            console.log("Orderlines fetched:", rows);
+            if (!rows.length) {
+                return { success: false, message: "No orderlines found" };
+            }
 
-    // 2️⃣ Filter the orderlines that still have months left
-    const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
-    console.log("Active rentals to update:", stillActive);
+            // 2️⃣ Filter the orderlines that still have months left
+            const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
+            console.log("Active rentals to update:", stillActive);
 
-    if (!stillActive.length) {
-      return { success: false, message: "No active rental products to update" };
-    }
+            if (!stillActive.length) {
+                return { success: false, message: "No active rental products to update" };
+            }
 
-    // 3️⃣ Update only active rentals
-    const idsToUpdate = stillActive.map(r => r.id);
-    console.log("IDs to update:", idsToUpdate);
+            // 3️⃣ Update only active rentals
+            const idsToUpdate = stillActive.map(r => r.id);
+            console.log("IDs to update:", idsToUpdate);
 
-    const updateResult = await query(
-  `UPDATE orderline
+            const updateResult = await query(
+                `UPDATE orderline
    SET invoicegenerated = true,
        lastgeneratedinvoicedate = CURRENT_DATE,
        generatedmonthscount = generatedmonthscount + 1
    WHERE id = ANY($1::int[])
    RETURNING id, rentalfor, generatedmonthscount, invoicegenerated, lastgeneratedinvoicedate`,
-  [idsToUpdate]
-);
-    console.log("Update result:", updateResult.rows);
-    return {
-      success: true,
-      message: `Updated ${idsToUpdate.length} active rental items`,
-      updatedIds: idsToUpdate
-    };
+                [idsToUpdate]
+            );
+            console.log("Update result:", updateResult.rows);
+            return {
+                success: true,
+                message: `Updated ${idsToUpdate.length} active rental items`,
+                updatedIds: idsToUpdate
+            };
 
-  } catch (error) {
-    console.error("Query Execution Error: IN updateInvoiceGeneratedData", error);
-    let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    return ErrorMessage;
-  }
-};
+        } catch (error) {
+            console.error("Query Execution Error: IN updateInvoiceGeneratedData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
 
 
 
@@ -1071,7 +1073,7 @@ return aggregated;
             let querydata: string;
             let params: any[];
             const { rfid, orderlinenumber, productid } = orderData;
-            
+
             let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
 
             if (updateStock.command === "UPDATE" || updateStock.command === "INSERT") {
@@ -1141,7 +1143,7 @@ return aggregated;
             const rfids = orderData.map(item => item.rfid);
             const productIds = orderData.map(item => item.productid);
             const validationResult = await query(validationQuery, [rfids, productIds]);
-    
+
             // Check if all RFIDs were found
             if (validationResult.rows.length !== orderData.length) {
                 const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
@@ -1152,17 +1154,17 @@ return aggregated;
                     statusCode: 400
                 };
             }
-    
+
             console.log('Before upsertStockRevoDatarfid:', orderData);
-            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);    
+            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
             if (updateStock.error) {
                 return { error: updateStock.error };
             }
             else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
-    
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);    
-                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);  
+
+                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
+                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);
                 if (ordersToUpdate.length > 0) {
                     let querydata = `
                         UPDATE orderline 
@@ -1173,7 +1175,7 @@ return aggregated;
                             END
                         WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
                         RETURNING *`;
-    
+
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
                     const result = await query(querydata, params);
                     return result;
@@ -1182,376 +1184,377 @@ return aggregated;
             else {
                 return { error: updateStock };
             }
-    
+
         } catch (error) {
             console.error("Query Execution Error: IN upsertOrderlinerfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
     };
-//     export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
-//     try {
-//         console.log('Transaction data:', transactionData);
-//         console.log('Order data:', orderData);
-//         let cartId: number[] = [];
-//         let productid: number[] = [];
-//         orderData.forEach((e: any) => {
-//             productid.push(e.productid);
-//             cartId.push(e.cartId);
-//             delete e.cartId;
-//         });
-//         console.log('Product IDs:', productid);
-//         console.log('Cart IDs:', cartId);
+    //     export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
+    //     try {
+    //         console.log('Transaction data:', transactionData);
+    //         console.log('Order data:', orderData);
+    //         let cartId: number[] = [];
+    //         let productid: number[] = [];
+    //         orderData.forEach((e: any) => {
+    //             productid.push(e.productid);
+    //             cartId.push(e.cartId);
+    //             delete e.cartId;
+    //         });
+    //         console.log('Product IDs:', productid);
+    //         console.log('Cart IDs:', cartId);
 
-//         // Query product_revo table to get availablequantity for each productid
-//         const quantityQuery = `
-//             SELECT id AS productid, availablequantity
-//             FROM product_revo
-//             WHERE id = ANY($1)
-//         `;
-//         const quantityResult = await query(quantityQuery, [productid]);
-//         const availableQuantities = quantityResult.rows.reduce((acc: any, row: any) => {
-//             acc[row.productid] = row.availablequantity;
-//             return acc;
-//         }, {});
+    //         // Query product_revo table to get availablequantity for each productid
+    //         const quantityQuery = `
+    //             SELECT id AS productid, availablequantity
+    //             FROM product_revo
+    //             WHERE id = ANY($1)
+    //         `;
+    //         const quantityResult = await query(quantityQuery, [productid]);
+    //         const availableQuantities = quantityResult.rows.reduce((acc: any, row: any) => {
+    //             acc[row.productid] = row.availablequantity;
+    //             return acc;
+    //         }, {});
 
-//         // Split orderData into orders and thirdpartyorders based on quantity check
-//         const ordersToInsert: any[] = [];
-//         const thirdPartyOrdersToInsert: any[] = [];
-//         orderData.forEach((item: any) => {
-//             const available = availableQuantities[item.productid] || 0;
-//             if (item.quantity <= available) {
-//                 // Entire quantity can be fulfilled from available stock
-//                 ordersToInsert.push({ ...item });
-//             } else {
-//                 // Split the order
-//                 if (available > 0) {
-//                     // Add available quantity to orders
-//                     const orderItem = { ...item, quantity: available };
-//                     ordersToInsert.push(orderItem);
-//                 }
-//                 // Add remaining quantity to thirdpartyorders
-//                 const thirdPartyQuantity = item.quantity - available;
-//                 if (thirdPartyQuantity > 0) {
-//                     const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
-//                     thirdPartyOrdersToInsert.push(thirdPartyItem);
-//                 }
-//             }
-//         });
+    //         // Split orderData into orders and thirdpartyorders based on quantity check
+    //         const ordersToInsert: any[] = [];
+    //         const thirdPartyOrdersToInsert: any[] = [];
+    //         orderData.forEach((item: any) => {
+    //             const available = availableQuantities[item.productid] || 0;
+    //             if (item.quantity <= available) {
+    //                 // Entire quantity can be fulfilled from available stock
+    //                 ordersToInsert.push({ ...item });
+    //             } else {
+    //                 // Split the order
+    //                 if (available > 0) {
+    //                     // Add available quantity to orders
+    //                     const orderItem = { ...item, quantity: available };
+    //                     ordersToInsert.push(orderItem);
+    //                 }
+    //                 // Add remaining quantity to thirdpartyorders
+    //                 const thirdPartyQuantity = item.quantity - available;
+    //                 if (thirdPartyQuantity > 0) {
+    //                     const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
+    //                     thirdPartyOrdersToInsert.push(thirdPartyItem);
+    //                 }
+    //             }
+    //         });
 
-//         console.log('Orders to insert:', ordersToInsert);
-//         console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
-//         console.log('Empty After splitting orders and third-party orders');
+    //         console.log('Orders to insert:', ordersToInsert);
+    //         console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
+    //         console.log('Empty After splitting orders and third-party orders');
 
-//         let combinedResult: any = { rows: [], command: 'INSERT' };
+    //         let combinedResult: any = { rows: [], command: 'INSERT' };
 
-//         // Process orders for orders table
-//         if (ordersToInsert.length > 0) {
-//             let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
-//                 return acc + e.quantity;
-//             }, 0);
-//             console.log('Order quantity for orders:', orderQuantity);
-//             console.log('Empty');
+    //         // Process orders for orders table
+    //         if (ordersToInsert.length > 0) {
+    //             let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
+    //                 return acc + e.quantity;
+    //             }, 0);
+    //             console.log('Order quantity for orders:', orderQuantity);
+    //             console.log('Empty');
 
-//             const insertOrderQuery = `
-//                 INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-//                 VALUES ($1, $2, $3, $4, $5, $6)
-//                 RETURNING *`;
-//             const insertOrderValues = [
-//                 transactionData.amount,
-//                 ordersToInsert[0].userid,
-//                 ordersToInsert[0].addressid,
-//                 ordersToInsert[0].merchanttransactionid,
-//                 orderQuantity,
-//                 transactionData.productid
-//             ];
+    //             const insertOrderQuery = `
+    //                 INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
+    //                 VALUES ($1, $2, $3, $4, $5, $6)
+    //                 RETURNING *`;
+    //             const insertOrderValues = [
+    //                 transactionData.amount,
+    //                 ordersToInsert[0].userid,
+    //                 ordersToInsert[0].addressid,
+    //                 ordersToInsert[0].merchanttransactionid,
+    //                 orderQuantity,
+    //                 transactionData.productid
+    //             ];
 
-//             try {
-//                 const orderResult = await query(insertOrderQuery, insertOrderValues);
-//                 if (orderResult.command === 'INSERT') {
-//                     const orderid = orderResult.rows[0].id;
-//                     const orderidunique = orderResult.rows[0].orderid;
-//                     const orderstatus = orderResult.rows[0].orderstatus;
-//                     ordersToInsert.forEach((e: any) => {
-//                         e.orderid = orderid;
-//                         e.uniqueorderid = orderidunique;
-//                         e.orderstatus = orderstatus;
-//                         e.ordertype = 'Orders';
-//                     });
-//                     const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
-//                     console.log('Order lines inserted from orders:', orderlineResult.rows);
-//                     console.log('Empty After inserting order lines');
-//                     // Add orders rows to combined result
-//                     combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
-//                 }
-//             } catch (error) {
-//                 console.error("Query Execution Error: BulkinsertOrder result", error);
-//                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
-//                 return ErrorMessage;
-//             }
-//         }
+    //             try {
+    //                 const orderResult = await query(insertOrderQuery, insertOrderValues);
+    //                 if (orderResult.command === 'INSERT') {
+    //                     const orderid = orderResult.rows[0].id;
+    //                     const orderidunique = orderResult.rows[0].orderid;
+    //                     const orderstatus = orderResult.rows[0].orderstatus;
+    //                     ordersToInsert.forEach((e: any) => {
+    //                         e.orderid = orderid;
+    //                         e.uniqueorderid = orderidunique;
+    //                         e.orderstatus = orderstatus;
+    //                         e.ordertype = 'Orders';
+    //                     });
+    //                     const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
+    //                     console.log('Order lines inserted from orders:', orderlineResult.rows);
+    //                     console.log('Empty After inserting order lines');
+    //                     // Add orders rows to combined result
+    //                     combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
+    //                 }
+    //             } catch (error) {
+    //                 console.error("Query Execution Error: BulkinsertOrder result", error);
+    //                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //                 return ErrorMessage;
+    //             }
+    //         }
 
-//         // Process orders for thirdpartyorders table (no order lines insertion)
-//         if (thirdPartyOrdersToInsert.length > 0) {
-//             console.log('Inside third-party orders');
-//             let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-//                 return acc + e.quantity;
-//             }, 0);
-//             console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
-//             console.log('Empty');
+    //         // Process orders for thirdpartyorders table (no order lines insertion)
+    //         if (thirdPartyOrdersToInsert.length > 0) {
+    //             console.log('Inside third-party orders');
+    //             let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+    //                 return acc + e.quantity;
+    //             }, 0);
+    //             console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
+    //             console.log('Empty');
 
-//             const insertThirdPartyQuery = `
-//                 INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-//                 VALUES ($1, $2, $3, $4, $5, $6)
-//                 RETURNING *`;
-//             const insertThirdPartyValues = [
-//                 transactionData.amount,
-//                 thirdPartyOrdersToInsert[0].userid,
-//                 thirdPartyOrdersToInsert[0].addressid,
-//                 thirdPartyOrdersToInsert[0].merchanttransactionid,
-//                 thirdPartyOrderQuantity,
-//                 transactionData.productid
-//             ];
+    //             const insertThirdPartyQuery = `
+    //                 INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
+    //                 VALUES ($1, $2, $3, $4, $5, $6)
+    //                 RETURNING *`;
+    //             const insertThirdPartyValues = [
+    //                 transactionData.amount,
+    //                 thirdPartyOrdersToInsert[0].userid,
+    //                 thirdPartyOrdersToInsert[0].addressid,
+    //                 thirdPartyOrdersToInsert[0].merchanttransactionid,
+    //                 thirdPartyOrderQuantity,
+    //                 transactionData.productid
+    //             ];
 
-//             try {
-//                 const thirdPartyResult = await query(insertThirdPartyQuery, insertThirdPartyValues);
-//                 console.log('Third-party order result:', thirdPartyResult.rows);
-//                 if (thirdPartyResult.command === 'INSERT') {
-//                     const orderid = thirdPartyResult.rows[0].id;
-//                     const orderidunique = thirdPartyResult.rows[0].orderid;
-//                     const orderstatus = thirdPartyResult.rows[0].orderstatus;
-//                     ordersToInsert.forEach((e: any) => {
-//                         e.orderid = orderid;
-//                         e.uniqueorderid = orderidunique;
-//                         e.orderstatus = orderstatus;
-//                         e.ordertype = 'Third Party Orders'
-//                     });
-//                     const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
-//                     console.log('Order lines inserted from third party:', orderlineResult.rows);
-//                     console.log('Empty After inserting third-party order lines');
-//                     // Add thirdpartyorders rows to combined result
-//                     combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
-//                 }
-//             } catch (error) {
-//                 console.error("Query Execution Error: BulkinsertThirdPartyOrder result", error);
-//                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
-//                 return ErrorMessage;
-//             }
-//         }
+    //             try {
+    //                 const thirdPartyResult = await query(insertThirdPartyQuery, insertThirdPartyValues);
+    //                 console.log('Third-party order result:', thirdPartyResult.rows);
+    //                 if (thirdPartyResult.command === 'INSERT') {
+    //                     const orderid = thirdPartyResult.rows[0].id;
+    //                     const orderidunique = thirdPartyResult.rows[0].orderid;
+    //                     const orderstatus = thirdPartyResult.rows[0].orderstatus;
+    //                     ordersToInsert.forEach((e: any) => {
+    //                         e.orderid = orderid;
+    //                         e.uniqueorderid = orderidunique;
+    //                         e.orderstatus = orderstatus;
+    //                         e.ordertype = 'Third Party Orders'
+    //                     });
+    //                     const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
+    //                     console.log('Order lines inserted from third party:', orderlineResult.rows);
+    //                     console.log('Empty After inserting third-party order lines');
+    //                     // Add thirdpartyorders rows to combined result
+    //                     combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
+    //                 }
+    //             } catch (error) {
+    //                 console.error("Query Execution Error: BulkinsertThirdPartyOrder result", error);
+    //                 let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //                 return ErrorMessage;
+    //             }
+    //         }
 
-//         return combinedResult.rows.length > 0
-//             ? combinedResult
-//             : { rows: [], command: 'NOOP', message: 'No orders processed' };
-//     } catch (error) {
-//         console.error("Query Execution Error: IN BulkinsertOrder", error);
-//         let ErrorMessage = await ErrorHandler.handleQueryError(error);
-//         return ErrorMessage;
-//     }
-// };
+    //         return combinedResult.rows.length > 0
+    //             ? combinedResult
+    //             : { rows: [], command: 'NOOP', message: 'No orders processed' };
+    //     } catch (error) {
+    //         console.error("Query Execution Error: IN BulkinsertOrder", error);
+    //         let ErrorMessage = await ErrorHandler.handleQueryError(error);
+    //         return ErrorMessage;
+    //     }
+    // };
 
-export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
-    try {
-        console.log('Transaction data:', transactionData);
-        console.log('Order data:', orderData);
-        console.log('Empty Before processing order data');
+    export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
+        try {
+            console.log('Transaction data:', transactionData);
+            console.log('Order data:', orderData);
+            console.log('Empty Before processing order data');
 
-        const {merchantTransactionId, userId, cgst, sgst, storelocation} = transactionData;
+            const { merchantTransactionId, userId, cgst, sgst, storelocation } = transactionData;
 
-        if(orderData[0].addressid === null){
-            const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
-            console.log('getAddress:', getAddress.rows);
-            const addressId = getAddress.rows[0]?.id;
-            orderData.forEach(order => {
-    if (order.addressid === null) {
-        order.addressid = addressId;
-    }})
-        }
-        console.log('Order Data after setting addressid:', orderData);
-        console.log('Empty After processing order data');
-        let cartId: number[] = [];
-        let productid: number[] = [];
-        orderData.forEach((e: any) => {
-            productid.push(e.productid);
-            cartId.push(e.cartId);
-            delete e.cartId;
-        });
-        console.log('Product IDs:', productid);
-        console.log('Cart IDs:', cartId);
+            if (orderData[0].addressid === null) {
+                const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
+                console.log('getAddress:', getAddress.rows);
+                const addressId = getAddress.rows[0]?.id;
+                orderData.forEach(order => {
+                    if (order.addressid === null) {
+                        order.addressid = addressId;
+                    }
+                })
+            }
+            console.log('Order Data after setting addressid:', orderData);
+            console.log('Empty After processing order data');
+            let cartId: number[] = [];
+            let productid: number[] = [];
+            orderData.forEach((e: any) => {
+                productid.push(e.productid);
+                cartId.push(e.cartId);
+                delete e.cartId;
+            });
+            console.log('Product IDs:', productid);
+            console.log('Cart IDs:', cartId);
 
-        // Query product_revo table to get availablequantity for each productid
-        const quantityQuery = `
+            // Query product_revo table to get availablequantity for each productid
+            const quantityQuery = `
             SELECT id AS productid, availablequantity
             FROM product_revo
             WHERE id = ANY($1)
         `;
-        const quantityResult = await query(quantityQuery, [productid]);
-        console.log('Available quantities:', quantityResult.rows);
-        const availableQuantities = quantityResult.rows.reduce((acc: any, row: any) => {
-            acc[row.productid] = row.availablequantity;
-            return acc;
-        }, {});
+            const quantityResult = await query(quantityQuery, [productid]);
+            console.log('Available quantities:', quantityResult.rows);
+            const availableQuantities = quantityResult.rows.reduce((acc: any, row: any) => {
+                acc[row.productid] = row.availablequantity;
+                return acc;
+            }, {});
 
-        // Split orderData into orders and thirdpartyorders based on quantity check
-        const ordersToInsert: any[] = [];
-        const thirdPartyOrdersToInsert: any[] = [];
-        orderData.forEach((item: any) => {
-            const available = availableQuantities[item.productid] || 0;
-            if (item.quantity <= available) {
-                // Entire quantity can be fulfilled from available stock
-                ordersToInsert.push({ ...item });
-            } else {
-                // Split the order
-                if (available > 0) {
-                    // Add available quantity to orders
-                    const orderItem = { ...item, quantity: available };
-                    ordersToInsert.push(orderItem);
+            // Split orderData into orders and thirdpartyorders based on quantity check
+            const ordersToInsert: any[] = [];
+            const thirdPartyOrdersToInsert: any[] = [];
+            orderData.forEach((item: any) => {
+                const available = availableQuantities[item.productid] || 0;
+                if (item.quantity <= available) {
+                    // Entire quantity can be fulfilled from available stock
+                    ordersToInsert.push({ ...item });
+                } else {
+                    // Split the order
+                    if (available > 0) {
+                        // Add available quantity to orders
+                        const orderItem = { ...item, quantity: available };
+                        ordersToInsert.push(orderItem);
+                    }
+                    // Add remaining quantity to thirdpartyorders
+                    const thirdPartyQuantity = item.quantity - available;
+                    if (thirdPartyQuantity > 0) {
+                        const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
+                        thirdPartyOrdersToInsert.push(thirdPartyItem);
+                    }
                 }
-                // Add remaining quantity to thirdpartyorders
-                const thirdPartyQuantity = item.quantity - available;
-                if (thirdPartyQuantity > 0) {
-                    const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
-                    thirdPartyOrdersToInsert.push(thirdPartyItem);
-                }
-            }
-        });
+            });
 
-        console.log('Orders to insert:', ordersToInsert);
-        console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
-        console.log('Empty After splitting orders and third-party orders');
+            console.log('Orders to insert:', ordersToInsert);
+            console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
+            console.log('Empty After splitting orders and third-party orders');
 
-        let combinedResult: any = { rows: [], command: 'INSERT' };
+            let combinedResult: any = { rows: [], command: 'INSERT' };
 
-        // Process orders for orders table
-        if (ordersToInsert.length > 0) {
-            // Calculate specific order amount, quantity, and product IDs for orders table
-            let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
-                return acc + e.quantity;
-            }, 0);
-            let orderAmount = ordersToInsert.reduce((acc: number, e: any) => {
-                return acc + (e.productamount * e.quantity);
-            }, 0);
-            let orderProductIds = ordersToInsert.map((e: any) => e.productid);
+            // Process orders for orders table
+            if (ordersToInsert.length > 0) {
+                // Calculate specific order amount, quantity, and product IDs for orders table
+                let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
+                    return acc + e.quantity;
+                }, 0);
+                let orderAmount = ordersToInsert.reduce((acc: number, e: any) => {
+                    return acc + (e.productamount * e.quantity);
+                }, 0);
+                let orderProductIds = ordersToInsert.map((e: any) => e.productid);
 
-            console.log('Order quantity for orders:', orderQuantity);
-            console.log('Order amount for orders:', orderAmount);
-            console.log('Order product IDs:', orderProductIds);
-            console.log('Mid checkpoint: Before inserting orders');
-            const finalMerchantTransactionId =
-  merchantTransactionId != null && merchantTransactionId !== '' 
-    ? merchantTransactionId 
-    : ordersToInsert[0]?.merchanttransactionid;
-            console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
-            console.log('Empty');
+                console.log('Order quantity for orders:', orderQuantity);
+                console.log('Order amount for orders:', orderAmount);
+                console.log('Order product IDs:', orderProductIds);
+                console.log('Mid checkpoint: Before inserting orders');
+                const finalMerchantTransactionId =
+                    merchantTransactionId != null && merchantTransactionId !== ''
+                        ? merchantTransactionId
+                        : ordersToInsert[0]?.merchanttransactionid;
+                console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
+                console.log('Empty');
 
-            const insertOrderQuery = `
+                const insertOrderQuery = `
                 INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING *`;
-            const insertOrderValues = [
-                orderAmount,
-                ordersToInsert[0].userid,
-                ordersToInsert[0].addressid,
-                finalMerchantTransactionId,
-                orderQuantity,
-                orderProductIds,
-                ordersToInsert[0].ordername,
-                ordersToInsert[0].paymentmethod,
-                ordersToInsert[0].totalrentalamount,
-                sgst,
-                cgst,
-                storelocation
-            ];
+                const insertOrderValues = [
+                    orderAmount,
+                    ordersToInsert[0].userid,
+                    ordersToInsert[0].addressid,
+                    finalMerchantTransactionId,
+                    orderQuantity,
+                    orderProductIds,
+                    ordersToInsert[0].ordername,
+                    ordersToInsert[0].paymentmethod,
+                    ordersToInsert[0].totalrentalamount,
+                    sgst,
+                    cgst,
+                    storelocation
+                ];
 
-            try {
-                const orderResult = await query(insertOrderQuery, insertOrderValues);
-                if (orderResult.command === 'INSERT') {
-                    const orderid = orderResult.rows[0].id;
-                    const orderidunique = orderResult.rows[0].orderid;
-                    const orderstatus = orderResult.rows[0].orderstatus;
-                    ordersToInsert.forEach((e: any) => {
-                        e.orderid = orderid;
-                        e.uniqueorderid = orderidunique;
-                        e.orderstatus = orderstatus;
-                        e.ordertype = 'Orders';
-                    });
-                    const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
-                    console.log('Order lines inserted from orders:', orderlineResult.rows);
-                    console.log('Empty After inserting order lines');
-                    // Add orders rows to combined result
-                    combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
+                try {
+                    const orderResult = await query(insertOrderQuery, insertOrderValues);
+                    if (orderResult.command === 'INSERT') {
+                        const orderid = orderResult.rows[0].id;
+                        const orderidunique = orderResult.rows[0].orderid;
+                        const orderstatus = orderResult.rows[0].orderstatus;
+                        ordersToInsert.forEach((e: any) => {
+                            e.orderid = orderid;
+                            e.uniqueorderid = orderidunique;
+                            e.orderstatus = orderstatus;
+                            e.ordertype = 'Orders';
+                        });
+                        const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
+                        console.log('Order lines inserted from orders:', orderlineResult.rows);
+                        console.log('Empty After inserting order lines');
+                        // Add orders rows to combined result
+                        combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
+                    }
+                } catch (error) {
+                    console.error("Query Execution Error: BulkinsertOrder result", error);
+                    let ErrorMessage = await ErrorHandler.handleQueryError(error);
+                    return ErrorMessage;
                 }
-            } catch (error) {
-                console.error("Query Execution Error: BulkinsertOrder result", error);
-                let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                return ErrorMessage;
             }
-        }
 
-        // Process orders for thirdpartyorders table
-        if (thirdPartyOrdersToInsert.length > 0) {
-            console.log('Inside third-party orders');
-            // Calculate specific order amount, quantity, and product IDs for thirdpartyorders table
-            let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                return acc + e.quantity;
-            }, 0);
-            let thirdPartyOrderAmount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                return acc + (e.productamount * e.quantity);
-            }, 0);
-            let thirdPartyProductIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
+            // Process orders for thirdpartyorders table
+            if (thirdPartyOrdersToInsert.length > 0) {
+                console.log('Inside third-party orders');
+                // Calculate specific order amount, quantity, and product IDs for thirdpartyorders table
+                let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+                    return acc + e.quantity;
+                }, 0);
+                let thirdPartyOrderAmount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+                    return acc + (e.productamount * e.quantity);
+                }, 0);
+                let thirdPartyProductIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
 
-            console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
-            console.log('Order amount for thirdpartyorders:', thirdPartyOrderAmount);
-            console.log('Third-party product IDs:', thirdPartyProductIds);
-            console.log('Empty');
+                console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
+                console.log('Order amount for thirdpartyorders:', thirdPartyOrderAmount);
+                console.log('Third-party product IDs:', thirdPartyProductIds);
+                console.log('Empty');
 
-            const insertThirdPartyQuery = `
+                const insertThirdPartyQuery = `
                 INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING *`;
-            const insertThirdPartyValues = [
-                thirdPartyOrderAmount,
-                thirdPartyOrdersToInsert[0].userid,
-                thirdPartyOrdersToInsert[0].addressid,
-                thirdPartyOrdersToInsert[0].merchanttransactionid,
-                thirdPartyOrderQuantity,
-                thirdPartyProductIds
-            ];
+                const insertThirdPartyValues = [
+                    thirdPartyOrderAmount,
+                    thirdPartyOrdersToInsert[0].userid,
+                    thirdPartyOrdersToInsert[0].addressid,
+                    thirdPartyOrdersToInsert[0].merchanttransactionid,
+                    thirdPartyOrderQuantity,
+                    thirdPartyProductIds
+                ];
 
-            try {
-                const thirdPartyResult = await query(insertThirdPartyQuery, insertThirdPartyValues);
-                console.log('Third-party order result:', thirdPartyResult.rows);
-                if (thirdPartyResult.command === 'INSERT') {
-                    const orderid = thirdPartyResult.rows[0].id;
-                    const orderidunique = thirdPartyResult.rows[0].orderid;
-                    const orderstatus = thirdPartyResult.rows[0].orderstatus;
-                    thirdPartyOrdersToInsert.forEach((e: any) => {
-                        e.thirdpartyorderid = orderid;
-                        e.uniqueorderid = orderidunique;
-                        e.orderstatus = orderstatus;
-                        e.ordertype = 'Third Party Orders';
-                    });
-                    const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert);
-                    console.log('Order lines inserted from third party:', orderlineResult.rows);
-                    console.log('Empty After inserting third-party order lines');
-                    // Add thirdpartyorders rows to combined result
-                    combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
+                try {
+                    const thirdPartyResult = await query(insertThirdPartyQuery, insertThirdPartyValues);
+                    console.log('Third-party order result:', thirdPartyResult.rows);
+                    if (thirdPartyResult.command === 'INSERT') {
+                        const orderid = thirdPartyResult.rows[0].id;
+                        const orderidunique = thirdPartyResult.rows[0].orderid;
+                        const orderstatus = thirdPartyResult.rows[0].orderstatus;
+                        thirdPartyOrdersToInsert.forEach((e: any) => {
+                            e.thirdpartyorderid = orderid;
+                            e.uniqueorderid = orderidunique;
+                            e.orderstatus = orderstatus;
+                            e.ordertype = 'Third Party Orders';
+                        });
+                        const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert);
+                        console.log('Order lines inserted from third party:', orderlineResult.rows);
+                        console.log('Empty After inserting third-party order lines');
+                        // Add thirdpartyorders rows to combined result
+                        combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
+                    }
+                } catch (error) {
+                    console.error("Query Execution Error: BulkinsertThirdPartyOrder result", error);
+                    let ErrorMessage = await ErrorHandler.handleQueryError(error);
+                    return ErrorMessage;
                 }
-            } catch (error) {
-                console.error("Query Execution Error: BulkinsertThirdPartyOrder result", error);
-                let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                return ErrorMessage;
             }
-        }
 
-        return combinedResult.rows.length > 0
-            ? combinedResult
-            : { rows: [], command: 'NOOP', message: 'No orders processed' };
-    } catch (error) {
-        console.error("Query Execution Error: IN BulkinsertOrder", error);
-        let ErrorMessage = await ErrorHandler.handleQueryError(error);
-        return ErrorMessage;
-    }
-};
+            return combinedResult.rows.length > 0
+                ? combinedResult
+                : { rows: [], command: 'NOOP', message: 'No orders processed' };
+        } catch (error) {
+            console.error("Query Execution Error: IN BulkinsertOrder", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
+    };
     export const bulkInsertOrderlines = async (orderData: any[]) => {
         try {
             console.log('Inside update bulkInsertOrderlines with orderData:', orderData);
@@ -1568,7 +1571,7 @@ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
             const values = orderData.flatMap(order =>
                 fields.map(field => order[field])
             );
-            const result = await query(querydata, values);           
+            const result = await query(querydata, values);
 
             return result;
 
@@ -1756,78 +1759,78 @@ Thank You!`,
             // console.log("Unique orderIds:", uniqueOrderIds);
 
             // const placeholders = uniqueOrderIds.map((_, index) => `$${index + 1}`).join(", ");
-        const invoiceQuery = await query(
-            `SELECT * FROM revoinvoice WHERE customerId = $1`,
-            [customerId]
-        );
-        console.log("Invoice Query Result:", invoiceQuery.rows);
-        return invoiceQuery; 
+            const invoiceQuery = await query(
+                `SELECT * FROM revoinvoice WHERE customerId = $1`,
+                [customerId]
+            );
+            console.log("Invoice Query Result:", invoiceQuery.rows);
+            return invoiceQuery;
 
         } catch (error) {
             console.error("Error in getInvoiceDataForOrderid:", error);
             throw error;
-            
+
         }
     }
 
     export const deleteFailedOrder = async (merchantid) => {
-  try {
-    console.log("Deleting failed order for merchantid:", merchantid);
-    // Step 1: Fetch orders with merchanttransactionid (unpaid & no transactionid)
-    const orderIdQuery = `
+        try {
+            console.log("Deleting failed order for merchantid:", merchantid);
+            // Step 1: Fetch orders with merchanttransactionid (unpaid & no transactionid)
+            const orderIdQuery = `
       SELECT orderid, transactionid  FROM orders 
       WHERE merchanttransactionid = $1 
       AND ispaymentsucceed = FALSE 
       AND transactionid IS NULL;
     `;
-    const orderIdResult = await query(orderIdQuery, [merchantid]);
-    console.log("Order IDs fetched:", orderIdResult.rows);
+            const orderIdResult = await query(orderIdQuery, [merchantid]);
+            console.log("Order IDs fetched:", orderIdResult.rows);
 
-    if (orderIdResult.rows.length === 0) {
-      return { status: 200, message: 'Merchant Id Payment is successful or no pending orders' };
-    }
+            if (orderIdResult.rows.length === 0) {
+                return { status: 200, message: 'Merchant Id Payment is successful or no pending orders' };
+            }
 
-    const uniqueorderid = orderIdResult.rows[0].orderid;
-    console.log("Unique Order ID to delete:", uniqueorderid);
+            const uniqueorderid = orderIdResult.rows[0].orderid;
+            console.log("Unique Order ID to delete:", uniqueorderid);
 
-    // Step 2: Get all product ids associated with order lines
-    const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
-const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
+            // Step 2: Get all product ids associated with order lines
+            const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
 
-console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
+            console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
 
-if (productIdOrderlineResult.rows.length > 0) {
-    console.log("Updating lock_qty for products associated with the order");
-  const products = productIdOrderlineResult.rows;
-   console.log("Products to update:", products);
-  // Iterate through each product and update individually
-  for (const product of products) {
-    console.log(`Updating lock_qty for product ID: ${product}`);
-    const updateLockQtyQuery = `
+            if (productIdOrderlineResult.rows.length > 0) {
+                console.log("Updating lock_qty for products associated with the order");
+                const products = productIdOrderlineResult.rows;
+                console.log("Products to update:", products);
+                // Iterate through each product and update individually
+                for (const product of products) {
+                    console.log(`Updating lock_qty for product ID: ${product}`);
+                    const updateLockQtyQuery = `
       UPDATE product_revo
       SET lock_qty = lock_qty - $1
       WHERE id = $2
     `;
-    
-    const res = await query(updateLockQtyQuery, [product.quantity, product.productid]);
-    console.log(`lock_qty updated for product ID:`, res);
-  }
-}
 
-    // Step 4: Delete orderline entries for this order
-    const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1`;
-    await query(deleteOrderlineQuery, [uniqueorderid]);
+                    const res = await query(updateLockQtyQuery, [product.quantity, product.productid]);
+                    console.log(`lock_qty updated for product ID:`, res);
+                }
+            }
 
-    // Step 5: Delete the order record
-    const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1`;
-    await query(deleteOrdersQuery, [uniqueorderid]);
+            // Step 4: Delete orderline entries for this order
+            const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1`;
+            await query(deleteOrderlineQuery, [uniqueorderid]);
 
-    return { status: 200, message: 'Data Deleted Successfully' };
+            // Step 5: Delete the order record
+            const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1`;
+            await query(deleteOrdersQuery, [uniqueorderid]);
 
-  } catch (error) {
-    console.error("Error in getOrderDataForMerchantid Service:", error);
-    return { status: 500, message: 'Error processing order cleanup' };
-  }
-};
+            return { status: 200, message: 'Data Deleted Successfully' };
+
+        } catch (error) {
+            console.error("Error in getOrderDataForMerchantid Service:", error);
+            return { status: 500, message: 'Error processing order cleanup' };
+        }
+    };
 
 }
