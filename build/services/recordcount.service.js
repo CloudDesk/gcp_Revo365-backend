@@ -139,6 +139,11 @@ export var recordCountService;
                     console.log("stock section");
                     getcount = await query(`select count(*) from ${objectName}`, []);
                 }
+                else if (objectName === "revoinvoice") {
+                    console.log("revoinvoice section");
+                    getcount = await query(`select count(*) from ${objectName}`, []);
+                    console.log("ObjectName", objectName);
+                }
             }
             return getcount.rows[0].count;
         }

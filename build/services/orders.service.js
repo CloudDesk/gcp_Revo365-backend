@@ -62,7 +62,9 @@ export var ordersService;
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
+            console.log("keys", keys);
             const values = Object.values(request.query);
+            console.log("values", values);
             let whereClauses = [];
             let parameterIndex = 1;
             const queryParams = [];
@@ -151,6 +153,7 @@ export var ordersService;
                 queryParams.push(offset, recordCount);
             }
             const result = await query(queryText, queryParams);
+            console.log("result", result);
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element) => {
                 if (element.invoiceurl) {
