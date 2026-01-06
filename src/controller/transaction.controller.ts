@@ -13,7 +13,7 @@ export module transactionController {
         reply.send(transactionData);
       }
     } catch (error) {
-      console.error("Query Execution Error: IN paymentInitialization Controller",error);
+      console.error("Query Execution Error: IN paymentInitialization Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
     }
@@ -68,9 +68,9 @@ export module transactionController {
   };
 
 
-   export const paymentInitializationRazorpay = async (request: any, reply: any) => {
+  export const paymentInitializationRazorpay = async (request: any, reply: any) => {
     try {
-      let transactionData :any = await transactionService.paymentInitializationRazorpay(
+      let transactionData: any = await transactionService.paymentInitializationRazorpay(
         request
       );
       console.log("transactionData", transactionData);
@@ -80,17 +80,18 @@ export module transactionController {
         reply.status(transactionData.status).send('Transaction initialization failed');
       }
     } catch (error) {
-      console.error("Query Execution Error: IN paymentInitialization Controller",error);
+      console.error("Query Execution Error: IN paymentInitialization Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
     }
   };
 
 
-   export const paymentConfirmationRazorpay = async (request, reply) => {
+  export const paymentConfirmationRazorpay = async (request, reply) => {
     try {
       console.log('inside razorpay confirmation controller');
       let transactionData = await transactionService.paymentConfirmationRazorpay(request);
+      console.log('transactionData', transactionData);
       if (transactionData?.status == 400 || transactionData?.status == 500) {
         reply.status(transactionData.status).send({
           message: transactionData.message,
@@ -108,7 +109,7 @@ export module transactionController {
 
   export const paymentInitializationRazorpayTicket = async (request: any, reply: any) => {
     try {
-      let transactionData :any = await transactionService.paymentInitializationRazorpayTicket(
+      let transactionData: any = await transactionService.paymentInitializationRazorpayTicket(
         request
       );
       console.log("transactionData", transactionData);
@@ -118,7 +119,7 @@ export module transactionController {
         reply.status(transactionData.status).send('Transaction initialization failed');
       }
     } catch (error) {
-      console.error("Query Execution Error: IN paymentInitialization Controller",error);
+      console.error("Query Execution Error: IN paymentInitialization Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
     }
