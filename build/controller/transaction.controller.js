@@ -78,6 +78,7 @@ export var transactionController;
         try {
             console.log('inside razorpay confirmation controller');
             let transactionData = await transactionService.paymentConfirmationRazorpay(request);
+            console.log('transactionData', transactionData);
             if (transactionData?.status == 400 || transactionData?.status == 500) {
                 reply.status(transactionData.status).send({
                     message: transactionData.message,

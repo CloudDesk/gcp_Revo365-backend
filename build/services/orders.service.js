@@ -1508,16 +1508,20 @@ ${whereClause} ${orderByClause}`;
     async function updateOrderStatus(payload, emailid, paymentfailed) {
         try {
             const { orderid, orderstatus } = payload;
+            console.log('Inside updateOrderStatus with data:', payload);
             const updateQuery = `
                 UPDATE orderline
                 SET orderstatus = $1
                 WHERE orderid = $2
                 RETURNING *;
             `;
+            console.log('Inside updateOrderStatus with data: Update Query:', updateQuery);
             const result = await query(updateQuery, [orderstatus, orderid]);
+            console.log('Inside updateOrderStatus with data: Update Result:', result);
             if (result.rowCount === 0) {
                 throw new Error(`No orderline found with orderid: ${orderid}`);
             }
+            console.log('Inside updateOrderStatus with data: Update Result:', result);
             let orderedquantity = result.rows[0].quantity;
             const template = emailTemplates.orders.orderPlaced;
             let textdata = result.rows.map(e => `Order Id  : ${e.orderlinenumber} and Amount : ${e.orderamount}`).join('\n');
