@@ -11,6 +11,7 @@ export var productrevoService;
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
+            console.log(keys, "keys");
             const values = Object.values(request.query);
             let whereClauses = [];
             let parameterIndex = 1;
@@ -334,7 +335,9 @@ export var productrevoService;
     productrevoService.getEachProductsRevo = async function (request, id) {
         try {
             const result = await query(`SELECT * FROM product_revo where id=${id}`, []);
+            console.log(result, "result");
             let getvalues = { objectName: "null" };
+            console.log(getvalues, "getvalues");
             getvalues.objectName = "products";
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
@@ -514,7 +517,7 @@ export var productrevoService;
     };
     productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold) => {
         console.log('--upsertQuantityFields', upsertData);
-        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty } = upsertData;
+        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity } = upsertData;
         try {
             let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
             let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
@@ -539,15 +542,17 @@ export var productrevoService;
           overallavailableqty = $6, 
           rentalsoldquantity = $7,
           oncatalogueqty = $8,
-          offcatalogueqty = $9
+          offcatalogueqty = $9,
+          rentaltotalquantity = $10,
+          rentalavailablequantity = $11
     `;
             let updateQuery = '';
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateQueryBase += `, orderedquantity = orderedquantity - $10`;
-                updateQuery = `${updateQueryBase} WHERE puc = $11 RETURNING *`;
+                updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+                updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
             }
             else {
-                updateQuery = `${updateQueryBase} WHERE puc = $10 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $12 RETURNING *`;
             }
             let updateParams = [];
             if (issold && !isNaN(orderedquantityNumber)) {
@@ -561,6 +566,8 @@ export var productrevoService;
                     rentalsoldquantity,
                     oncatalogueqty,
                     offcatalogueqty,
+                    rentaltotalquantity,
+                    rentalavailablequantity,
                     orderedquantityNumber,
                     puc
                 ];
@@ -576,6 +583,8 @@ export var productrevoService;
                     rentalsoldquantity,
                     oncatalogueqty,
                     offcatalogueqty,
+                    rentaltotalquantity,
+                    rentalavailablequantity,
                     puc
                 ];
             }
@@ -615,10 +624,13 @@ export var productrevoService;
                         'quantity', $2::integer,
                         'ecompublishedquantity', $3::integer,
                         'soldquantity', $4::integer,
-                        'availablequantity', $5::integer
+                        'availablequantity', $5::integer,
+                        'rentaltotalquantity', $6::integer,
+                        'rentalsoldquantity', $7::integer,
+                        'rentalavailablequantity', $8::integer
                     )
                 )
-            WHERE puc = $6
+            WHERE puc = $9
             RETURNING *
         `;
             if (issold) {
@@ -632,10 +644,13 @@ export var productrevoService;
                   'quantity', $2::integer,
                   'ecompublishedquantity', $3::integer,
                   'soldquantity', $4::integer,
-                  'availablequantity', $5::integer
+                  'availablequantity', $5::integer,
+                  'rentaltotalquantity', $6::integer,
+                  'rentalsoldquantity', $7::integer,
+                  'rentalavailablequantity', $8::integer
                 )
               )
-            WHERE puc = $6
+            WHERE puc = $9
             RETURNING *
           `;
             }
@@ -648,6 +663,9 @@ export var productrevoService;
                         data.ecompublishedquantity,
                         data.soldquantity,
                         data.availablequantity,
+                        data.rentaltotalquantity,
+                        data.rentalsoldquantity, // Assuming rentalsoldquantity is available here, derived from diff in previous step
+                        data.rentalavailablequantity,
                         data.puc
                     ]
                 };
@@ -742,13 +760,13 @@ export var productrevoService;
         const queryText = `
         WITH counts AS (
             SELECT 
-                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' THEN 1 ELSE 0 END), 0) AS off_catalogue_count
+                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count
             FROM stock_revo 
             WHERE 
                 puc = $1
-                AND ecompublish = true 
-                AND stockstatus = 'Available' 
                 AND isdeleted = false 
                 AND isarchive = false 
                 AND removefromrecyclebin = false 
@@ -757,10 +775,13 @@ export var productrevoService;
         UPDATE product_revo 
         SET 
             oncatalogueqty = counts.on_catalogue_count,
-            offcatalogueqty = counts.off_catalogue_count
+            offcatalogueqty = counts.off_catalogue_count,
+            rentaltotalquantity = counts.rental_total_count,
+            rentalsoldquantity = counts.rental_sold_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count
         FROM counts
         WHERE puc = $1
-        RETURNING counts.on_catalogue_count, counts.off_catalogue_count;
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count, (counts.rental_total_count - counts.rental_sold_count) as rental_available_count;
     `;
         console.log('queryText:', queryText);
         let result = await query(queryText, [puc]);
@@ -768,7 +789,9 @@ export var productrevoService;
         if (result.rows.length > 0) {
             return {
                 onCatalogueCount: result.rows[0].on_catalogue_count,
-                offCatalogueCount: result.rows[0].off_catalogue_count
+                offCatalogueCount: result.rows[0].off_catalogue_count,
+                rentalTotalQuantity: result.rows[0].rental_total_count,
+                rentalAvailableQuantity: result.rows[0].rental_available_count
             };
         }
         else {

@@ -56,6 +56,7 @@ export var productrevoController;
     productrevoController.getEachProductsRevo = async function (request, reply) {
         try {
             const { id } = request.params;
+            console.log("request.params", request.params);
             let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id));
             reply.send(getProductsResult);
         }

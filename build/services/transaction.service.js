@@ -254,9 +254,9 @@ export var transactionService;
                     body: "Payment Not Done. If Any Payment Debited it will be refunded in 5 business Days",
                 };
                 messageinitialization(transactionDataset.transaction.userId, messageData);
-                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing,
-                    // razorpay_signature,
-                    true);
+                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing, 
+                // razorpay_signature,
+                true);
             }
             const queryParams = new URLSearchParams(response.data).toString();
             let url = REDIRECT_URL_SUCCESS;
@@ -292,9 +292,9 @@ export var transactionService;
             return ErrorMessage;
         }
     };
-    transactionService.insertTransactionData = async (transactionData, insersertdordderdatawithprocessing,
-        // razorpay_signature: string,
-        paymentfailed = false) => {
+    transactionService.insertTransactionData = async (transactionData, insersertdordderdatawithprocessing, 
+    // razorpay_signature: string,
+    paymentfailed = false) => {
         try {
             console.log("Inside insertTransactionData service");
             console.log("Transaction Data:", transactionData);
@@ -474,7 +474,7 @@ export var transactionService;
                     insertorderdata.rows[0].id,
                     transactionResult.rows[0].transactionid,
                 ]);
-                console.log("Update Order Status:", updateOrderStatus);
+                // console.log("Update Order Status:", updateOrderStatus);
                 console.log(">>>>>", productupdateorderqty, ">>>>>");
                 console.log("---------------");
                 const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
@@ -489,8 +489,8 @@ export var transactionService;
                     console.log("ggg");
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
                     // console.log("Updated Order Quantity:", updatedOrderQuantity);
-                    // console.log(cartIddata, "cart id to delete");
-                    // console.log("final");
+                    console.log(cartIddata, "cart id to delete");
+                    console.log("final");
                 }
                 console.log("end");
                 return {
@@ -889,7 +889,7 @@ export var transactionService;
             transactionDataset.transaction.transactiondata = payment;
             const message = { payment: "Payment done successfully" };
             const result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing
-                // razorpay_signature
+            // razorpay_signature
             );
             console.log(result, "Result after insertTransactionData");
             console.log("end");

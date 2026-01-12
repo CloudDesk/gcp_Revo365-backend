@@ -65,6 +65,7 @@ export var stockRevoController;
     stockRevoController.upsertStockRevoData = async (request, reply) => {
         try {
             let upsertStockResult = await stockRevoService.upsertStockRevoData(request.body);
+            console.log("request body", request.body);
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
                 const puc = upsertStockResult.result.puc;
                 const pucArray = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
