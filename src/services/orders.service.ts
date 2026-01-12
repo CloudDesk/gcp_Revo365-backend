@@ -1447,8 +1447,8 @@ ${whereClause} ${orderByClause}`;
                 console.log('Empty');
 
                 const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation, assetnumber, location, vendorname, empid, deliverydate, brand, invoicefor)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 RETURNING *`;
                 const insertOrderValues = [
                     orderAmount,
@@ -1462,7 +1462,14 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].totalrentalamount,
                     sgst,
                     cgst,
-                    storelocation
+                    storelocation,
+                    ordersToInsert[0].assetnumber,
+                    ordersToInsert[0].location,
+                    ordersToInsert[0].vendorname,
+                    ordersToInsert[0].empid,
+                    ordersToInsert[0].deliverydate,
+                    ordersToInsert[0].brand,
+                    ordersToInsert[0].invoicefor
                 ];
 
                 try {
@@ -1557,7 +1564,7 @@ ${whereClause} ${orderByClause}`;
     };
     export const bulkInsertOrderlines = async (orderData: any[]) => {
         try {
-            console.log('Inside update bulkInsertOrderlines with orderData:', orderData);
+            console.log('Inside update bulkInsertOrderlines with orderData:', JSON.stringify(orderData, null, 2));
             const fields = Object.keys(orderData[0]);
             const fieldNames = fields.join(", ");
             const baseQuery = `INSERT INTO orderline (${fieldNames}) VALUES `;
@@ -1638,6 +1645,16 @@ ${whereClause} ${orderByClause}`;
                         orderstatus: updatedOrderResult.rows[0].orderstatus
                     }
                     const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed)
+
+                    // Filter for rental orders and allocate stock
+                    if (!paymentfailed) {
+                        const rentalOrders = updatedOrderResult.rows.filter((row: any) => row.ordername === 'rental');
+                        if (rentalOrders.length > 0) {
+                            console.log(`Found ${rentalOrders.length} rental orders. Allocating stock.`);
+                            await stockRevoService.allocateRentalStock(rentalOrders);
+                        }
+                    }
+
                     console.log('Updated Order Line Data from orders:', updatedOrderLineData);
                     console.log('Empty After updating order line data');
                     return { data: updatedOrderResult.rows, status: 'success' }

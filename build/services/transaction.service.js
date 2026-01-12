@@ -254,9 +254,9 @@ export var transactionService;
                     body: "Payment Not Done. If Any Payment Debited it will be refunded in 5 business Days",
                 };
                 messageinitialization(transactionDataset.transaction.userId, messageData);
-                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing, 
-                // razorpay_signature,
-                true);
+                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing,
+                    // razorpay_signature,
+                    true);
             }
             const queryParams = new URLSearchParams(response.data).toString();
             let url = REDIRECT_URL_SUCCESS;
@@ -292,9 +292,9 @@ export var transactionService;
             return ErrorMessage;
         }
     };
-    transactionService.insertTransactionData = async (transactionData, insersertdordderdatawithprocessing, 
-    // razorpay_signature: string,
-    paymentfailed = false) => {
+    transactionService.insertTransactionData = async (transactionData, insersertdordderdatawithprocessing,
+        // razorpay_signature: string,
+        paymentfailed = false) => {
         try {
             console.log("Inside insertTransactionData service");
             console.log("Transaction Data:", transactionData);
@@ -488,9 +488,9 @@ export var transactionService;
                     console.log("Update Product Order Quantity Data:", updateproductorderquantiydata);
                     console.log("ggg");
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
-                    console.log("Updated Order Quantity:", updatedOrderQuantity);
-                    console.log(cartIddata, "cart id to delete");
-                    console.log("final");
+                    // console.log("Updated Order Quantity:", updatedOrderQuantity);
+                    // console.log(cartIddata, "cart id to delete");
+                    // console.log("final");
                 }
                 console.log("end");
                 return {
@@ -889,7 +889,7 @@ export var transactionService;
             transactionDataset.transaction.transactiondata = payment;
             const message = { payment: "Payment done successfully" };
             const result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing
-            // razorpay_signature
+                // razorpay_signature
             );
             console.log(result, "Result after insertTransactionData");
             console.log("end");
@@ -905,7 +905,7 @@ export var transactionService;
                         orderedquantity: e.quantity,
                     }));
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
-                    console.log("Updated Order Quantity:", updatedOrderQuantity);
+                    // console.log("Updated Order Quantity:", updatedOrderQuantity);
                     console.log(cartIddata, "cart id to delete");
                     console.log("final");
                     if (cartIddata[0] === undefined) {

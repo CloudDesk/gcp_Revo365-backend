@@ -58,6 +58,7 @@ export module productrevoController {
     export const getEachProductsRevo = async function (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) {
         try {
             const { id } = request.params
+            console.log("request.params", request.params)
 
             let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id))
             reply.send(getProductsResult)

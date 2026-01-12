@@ -725,8 +725,8 @@ export var productrevoService;
         WHERE id = $2
         RETURNING *`;
                 let result = await query(queryText, [orderedquantity, id]);
-                console.log('---', result);
-                console.log('---', result.rows);
+                // console.log('---', result);
+                // console.log('---', result.rows);
                 data.push(result);
             }
             return data; // return array of results

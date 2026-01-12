@@ -61,9 +61,8 @@ export module transactionService {
           const rangeClauses = paramValues.map((range) => {
             const [lowerBound, upperBound] = range.split("-");
             queryParams.push(lowerBound, upperBound);
-            return `(${key} BETWEEN $${parameterIndex} AND $${
-              parameterIndex + 1
-            })`;
+            return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+              })`;
           });
           whereClauses.push(`(${rangeClauses.join(" OR ")})`);
           parameterIndex += 2 * paramValues.length;
@@ -570,7 +569,7 @@ export module transactionService {
         const allQuantitiesAvailable = result.rows.every(
           (product) =>
             Number(product.overallavailableqty) - Number(product.lock_qty) >=
-              0 &&
+            0 &&
             Number(
               product.overallavailableqty - Number(product.orderedquantity)
             ) >= 0
@@ -635,7 +634,7 @@ export module transactionService {
             transactionResult.rows[0].transactionid,
           ]
         );
-        console.log("Update Order Status:", updateOrderStatus);
+        // console.log("Update Order Status:", updateOrderStatus);
         console.log(">>>>>", productupdateorderqty, ">>>>>");
         console.log("---------------");
         const updateOrderlineStatus = await query(
@@ -660,7 +659,7 @@ export module transactionService {
             await productrevoService.updateOrderedQuantityarray(
               updateproductorderquantiydata
             );
-          console.log("Updated Order Quantity:", updatedOrderQuantity);
+          // console.log("Updated Order Quantity:", updatedOrderQuantity);
           console.log(cartIddata, "cart id to delete");
           console.log("final");
         }
@@ -698,7 +697,7 @@ export module transactionService {
         const allQuantitiesAvailable = result.rows.every(
           (product) =>
             Number(product.overallavailableqty) - Number(product.lock_qty) >=
-              0 &&
+            0 &&
             Number(
               product.overallavailableqty - Number(product.orderedquantity)
             ) >= 0
@@ -952,210 +951,210 @@ export module transactionService {
       }
 
       const checkMerchantId = await query(
-  `SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,
-  [merchantTransactionId]
-);
-console.log(checkMerchantId.rows, "Check Merchant ID in orders");
+        `SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,
+        [merchantTransactionId]
+      );
+      console.log(checkMerchantId.rows, "Check Merchant ID in orders");
 
-// Step 2: If not found in orders, check in thirdpartyorders
-let checkMerchantIdThirdParty = { rows: [] };
-if (checkMerchantId.rows.length === 0) {
-  checkMerchantIdThirdParty = await query(
-    `SELECT merchanttransactionid FROM thirdpartyorders WHERE merchanttransactionid = $1`,
-    [merchantTransactionId]
-  );
-  console.log(
-    checkMerchantIdThirdParty.rows,
-    "Check Merchant ID in thirdpartyorders"
-  );
-}
-if (
-  checkMerchantId.rows.length === 0 &&
-  checkMerchantIdThirdParty.rows.length === 0
-) {
-  await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
-  return { status: 400, message: "Payment timed out, try again." };
-}
+      // Step 2: If not found in orders, check in thirdpartyorders
+      let checkMerchantIdThirdParty = { rows: [] };
+      if (checkMerchantId.rows.length === 0) {
+        checkMerchantIdThirdParty = await query(
+          `SELECT merchanttransactionid FROM thirdpartyorders WHERE merchanttransactionid = $1`,
+          [merchantTransactionId]
+        );
+        console.log(
+          checkMerchantIdThirdParty.rows,
+          "Check Merchant ID in thirdpartyorders"
+        );
+      }
+      if (
+        checkMerchantId.rows.length === 0 &&
+        checkMerchantIdThirdParty.rows.length === 0
+      ) {
+        await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+        return { status: 400, message: "Payment timed out, try again." };
+      }
 
-const token = await loginShiprocket();
+      const token = await loginShiprocket();
       // ✅ Shiprocket Payload Construction
-const orderData = transactionDataset.order[0];
-const transactionData = transactionDataset.transaction;
+      const orderData = transactionDataset.order[0];
+      const transactionData = transactionDataset.transaction;
 
-// Fetch user & address from DB (since Shiprocket needs name, phone, address, etc.)
-const userQuery = await query(`SELECT firstname, lastname, useremail, usermobilenumber FROM users WHERE id = $1`, [transactionData.userId]);
-const addressQuery = await query(`SELECT address, city, state, pincode FROM address WHERE id = $1`, [orderData.addressid]);
+      // Fetch user & address from DB (since Shiprocket needs name, phone, address, etc.)
+      const userQuery = await query(`SELECT firstname, lastname, useremail, usermobilenumber FROM users WHERE id = $1`, [transactionData.userId]);
+      const addressQuery = await query(`SELECT address, city, state, pincode FROM address WHERE id = $1`, [orderData.addressid]);
 
-const user = userQuery.rows[0];
-const address = addressQuery.rows[0];
+      const user = userQuery.rows[0];
+      const address = addressQuery.rows[0];
 
-// Construct payload
-const shiprocketPayload = {
-  order_id: transactionData.merchanttransactionId, // your order unique ID
-  order_date: new Date().toISOString(), // current date or order.createddate if available
-  pickup_location: "warehouse",
-  // pickup_location: orderData.storelocation || "73, Singanna Chetty St, Chindatripet, Anna Salai, Chintadripet, Chennai, Tamil Nadu 600002",
-  billing_customer_name: user?.firstname || "Customer",
-  billing_last_name: user?.lastname || "Customer",
-  billing_address: address?.address || "Not Provided",
-  billing_address_2: "Not Given",
-  billing_city: address?.city || "Unknown City",
-  billing_pincode: address?.pincode || "000000",
-  billing_state: address?.state || "Unknown State",
-  billing_country: "India",
-  billing_email: user?.useremail || transactionData.name,
-  billing_phone: user?.usermobilenumber || transactionData.mobilenumber,
-  shipping_customer_name: user?.firstname || 'Customer',
-  shipping_last_name: user?.lastname || 'Customer',
-  shipping_address: address?.address || "Not Provided",
-  shipping_address_2:'Not Given',
-  shipping_city: address?.city || "Unknown City",
-  shipping_pincode: address?.pincode || "000000",
-  shipping_state: address?.state || "Unknown State",
-  shipping_country: "India",
-  shipping_is_billing: true,
-  shipping_email: user?.useremail || transactionData.name,
-  shipping_phone: user?.usermobilenumber || transactionData.mobilenumber,
-  order_items: [
-    {
-      name: orderData.productname,
-      sku: `SKU-${orderData.productid}`,
-      units: orderData.quantity,
-      selling_price: orderData.productamount,
-    },
-  ],
-  payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
-  sub_total: orderData.orderamount,
-  length: 10,
-  breadth: 10,
-  height: 10,
-  weight: 0.5,
-};
+      // Construct payload
+      const shiprocketPayload = {
+        order_id: transactionData.merchanttransactionId, // your order unique ID
+        order_date: new Date().toISOString(), // current date or order.createddate if available
+        pickup_location: "warehouse",
+        // pickup_location: orderData.storelocation || "73, Singanna Chetty St, Chindatripet, Anna Salai, Chintadripet, Chennai, Tamil Nadu 600002",
+        billing_customer_name: user?.firstname || "Customer",
+        billing_last_name: user?.lastname || "Customer",
+        billing_address: address?.address || "Not Provided",
+        billing_address_2: "Not Given",
+        billing_city: address?.city || "Unknown City",
+        billing_pincode: address?.pincode || "000000",
+        billing_state: address?.state || "Unknown State",
+        billing_country: "India",
+        billing_email: user?.useremail || transactionData.name,
+        billing_phone: user?.usermobilenumber || transactionData.mobilenumber,
+        shipping_customer_name: user?.firstname || 'Customer',
+        shipping_last_name: user?.lastname || 'Customer',
+        shipping_address: address?.address || "Not Provided",
+        shipping_address_2: 'Not Given',
+        shipping_city: address?.city || "Unknown City",
+        shipping_pincode: address?.pincode || "000000",
+        shipping_state: address?.state || "Unknown State",
+        shipping_country: "India",
+        shipping_is_billing: true,
+        shipping_email: user?.useremail || transactionData.name,
+        shipping_phone: user?.usermobilenumber || transactionData.mobilenumber,
+        order_items: [
+          {
+            name: orderData.productname,
+            sku: `SKU-${orderData.productid}`,
+            units: orderData.quantity,
+            selling_price: orderData.productamount,
+          },
+        ],
+        payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
+        sub_total: orderData.orderamount,
+        length: 10,
+        breadth: 10,
+        height: 10,
+        weight: 0.5,
+      };
 
-// 👇 Log payload only for verification
-console.log("🧾 Shiprocket Payload Preview ===>", JSON.stringify(shiprocketPayload, null, 2));
-console.log('Test')
+      // 👇 Log payload only for verification
+      console.log("🧾 Shiprocket Payload Preview ===>", JSON.stringify(shiprocketPayload, null, 2));
+      console.log('Test')
 
-let shiprocketOrderData = null;
-try {
-  const shiprocketResponse = await axios.post(
-    `${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`,
-    shiprocketPayload,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+      let shiprocketOrderData = null;
+      try {
+        const shiprocketResponse = await axios.post(
+          `${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`,
+          shiprocketPayload,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
 
-  shiprocketOrderData = shiprocketResponse.data;
-  console.log("✅ Shiprocket order creation response:", shiprocketOrderData);
-  console.log('Stop After Shiprocket order creation')
+        shiprocketOrderData = shiprocketResponse.data;
+        console.log("✅ Shiprocket order creation response:", shiprocketOrderData);
+        console.log('Stop After Shiprocket order creation')
 
-  // Store order + shipment data in DB
-  await query(
-    `UPDATE orders 
+        // Store order + shipment data in DB
+        await query(
+          `UPDATE orders 
      SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
      WHERE merchanttransactionid = $6`,
-    [
-      shiprocketOrderData.order_id,
-      shiprocketOrderData.shipment_id,
-      shiprocketOrderData.status_code,
-      shiprocketOrderData.status,
-      shiprocketOrderData.channel_order_id,
-      transactionData.merchanttransactionId,
-    ]
-  );
+          [
+            shiprocketOrderData.order_id,
+            shiprocketOrderData.shipment_id,
+            shiprocketOrderData.status_code,
+            shiprocketOrderData.status,
+            shiprocketOrderData.channel_order_id,
+            transactionData.merchanttransactionId,
+          ]
+        );
 
-  await query(
-    `UPDATE thirdpartyorders 
+        await query(
+          `UPDATE thirdpartyorders 
      SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
      WHERE merchanttransactionid = $6`,
-    [
-      shiprocketOrderData.order_id,
-      shiprocketOrderData.shipment_id,
-      shiprocketOrderData.status_code,
-      shiprocketOrderData.status,
-      shiprocketOrderData.channel_order_id,
-      transactionData.merchanttransactionId,
-    ]
-  );
-  console.log("Stop after Update DB1")
-} catch (error) {
-  console.error("❌ Error creating Shiprocket order:", error.response?.data || error.message);
-}
-
-// ✅ STEP 2: Assign Courier (Generate AWB)
-if (shiprocketOrderData?.shipment_id) {
-  try {
-    console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`)
-
-    const readyToShip = await axios.post(
-      `${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`,
-      { shipment_id: [Number(shiprocketOrderData.shipment_id)] },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
+          [
+            shiprocketOrderData.order_id,
+            shiprocketOrderData.shipment_id,
+            shiprocketOrderData.status_code,
+            shiprocketOrderData.status,
+            shiprocketOrderData.channel_order_id,
+            transactionData.merchanttransactionId,
+          ]
+        );
+        console.log("Stop after Update DB1")
+      } catch (error) {
+        console.error("❌ Error creating Shiprocket order:", error.response?.data || error.message);
       }
-    );
 
-    console.log("📦 Ready to Ship Response:", readyToShip.data);
+      // ✅ STEP 2: Assign Courier (Generate AWB)
+      if (shiprocketOrderData?.shipment_id) {
+        try {
+          console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`)
 
-    await new Promise((r) => setTimeout(r, 15000));
-    console.log("Order ID:", shiprocketOrderData.order_id);
-    console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
+          const readyToShip = await axios.post(
+            `${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`,
+            { shipment_id: [Number(shiprocketOrderData.shipment_id)] },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
 
-    const courierResponse = await axios.post(
-      `${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`,
-      { shipment_id: Number(shiprocketOrderData.shipment_id) },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+          console.log("📦 Ready to Ship Response:", readyToShip.data);
 
-    const courierData = courierResponse.data;
-    console.log("🚚 Courier Assigned Response:", courierData);
-    console.log("Stop After Assign courier")
+          await new Promise((r) => setTimeout(r, 15000));
+          console.log("Order ID:", shiprocketOrderData.order_id);
+          console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
 
-    // Update AWB & courier details in DB
-    await query(
-      `UPDATE orders 
+          const courierResponse = await axios.post(
+            `${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`,
+            { shipment_id: Number(shiprocketOrderData.shipment_id) },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+
+          const courierData = courierResponse.data;
+          console.log("🚚 Courier Assigned Response:", courierData);
+          console.log("Stop After Assign courier")
+
+          // Update AWB & courier details in DB
+          await query(
+            `UPDATE orders 
        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
        WHERE merchanttransactionid = $4`,
-      [
-        courierData.awb_code || null,
-        courierData.courier_name || null,
-        courierData.courier_company_id || null,
-        transactionData.merchanttransactionId,
-      ]
-    );
+            [
+              courierData.awb_code || null,
+              courierData.courier_name || null,
+              courierData.courier_company_id || null,
+              transactionData.merchanttransactionId,
+            ]
+          );
 
-    await query(
-      `UPDATE thirdpartyorders 
+          await query(
+            `UPDATE thirdpartyorders 
        SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
        WHERE merchanttransactionid = $4`,
-      [
-        courierData.awb_code || null,
-        courierData.courier_name || null,
-        courierData.courier_company_id || null,
-        transactionData.merchanttransactionId,
-      ]
-    );
+            [
+              courierData.awb_code || null,
+              courierData.courier_name || null,
+              courierData.courier_company_id || null,
+              transactionData.merchanttransactionId,
+            ]
+          );
 
-    console.log("✅ Courier assigned and AWB updated in DB");
-  } catch (error) {
-    console.error("❌ Error assigning courier:", error.response?.data || error.message);
-    console.log('Inside Error')
-  }
-} else {
-  console.log("⚠️ Shipment ID missing — cannot assign courier.");
-}
+          console.log("✅ Courier assigned and AWB updated in DB");
+        } catch (error) {
+          console.error("❌ Error assigning courier:", error.response?.data || error.message);
+          console.log('Inside Error')
+        }
+      } else {
+        console.log("⚠️ Shipment ID missing — cannot assign courier.");
+      }
 
       // Update transaction and order data
       console.log(
@@ -1191,7 +1190,7 @@ if (shiprocketOrderData?.shipment_id) {
             await productrevoService.updateOrderedQuantityarray(
               updateproductorderquantiydata
             );
-          console.log("Updated Order Quantity:", updatedOrderQuantity);
+          // console.log("Updated Order Quantity:", updatedOrderQuantity);
           console.log(cartIddata, "cart id to delete");
           console.log("final");
           if (cartIddata[0] === undefined) {
@@ -1249,54 +1248,54 @@ if (shiprocketOrderData?.shipment_id) {
   };
 
   export const paymentInitializationRazorpayTicket = async (request: any) => {
-  try {
-    console.log("Inside paymentInitializationRazorpayTicket service");
-    console.log(request.body, "req values")
+    try {
+      console.log("Inside paymentInitializationRazorpayTicket service");
+      console.log(request.body, "req values")
 
-    // Extract the amount payable from servicetype in the request body
-    const amount = Number(request.body.servicetype); // amount in paise for Razorpay
-     console.log(amount, "amount")
-    // Generate a unique receipt id, can use any unique string generator or timestamp here
-    const receiptId = `ticket_receipt_${Date.now()}`;
+      // Extract the amount payable from servicetype in the request body
+      const amount = Number(request.body.servicetype); // amount in paise for Razorpay
+      console.log(amount, "amount")
+      // Generate a unique receipt id, can use any unique string generator or timestamp here
+      const receiptId = `ticket_receipt_${Date.now()}`;
 
-    // Create Razorpay order
-    const order = await razorpay.orders.create({
-      amount: Number(amount) * 100,
-      currency: "INR",
-      receipt: receiptId,
-      notes: {
-        userid: request.body.userid || "unknown",
-        tickettype: request.body.tickettype || "unknown",
-      },
-    });
+      // Create Razorpay order
+      const order = await razorpay.orders.create({
+        amount: Number(amount) * 100,
+        currency: "INR",
+        receipt: receiptId,
+        notes: {
+          userid: request.body.userid || "unknown",
+          tickettype: request.body.tickettype || "unknown",
+        },
+      });
 
-    console.log("Razorpay order created:", order);
-    console.log('Vanakam')
-    // Return the order info for the frontend to initiate payment
-    return {
-      status: 200,
-      data: {
+      console.log("Razorpay order created:", order);
+      console.log('Vanakam')
+      // Return the order info for the frontend to initiate payment
+      return {
         status: 200,
-        orderId: order.id,
-        amount: order.amount,
-        currency: order.currency,
-        key: RAZORPAY_KEY_ID,
-        redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-      },
-    };
-  } catch (error) {
-    console.error("Error in paymentInitializationRazorpayTicket:", error.message);
-    // Handle errors appropriately
-    let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    return ErrorMessage;
-  }
-};
+        data: {
+          status: 200,
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          key: RAZORPAY_KEY_ID,
+          redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+        },
+      };
+    } catch (error) {
+      console.error("Error in paymentInitializationRazorpayTicket:", error.message);
+      // Handle errors appropriately
+      let ErrorMessage = await ErrorHandler.handleQueryError(error);
+      return ErrorMessage;
+    }
+  };
 
 
   export const paymentConfirmationRazorpayTicket = async (request) => {
     console.log("Inside paymentConfirmationRazorpay service");
     console.log("Dummy");
-    
+
     try {
       let transactionDataset = request.body.transactionData;
       const { razorpay_payment_id, razorpay_order_id, razorpay_signature } =
@@ -1359,16 +1358,16 @@ if (shiprocketOrderData?.shipment_id) {
         razorpay_order_id,
         razorpay_signature) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [payment,
-        transactionDataset.userId,
-        transactionDataset.productid,
-        transactionDataset.merchanttransactionId,
-        transactionDataset.name,
-        transactionDataset.amount,
-        transactionDataset.mobilenumber,
-        transactionDataset.transactionfor,
-        razorpay_payment_id,
-        razorpay_order_id,
-        razorpay_signature
+          transactionDataset.userId,
+          transactionDataset.productid,
+          transactionDataset.merchanttransactionId,
+          transactionDataset.name,
+          transactionDataset.amount,
+          transactionDataset.mobilenumber,
+          transactionDataset.transactionfor,
+          razorpay_payment_id,
+          razorpay_order_id,
+          razorpay_signature
         ])
       console.log(insertTransaction.command, "Insert Transaction Result:");
       console.log("end");
@@ -1377,14 +1376,14 @@ if (shiprocketOrderData?.shipment_id) {
           status: 200,
           message: "Payment verified and processed successfully",
         };
-      }else{
+      } else {
         return {
           status: 400,
           message:
             "Transaction failure. If payment debited, it will be refunded in 5 business days",
         };
       }
-       
+
     } catch (error) {
       console.error(
         "Query Execution Error: IN paymentConfirmationRazorpay",

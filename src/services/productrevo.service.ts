@@ -15,6 +15,7 @@ export module productrevoService {
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
       const keys = Object.keys(request.query);
+      console.log(keys, "keys")
       const values = Object.values(request.query);
 
       let whereClauses: string[] = [];
@@ -370,7 +371,9 @@ export module productrevoService {
         `SELECT * FROM product_revo where id=${id}`,
         []
       );
+      console.log(result, "result")
       let getvalues = { objectName: "null" };
+      console.log(getvalues, "getvalues")
       getvalues.objectName = "products";
       let datatypecheckResult = await dataTypeCheck(result);
       return datatypecheckResult;
@@ -535,11 +538,11 @@ export module productrevoService {
     }
   }
 
-  export const updateoverallAvailableQuantity = async (puc: any)=>{
-    try{
+  export const updateoverallAvailableQuantity = async (puc: any) => {
+    try {
       const quertTogetThirdpartyproduct = await query(`SELECT id, thirdpartyquantity from stock_revo where puc = $1 and stocktype = 'third_party_product'`, [puc]);
       console.log('quertTogetThirdpartyproduct', quertTogetThirdpartyproduct.rows);
-      if(quertTogetThirdpartyproduct.rows.length > 0){
+      if (quertTogetThirdpartyproduct.rows.length > 0) {
         const stockid = quertTogetThirdpartyproduct.rows[0].id;
         const thirdpartyquantity = quertTogetThirdpartyproduct.rows[0].thirdpartyquantity;
         const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = (${thirdpartyquantity} + availablequantity) WHERE puc = $1  RETURNING *`;
@@ -551,7 +554,7 @@ export module productrevoService {
         const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
         return result.rows[0];
       }
-    }catch(error){
+    } catch (error) {
       console.error("Query Execution Error: IN updateoverallAvailableQuantity", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
       return ErrorMessage
@@ -559,35 +562,37 @@ export module productrevoService {
   }
 
   export const upsertQuantityFields = async (upsertData: any, orderedquantitydata, issold: boolean) => {
-  console.log('--upsertQuantityFields', upsertData);
-  const { 
-    quantity, 
-    ecompublishedquantity, 
-    soldquantity, 
-    availablequantity, 
-    puc, 
-    overallavailableqty, 
-    rentalsoldquantity,
-    oncatalogueqty,
-    offcatalogueqty
-  } = upsertData;
+    console.log('--upsertQuantityFields', upsertData);
+    const {
+      quantity,
+      ecompublishedquantity,
+      soldquantity,
+      availablequantity,
+      puc,
+      overallavailableqty,
+      rentalsoldquantity,
+      oncatalogueqty,
+      offcatalogueqty,
+      rentaltotalquantity,
+      rentalavailablequantity
+    } = upsertData;
 
-  try {
-    let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
-    let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
-    let productStatusValue: string;
+    try {
+      let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
+      let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
+      let productStatusValue: string;
 
-    if (availablequantity > 5) {
-      productStatusValue = 'in_stock';
-    } else if (availablequantity > 0 && availablequantity <= 5) {
-      productStatusValue = 'low_stock';
-    } else {
-      productStatusValue = 'out_of_stock';
-    }
+      if (availablequantity > 5) {
+        productStatusValue = 'in_stock';
+      } else if (availablequantity > 0 && availablequantity <= 5) {
+        productStatusValue = 'low_stock';
+      } else {
+        productStatusValue = 'out_of_stock';
+      }
 
-    let orderedquantityNumber = Number(orderedquantitydata);
+      let orderedquantityNumber = Number(orderedquantitydata);
 
-    let updateQueryBase = `
+      let updateQueryBase = `
       UPDATE product_revo 
       SET quantity = $1, 
           ecompublishedquantity = $2, 
@@ -597,73 +602,79 @@ export module productrevoService {
           overallavailableqty = $6, 
           rentalsoldquantity = $7,
           oncatalogueqty = $8,
-          offcatalogueqty = $9
+          offcatalogueqty = $9,
+          rentaltotalquantity = $10,
+          rentalavailablequantity = $11
     `;
 
-    let updateQuery = '';
-    if (issold && !isNaN(orderedquantityNumber)) {
-      updateQueryBase += `, orderedquantity = orderedquantity - $10`;
-      updateQuery = `${updateQueryBase} WHERE puc = $11 RETURNING *`;
-    } else {
-      updateQuery = `${updateQueryBase} WHERE puc = $10 RETURNING *`;
-    }
+      let updateQuery = '';
+      if (issold && !isNaN(orderedquantityNumber)) {
+        updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+        updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
+      } else {
+        updateQuery = `${updateQueryBase} WHERE puc = $12 RETURNING *`;
+      }
 
-    let updateParams = [];
-    if (issold && !isNaN(orderedquantityNumber)) {
-      updateParams = [
-        quantity, 
-        ecompublishedquantity, 
-        soldquantity, 
-        availablequantity, 
-        productStatusValue, 
-        overallavailableqty, 
-        rentalsoldquantity,
-        oncatalogueqty,
-        offcatalogueqty,
-        orderedquantityNumber,
-        puc
-      ];
-    } else {
-      updateParams = [
-        quantity, 
-        ecompublishedquantity, 
-        soldquantity, 
-        availablequantity, 
-        productStatusValue, 
-        overallavailableqty, 
-        rentalsoldquantity,
-        oncatalogueqty,
-        offcatalogueqty,
-        puc
-      ];
-    }
+      let updateParams = [];
+      if (issold && !isNaN(orderedquantityNumber)) {
+        updateParams = [
+          quantity,
+          ecompublishedquantity,
+          soldquantity,
+          availablequantity,
+          productStatusValue,
+          overallavailableqty,
+          rentalsoldquantity,
+          oncatalogueqty,
+          offcatalogueqty,
+          rentaltotalquantity,
+          rentalavailablequantity,
+          orderedquantityNumber,
+          puc
+        ];
+      } else {
+        updateParams = [
+          quantity,
+          ecompublishedquantity,
+          soldquantity,
+          availablequantity,
+          productStatusValue,
+          overallavailableqty,
+          rentalsoldquantity,
+          oncatalogueqty,
+          offcatalogueqty,
+          rentaltotalquantity,
+          rentalavailablequantity,
+          puc
+        ];
+      }
 
-    const updateResult = await query(updateQuery, updateParams);
+      const updateResult = await query(updateQuery, updateParams);
 
-    // update cart quantities
-    let cartData = {
-      productid: updateResult.rows[0].id,
-      availablequantity
-    };
-
-    const updateCartQuantity = await cartservice.upsertCartQuantity(cartData);
-
-    if (updateCartQuantity?.command === 'UPDATE' || updateCartQuantity === null) {
-      return updateResult.rows[0];
-    } else {
-      let message = {
-        product: updateResult.rows[0],
-        cart: 'Problem In Cart Quantity Updation. Please contact support team'
+      // update cart quantities
+      let cartData = {
+        productid: updateResult.rows[0].id,
+        availablequantity
       };
-      return message;
-    }
 
-  } catch (error) {
-    console.error("Query Execution Error: IN upsertQuantityFields", error);
-    let ErrorMessage = await ErrorHandler.handleQueryError(error);
-    return ErrorMessage;
-  }
-};
+      const updateCartQuantity = await cartservice.upsertCartQuantity(cartData);
+
+      if (updateCartQuantity?.command === 'UPDATE' || updateCartQuantity === null) {
+        return updateResult.rows[0];
+      } else {
+        let message = {
+          product: updateResult.rows[0],
+          cart: 'Problem In Cart Quantity Updation. Please contact support team'
+        };
+        return message;
+      }
+
+    } catch (error) {
+      console.error("Query Execution Error: IN upsertQuantityFields", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error);
+      return ErrorMessage;
+    }
+  };
 
   export const testupsertQuantityFieldsBatch = async (batchData: any[], issold: boolean) => {
     try {
@@ -677,10 +688,13 @@ export module productrevoService {
                         'quantity', $2::integer,
                         'ecompublishedquantity', $3::integer,
                         'soldquantity', $4::integer,
-                        'availablequantity', $5::integer
+                        'availablequantity', $5::integer,
+                        'rentaltotalquantity', $6::integer,
+                        'rentalsoldquantity', $7::integer,
+                        'rentalavailablequantity', $8::integer
                     )
                 )
-            WHERE puc = $6
+            WHERE puc = $9
             RETURNING *
         `;
       if (issold) {
@@ -694,10 +708,13 @@ export module productrevoService {
                   'quantity', $2::integer,
                   'ecompublishedquantity', $3::integer,
                   'soldquantity', $4::integer,
-                  'availablequantity', $5::integer
+                  'availablequantity', $5::integer,
+                  'rentaltotalquantity', $6::integer,
+                  'rentalsoldquantity', $7::integer,
+                  'rentalavailablequantity', $8::integer
                 )
               )
-            WHERE puc = $6
+            WHERE puc = $9
             RETURNING *
           `;
       }
@@ -710,6 +727,9 @@ export module productrevoService {
             data.ecompublishedquantity,
             data.soldquantity,
             data.availablequantity,
+            data.rentaltotalquantity,
+            data.rentalsoldquantity, // Assuming rentalsoldquantity is available here, derived from diff in previous step
+            data.rentalavailablequantity,
             data.puc
           ]
         };
@@ -780,34 +800,34 @@ export module productrevoService {
 
 
   export async function updateOrderedQuantityarray(updatedData) {
-  try {
-    console.log('Inside updateorderqty');
-    console.log('Inside updateorderqty', updatedData);
+    try {
+      console.log('Inside updateorderqty');
+      console.log('Inside updateorderqty', updatedData);
 
-    let data = [];
-    for (const e of updatedData) {
-      const { id, orderedquantity } = e;
-      console.log(id, orderedquantity, 'kkkk');
+      let data = [];
+      for (const e of updatedData) {
+        const { id, orderedquantity } = e;
+        console.log(id, orderedquantity, 'kkkk');
 
-      const queryText = `
+        const queryText = `
         UPDATE product_revo
         SET orderedquantity = orderedquantity + $1,
             lock_qty = lock_qty - $1 
         WHERE id = $2
         RETURNING *`;
 
-      let result = await query(queryText, [orderedquantity, id]);
-      console.log('---', result);
-      console.log('---', result.rows);
-      data.push(result);
-    }
+        let result = await query(queryText, [orderedquantity, id]);
+        // console.log('---', result);
+        // console.log('---', result.rows);
+        data.push(result);
+      }
 
-    return data;  // return array of results
-  } catch (error) {
-    console.error('Error in updateOrderedQuantityarray:', error);
-    throw error;  // better to throw so caller knows of the error
+      return data;  // return array of results
+    } catch (error) {
+      console.error('Error in updateOrderedQuantityarray:', error);
+      throw error;  // better to throw so caller knows of the error
+    }
   }
-}
 
 
   export async function updateCatalogueQuantities(puc) {
@@ -815,13 +835,13 @@ export module productrevoService {
     const queryText = `
         WITH counts AS (
             SELECT 
-                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' THEN 1 ELSE 0 END), 0) AS off_catalogue_count
+                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
+                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count
             FROM stock_revo 
             WHERE 
                 puc = $1
-                AND ecompublish = true 
-                AND stockstatus = 'Available' 
                 AND isdeleted = false 
                 AND isarchive = false 
                 AND removefromrecyclebin = false 
@@ -830,10 +850,13 @@ export module productrevoService {
         UPDATE product_revo 
         SET 
             oncatalogueqty = counts.on_catalogue_count,
-            offcatalogueqty = counts.off_catalogue_count
+            offcatalogueqty = counts.off_catalogue_count,
+            rentaltotalquantity = counts.rental_total_count,
+            rentalsoldquantity = counts.rental_sold_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count
         FROM counts
         WHERE puc = $1
-        RETURNING counts.on_catalogue_count, counts.off_catalogue_count;
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count, (counts.rental_total_count - counts.rental_sold_count) as rental_available_count;
     `;
     console.log('queryText:', queryText);
     let result = await query(queryText, [puc]);
@@ -842,7 +865,9 @@ export module productrevoService {
     if (result.rows.length > 0) {
       return {
         onCatalogueCount: result.rows[0].on_catalogue_count,
-        offCatalogueCount: result.rows[0].off_catalogue_count
+        offCatalogueCount: result.rows[0].off_catalogue_count,
+        rentalTotalQuantity: result.rows[0].rental_total_count,
+        rentalAvailableQuantity: result.rows[0].rental_available_count
       };
     } else {
       return { message: 'No data Found' };
@@ -862,5 +887,4 @@ export module productrevoService {
       console.error('Error in updateCancelledOrderedQuantity:', error);
     }
   }
-
 }
