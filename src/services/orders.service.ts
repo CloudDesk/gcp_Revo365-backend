@@ -1080,7 +1080,10 @@ ${whereClause} ${orderByClause}`;
                 const puc = updateStock.result.puc; // Get the puc from the result
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
 
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
+                // Determine if this is a rental order
+                const isRental = orderData[0]?.ordername === 'rental';
+
+                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true, isRental);
                 // if (orderData[0].orderid) {
                 //     querydata = `UPDATE orders SET orderstatus=$${1} where orderid=$${2} RETURNING *`;
                 //     params = ['ready_to_dispatch', orderData[0].orderid];

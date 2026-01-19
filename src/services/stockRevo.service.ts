@@ -360,7 +360,7 @@ export module stockRevoService {
         }
     }
 
-    export const updateQuantity = async (pucs: string[], orderedquantity = 0, issold = false) => {
+    export const updateQuantity = async (pucs: string[], orderedquantity = 0, issold = false, isRental = false) => {
         try {
             const quantitiesList = [];
 
@@ -496,7 +496,7 @@ export module stockRevoService {
 
             const updateQuantityResults = await Promise.all(
                 quantitiesList.map(quantities =>
-                    productrevoService.upsertQuantityFields(quantities, orderedquantity, issold)
+                    productrevoService.upsertQuantityFields(quantities, orderedquantity, issold, isRental)
                 )
             );
 
@@ -679,7 +679,10 @@ export module stockRevoService {
             let arraylength = rfidDataArray.length;
             let ordername = rfidDataArray[0].ordername;
 
-            let stockStatusValue = ordername === 'rental' ? 'Rental Sold' : 'Sold';
+
+            const isRental = ordername === 'rental';
+
+            let stockStatusValue = isRental ? 'Rental Sold' : 'Sold';
 
             let caseStatementsOrderId = rfidDataArray.map((item) => {
                 return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;

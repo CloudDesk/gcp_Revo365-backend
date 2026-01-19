@@ -561,7 +561,7 @@ export module productrevoService {
     }
   }
 
-  export const upsertQuantityFields = async (upsertData: any, orderedquantitydata, issold: boolean) => {
+  export const upsertQuantityFields = async (upsertData: any, orderedquantitydata, issold: boolean, isRental = false) => {
     console.log('--upsertQuantityFields', upsertData);
     const {
       quantity,
@@ -609,7 +609,12 @@ export module productrevoService {
 
       let updateQuery = '';
       if (issold && !isNaN(orderedquantityNumber)) {
-        updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+        // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
+        if (isRental) {
+          updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $12`;
+        } else {
+          updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+        }
         updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
       } else {
         updateQuery = `${updateQueryBase} WHERE puc = $12 RETURNING *`;
