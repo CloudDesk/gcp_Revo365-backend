@@ -484,6 +484,7 @@ export var transactionService;
                     const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
                         id: e.productid,
                         orderedquantity: e.quantity,
+                        ordername: e.ordername
                     }));
                     console.log("Update Product Order Quantity Data:", updateproductorderquantiydata);
                     console.log("ggg");
@@ -898,12 +899,30 @@ export var transactionService;
                 result.transactionData &&
                 result.transactionData.length > 0) {
                 console.log("Come's inside if orderdata and transactionData");
-                if (productupdateorderqty.length > 0) {
-                    console.log("Come's inside if productupdateorderqty");
-                    const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
-                        id: e.productid,
-                        orderedquantity: e.quantity,
-                    }));
+                // Logic updated to fetch from DB instead of unreliable global variable
+                if (true) {
+                    console.log("Come's inside confirmation block");
+                    // User confirmed ordername exists in orderline table
+                    const orderLineItemsQuery = `SELECT productid, quantity, ordername FROM orderline WHERE merchanttransactionid = $1`;
+                    console.log("Fetching items for transaction:", transactionDataset.merchanttransactionId);
+                    const orderLineItemsResult = await query(orderLineItemsQuery, [transactionDataset.merchanttransactionId]);
+                    let updateproductorderquantiydata = [];
+                    if (orderLineItemsResult.rows.length > 0) {
+                        console.log("Fetched items from DB:", JSON.stringify(orderLineItemsResult.rows, null, 2));
+                        updateproductorderquantiydata = orderLineItemsResult.rows.map((e) => ({
+                            id: e.productid,
+                            orderedquantity: e.quantity,
+                            ordername: e.ordername
+                        }));
+                    }
+                    else {
+                        console.log("Warning: No items found in DB, using fallback global variable");
+                        updateproductorderquantiydata = productupdateorderqty.map((e) => ({
+                            id: e.productid,
+                            orderedquantity: e.quantity,
+                            ordername: e.ordername
+                        }));
+                    }
                     const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
                     // console.log("Updated Order Quantity:", updatedOrderQuantity);
                     console.log(cartIddata, "cart id to delete");
