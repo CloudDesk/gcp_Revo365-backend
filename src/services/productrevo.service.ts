@@ -808,18 +808,33 @@ export module productrevoService {
       for (const e of updatedData) {
         const { id, orderedquantity } = e;
         console.log(id, orderedquantity, 'kkkk');
+        console.log("Debug: Processing item", JSON.stringify(e, null, 2));
 
-        const queryText = `
+        const orderName = e.ordername ? e.ordername.toLowerCase().trim() : '';
+        console.log("Debug: Normalized ordername:", orderName);
+
+        if (orderName === 'rental') {
+          console.log('Updating rentalorderedquantity for rental product');
+          const queryText = `
+        UPDATE product_revo
+        SET rentalorderedquantity = rentalorderedquantity + $1,
+            lock_qty = lock_qty - $1 
+        WHERE id = $2
+        RETURNING *`;
+          let result = await query(queryText, [orderedquantity, id]);
+          data.push(result);
+        } else {
+          console.log('Updating orderedquantity for normal product');
+          const queryText = `
         UPDATE product_revo
         SET orderedquantity = orderedquantity + $1,
             lock_qty = lock_qty - $1 
         WHERE id = $2
         RETURNING *`;
+          let result = await query(queryText, [orderedquantity, id]);
+          data.push(result);
+        }
 
-        let result = await query(queryText, [orderedquantity, id]);
-        // console.log('---', result);
-        // console.log('---', result.rows);
-        data.push(result);
       }
 
       return data;  // return array of results
