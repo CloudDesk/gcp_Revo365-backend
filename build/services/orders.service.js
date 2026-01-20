@@ -324,9 +324,18 @@ export var ordersService;
                         whereClauses.push(`(${rangeWhereClause})`);
                     }
                     else {
-                        whereClauses.push(`(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`);
-                        queryParams.push(...paramValues);
-                        parameterIndex += paramValues.length;
+                        const clauses = [];
+                        paramValues.forEach((val) => {
+                            if (String(val).toLowerCase() === 'null') {
+                                clauses.push(`${key} IS NULL`);
+                            }
+                            else {
+                                clauses.push(`${key} = $${parameterIndex}`);
+                                queryParams.push(val);
+                                parameterIndex++;
+                            }
+                        });
+                        whereClauses.push(`(${clauses.join(" OR ")})`);
                     }
                 }
             });
@@ -345,6 +354,9 @@ export var ordersService;
                 queryParams.push(offset, recordCount);
             }
             let data = await query(querydata, queryParams);
+            if (data.rows.length === 0) {
+                return data.rows;
+            }
             // get invoiceurl
             const invoiceQuery = `
                     SELECT DISTINCT r.invoiceurl, r.orderid
