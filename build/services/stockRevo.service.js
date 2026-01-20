@@ -360,7 +360,7 @@ export var stockRevoService;
             return ErrorMessage;
         }
     };
-    stockRevoService.updateQuantity = async (pucs, orderedquantity = 0, issold = false) => {
+    stockRevoService.updateQuantity = async (pucs, orderedquantity = 0, issold = false, isRental = false) => {
         try {
             const quantitiesList = [];
             for (const puc of pucs) {
@@ -488,7 +488,7 @@ export var stockRevoService;
                 console.log("--quantities", quantities);
                 quantitiesList.push(quantities);
             }
-            const updateQuantityResults = await Promise.all(quantitiesList.map(quantities => productrevoService.upsertQuantityFields(quantities, orderedquantity, issold)));
+            const updateQuantityResults = await Promise.all(quantitiesList.map(quantities => productrevoService.upsertQuantityFields(quantities, orderedquantity, issold, isRental)));
             let result = stockRevoService.testinupdateQuantity(pucs, issold);
             return updateQuantityResults;
         }
@@ -657,7 +657,8 @@ export var stockRevoService;
             let productid = rfidDataArray[0].productid;
             let arraylength = rfidDataArray.length;
             let ordername = rfidDataArray[0].ordername;
-            let stockStatusValue = ordername === 'rental' ? 'Rental Sold' : 'Sold';
+            const isRental = ordername === 'rental';
+            let stockStatusValue = isRental ? 'Rental Sold' : 'Sold';
             let caseStatementsOrderId = rfidDataArray.map((item) => {
                 return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;
             }).join(' ');

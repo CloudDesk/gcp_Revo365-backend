@@ -515,7 +515,7 @@ export var productrevoService;
             return ErrorMessage;
         }
     };
-    productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold) => {
+    productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold, isRental = false) => {
         console.log('--upsertQuantityFields', upsertData);
         const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity } = upsertData;
         try {
@@ -547,8 +547,17 @@ export var productrevoService;
           rentalavailablequantity = $11
     `;
             let updateQuery = '';
+            console.log("DEBUG upsertQuantityFields - issold:", issold, "isRental:", isRental, "orderedquantityNumber:", orderedquantityNumber);
             if (issold && !isNaN(orderedquantityNumber)) {
-                updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+                // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
+                if (isRental) {
+                    console.log("DEBUG: Decrementing rentalorderedquantity");
+                    updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $12`;
+                }
+                else {
+                    console.log("DEBUG: Decrementing orderedquantity");
+                    updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+                }
                 updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
             }
             else {

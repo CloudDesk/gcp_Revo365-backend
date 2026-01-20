@@ -76,13 +76,28 @@ export module transactionController {
       console.log("transactionData", transactionData);
       if (transactionData && transactionData.status == 200) {
         reply.send(transactionData);
+      } else if (transactionData?.statusCode) {
+        // Handle ErrorHandler response (has statusCode instead of status)
+        reply.status(transactionData.statusCode).send({
+          message: transactionData.errorMessage || 'Transaction initialization failed',
+          errorDetails: transactionData.errorDetails || []
+        });
+      } else if (transactionData?.status) {
+        // Handle service error response (has status)
+        reply.status(transactionData.status).send({
+          message: transactionData.message || 'Transaction initialization failed'
+        });
       } else {
-        reply.status(transactionData.status).send('Transaction initialization failed');
+        // Fallback for unexpected response format
+        reply.status(500).send({
+          message: 'Transaction initialization failed',
+          errorDetails: []
+        });
       }
     } catch (error) {
       console.error("Query Execution Error: IN paymentInitialization Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      return ErrorMessage;
+      reply.status(ErrorMessage.statusCode || 500).send(ErrorMessage);
     }
   };
 
@@ -116,12 +131,18 @@ export module transactionController {
       if (transactionData && transactionData.status == 200) {
         reply.send(transactionData);
       } else {
-        reply.status(transactionData.status).send('Transaction initialization failed');
+        // Handle error responses - check for statusCode (from ErrorHandler) or status (from service)
+        const statusCode = transactionData?.statusCode || transactionData?.status || 500;
+        const errorMessage = transactionData?.errorMessage || transactionData?.message || 'Transaction initialization failed';
+        reply.status(statusCode).send({
+          message: errorMessage,
+          errorDetails: transactionData?.errorDetails || []
+        });
       }
     } catch (error) {
       console.error("Query Execution Error: IN paymentInitialization Controller", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      return ErrorMessage;
+      reply.status(ErrorMessage.statusCode || 500).send(ErrorMessage);
     }
   };
 

@@ -1081,7 +1081,25 @@ ${whereClause} ${orderByClause}`;
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
 
                 // Determine if this is a rental order
-                const isRental = orderData[0]?.ordername === 'rental';
+                // Try to get ordername from request first, then fall back to database
+                console.log("DEBUG: orderData[0]:", JSON.stringify(orderData[0]));
+                let ordername = orderData[0]?.ordername || '';
+
+                // If ordername not in request, fetch from database
+                if (!ordername && orderData[0]?.orderlinenumber) {
+                    console.log("DEBUG: ordername not in request, querying database with orderlinenumber:", orderData[0].orderlinenumber);
+                    const orderlineQuery = await query(
+                        `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
+                        [orderData[0].orderlinenumber]
+                    );
+                    if (orderlineQuery.rows.length > 0) {
+                        ordername = orderlineQuery.rows[0].ordername || '';
+                        console.log("DEBUG: Fetched ordername from database:", ordername);
+                    }
+                }
+
+                const isRental = ordername.toLowerCase().trim() === 'rental';
+                console.log("DEBUG: Final ordername:", ordername, "isRental:", isRental);
 
                 let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true, isRental);
                 // if (orderData[0].orderid) {
@@ -1166,7 +1184,53 @@ ${whereClause} ${orderByClause}`;
             else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
                 const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
 
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true);
+                // Determine if this is a rental order
+                // Try to get ordername from orderData first
+                let ordername = '';
+                for (const item of orderData) {
+                    if (item.ordername) {
+                        ordername = item.ordername;
+                        break;
+                    }
+                }
+
+                // If ordername not in request, fetch from database using orderlinenumber from updateStock result
+                if (!ordername && updateStock.result.rows.length > 0) {
+                    const orderlinenumber = updateStock.result.rows[0]?.orderlinenumber;
+                    if (orderlinenumber) {
+                        console.log("DEBUG: ordername not in request, querying database with orderlinenumber:", orderlinenumber);
+                        const orderlineQuery = await query(
+                            `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
+                            [orderlinenumber]
+                        );
+                        if (orderlineQuery.rows.length > 0) {
+                            ordername = orderlineQuery.rows[0].ordername || '';
+                            console.log("DEBUG: Fetched ordername from database:", ordername);
+                        }
+                    }
+                }
+
+                // Additional fallback: Check if product is rental by checking ecompublish status
+                let isRental = false;
+                if (ordername) {
+                    isRental = ordername.toLowerCase().trim() === 'rental';
+                } else if (pucArray.length > 0) {
+                    // If still no ordername, check product_revo to see if it's a rental product
+                    console.log("DEBUG: No ordername found, checking product_revo for rental status");
+                    const productQuery = await query(
+                        `SELECT ecompublish FROM product_revo WHERE puc = $1 LIMIT 1`,
+                        [pucArray[0]]
+                    );
+                    if (productQuery.rows.length > 0) {
+                        // Rental products typically have ecompublish = false
+                        isRental = productQuery.rows[0].ecompublish === false;
+                        console.log("DEBUG: Product ecompublish status:", productQuery.rows[0].ecompublish, "isRental:", isRental);
+                    }
+                }
+
+                console.log("DEBUG: Final ordername:", ordername, "isRental:", isRental);
+
+                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true, isRental);
                 const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);
                 if (ordersToUpdate.length > 0) {
                     let querydata = `

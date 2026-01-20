@@ -121,15 +121,22 @@ export module ErrorHandler {
           }
           break;
         default:
-          errorMessage = error.message;
+          errorMessage = error.message || error.toString() || "An unknown error occurred";
           if (error.detail) {
             errorDetails.push({ key: "general", message: error.detail });
           }
       }
     } else {
-      errorMessage = error.message;
+      errorMessage = error.message || error.toString() || "An unknown error occurred";
       if (error.detail) {
         errorDetails.push({ key: "general", message: error.detail });
+      } else if (!error.message && typeof error === 'object') {
+        // If error is an object without message, try to stringify it
+        try {
+          errorDetails.push({ key: "general", message: JSON.stringify(error) });
+        } catch (e) {
+          errorDetails.push({ key: "general", message: "Unknown error object" });
+        }
       }
     }
     console.log(errorMessage, "Error message is");

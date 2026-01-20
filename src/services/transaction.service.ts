@@ -883,8 +883,8 @@ export module transactionService {
       // };
     } catch (error) {
       console.error(
-        "Query Execution Error: IN paymentInitializationRazorpay",
-        error.message
+        "Query Execution Error: IN test",
+        error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
