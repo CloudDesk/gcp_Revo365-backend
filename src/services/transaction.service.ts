@@ -546,7 +546,6 @@ export module transactionService {
       console.log(">>body", request.body, ">>body");
       console.log(">>Tran", request.body.transaction, ">>Tran");
       console.log(">>orde", request.body.order, ">>orde");
-      console.log(request.body.order[0].ordername, "Vada");
       console.log("End");
 
       if (request.body.order[0].paymentmethod === "Cash") {
