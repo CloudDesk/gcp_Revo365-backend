@@ -53,7 +53,7 @@ const fileGeneration = async (data) => {
 
     await doc.render(data);
 
-    const buf = doc.getZip().generate({
+    const buf: any = doc.getZip().generate({
       type: "nodebuffer",
       compression: "DEFLATE",
     });
@@ -67,14 +67,13 @@ const fileGeneration = async (data) => {
     // );
 
     const docxFilePath = path.resolve(
-  `${uploadsDir}/${
-    data.ponumber ||
-    data.prnumber ||
-    data.invoicenumber ||
-    data.ticketnumber ||
-    (currentEpochTimeInSeconds ? currentEpochTimeInSeconds : "Revo")
-  }.docx`
-);
+      `${uploadsDir}/${data.ponumber ||
+      data.prnumber ||
+      data.invoicenumber ||
+      data.ticketnumber ||
+      (currentEpochTimeInSeconds ? currentEpochTimeInSeconds : "Revo")
+      }.docx`
+    );
 
     // console.log(docxFilePath, "docxfilepath");
 
