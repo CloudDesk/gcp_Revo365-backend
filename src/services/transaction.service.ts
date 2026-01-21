@@ -561,26 +561,34 @@ export module transactionService {
 
         const productId =
           productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-        const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
+        const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
         const result = await query(queryText, productid);
         console.log("Result from product_revo:", result.rows);
         console.log("Result from product_revo:", result.rows);
-        
+
         const allQuantitiesAvailable = result.rows.every(
-          (product) =>
-           {
-             if( request.body[0].order.invoicefor === "product rental"){
-              Number(product.rentalavailablequantity) - Number(product.lock_qty) >=
-              0
-            }else{
-              Number(product.overallavailableqty) - Number(product.lock_qty) >=
-              0 &&
-              Number(
-                product.overallavailableqty - Number(product.orderedquantity)
-              ) >= 0
+          (product) => {
+            console.log("Product:", product);
+            console.log("Request Body:", request.body);
+            console.log("Request Body Order:", request.body.order);
+            if (request.body[0].order.invoicefor === "product rental") {
+
+
+
+              return (
+                Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
+                Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0
+              );
+            } else {
+
+
+              return (
+                Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+                Number(product.overallavailableqty) - Number(product.orderedquantity) >= 0
+              );
             }
           }
-           
+
         );
         console.log("All quantities available:", allQuantitiesAvailable);
         if (!allQuantitiesAvailable) {
@@ -699,19 +707,70 @@ export module transactionService {
 
         const productId =
           productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-        const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
+        const queryText = `SELECT id, overallavailableqty,rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
         const result = await query(queryText, productid);
         console.log("Result from product_revo:", result);
         console.log("Result from product_revo:", result.rows);
+        console.log("Request Body:", request.body);
         const allQuantitiesAvailable = result.rows.every(
-          (product) =>
-            Number(product.overallavailableqty) - Number(product.lock_qty) >=
-            0 &&
-            Number(
-              product.overallavailableqty - Number(product.orderedquantity)
-            ) >= 0
+          (product) => {
+            if (request.body.order[0].invoicefor === "product rental") {
+              console.log("product.rentalavailablequantity", product.rentalavailablequantity);
+              console.log("product.lock_qty", product.lock_qty);
+              console.log("product.rentalorderedquantity", product.rentalorderedquantity);
+              console.log("rental - lock", Number(product.rentalavailablequantity) - Number(product.lock_qty));
+              console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
+
+              return (
+                Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
+                Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0
+              );
+            } else {
+              console.log("eles product.overallavailableqty", product.overallavailableqty);
+              console.log("eles product.lock_qty", product.lock_qty);
+              console.log("eles product.orderedquantity", product.orderedquantity);
+
+
+              return (
+                Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
+                Number(product.overallavailableqty) - Number(product.orderedquantity) >= 0
+              );
+            }
+
+          }
+
         );
         console.log("All quantities available:", allQuantitiesAvailable);
+        try {
+          let createHttpTaskResult = await createHttpTask(merchanttransactionId);
+          if (createHttpTaskResult?.success === false) {
+            return {
+              status: 400,
+              message:
+                "Task Not Created For Making Order. Please contact Admin",
+            };
+          }
+
+          let insertorderdata = await ordersService.bulkInsertOrder(
+            request.body.transaction,
+            request.body.order
+          );
+          console.log("Insert Order Data Result:", insertorderdata.rows);
+          insersertdordderdatawithprocessing = insertorderdata.rows;
+        } catch (error) {
+          console.log(
+            error.message,
+            "Error in Task paymentInitializationRazorpay"
+          );
+          await productrevoService.bulkupsertProducttosetZero(
+            dummyorderdata,
+            true
+          );
+          return {
+            status: 500,
+            message: "Error processing order. Inventory has been reset.",
+          };
+        }
         if (!allQuantitiesAvailable) {
           return {
             status: 400,
@@ -747,36 +806,7 @@ export module transactionService {
         });
 
         // Step 4: Create HTTP task and insert order data
-        try {
-          let createHttpTaskResult = await createHttpTask(merchanttransactionId);
-          if (createHttpTaskResult?.success === false) {
-            return {
-              status: 400,
-              message:
-                "Task Not Created For Making Order. Please contact Admin",
-            };
-          }
 
-          let insertorderdata = await ordersService.bulkInsertOrder(
-            request.body.transaction,
-            request.body.order
-          );
-          console.log("Insert Order Data Result:", insertorderdata.rows);
-          insersertdordderdatawithprocessing = insertorderdata.rows;
-        } catch (error) {
-          console.log(
-            error.message,
-            "Error in Task paymentInitializationRazorpay"
-          );
-          await productrevoService.bulkupsertProducttosetZero(
-            dummyorderdata,
-            true
-          );
-          return {
-            status: 500,
-            message: "Error processing order. Inventory has been reset.",
-          };
-        }
 
         // Step 5: Return Razorpay order details for frontend
         return {
