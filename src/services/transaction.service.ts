@@ -561,17 +561,26 @@ export module transactionService {
 
         const productId =
           productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-        const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
+        const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
         const result = await query(queryText, productid);
         console.log("Result from product_revo:", result.rows);
         console.log("Result from product_revo:", result.rows);
+        
         const allQuantitiesAvailable = result.rows.every(
           (product) =>
-            Number(product.overallavailableqty) - Number(product.lock_qty) >=
-            0 &&
-            Number(
-              product.overallavailableqty - Number(product.orderedquantity)
-            ) >= 0
+           {
+             if( request.body[0].order.invoicefor === "product rental"){
+              Number(product.rentalavailablequantity) - Number(product.lock_qty) >=
+              0
+            }else{
+              Number(product.overallavailableqty) - Number(product.lock_qty) >=
+              0 &&
+              Number(
+                product.overallavailableqty - Number(product.orderedquantity)
+              ) >= 0
+            }
+          }
+           
         );
         console.log("All quantities available:", allQuantitiesAvailable);
         if (!allQuantitiesAvailable) {
