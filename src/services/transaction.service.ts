@@ -571,7 +571,7 @@ export module transactionService {
             console.log("Product:", product);
             console.log("Request Body:", request.body);
             console.log("Request Body Order:", request.body.order);
-            if (request.body[0].order.invoicefor === "product rental") {
+            if (request.body.order[0].invoicefor === "product rental") {
 
 
 
@@ -741,37 +741,13 @@ export module transactionService {
 
         );
         console.log("All quantities available:", allQuantitiesAvailable);
-        try {
-          let createHttpTaskResult = await createHttpTask(merchanttransactionId);
-          if (createHttpTaskResult?.success === false) {
-            return {
-              status: 400,
-              message:
-                "Task Not Created For Making Order. Please contact Admin",
-            };
-          }
 
-          let insertorderdata = await ordersService.bulkInsertOrder(
-            request.body.transaction,
-            request.body.order
-          );
-          console.log("Insert Order Data Result:", insertorderdata.rows);
-          insersertdordderdatawithprocessing = insertorderdata.rows;
-        } catch (error) {
-          console.log(
-            error.message,
-            "Error in Task paymentInitializationRazorpay"
-          );
+        if (!allQuantitiesAvailable) {
+
           await productrevoService.bulkupsertProducttosetZero(
             dummyorderdata,
             true
           );
-          return {
-            status: 500,
-            message: "Error processing order. Inventory has been reset.",
-          };
-        }
-        if (!allQuantitiesAvailable) {
           return {
             status: 400,
             message:
@@ -806,7 +782,36 @@ export module transactionService {
         });
 
         // Step 4: Create HTTP task and insert order data
+        try {
+          let createHttpTaskResult = await createHttpTask(merchanttransactionId);
+          if (createHttpTaskResult?.success === false) {
+            return {
+              status: 400,
+              message:
+                "Task Not Created For Making Order. Please contact Admin",
+            };
+          }
 
+          let insertorderdata = await ordersService.bulkInsertOrder(
+            request.body.transaction,
+            request.body.order
+          );
+          console.log("Insert Order Data Result:", insertorderdata.rows);
+          insersertdordderdatawithprocessing = insertorderdata.rows;
+        } catch (error) {
+          console.log(
+            error.message,
+            "Error in Task paymentInitializationRazorpay"
+          );
+          await productrevoService.bulkupsertProducttosetZero(
+            dummyorderdata,
+            true
+          );
+          return {
+            status: 500,
+            message: "Error processing order. Inventory has been reset.",
+          };
+        }
 
         // Step 5: Return Razorpay order details for frontend
         return {
