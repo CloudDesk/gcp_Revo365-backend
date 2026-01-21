@@ -328,7 +328,6 @@ export module ordersService {
     export const getOrderlineDynamic = async (request) => {
         try {
             const userid = request.query.userid;
-            const keys = Object.keys(request.query);
             const pageNumber = request.query.page;
             const recordCount = request.query.count;
             const queryParams = [];
@@ -371,7 +370,7 @@ export module ordersService {
                 offset = (pageNumber - 1) * recordCount;
             }
 
-            let querydata = `select * from orderline`
+            let querydata = `SELECT * FROM orderline`;
             if (whereClauses.length > 0) {
                 querydata += ` WHERE ${whereClauses.join(" AND ")} ORDER BY modifieddate DESC`;
             }
@@ -380,7 +379,7 @@ export module ordersService {
             }
 
             if (offset != null && recordCount != null) {
-                querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
+                querydata += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
             let data = await query(querydata, queryParams)
@@ -405,29 +404,43 @@ export module ordersService {
             }));
 
             // Fetch product images
-            const productimagequery = `
-            SELECT p.id, p.small, p.medium, p.large
-            FROM product_revo AS p
-            JOIN orderline AS o ON p.id = o.productid
-            WHERE o.productid IN (${data.rows.map(row => row.productid).join(',')});`
+            if (data.rows.length > 0) {
+                const productIds = data.rows.map(row => row.productid).filter(id => id != null);
+                if (productIds.length > 0) {
+                    const productImageParams = productIds.map((_, idx) => `$${idx + 1}`).join(',');
+                    const productimagequery = `
+                        SELECT p.id, p.small, p.medium, p.large
+                        FROM product_revo AS p
+                        WHERE p.id IN (${productImageParams})`;
+                    const productimage = await query(productimagequery, productIds);
+                    
+                    // Create a map of product images
+                    const productImageMap = new Map(productimage.rows.map(row => [row.id, {
+                        small: row.small,
+                        medium: row.medium,
+                        large: row.large
+                    }]));
 
-            const productimage = await query(productimagequery, [])
-
-            // Create a map of product images
-            const productImageMap = new Map(productimage.rows.map(row => [row.id, {
-                small: row.small,
-                medium: row.medium,
-                large: row.large
-            }]));
-
-            data.rows = data.rows.map(row => ({
-                ...row,
-                productImages: productImageMap.get(row.productid) || {
-                    small: null,
-                    medium: null,
-                    large: null
+                    data.rows = data.rows.map(row => ({
+                        ...row,
+                        productImages: productImageMap.get(row.productid) || {
+                            small: null,
+                            medium: null,
+                            large: null
+                        }
+                    }));
+                } else {
+                    // No product IDs, add empty product images
+                    data.rows = data.rows.map(row => ({
+                        ...row,
+                        productImages: {
+                            small: null,
+                            medium: null,
+                            large: null
+                        }
+                    }));
                 }
-            }));
+            }
 
             return data.rows
         } catch (error) {
