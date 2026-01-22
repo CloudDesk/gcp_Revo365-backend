@@ -589,6 +589,7 @@ export var transactionService;
                             message: "Task Not Created For Making Order. Please contact Admin",
                         };
                     }
+                    console.log("Insert Order Data Result:", request.body.order);
                     let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
                     console.log("Insert Order Data Result:", insertorderdata.rows);
                     insersertdordderdatawithprocessing = insertorderdata.rows;

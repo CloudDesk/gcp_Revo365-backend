@@ -1356,16 +1356,26 @@ ${whereClause} ${orderByClause}`;
                 }
                 else {
                     // Split the order
+                    console.log("available", available);
+                    console.log("item.invoicefor", item.invoicefor);
                     if (available > 0) {
                         // Add available quantity to orders
-                        const orderItem = { ...item, quantity: available };
+                        let orderItem = { ...item, quantity: available };
                         ordersToInsert.push(orderItem);
                     }
+                    else if (available <= 0 && item.invoicefor == "product rental") {
+                        console.log("comes inside else if");
+                        let orderItem = { ...item, quantity: available };
+                        ordersToInsert.push(orderItem);
+                        console.log("orderItem", orderItem);
+                    }
                     // Add remaining quantity to thirdpartyorders
-                    const thirdPartyQuantity = item.quantity - available;
-                    if (thirdPartyQuantity > 0) {
-                        const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
-                        thirdPartyOrdersToInsert.push(thirdPartyItem);
+                    if (item.invoicefor != "product rental") {
+                        const thirdPartyQuantity = item.quantity - available;
+                        if (thirdPartyQuantity > 0) {
+                            const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
+                            thirdPartyOrdersToInsert.push(thirdPartyItem);
+                        }
                     }
                 }
             });
