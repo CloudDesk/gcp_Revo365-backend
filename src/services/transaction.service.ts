@@ -791,7 +791,7 @@ export module transactionService {
                 "Task Not Created For Making Order. Please contact Admin",
             };
           }
-
+          console.log("Insert Order Data Result:", request.body.order);
           let insertorderdata = await ordersService.bulkInsertOrder(
             request.body.transaction,
             request.body.order
