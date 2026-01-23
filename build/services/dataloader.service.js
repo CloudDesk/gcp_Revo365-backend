@@ -115,7 +115,17 @@ export var dataLoaderService;
                             e[key] = null;
                         }
                         else {
-                            if (stockInteger.includes(key)) {
+                            // Normalize stocktype field: convert variations to "rental_product"
+                            if (key === "stocktype" && typeof value === "string") {
+                                const normalizedValue = value.toLowerCase().replace(/\s+/g, "_");
+                                if (normalizedValue === "rental_product") {
+                                    e[key] = "rental_product";
+                                }
+                                else {
+                                    e[key] = value;
+                                }
+                            }
+                            else if (stockInteger.includes(key)) {
                                 let valueconvert = Number(value);
                                 if (isNaN(valueconvert)) {
                                     e[key] = value;
@@ -166,6 +176,10 @@ export var dataLoaderService;
                                 e[key] = value;
                             }
                         }
+                    }
+                    // Force ecompublish = false if stocktype is rental_product
+                    if (e.stocktype === "rental_product") {
+                        e.ecompublish = false;
                     }
                     if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
                         e.ecompublish = false;
