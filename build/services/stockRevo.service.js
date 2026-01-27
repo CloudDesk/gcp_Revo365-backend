@@ -564,6 +564,7 @@ export var stockRevoService;
                 soldquantity: parseInt(row.soldquantity, 10),
                 availablequantity: parseInt(row.availablequantity, 10),
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
+                rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
                 rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10)
             }));
             const updateResults = await productrevoService.testupsertQuantityFieldsBatch(batchUpdateData, issold);
