@@ -20,9 +20,9 @@ export module userController {
         try {
             let getCustomerDataResult = await userService.getCustomersData(request.body);
             console.log(getCustomerDataResult)
-            reply.send(getCustomerDataResult); 
+            reply.send(getCustomerDataResult);
         } catch (error) {
-            
+
         }
     }
     export const forgotuser = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -76,7 +76,7 @@ export module userController {
                 reply.status(200).send('User Updated successfully');
             } else if (upsertUserResult.command == 'INSERT') {
                 reply.status(200).send({ message: 'User signup done successfully', data: upsertUserResult.rows });
-            }else if (upsertUserResult.errorMessage==='Duplicate Key Exist'){
+            } else if (upsertUserResult.errorMessage === 'Duplicate Key Exist') {
                 reply.status(404).send(upsertUserResult.errorDetails[0].message)
             }
             else {

@@ -56,6 +56,30 @@ export module ticketController {
         }
     }
 
+
+    export const upsertTicketsWhatsapp = async (request, reply) => {
+        try {
+            let host = request.headers.host
+            let upsertTicket = await ticketService.upsertTickets(request.body, request.files, host)
+            if (upsertTicket.command === "UPDATE" || upsertTicket.command === "INSERT") {
+                let message: any = {};
+                message = {
+                    message: upsertTicket.command === "UPDATE"
+                        ? `Ticket Updated Successfully`
+                        : `Ticket Raised Successfully`
+                };
+                console.log("upsertTicket", upsertTicket);
+                reply.status(200).send(upsertTicket);
+            } else {
+                reply.status(400).send(upsertTicket)
+            }
+        } catch (error) {
+            console.error("Error in 'upsertTickets':", error);
+            let ErrorDetails = ErrorHandler.handleQueryError(error);
+            reply.status(404).send(ErrorDetails);
+        }
+    }
+
     export const upsertGcpTickets = async (request, reply) => {
         try {
             let host = request.headers.host

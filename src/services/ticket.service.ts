@@ -8,86 +8,86 @@ import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 export module ticketService {
   export const getTicketDynamic = async (request) => {
     try {
-        const userid = request.query.userid;
-        const keys = Object.keys(request.query);
-        const pageNumber = request.query.page;
-        const recordCount = request.query.count;
-        const queryParams = [];
-        let whereClauses = [];
-        let offset: any;
-        let parameterIndex = 1;
-        Object.entries(request.query).forEach(([key, value], index) => {
-            if (key !== 'page' && key !== 'count') {
-                const paramValues = Array.isArray(value) ? value : [value];
-                if (key === "createddate" || key === "modifieddate") {
-                    let rangeWhereClause = paramValues
-                        .map((range) => {
-                            const [lowerBound, upperBound] = range.split("-");
-                            queryParams.push(lowerBound, upperBound);
-                            const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
-                                })`;
-                            parameterIndex += 2;
-                            return clause;
-                        })
-                        .join(" OR ");
-                    whereClauses.push(`(${rangeWhereClause})`);
+      const userid = request.query.userid;
+      const keys = Object.keys(request.query);
+      const pageNumber = request.query.page;
+      const recordCount = request.query.count;
+      const queryParams = [];
+      let whereClauses = [];
+      let offset: any;
+      let parameterIndex = 1;
+      Object.entries(request.query).forEach(([key, value], index) => {
+        if (key !== 'page' && key !== 'count') {
+          const paramValues = Array.isArray(value) ? value : [value];
+          if (key === "createddate" || key === "modifieddate") {
+            let rangeWhereClause = paramValues
+              .map((range) => {
+                const [lowerBound, upperBound] = range.split("-");
+                queryParams.push(lowerBound, upperBound);
+                const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
+                  })`;
+                parameterIndex += 2;
+                return clause;
+              })
+              .join(" OR ");
+            whereClauses.push(`(${rangeWhereClause})`);
 
-                }
-                else {
-                    whereClauses.push(
-                        `(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`
-                    );
-                    queryParams.push(...paramValues);
-                    parameterIndex += paramValues.length; 
-                }
+          }
+          else {
+            whereClauses.push(
+              `(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`
+            );
+            queryParams.push(...paramValues);
+            parameterIndex += paramValues.length;
+          }
 
-            }
-
-        });
-        if (pageNumber && recordCount) {
-            offset = (pageNumber - 1) * recordCount;
         }
 
-        let querydata = `select * from tickets`
-        if (whereClauses.length > 0) {
-            querydata += ` WHERE ${whereClauses.join(" AND ")} ORDER BY modifieddate DESC`;
-        }
-        else {
-            querydata += ` ORDER BY modifieddate DESC`;
-        }
+      });
+      if (pageNumber && recordCount) {
+        offset = (pageNumber - 1) * recordCount;
+      }
 
-        if (offset != null && recordCount != null) {
-            querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
-            queryParams.push(offset, recordCount);
-        }
+      let querydata = `select * from tickets`
+      if (whereClauses.length > 0) {
+        querydata += ` WHERE ${whereClauses.join(" AND ")} ORDER BY modifieddate DESC`;
+      }
+      else {
+        querydata += ` ORDER BY modifieddate DESC`;
+      }
 
-        let data = await query(querydata, queryParams)
+      if (offset != null && recordCount != null) {
+        querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
+        queryParams.push(offset, recordCount);
+      }
 
-        if (keys.length == 1 && keys[0] == 'userid') {
-            const invoiceQuery = `
+      let data = await query(querydata, queryParams)
+
+      if (keys.length == 1 && keys[0] == 'userid') {
+        const invoiceQuery = `
                 SELECT DISTINCT r.invoiceurl, t.ticketnumber, t.userid
                 FROM revoinvoice AS r 
                 JOIN tickets AS t ON r.ticketnumber = t.ticketnumber 
                 WHERE t.userid = $1 AND r.invoicefor = 'service';
             `
-            const invoiceurldata = await query(invoiceQuery, [userid])
-            const invoiceMap = new Map(invoiceurldata.rows.map(row => [row.ticketnumber, row.invoiceurl]));
+        const invoiceurldata = await query(invoiceQuery, [userid])
+        const invoiceMap = new Map(invoiceurldata.rows.map(row => [row.ticketnumber, row.invoiceurl]));
 
-            data.rows = data.rows.map(row => ({
-                ...row,
-                invoiceurl: invoiceMap.get(row.ticketnumber) || null
-            }));
-        }
-        else {
-        }
+        data.rows = data.rows.map(row => ({
+          ...row,
+          invoiceurl: invoiceMap.get(row.ticketnumber) || null
+        }));
+      }
+      else {
+      }
 
-        return data.rows
+      return data.rows
     } catch (error) {
-        console.error("Query Execution Error: IN getTicketDynamic", error);
-        let ErrorMessage = await ErrorHandler.handleQueryError(error)
-        return ErrorMessage
+      console.error("Query Execution Error: IN getTicketDynamic", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error)
+      return ErrorMessage
     }
-}
+  }
   export const getTicketData = async (request) => {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
@@ -138,7 +138,7 @@ export module ticketService {
       (isdeleted = FALSE OR isdeleted IS NULL) AND  
       (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
       const whereClause =
-      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
+        whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
       const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
       let queryText = `
       SELECT t.*, i.id as inventoryuserid,i.firstname as username,i.role as userrole,p.warranty AS product_warranty
@@ -237,7 +237,7 @@ export module ticketService {
       let querydata: string;
       let params: any[];
       const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
-      console.log(id,inventoryuserid,product_warranty, "id,inventoryuserid,product_warranty");
+      console.log(id, inventoryuserid, product_warranty, "id,inventoryuserid,product_warranty");
       console.log("Upsert Fields", upsertFields);
       if (files && files.length > 0) {
         for (const file of files) {
@@ -255,8 +255,8 @@ export module ticketService {
           .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
         params = [...fieldValues, id];
         console.log("Query Data", querydata);
-      } 
-      
+      }
+
       else {
         querydata = `INSERT INTO tickets (${fieldNames.join(
           ", "
@@ -268,6 +268,7 @@ export module ticketService {
       console.log(querydata, "querydata in Upsert Normal Tickets");
 
       const result = await query(querydata, params);
+      console.log(result, "result in Upsert Normal Tickets");
       if (result && result.rows.length > 0) {
         let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
           result.rows[0].userid,
@@ -305,7 +306,10 @@ export module ticketService {
       let params: any[];
       const { id, ...upsertFields } = ticketData;
       const fieldNames = Object.keys(upsertFields);
+      console.log("upsertFields", upsertFields);
+      console.log("fieldNames", fieldNames);
       const fieldValues = Object.values(upsertFields);
+      console.log("fieldValues", fieldValues);
       if (id) {
         querydata = `UPDATE tickets SET ${fieldNames
           .map((field, index) => `${field} = $${index + 1}`)
