@@ -58,6 +58,7 @@ import { runShiprocketDiagnostics, shiprocketShippingService } from "../services
 import { bannerController } from "../controller/banner.controller.js";
 import { googlereviewController } from "../controller/googlereview.controller.js";
 import { blogscontroller } from "../controller/blogs.controller.js";
+import { enquiryController } from "../controller/enquiry.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //product version 1
@@ -287,6 +288,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //transaction
     fastify.get('/transaction', { preHandler: [getSession] }, transactionController.getTransactionData);
     fastify.post('/transaction', { preHandler: [getSession] }, transactionController.inserttransaction);
+
+    // ecom enquiry (public)
+    fastify.post('/enquiry-corporate', enquiryController.enquiryCorporate);
+    fastify.post('/enquiry-individual', enquiryController.enquiryIndividual);
 
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
