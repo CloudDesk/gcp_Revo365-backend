@@ -288,8 +288,11 @@ If the Apps Script code is ever modified:
 //   Who has access: Anyone
 // ============================================================
 
-// ⚠️ IMPORTANT: Change this to match ENQUIRY_SHEETS_SECRET in .env
-var ALLOWED_SECRET = "REVO365_SHEET_SECRET_2026";
+// ⚠️ IMPORTANT: Must match ENQUIRY_SHEETS_SECRET in .env exactly
+var ALLOWED_SECRET = "TEQIT_DEV_contactteqit.io";
+
+// Status dropdown options for the Status column
+var STATUS_OPTIONS = ["Open", "In Progress", "Closed", "Converted", "No Response"];
 
 function doPost(e) {
   // ── Step 1: Acquire a script-level lock (handles concurrent requests) ──
@@ -362,16 +365,44 @@ function doPost(e) {
     }
 
     // ── Step 6: Append the row ──
-    // appendRow() always adds after the last row with data.
-    // It is server-side atomic — concurrent calls are safely queued by LockService.
+    // appendRow() is atomic — concurrent calls safely queued by LockService.
     sheet.appendRow(body.rowData);
+    var newRowNum = sheet.getLastRow();
 
-    // ── Step 7: Return success ──
+    // ── Step 7: Apply Status dropdown to the new row's Status cell ──
+    // Dynamically find the "Status" column from row 1 headers
+    var lastCol = sheet.getLastColumn();
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var statusColIndex = -1;
+    for (var i = 0; i < headers.length; i++) {
+      if (String(headers[i]).trim().toLowerCase() === "status") {
+        statusColIndex = i + 1; // Convert to 1-based index
+        break;
+      }
+    }
+
+    if (statusColIndex > 0) {
+      var statusCell = sheet.getRange(newRowNum, statusColIndex);
+
+      // Apply dropdown validation for Status
+      var rule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(STATUS_OPTIONS, true)
+        .setAllowInvalid(false)
+        .setHelpText("Select the current status of this enquiry")
+        .build();
+      statusCell.setDataValidation(rule);
+
+      // Highlight the status cell with a light yellow background
+      statusCell.setBackground("#FFF2CC");
+      statusCell.setFontWeight("bold");
+    }
+
+    // ── Step 8: Return success ──
     return ContentService
       .createTextOutput(JSON.stringify({
         success: true,
         message: "Row appended to sheet: " + body.sheetName,
-        rowCount: sheet.getLastRow()
+        rowCount: newRowNum
       }))
       .setMimeType(ContentService.MimeType.JSON);
 

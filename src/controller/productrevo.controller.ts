@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { productrevoService } from "../services/productrevo.service.js";
+import { stockRevoService } from "../services/stockRevo.service.js";
 import uploadtos3 from "../aws/uploadtos3.js";
 
 interface idparams {
@@ -86,6 +87,71 @@ export module productrevoController {
         } catch (error) {
             console.error('ERROR IN  Controller deleteProductrevo', error);
             reply.send(error.message);
+        }
+    }
+
+    // ─── ECOM VISIBILITY TOGGLE ────────────────────────────────────────────
+    /**
+     * PATCH /v2/product/:id/ecom-visibility
+     * Body: { ecom_visible: true | false }
+     *
+     * Hides or shows a product on the ecom storefront.
+     * When hidden (false): cart + wishlist entries are auto-cleared.
+     * When shown (true): product reappears, no qty changes needed.
+     * Stocks and orderlines are NEVER touched.
+     */
+    export const toggleEcomVisible = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
+        try {
+            const { id } = request.params;
+            const body: any = request.body;
+
+            if (typeof body?.ecom_visible !== 'boolean') {
+                return reply.status(400).send({
+                    error: 'Missing or invalid body field: ecom_visible (must be true or false)'
+                });
+            }
+
+            const result: any = await productrevoService.toggleEcomVisible(Number(id), body.ecom_visible);
+            reply.status(result?.status ?? result?.statusCode ?? 200).send(result);
+        } catch (error) {
+            console.error('ERROR IN Controller toggleEcomVisible', error);
+            reply.status(500).send({ error: error.message });
+        }
+    }
+
+    // ─── SAFE SOFT DELETE ──────────────────────────────────────────────
+    /**
+     * DELETE /v2/product/:id/safe
+     * (soft delete — never hard deletes, preserves orderline history)
+     *
+     * Flow executed:
+     *   1. product_revo → isdeleted=true, ecom_visible=false
+     *   2. stock_revo   → Available items archived (Sold items kept)
+     *   3. cart/wishlist → entries cleared
+     *   4. stockRevoService.updateQuantity([puc]) → qty fields reset to 0
+     *   5. orderline    → NEVER TOUCHED
+     */
+    export const softDeleteProductRevo = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
+        try {
+            const { id } = request.params;
+            const result: any = await productrevoService.softDeleteProductRevo(Number(id));
+
+            // Trigger quantity recalculation if we have a valid puc
+            // (this resets ecompublishedquantity, availablequantity, etc. to 0)
+            if (result?.puc) {
+                try {
+                    await stockRevoService.updateQuantity([result.puc], 0, false, false);
+                    console.log(`[controller] Quantity fields recalculated for puc: ${result.puc}`);
+                } catch (qtyErr: any) {
+                    // Non-critical — log but don't fail the response
+                    console.error('[controller] Qty recalc failed after soft delete:', qtyErr?.message);
+                }
+            }
+
+            reply.status(result?.status ?? 200).send(result);
+        } catch (error) {
+            console.error('ERROR IN Controller softDeleteProductRevo', error);
+            reply.status(500).send({ error: error.message });
         }
     }
     export const upsertProductrevo = async (request: any, reply: any) => {
