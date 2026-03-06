@@ -83,5 +83,3 @@ substitutions:
   _ENQUIRY_INDIVIDUAL_SHEET: '${ENQUIRY_INDIVID
 options:
   logging: CLOUD_LOGGING_ONLY
-
-  
