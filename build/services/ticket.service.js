@@ -249,6 +249,7 @@ export var ticketService;
             }
             console.log(querydata, "querydata in Upsert Normal Tickets");
             const result = await query(querydata, params);
+            console.log(result, "result in Upsert Normal Tickets");
             if (result && result.rows.length > 0) {
                 let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
                     result.rows[0].userid,
@@ -288,7 +289,10 @@ export var ticketService;
             let params;
             const { id, ...upsertFields } = ticketData;
             const fieldNames = Object.keys(upsertFields);
+            console.log("upsertFields", upsertFields);
+            console.log("fieldNames", fieldNames);
             const fieldValues = Object.values(upsertFields);
+            console.log("fieldValues", fieldValues);
             if (id) {
                 querydata = `UPDATE tickets SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)

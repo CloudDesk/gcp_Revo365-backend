@@ -301,7 +301,8 @@ export var cartservice;
                 p.quantity AS products_quantity,
                 p.soldquantity AS products_soldquantity,
                 p.orderedquantity AS products_orderedquantity,
-                p.discount AS products_discount
+                p.discount AS products_discount,
+                p.weight AS products_weight
             FROM cart c
             INNER JOIN product_revo p ON p.id = c.productid 
             WHERE iscart = true AND iswishlist = false

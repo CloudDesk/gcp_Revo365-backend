@@ -49,6 +49,7 @@ import { runShiprocketDiagnostics, shiprocketShippingService } from "../services
 import { bannerController } from "../controller/banner.controller.js";
 import { googlereviewController } from "../controller/googlereview.controller.js";
 import { blogscontroller } from "../controller/blogs.controller.js";
+import { enquiryController } from "../controller/enquiry.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -104,6 +105,10 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
     fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct);
+    // Ecom visibility toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecom_visible: true|false }
+    fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
+    // Safe soft delete: never hard deletes, cascades to stock_revo + cart/wishlist, preserves orderline
+    fastify.delete('/v2/product/:id/safe', { preHandler: [getSession] }, productrevoController.softDeleteProductRevo);
     //version 2 -> stock
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
@@ -151,6 +156,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/wishlist', { preHandler: [getSession] }, wishListController.upsertToWishlist);
     //users
     fastify.get('/users', { preHandler: [getSession] }, userController.getUsersData);
+    fastify.get('/whatsapp/users', userController.getUsersData);
     fastify.get('/users/:useremail/:userpassword', userController.getLoggedInUsersData);
     fastify.post('/users', userController.upsertUser);
     fastify.post('/users/fcmid', userController.upsertFcmidUser);
@@ -161,6 +167,7 @@ const Revo365Routes = async function (fastify, opts) {
     //Invetroyusers
     fastify.get('/inventoryusers', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersData);
     fastify.get('/inventoryusers/tickets', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersDataTickets);
+    fastify.get('/whatsapp/inventoryusers/tickets', InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
     fastify.post('/inventoryusers', InventoryuserController.upsertInventoryUser);
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
@@ -176,6 +183,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/orders', { preHandler: [getSession] }, ordersController.getUserOrderData);
     fastify.get('/orders/overall', { preHandler: [getSession] }, ordersController.getOrderData);
     fastify.get('/orderline', { preHandler: [getSession] }, ordersController.getorderlinedata);
+    fastify.get('/whatsapp/orderline', ordersController.getorderlinedata);
     fastify.get('/orderline/Inventory', { preHandler: [getSession] }, ordersController.getInvorderlinedata);
     fastify.get('/customer/orderline', { preHandler: [getSession] }, ordersController.getOrderlineDynamicData);
     fastify.post('/orderline', { preHandler: [getSession] }, ordersController.updateorderlineitem);
@@ -234,6 +242,9 @@ const Revo365Routes = async function (fastify, opts) {
     //transaction
     fastify.get('/transaction', { preHandler: [getSession] }, transactionController.getTransactionData);
     fastify.post('/transaction', { preHandler: [getSession] }, transactionController.inserttransaction);
+    // ecom enquiry (public)
+    fastify.post('/enquiry-corporate', enquiryController.enquiryCorporate);
+    fastify.post('/enquiry-individual', enquiryController.enquiryIndividual);
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
@@ -261,9 +272,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/order-rfid/line', { preHandler: [getSession] }, ordersController.upsertOrderlinerfid);
     //tickets
     fastify.get('/tickets', { preHandler: [getSession] }, ticketController.getTicketsData);
+    fastify.get('/whatsapp/tickets', ticketController.getTicketsData);
     fastify.get('/customer/tickets', { preHandler: [getSession] }, ticketController.getTicketDynamicData);
     fastify.get('/tickets/queue', { preHandler: [getSession] }, ticketController.getQueueTicketsData);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
+    fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
@@ -322,6 +335,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);
+    fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
     fastify.post('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.upsertRevoInvoice);
     //Query Table
     fastify.get('/table', { preHandler: [getSession] }, tablecontoller.getTable);
