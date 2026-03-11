@@ -413,7 +413,7 @@ export module ordersService {
                         FROM product_revo AS p
                         WHERE p.id IN (${productImageParams})`;
                     const productimage = await query(productimagequery, productIds);
-                    
+
                     // Create a map of product images
                     const productImageMap = new Map(productimage.rows.map(row => [row.id, {
                         small: row.small,
@@ -1496,26 +1496,26 @@ ${whereClause} ${orderByClause}`;
                     // Split the order
                     console.log("available", available);
                     console.log("item.invoicefor", item.invoicefor);
-                    if (available > 0 ) {
+                    if (available > 0) {
                         // Add available quantity to orders
                         let orderItem = { ...item, quantity: available };
                         ordersToInsert.push(orderItem);
                     }
-                     else if(available <= 0 && item.invoicefor == "product rental") {
+                    else if (available <= 0 && item.invoicefor == "product rental") {
                         console.log("comes inside else if");
                         let orderItem = { ...item, quantity: available };
-                        ordersToInsert.push(orderItem); 
+                        ordersToInsert.push(orderItem);
                         console.log("orderItem", orderItem);
                     }
                     // Add remaining quantity to thirdpartyorders
-                    if(item.invoicefor != "product rental"){
+                    if (item.invoicefor != "product rental") {
                         const thirdPartyQuantity = item.quantity - available;
                         if (thirdPartyQuantity > 0) {
                             const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
                             thirdPartyOrdersToInsert.push(thirdPartyItem);
                         }
                     }
-                  
+
                 }
             });
 
@@ -1745,7 +1745,7 @@ ${whereClause} ${orderByClause}`;
                         orderid: updatedOrderResult.rows[0].id,
                         orderstatus: updatedOrderResult.rows[0].orderstatus
                     }
-                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed)
+                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed, false)
 
                     // Filter for rental orders and allocate stock
                     if (!paymentfailed) {
@@ -1757,7 +1757,7 @@ ${whereClause} ${orderByClause}`;
                     }
 
                     console.log('Updated Order Line Data from orders:', updatedOrderLineData);
-                    console.log('Empty After updating order line data');
+                    console.log('cdc line data');
                     return { data: updatedOrderResult.rows, status: 'success' }
                 }
                 else {
@@ -1772,18 +1772,26 @@ ${whereClause} ${orderByClause}`;
         }
     };
 
-    export async function updateOrderStatus(payload: any, emailid: string, paymentfailed: boolean) {
+    export async function updateOrderStatus(payload: any, emailid: string, paymentfailed: boolean, isThirdParty: boolean) {
         try {
             const { orderid, orderstatus } = payload;
             console.log('Inside updateOrderStatus with data:', payload);
-            const updateQuery = `
+            const updateQuery = isThirdParty ?
+                `
+                UPDATE orderline
+                SET orderstatus = $1
+                WHERE thirdpartyorderid = $2
+                RETURNING *;
+            `
+                : `
                 UPDATE orderline
                 SET orderstatus = $1
                 WHERE orderid = $2
                 RETURNING *;
             `;
             console.log('Inside updateOrderStatus with data: Update Query:', updateQuery);
-            const result = await query(updateQuery, [orderstatus, orderid]);
+            const proceessId = isThirdParty ? payload.thirdpartyorderid : payload.orderid;
+            const result = await query(updateQuery, [orderstatus, proceessId]);
             console.log('Inside updateOrderStatus with data: Update Result:', result);
             if (result.rowCount === 0) {
                 throw new Error(`No orderline found with orderid: ${orderid}`);
