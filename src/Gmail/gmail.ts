@@ -36,6 +36,8 @@ export const  sendMail = async (request, reply) => {
 
 
     transporter.sendMail(mailOptions, (error, info) => {
+        console.log('Mail Options:', mailOptions);
+        console.log('%csrc/Gmail/gmail.ts:40 e', 'color: #007acc;', error);
         if (error) {
             if (reply) {
                 reply.status(404).send('Error Sending Email')

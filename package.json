@@ -46,6 +46,7 @@
     "csvtojson": "^2.0.10",
     "docxtemplater": "^3.50.0",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "fastify": "^4.28.1",
     "fastify-cookie": "^5.6.1",
     "fastify-multer": "^2.0.3",
