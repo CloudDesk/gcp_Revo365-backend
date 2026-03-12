@@ -95,7 +95,7 @@ export var thirdPartyOrdersService;
     };
     thirdPartyOrdersService.updateThirdPartyOrder = async (data, paymentfailed) => {
         try {
-            // console.log('Inside thirdPartyOrder with data:', data);
+            console.log('Inside thirdPartyOrder with data:', data);
             const orders = data.order;
             const transactionid = data.transactiondata.transactionid;
             const emailid = data.transactiondata.name;
@@ -143,10 +143,10 @@ export var thirdPartyOrdersService;
                 if (updatedOrderResult.command === 'UPDATE') {
                     console.log('Inside if');
                     let orderlinedata = {
-                        orderid: updatedOrderResult.rows[0].id,
+                        thirdpartyorderid: updatedOrderResult.rows[0].id,
                         orderstatus: updatedOrderResult.rows[0].orderstatus
                     };
-                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed);
+                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed, true);
                     // console.log('Updated Order Line Data in third party:', updatedOrderLineData);
                     // console.log('Updated Order line after third party');
                     return { data: updatedOrderResult.rows, status: 'success' };

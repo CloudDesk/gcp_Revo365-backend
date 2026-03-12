@@ -1586,7 +1586,7 @@ ${whereClause} ${orderByClause}`;
                         orderid: updatedOrderResult.rows[0].id,
                         orderstatus: updatedOrderResult.rows[0].orderstatus
                     };
-                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed);
+                    const updatedOrderLineData = await ordersService.updateOrderStatus(orderlinedata, emailid, paymentfailed, false);
                     // Filter for rental orders and allocate stock
                     if (!paymentfailed) {
                         const rentalOrders = updatedOrderResult.rows.filter((row) => row.ordername === 'rental');
@@ -1596,7 +1596,7 @@ ${whereClause} ${orderByClause}`;
                         }
                     }
                     console.log('Updated Order Line Data from orders:', updatedOrderLineData);
-                    console.log('Empty After updating order line data');
+                    console.log('cdc line data');
                     return { data: updatedOrderResult.rows, status: 'success' };
                 }
                 else {
@@ -1609,18 +1609,26 @@ ${whereClause} ${orderByClause}`;
             throw error;
         }
     };
-    async function updateOrderStatus(payload, emailid, paymentfailed) {
+    async function updateOrderStatus(payload, emailid, paymentfailed, isThirdParty) {
         try {
             const { orderid, orderstatus } = payload;
             console.log('Inside updateOrderStatus with data:', payload);
-            const updateQuery = `
+            const updateQuery = isThirdParty ?
+                `
+                UPDATE orderline
+                SET orderstatus = $1
+                WHERE thirdpartyorderid = $2
+                RETURNING *;
+            `
+                : `
                 UPDATE orderline
                 SET orderstatus = $1
                 WHERE orderid = $2
                 RETURNING *;
             `;
             console.log('Inside updateOrderStatus with data: Update Query:', updateQuery);
-            const result = await query(updateQuery, [orderstatus, orderid]);
+            const proceessId = isThirdParty ? payload.thirdpartyorderid : payload.orderid;
+            const result = await query(updateQuery, [orderstatus, proceessId]);
             console.log('Inside updateOrderStatus with data: Update Result:', result);
             if (result.rowCount === 0) {
                 throw new Error(`No orderline found with orderid: ${orderid}`);
