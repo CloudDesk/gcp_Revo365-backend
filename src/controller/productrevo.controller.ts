@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { productrevoService } from "../services/productrevo.service.js";
 import { stockRevoService } from "../services/stockRevo.service.js";
+import { getSession } from "../services/session.service.js";
 import uploadtos3 from "../aws/uploadtos3.js";
 
 interface idparams {
@@ -10,17 +11,26 @@ interface idparams {
 export module productrevoController {
     export const getProductsrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-            let getProductRevoResult = await productrevoService.getproductsData(request);
+            let getProductRevoResult = await productrevoService.getproductsData(request, "visible");
             reply.send(getProductRevoResult)
         } catch (error) {
             console.error('ERROR IN  Controller getProductsrevoData', error);
             reply.status(500).send(error.message);
         }
     }
+    export const getHiddenProductsrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            let getProductRevoResult = await productrevoService.getproductsData(request, "hidden");
+            reply.send(getProductRevoResult)
+        } catch (error) {
+            console.error('ERROR IN Controller getHiddenProductsrevoData', error);
+            reply.status(500).send(error.message);
+        }
+    }
     //get
     export const getProductsEcomrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-            let getProductRevoResult = await productrevoService.getEcomProducts(request);
+            let getProductRevoResult = await productrevoService.getEcomProducts(request, "visible");
             reply.send(getProductRevoResult)
         } catch (error) {
             console.error('ERROR IN  Controller getProductsEcomrevoData', error);
@@ -29,7 +39,7 @@ export module productrevoController {
     }
     export const getSimilarProducts = async function (request: any, reply: any) {
         try {
-            let getProductsResult = await productrevoService.getSimilarProducts(request)
+            let getProductsResult = await productrevoService.getSimilarProducts(request, "visible")
             reply.send(getProductsResult)
         } catch (error) {
             console.error('ERROR IN  Controller getSimilarProducts', error);
@@ -61,7 +71,7 @@ export module productrevoController {
             const { id } = request.params
             console.log("request.params", request.params)
 
-            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id))
+            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id), "visible")
             reply.send(getProductsResult)
         } catch (error) {
             console.error('ERROR IN  Controller getEachProductsRevo', error);
@@ -95,15 +105,19 @@ export module productrevoController {
      * PATCH /v2/product/:id/ecom-visibility
      * Body: { ecom_visible: true | false }
      *
-     * Hides or shows a product on the ecom storefront.
-     * When hidden (false): cart + wishlist entries are auto-cleared.
-     * When shown (true): product reappears, no qty changes needed.
-     * Stocks and orderlines are NEVER touched.
+     * Single lifecycle toggle for product visibility and soft delete.
+     * false -> hidden + soft deleted
+     * true  -> restored + visible
      */
     export const toggleEcomVisible = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
         try {
             const { id } = request.params;
             const body: any = request.body;
+            const sessionData = await getSession(request, reply);
+
+            if (!sessionData || reply.sent) {
+                return;
+            }
 
             if (typeof body?.ecom_visible !== 'boolean') {
                 return reply.status(400).send({
@@ -111,46 +125,19 @@ export module productrevoController {
                 });
             }
 
-            const result: any = await productrevoService.toggleEcomVisible(Number(id), body.ecom_visible);
-            reply.status(result?.status ?? result?.statusCode ?? 200).send(result);
-        } catch (error) {
-            console.error('ERROR IN Controller toggleEcomVisible', error);
-            reply.status(500).send({ error: error.message });
-        }
-    }
+            const result: any = await productrevoService.toggleEcomVisible(Number(id), body.ecom_visible, sessionData);
 
-    // ─── SAFE SOFT DELETE ──────────────────────────────────────────────
-    /**
-     * DELETE /v2/product/:id/safe
-     * (soft delete — never hard deletes, preserves orderline history)
-     *
-     * Flow executed:
-     *   1. product_revo → isdeleted=true, ecom_visible=false
-     *   2. stock_revo   → Available items archived (Sold items kept)
-     *   3. cart/wishlist → entries cleared
-     *   4. stockRevoService.updateQuantity([puc]) → qty fields reset to 0
-     *   5. orderline    → NEVER TOUCHED
-     */
-    export const softDeleteProductRevo = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
-        try {
-            const { id } = request.params;
-            const result: any = await productrevoService.softDeleteProductRevo(Number(id));
-
-            // Trigger quantity recalculation if we have a valid puc
-            // (this resets ecompublishedquantity, availablequantity, etc. to 0)
             if (result?.puc) {
                 try {
                     await stockRevoService.updateQuantity([result.puc], 0, false, false);
-                    console.log(`[controller] Quantity fields recalculated for puc: ${result.puc}`);
                 } catch (qtyErr: any) {
-                    // Non-critical — log but don't fail the response
-                    console.error('[controller] Qty recalc failed after soft delete:', qtyErr?.message);
+                    console.error('[controller] Qty recalc failed after ecom visibility toggle:', qtyErr?.message);
                 }
             }
 
-            reply.status(result?.status ?? 200).send(result);
+            reply.status(result?.status ?? result?.statusCode ?? 200).send(result);
         } catch (error) {
-            console.error('ERROR IN Controller softDeleteProductRevo', error);
+            console.error('ERROR IN Controller toggleEcomVisible', error);
             reply.status(500).send({ error: error.message });
         }
     }

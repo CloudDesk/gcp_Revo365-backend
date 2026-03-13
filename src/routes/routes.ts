@@ -106,6 +106,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     )
     // verison 2 -> product
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
+    fastify.get('/v2/product-hidden', { preHandler: [getSession] }, productrevoController.getHiddenProductsrevoData);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);
     fastify.get('/v2/product/Archieve', { preHandler: [getSession] }, productrevoController.getArcheivedProductsRevo);
     fastify.get('/v2/product-ecom/:id', productrevoController.getEachProductsRevo);
@@ -121,10 +122,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
     fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct)
-    // Ecom visibility toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecom_visible: true|false }
+    // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecom_visible: true|false }
     fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
-    // Safe soft delete: never hard deletes, cascades to stock_revo + cart/wishlist, preserves orderline
-    fastify.delete('/v2/product/:id/safe', { preHandler: [getSession] }, productrevoController.softDeleteProductRevo);
 
     //version 2 -> stock
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);

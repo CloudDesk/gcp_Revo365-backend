@@ -10,7 +10,45 @@ export module productrevoService {
 
   const TIMEOUT_THRESHOLD = 5000;
 
-  export const getproductsData = async (request: any) => {
+  const buildStatusAuditPayload = (
+    previousAudit: any,
+    actor: any,
+    ecomVisible: boolean
+  ) => {
+    const changedAt = new Date().toISOString();
+    const changedBy = {
+      id: actor?.id ?? null,
+      name: [actor?.firstname, actor?.lastname].filter(Boolean).join(" ") || actor?.useremail || "unknown",
+      email: actor?.useremail ?? null,
+      role: actor?.role ?? null,
+    };
+
+    const entry = {
+      ecom_visible: ecomVisible,
+      changed_at: changedAt,
+      changed_by: changedBy,
+      source: "product.ecom_visibility.toggle",
+    };
+
+    const history = Array.isArray(previousAudit?.history)
+      ? [...previousAudit.history, entry]
+      : [entry];
+
+    return {
+      current: entry,
+      history,
+    };
+  };
+
+  const getVisibilityCondition = (mode: "visible" | "hidden") => {
+    if (mode === "hidden") {
+      return `(ecom_visible = FALSE)`;
+    }
+
+    return `(ecom_visible = TRUE OR ecom_visible IS NULL)`;
+  };
+
+  export const getproductsData = async (request: any, visibilityMode: "visible" | "hidden" = "visible") => {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
@@ -52,7 +90,7 @@ export module productrevoService {
         }
       });
       const offset = (pageNumber - 1) * recordCount;
-      const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+      const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL) AND ${getVisibilityCondition(visibilityMode)}`;
       const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
       const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
 
@@ -77,7 +115,7 @@ export module productrevoService {
   };
 
 
-  export const getEcomProducts = async (request: any) => {
+  export const getEcomProducts = async (request: any, visibilityMode: "visible" | "hidden" = "visible") => {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
@@ -143,7 +181,7 @@ export module productrevoService {
       const baseConditions = `(isarchive = FALSE OR isarchive IS NULL)
         AND (isdeleted = FALSE OR isdeleted IS NULL)
         AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)
-        AND (ecom_visible = TRUE OR ecom_visible IS NULL)`;
+        AND ${getVisibilityCondition(visibilityMode)}`;
       const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
       let queryText = `SELECT * FROM product_revo`;
       if (whereClause) {
@@ -165,7 +203,7 @@ export module productrevoService {
     }
   };
 
-  export const getSimilarProducts = async (request: any) => {
+  export const getSimilarProducts = async (request: any, visibilityMode: "visible" | "hidden" = "visible") => {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
@@ -187,7 +225,7 @@ export module productrevoService {
       });
 
       const offset = (pageNumber - 1) * recordCount;
-      const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+      const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL) AND ${getVisibilityCondition(visibilityMode)}`;
       const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
       const orderByClause = `ORDER BY modifieddate DESC`;
 
@@ -240,170 +278,99 @@ export module productrevoService {
 
   // ─── ECOM VISIBILITY TOGGLE ──────────────────────────────────────────────────
   /**
-   * Toggles the ecom_visible flag on a product_revo record.
+   * Toggles product visibility state for ecom.
    *
-   * ecom_visible = TRUE  → product appears on ecom listing (default)
+   * ecom_visible = TRUE  → product visible on ecom
+   * stock_revo  → available stock unarchived for the same puc
+   *
    * ecom_visible = FALSE → product hidden from ecom
-   *                        → cart + wishlist entries for this productid are DELETED
-   *                        → stock_revo unchanged (quantities unaffected)
-   *                        → orderline NEVER touched
+   * stock_revo  → available stock archived for the same puc
    *
-   * Toggle back to TRUE:
-   *   → product reappears on ecom
-   *   → quantities already accurate (stock_revo.ecompublish was never changed)
-   *   → NO qty recalculation needed
-   *   → cart/wishlist NOT restored (users re-add themselves)
-   *
-   * @param id          product_revo.id
-   * @param ecomVisible true to show, false to hide
+   * Sold / Rental Sold stock and orderline history are preserved.
    */
-  export const toggleEcomVisible = async (id: number, ecomVisible: boolean) => {
+  export const toggleEcomVisible = async (id: number, ecomVisible: boolean, actor?: any) => {
     try {
-      // 1. Verify product exists
       const productResult = await query(
-        `SELECT id, puc, ecom_visible FROM product_revo WHERE id = $1`,
+        `SELECT id, puc, ecom_visible, isdeleted, status_audit FROM product_revo WHERE id = $1`,
         [id]
       );
       if (!productResult.rows.length) {
         return { status: 404, message: `Product not found with id ${id}` };
       }
 
-      const currentVisible = productResult.rows[0].ecom_visible;
+      const { puc, status_audit } = productResult.rows[0];
+      const currentVisible = productResult.rows[0].ecom_visible !== false;
 
-      // 2. No-op if already in desired state
       if (currentVisible === ecomVisible) {
         return {
           status: 200,
-          message: `Product is already ${ecomVisible ? 'visible' : 'hidden'} on ecom. No changes made.`,
+          message: `Product is already ${ecomVisible ? 'visible' : 'hidden'}. No changes made.`,
           ecom_visible: ecomVisible,
+          puc,
         };
       }
 
-      // 3. Update the ecom_visible flag
+      const statusAudit = buildStatusAuditPayload(status_audit, actor, ecomVisible);
+
       await query(
-        `UPDATE product_revo SET ecom_visible = $1 WHERE id = $2`,
-        [ecomVisible, id]
+        `UPDATE product_revo
+         SET ecom_visible = $1,
+             removefromrecyclebin = FALSE,
+             status_audit = $2
+         WHERE id = $3`,
+        [ecomVisible, JSON.stringify(statusAudit), id]
       );
 
       let cartDeletedCount = 0;
+      let stockUpdatedCount = 0;
 
-      // 4. If hiding: clear ALL cart and wishlist entries for this product
-      //    (same cart table with iscart/iswishlist flags)
       if (!ecomVisible) {
+        const archiveResult = await query(
+          `UPDATE stock_revo
+           SET isarchive = TRUE
+           WHERE puc = $1
+             AND stockstatus = 'Available'
+             AND (isdeleted = FALSE OR isdeleted IS NULL)
+             AND (isarchive = FALSE OR isarchive IS NULL)
+           RETURNING id`,
+          [puc]
+        );
+        stockUpdatedCount = archiveResult.rowCount ?? 0;
+
         const deleteResult = await query(
           `DELETE FROM cart WHERE productid = $1 RETURNING id`,
           [id]
         );
         cartDeletedCount = deleteResult.rowCount ?? 0;
-        console.log(
-          `[productService] Ecom hide: deleted ${cartDeletedCount} cart/wishlist entries for product id ${id}`
+      } else {
+        const restoreResult = await query(
+          `UPDATE stock_revo
+           SET isarchive = FALSE
+           WHERE puc = $1
+             AND stockstatus = 'Available'
+             AND (isdeleted = FALSE OR isdeleted IS NULL)
+             AND isarchive = TRUE
+           RETURNING id`,
+          [puc]
         );
+        stockUpdatedCount = restoreResult.rowCount ?? 0;
       }
-
-      // 5. Stock quantities: NOT touched.
-      //    ecompublishedquantity is based on stock_revo.ecompublish, which is unchanged.
-      //    When re-enabling (ecomVisible = true), quantities are already correct.
 
       return {
         status: 200,
         message: ecomVisible
-          ? `Product id ${id} is now VISIBLE on ecom. No qty changes needed.`
-          : `Product id ${id} hidden from ecom. ${cartDeletedCount} cart/wishlist entries cleared.`,
+          ? `Product id ${id} moved live successfully.`
+          : `Product id ${id} hidden from ecom successfully.`,
         ecom_visible: ecomVisible,
+        puc,
+        stock_updated_count: stockUpdatedCount,
         cart_wishlist_cleared: cartDeletedCount,
+        status_audit: statusAudit.current,
       };
     } catch (error) {
       console.error("Query Execution Error: IN toggleEcomVisible", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
-    }
-  };
-
-  // ─── SAFE SOFT DELETE ────────────────────────────────────────────────────────
-  /**
-   * Soft deletes a product_revo record safely.
-   *
-   * Flow:
-   *  1. Mark product_revo as isdeleted=true, ecom_visible=false
-   *  2. Archive all AVAILABLE stock_revo items under this product's puc
-   *     (Sold/Rental Sold items are preserved for orderline history)
-   *  3. Clear cart + wishlist entries for this productid
-   *  4. Returns puc so controller can call stockRevoService.updateQuantity([puc])
-   *     to refresh the stored quantity fields to 0
-   *  5. orderline is NEVER touched
-   *
-   * @param id  product_revo.id to soft delete
-   */
-  export const softDeleteProductRevo = async (id: number) => {
-    try {
-      // 1. Get product details
-      const productResult = await query(
-        `SELECT id, puc, isdeleted FROM product_revo WHERE id = $1`,
-        [id]
-      );
-      if (!productResult.rows.length) {
-        return { status: 404, message: `Product not found with id ${id}`, puc: null };
-      }
-
-      const { puc, isdeleted } = productResult.rows[0];
-
-      if (isdeleted === true) {
-        return { status: 200, message: `Product id ${id} is already soft deleted.`, puc };
-      }
-
-      // 2. Soft delete the product_revo record
-      await query(
-        `UPDATE product_revo
-         SET isdeleted = TRUE,
-             ecom_visible = FALSE,
-             removefromrecyclebin = FALSE
-         WHERE id = $1`,
-        [id]
-      );
-
-      // 3. Archive only AVAILABLE stock_revo items for this puc
-      //    Sold / Rental Sold items are kept intact for orderline history
-      const archiveResult = await query(
-        `UPDATE stock_revo
-         SET isarchive = TRUE
-         WHERE puc = $1
-           AND stockstatus = 'Available'
-           AND (isdeleted = FALSE OR isdeleted IS NULL)
-           AND (isarchive = FALSE OR isarchive IS NULL)
-         RETURNING id`,
-        [puc]
-      );
-      const archivedStockCount = archiveResult.rowCount ?? 0;
-      console.log(
-        `[productService] Soft delete: archived ${archivedStockCount} available stock_revo items for puc ${puc}`
-      );
-
-      // 4. Delete cart and wishlist entries for this product
-      const cartDeleteResult = await query(
-        `DELETE FROM cart WHERE productid = $1 RETURNING id`,
-        [id]
-      );
-      const cartDeletedCount = cartDeleteResult.rowCount ?? 0;
-      console.log(
-        `[productService] Soft delete: cleared ${cartDeletedCount} cart/wishlist entries for product id ${id}`
-      );
-
-      // 5. orderline → NEVER TOUCHED (order history must be preserved)
-
-      // Return puc so controller can trigger stockRevoService.updateQuantity([puc])
-      // to recalculate and persist quantity fields to 0
-      return {
-        status: 200,
-        message: `Product id ${id} soft deleted successfully.`,
-        puc,
-        archived_stock_count: archivedStockCount,
-        cart_wishlist_cleared: cartDeletedCount,
-        orderline: 'preserved — not touched',
-      };
-    } catch (error) {
-      console.error("Query Execution Error: IN softDeleteProductRevo", error);
-      let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      return { ...ErrorMessage, puc: null };
     }
   };
 
@@ -540,11 +507,17 @@ export module productrevoService {
   }
 
   //get
-  export const getEachProductsRevo = async function (request: any, id: Number) {
+  export const getEachProductsRevo = async function (request: any, id: Number, visibilityMode: "visible" | "hidden" = "visible") {
     try {
+      const queryText = `SELECT * FROM product_revo
+           WHERE id = $1
+             AND (isarchive = FALSE OR isarchive IS NULL)
+             AND (isdeleted = FALSE OR isdeleted IS NULL)
+             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)
+             AND ${getVisibilityCondition(visibilityMode)}`;
       const result: QueryResult = await query(
-        `SELECT * FROM product_revo where id=${id}`,
-        []
+        queryText,
+        [id]
       );
       console.log(result, "result")
       let getvalues = { objectName: "null" };
