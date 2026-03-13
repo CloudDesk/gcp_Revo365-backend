@@ -50,6 +50,7 @@ import { bannerController } from "../controller/banner.controller.js";
 import { googlereviewController } from "../controller/googlereview.controller.js";
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
+import { enquiryExportController } from "../controller/enquiryExport.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
@@ -245,6 +246,8 @@ const Revo365Routes = async function (fastify, opts) {
     // ecom enquiry (public)
     fastify.post('/enquiry-corporate', enquiryController.enquiryCorporate);
     fastify.post('/enquiry-individual', enquiryController.enquiryIndividual);
+    // enquiry export — downloads Excel with Corporate + Individual sheets (session-protected)
+    fastify.get('/enquiry-export', { preHandler: [getSession] }, enquiryExportController.downloadEnquiryExcel);
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
