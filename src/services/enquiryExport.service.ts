@@ -33,10 +33,17 @@ const INDIVIDUAL_COLUMNS: { key: string; header: string; width: number }[] = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const formatDisplayDate = (date) =>
+  date.toLocaleDateString('en-IN', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit'
+  });
+
 /**
  * Formats a JS Date (or ISO string) to "YYYY-MM-DD HH:MM" in IST.
  */
-const formatDate = (value: Date | string | null | undefined): string => {
+const formatDateTimeIST = (value: Date | string | null | undefined): string => {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (isNaN(d.getTime())) return String(value);
@@ -150,7 +157,7 @@ const buildSheet = (
       const raw = record[col.key];
       // Format date fields
       if (col.key === "created_at" || col.key === "preferred_date") {
-        rowData[col.key] = formatDate(raw);
+        rowData[col.key] = formatDateTimeIST(raw);
       } else {
         rowData[col.key] = raw ?? "";
       }
@@ -173,7 +180,7 @@ const buildSheet = (
 
 export interface EnquiryExportFilters {
   /** Start of the date range (inclusive). ISO date string e.g. "2025-01-01" */
-  from: string;
+  from?: string;
   /**
    * End of the date range (inclusive).
    * Defaults to the current moment when not supplied.
@@ -207,8 +214,10 @@ export module enquiryExportService {
     // A record saved at IST 00:00 on Mar 13 = 2025-03-12T18:30:00Z
     //   → NOT included in to=2025-03-12  ✅
     //   → IS  included in from=2025-03-13 ✅
-    const fromDate = new Date(`${filters.from}T00:00:00.000+05:30`);
-    const toDate   = filters.to
+    const fromDate = filters.from
+      ? new Date(`${filters.from}T00:00:00.000+05:30`)
+      : new Date('1970-01-01T00:00:00.000+05:30');
+    const toDate = filters.to
       ? new Date(`${filters.to}T23:59:59.999+05:30`)
       : new Date(); // no `to` → up to the exact current moment
 
@@ -232,16 +241,19 @@ export module enquiryExportService {
     const individualRows = allRows.filter((r) => r.recordtype === "individual");
 
     // Human-readable label used in the sheet title
-    const rangeLabel = filters.to
-      ? `${filters.from}  to  ${filters.to}`
-      : `${filters.from}  to  Now`;
+    // const rangeLabel = filters.to
+    //   ? `${filters.from}  to  ${filters.to}`
+    //   : `${filters.from}  to  Now`;
+    const fromLabel = filters.from ? formatDisplayDate(fromDate) : 'Beginning';
+    const toLabel = filters.to ? formatDisplayDate(toDate) : 'Now';
+    const rangeLabel = `${fromLabel} to ${toLabel}`;
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "Revo365 Backend";
     workbook.created = new Date();
     workbook.modified = new Date();
 
-    buildSheet(workbook, "Corporate",  CORPORATE_COLUMNS,  corporateRows,  rangeLabel);
+    buildSheet(workbook, "Corporate", CORPORATE_COLUMNS, corporateRows, rangeLabel);
     buildSheet(workbook, "Individual", INDIVIDUAL_COLUMNS, individualRows, rangeLabel);
 
     return workbook;

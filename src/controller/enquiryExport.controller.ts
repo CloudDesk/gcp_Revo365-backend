@@ -25,18 +25,11 @@ export module enquiryExportController {
   ): Promise<void> => {
     try {
       const { from, to } = request.query as { from?: string; to?: string };
-
-      // ── Validate `from` (required) ─────────────────────────────────────────
-      if (!from) {
-        return reply.status(400).send({
-          success: false,
-          error: { message: "`from` query parameter is required (YYYY-MM-DD)." },
-        });
-      }
+      console.log(request.query, "query downloadEnquiryExcel");
 
       const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-      if (!ISO_DATE.test(from) || isNaN(Date.parse(from))) {
+      if (from && (!ISO_DATE.test(from) || isNaN(Date.parse(from)))) {
         return reply.status(400).send({
           success: false,
           error: { message: "`from` must be a valid date in YYYY-MM-DD format." },
