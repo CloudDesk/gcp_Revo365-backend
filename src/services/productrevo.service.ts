@@ -45,7 +45,7 @@ export module productrevoService {
       return `(ecom_visible = FALSE)`;
     }
 
-    return `(ecom_visible = TRUE OR ecom_visible IS NULL)`;
+    return `(ecom_visible = TRUE)`;
   };
 
   export const getproductsData = async (request: any, visibilityMode: "visible" | "hidden" = "visible") => {

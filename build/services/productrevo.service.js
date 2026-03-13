@@ -32,7 +32,7 @@ export var productrevoService;
         if (mode === "hidden") {
             return `(ecom_visible = FALSE)`;
         }
-        return `(ecom_visible = TRUE OR ecom_visible IS NULL)`;
+        return `(ecom_visible = TRUE)`;
     };
     productrevoService.getproductsData = async (request, visibilityMode = "visible") => {
         try {
