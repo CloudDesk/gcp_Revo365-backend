@@ -8,20 +8,20 @@ Request body:
 
 ```json
 {
-  "ecom_visible": true
+  "ecomvisible": true
 }
 ```
 
 Behavior:
 
 - `true -> false`
-  - `product_revo.ecom_visible = false`
+  - `product_revo.ecomvisible = false`
   - available `stock_revo` rows for the same `puc` are archived
   - cart and wishlist rows for the product are cleared
   - product quantity fields are recalculated
 
 - `false -> true`
-  - `product_revo.ecom_visible = true`
+  - `product_revo.ecomvisible = true`
   - available `stock_revo` rows for the same `puc` are unarchived
   - product quantity fields are recalculated
   - cart and wishlist rows are not restored automatically
@@ -35,7 +35,7 @@ Notes:
 
 ## 2. Customer-facing routes covered
 
-The following routes return only `ecom_visible = true` products:
+The following routes return only `ecomvisible = true` products:
 
 - `GET /v2/product-ecommerce`
 - `GET /v2/product-ecom`
@@ -57,14 +57,14 @@ Hidden-only protected route:
 
 New column on `product_revo`:
 
-- `status_audit jsonb`
+- `statushistory jsonb`
 
 Stored shape:
 
 ```json
 {
   "current": {
-    "ecom_visible": true,
+    "ecomvisible": true,
     "changed_at": "2026-03-13T10:00:00.000Z",
     "changed_by": {
       "id": 1,
@@ -80,7 +80,7 @@ Stored shape:
 
 Each toggle appends one new history entry with:
 
-- current `ecom_visible`
+- current `ecomvisible`
 - change timestamp
 - actor basic info from session
 - source value
@@ -89,13 +89,13 @@ Each toggle appends one new history entry with:
 
 Run:
 
-- [`src/database/migrations/add_product_revo_status_audit.sql`](/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/src/database/migrations/add_product_revo_status_audit.sql)
+- [`src/database/migrations/add_product_revo_statushistory.sql`](/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/src/database/migrations/add_product_revo_statushistory.sql)
 
 
 
 Business Requirement
 
-Client can hide a product from the ecom site by toggling ecom_visible=false.
+Client can hide a product from the ecom site by toggling ecomvisible=false.
 Product should disappear from ecom products/accessories/detail/cart/wishlist behavior.
 Existing stock must be preserved, not deleted.
 When toggled back to true, the same stock should become sellable again and quantities should recalculate.
@@ -125,7 +125,7 @@ Implementation Summary
 src/routes/routes.ts
 src/controller/productrevo.controller.ts
 src/services/productrevo.service.ts
-src/database/migrations/add_product_revo_status_audit.sql
+src/database/migrations/add_product_revo_statushistory.sql
 Audit Format
 
 current structure

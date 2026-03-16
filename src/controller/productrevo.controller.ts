@@ -3,6 +3,7 @@ import { productrevoService } from "../services/productrevo.service.js";
 import { stockRevoService } from "../services/stockRevo.service.js";
 import { getSession } from "../services/session.service.js";
 import uploadtos3 from "../aws/uploadtos3.js";
+// Note: stockRevoService import retained for other potential usages in this module.
 
 interface idparams {
     id: number
@@ -103,39 +104,50 @@ export module productrevoController {
     // ─── ECOM VISIBILITY TOGGLE ────────────────────────────────────────────
     /**
      * PATCH /v2/product/:id/ecom-visibility
-     * Body: { ecom_visible: true | false }
+     * Body: { ecomvisible: true | false }
      *
-     * Single lifecycle toggle for product visibility and soft delete.
-     * false -> hidden + soft deleted
-     * true  -> restored + visible
+     * Approach A — ecomvisible is a product-level visibility flag only.
+     *
+     * Toggle OFF (false):
+     *   1. Validate: product exists? Already false? → return early
+     *   2. BEGIN TRANSACTION
+     *       a. UPDATE product_revo SET ecomvisible = FALSE, statushistory = <audit[]> WHERE id = $1
+     *       b. DELETE FROM cart WHERE productid = $1  (clears cart AND wishlist if same table)
+     *   3. COMMIT
+     *   4. Return: { ecomvisible: false, cart_cleared: N, status_history: { active: {...}, total_entries: N } }
+     *
+     * Toggle ON (true):
+     *   1. Validate: product exists? Already true? → return early
+     *   2. BEGIN TRANSACTION
+     *       a. UPDATE product_revo SET ecomvisible = TRUE, statushistory = <audit[]> WHERE id = $1
+     *   3. COMMIT
+     *   4. Return: { ecomvisible: true, status_history: { active: {...}, total_entries: N } }
+     *
+     * Physical stock (stock_revo) and qty counters are intentionally untouched.
+     * Session is validated by the getSession preHandler on this route.
      */
     export const toggleEcomVisible = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
         try {
             const { id } = request.params;
             const body: any = request.body;
-            const sessionData = await getSession(request, reply);
 
-            if (!sessionData || reply.sent) {
-                return;
-            }
+            // Session already validated by preHandler; re-call only to extract actor for audit trail.
+            const sessionData = (request as any).sessionData ?? await getSession(request, reply);
+            if (reply.sent) return; // guard if getSession already replied with 401
 
-            if (typeof body?.ecom_visible !== 'boolean') {
+            if (typeof body?.ecomvisible !== 'boolean') {
                 return reply.status(400).send({
-                    error: 'Missing or invalid body field: ecom_visible (must be true or false)'
+                    error: 'Missing or invalid body field: ecomvisible (must be true or false)'
                 });
             }
 
-            const result: any = await productrevoService.toggleEcomVisible(Number(id), body.ecom_visible, sessionData);
+            const result: any = await productrevoService.toggleEcomVisible(
+                Number(id),
+                body.ecomvisible,
+                sessionData
+            );
 
-            if (result?.puc) {
-                try {
-                    await stockRevoService.updateQuantity([result.puc], 0, false, false);
-                } catch (qtyErr: any) {
-                    console.error('[controller] Qty recalc failed after ecom visibility toggle:', qtyErr?.message);
-                }
-            }
-
-            reply.status(result?.status ?? result?.statusCode ?? 200).send(result);
+            reply.status(result?.status ?? 200).send(result);
         } catch (error) {
             console.error('ERROR IN Controller toggleEcomVisible', error);
             reply.status(500).send({ error: error.message });

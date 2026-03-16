@@ -122,11 +122,12 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
     fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct)
-    // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecom_visible: true|false }
+    // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecomvisible: true|false }
     fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
 
     //version 2 -> stock
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
+    fastify.get('/v2/stock-hidden', { preHandler: [getSession] }, stockRevoController.getHiddenStocksRevoData);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);
