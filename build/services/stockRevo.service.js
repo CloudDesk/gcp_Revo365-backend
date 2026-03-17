@@ -5,7 +5,13 @@ import { productrevoService } from "./productrevo.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export var stockRevoService;
 (function (stockRevoService) {
-    stockRevoService.getStockRevoData = async (request) => {
+    const getVisibilityCondition = (mode) => {
+        if (mode === "hidden") {
+            return `(p.ecomvisible = FALSE)`;
+        }
+        return `(p.ecomvisible = TRUE OR p.ecomvisible IS NULL)`;
+    };
+    stockRevoService.getStockRevoData = async (request, visibilityMode = "visible") => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
@@ -14,42 +20,57 @@ export var stockRevoService;
             let whereClauses = [];
             let parameterIndex = 1;
             const queryParams = [];
-            let orderByField = "modifieddate";
+            let orderByField = "s.modifieddate";
             let orderByDirection = "DESC";
             keys.forEach((key, index) => {
                 const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
+                let fieldKey = key;
+                if (key === "id")
+                    fieldKey = "s.id";
+                if (key === "puc")
+                    fieldKey = "s.puc";
+                if (key === "modifieddate")
+                    fieldKey = "s.modifieddate";
                 if (key === "displaysize" || key === "price") {
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
-                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        return `(s.${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                     });
                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
                     parameterIndex += 2 * paramValues.length;
                 }
                 else if (key === "sortby") {
                     const [fieldName, direction] = paramValues[0].split("-");
-                    orderByField = fieldName;
+                    orderByField = fieldName.startsWith("s.") ? fieldName : `s.${fieldName}`;
                     orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
-                    whereClauses.push(`(${key} != $${parameterIndex} OR ${key} IS NULL)`);
+                    whereClauses.push(`(${fieldKey} != $${parameterIndex} OR ${fieldKey} IS NULL)`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
                 else if (key !== "page" && key !== "count") {
-                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    const clauses = paramValues.map((_, idx) => `${fieldKey} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
                 }
             });
             const offset = (pageNumber - 1) * recordCount;
-            const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+            const baseConditions = `(s.isarchive = FALSE OR s.isarchive IS NULL) 
+                AND (s.isdeleted = FALSE OR s.isdeleted IS NULL) 
+                AND (s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)
+                AND ${getVisibilityCondition(visibilityMode)}`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-            let queryText = `SELECT * FROM stock_revo ${whereClause} ${orderByClause}`;
+            let queryText = `
+                SELECT s.* 
+                FROM stock_revo s
+                INNER JOIN product_revo p ON s.puc = p.puc
+                ${whereClause} 
+                ${orderByClause}`;
             if (pageNumber && recordCount) {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
@@ -63,6 +84,9 @@ export var stockRevoService;
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
+    };
+    stockRevoService.getHiddenStocksRevoData = async (request) => {
+        return await stockRevoService.getStockRevoData(request, "hidden");
     };
     stockRevoService.getEachStockRevoData = async (request) => {
         try {

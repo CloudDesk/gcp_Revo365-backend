@@ -1,4 +1,4 @@
-import { query } from "../database/postgres.js";
+import pool, { query } from "../database/postgres.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import imageResize from "../imageResize/imageRessize.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
@@ -6,33 +6,40 @@ import { cartservice } from "./cart.service.js";
 export var productrevoService;
 (function (productrevoService) {
     const TIMEOUT_THRESHOLD = 5000;
-    const buildStatusAuditPayload = (previousAudit, actor, ecomVisible) => {
-        const changedAt = new Date().toISOString();
-        const changedBy = {
-            id: actor?.id ?? null,
-            name: [actor?.firstname, actor?.lastname].filter(Boolean).join(" ") || actor?.useremail || "unknown",
-            email: actor?.useremail ?? null,
-            role: actor?.role ?? null,
-        };
-        const entry = {
-            ecom_visible: ecomVisible,
-            changed_at: changedAt,
-            changed_by: changedBy,
+    /**
+     * Builds a new statushistory entry.
+     *
+     * `resolvedActor` must already be fully populated (id, name, email, role)
+     * by the caller via a DB lookup on inventoryusers.
+     *
+     * Shape (each element):
+     *   {
+     *     active: boolean,        ← only the latest entry is true
+     *     ecomvisible: boolean,   ← the value being set
+     *     changed_at: string,     ← ISO timestamp
+     *     changed_by: { id, name, email, role },
+     *     source: string
+     *   }
+     */
+    const buildStatusHistoryPayload = (previousHistory, resolvedActor, ecomVisible) => {
+        const newEntry = {
+            active: true,
+            ecomvisible: ecomVisible,
+            changed_at: new Date().toISOString(),
+            changed_by: resolvedActor,
             source: "product.ecom_visibility.toggle",
         };
-        const history = Array.isArray(previousAudit?.history)
-            ? [...previousAudit.history, entry]
-            : [entry];
-        return {
-            current: entry,
-            history,
-        };
+        // Mark all previous entries as inactive, then append the new one
+        const existing = Array.isArray(previousHistory)
+            ? previousHistory.map((e) => ({ ...e, active: false }))
+            : [];
+        return [...existing, newEntry];
     };
     const getVisibilityCondition = (mode) => {
         if (mode === "hidden") {
-            return `(ecom_visible = FALSE)`;
+            return `(ecomvisible = FALSE)`;
         }
-        return `(ecom_visible = TRUE)`;
+        return `(ecomvisible = TRUE OR ecomvisible IS NULL)`;
     };
     productrevoService.getproductsData = async (request, visibilityMode = "visible") => {
         try {
@@ -156,8 +163,8 @@ export var productrevoService;
             });
             const offset = (pageNumber - 1) * recordCount;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-            // ecom_visible = TRUE  → show on ecom (default for all products)
-            // ecom_visible = FALSE → hidden from ecom by admin (cart/wishlist cleared when toggled)
+            // ecomvisible = TRUE  → show on ecom (default for all products)
+            // ecomvisible = FALSE → hidden from ecom by admin (cart/wishlist cleared when toggled)
             const baseConditions = `(isarchive = FALSE OR isarchive IS NULL)
         AND (isdeleted = FALSE OR isdeleted IS NULL)
         AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)
@@ -251,78 +258,98 @@ export var productrevoService;
     };
     // ─── ECOM VISIBILITY TOGGLE ──────────────────────────────────────────────────
     /**
-     * Toggles product visibility state for ecom.
+     * PATCH /v2/product/:id/ecom-visibility
+     * Body: { ecomvisible: true | false }
      *
-     * ecom_visible = TRUE  → product visible on ecom
-     * stock_revo  → available stock unarchived for the same puc
-     *
-     * ecom_visible = FALSE → product hidden from ecom
-     * stock_revo  → available stock archived for the same puc
-     *
-     * Sold / Rental Sold stock and orderline history are preserved.
+     * DB columns used:
+     *   ecomvisible   (BOOLEAN)  ← renamed from ecom_visible
+     *   statushistory (JSONB)    ← renamed from status_audit; now a flat array of objects
      */
     productrevoService.toggleEcomVisible = async (id, ecomVisible, actor) => {
+        const client = await pool.connect();
         try {
-            const productResult = await query(`SELECT id, puc, ecom_visible, isdeleted, status_audit FROM product_revo WHERE id = $1`, [id]);
+            await client.query('BEGIN');
+            // 1. Fetch & lock the product row
+            const productResult = await client.query(`SELECT id, puc, ecomvisible, statushistory FROM product_revo WHERE id = $1 FOR UPDATE`, [id]);
             if (!productResult.rows.length) {
+                await client.query('ROLLBACK');
                 return { status: 404, message: `Product not found with id ${id}` };
             }
-            const { puc, status_audit } = productResult.rows[0];
-            const currentVisible = productResult.rows[0].ecom_visible !== false;
+            const { puc, statushistory } = productResult.rows[0];
+            const currentVisible = productResult.rows[0].ecomvisible !== false;
+            // 2. No-op guard — already in the target state
             if (currentVisible === ecomVisible) {
+                await client.query('ROLLBACK');
                 return {
                     status: 200,
                     message: `Product is already ${ecomVisible ? 'visible' : 'hidden'}. No changes made.`,
-                    ecom_visible: ecomVisible,
+                    ecomvisible: ecomVisible,
+                    changed: false,
                     puc,
                 };
             }
-            const statusAudit = buildStatusAuditPayload(status_audit, actor, ecomVisible);
-            await query(`UPDATE product_revo
-         SET ecom_visible = $1,
-             removefromrecyclebin = FALSE,
-             status_audit = $2
-         WHERE id = $3`, [ecomVisible, JSON.stringify(statusAudit), id]);
-            let cartDeletedCount = 0;
-            let stockUpdatedCount = 0;
+            // 3. Resolve the actor from inventoryusers using session email
+            //    Session stores only useremail; we need id, name, and role from DB.
+            let resolvedActor = {
+                id: null,
+                name: actor?.useremail ?? "unknown",
+                email: actor?.useremail ?? null,
+                role: null,
+            };
+            if (actor?.useremail) {
+                const userLookup = await client.query(`SELECT id, firstname, lastname, role
+           FROM inventoryusers
+           WHERE useremail = $1
+           LIMIT 1`, [actor.useremail]);
+                if (userLookup.rows.length) {
+                    const u = userLookup.rows[0];
+                    resolvedActor = {
+                        id: u.id ?? null,
+                        name: [u.firstname, u.lastname].filter(Boolean).join(" ") || actor.useremail,
+                        email: actor.useremail,
+                        role: u.role ?? null,
+                    };
+                }
+            }
+            // 4. Build new statushistory (append new entry, mark previous as inactive)
+            const newStatusHistory = buildStatusHistoryPayload(statushistory, resolvedActor, ecomVisible);
+            // 4. Update Product Visibility + Audit Trail
+            await client.query(`UPDATE product_revo
+         SET ecomvisible    = $1,
+             statushistory  = $2
+         WHERE id = $3`, [ecomVisible, JSON.stringify(newStatusHistory), id]);
+            // 5. If Toggle OFF: clear cart/wishlist
+            let cartClearedCount = 0;
             if (!ecomVisible) {
-                const archiveResult = await query(`UPDATE stock_revo
-           SET isarchive = TRUE
-           WHERE puc = $1
-             AND stockstatus = 'Available'
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (isarchive = FALSE OR isarchive IS NULL)
-           RETURNING id`, [puc]);
-                stockUpdatedCount = archiveResult.rowCount ?? 0;
-                const deleteResult = await query(`DELETE FROM cart WHERE productid = $1 RETURNING id`, [id]);
-                cartDeletedCount = deleteResult.rowCount ?? 0;
+                const deleteResult = await client.query(`DELETE FROM cart WHERE productid = $1 RETURNING id`, [id]);
+                cartClearedCount = deleteResult.rowCount ?? 0;
             }
-            else {
-                const restoreResult = await query(`UPDATE stock_revo
-           SET isarchive = FALSE
-           WHERE puc = $1
-             AND stockstatus = 'Available'
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND isarchive = TRUE
-           RETURNING id`, [puc]);
-                stockUpdatedCount = restoreResult.rowCount ?? 0;
-            }
+            await client.query('COMMIT');
+            // The active entry is always the last one
+            const activeEntry = newStatusHistory[newStatusHistory.length - 1];
             return {
                 status: 200,
                 message: ecomVisible
-                    ? `Product id ${id} moved live successfully.`
-                    : `Product id ${id} hidden from ecom successfully.`,
-                ecom_visible: ecomVisible,
+                    ? `Product id ${id} is now live on ecom.`
+                    : `Product id ${id} hidden from ecom. Cart/wishlist cleared.`,
+                ecomvisible: ecomVisible,
+                changed: true,
                 puc,
-                stock_updated_count: stockUpdatedCount,
-                cart_wishlist_cleared: cartDeletedCount,
-                status_audit: statusAudit.current,
+                cart_cleared: cartClearedCount,
+                status_history: {
+                    active: activeEntry,
+                    total_entries: newStatusHistory.length,
+                },
             };
         }
         catch (error) {
-            console.error("Query Execution Error: IN toggleEcomVisible", error);
+            await client.query('ROLLBACK');
+            console.error('Critical error in toggleEcomVisible — rolled back:', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
+        }
+        finally {
+            client.release();
         }
     };
     productrevoService.upsertProductrevo = async (productrevoData) => {

@@ -3,11 +3,21 @@ export var stockRevoController;
 (function (stockRevoController) {
     stockRevoController.getStockRevoData = async (request, reply) => {
         try {
-            let result = await stockRevoService.getStockRevoData(request);
+            let result = await stockRevoService.getStockRevoData(request, "visible");
             reply.send(result);
         }
         catch (error) {
             console.error("Error in getStockRevoData", error);
+            reply.send(error.message);
+        }
+    };
+    stockRevoController.getHiddenStocksRevoData = async (request, reply) => {
+        try {
+            let result = await stockRevoService.getHiddenStocksRevoData(request);
+            reply.send(result);
+        }
+        catch (error) {
+            console.error("Error in getHiddenStocksRevoData", error);
             reply.send(error.message);
         }
     };
