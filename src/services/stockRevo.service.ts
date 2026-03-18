@@ -25,12 +25,9 @@ export module stockRevoService {
 
             keys.forEach((key, index) => {
                 const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
-                let fieldKey = key;
-                if (key === "id") fieldKey = "s.id";
-                if (key === "puc") fieldKey = "s.puc";
-                if (key === "modifieddate") fieldKey = "s.modifieddate";
-                // ecomvisible lives on the joined product_revo table
-                if (key === "ecomvisible") fieldKey = "p.ecomvisible";
+                // Default ALL stock columns to s. alias to avoid ambiguous references after the JOIN.
+                // Only ecomvisible lives on the joined product_revo table (p.).
+                let fieldKey = key === "ecomvisible" ? "p.ecomvisible" : `s.${key}`;
 
                 if (key === "displaysize" || key === "price") {
                     const rangeClauses = paramValues.map(range => {
