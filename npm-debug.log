@@ -1,0 +1,47 @@
+0 info it worked if it ends with ok
+1 verbose cli [
+1 verbose cli   '/Users/jeyakumarn/.nvm/versions/node/v22.17.0/bin/node',
+1 verbose cli   '/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/node_modules/.bin/npm',
+1 verbose cli   'run',
+1 verbose cli   'revo-backend-deploy'
+1 verbose cli ]
+2 info using npm@2.15.12
+3 info using node@v22.17.0
+4 verbose run-script [
+4 verbose run-script   'prerevo-backend-deploy',
+4 verbose run-script   'revo-backend-deploy',
+4 verbose run-script   'postrevo-backend-deploy'
+4 verbose run-script ]
+5 info prerevo-backend-deploy revo-365_backend@1.0.0
+6 info revo-backend-deploy revo-365_backend@1.0.0
+7 verbose unsafe-perm in lifecycle true
+8 info revo-365_backend@1.0.0 Failed to exec revo-backend-deploy script
+9 verbose stack Error: revo-365_backend@1.0.0 revo-backend-deploy: `gcloud run deploy revo365-sit --image gcr.io/revo-dev-and-test/revo365-sit-backend:latest --platform managed --region us-central1 --allow-unauthenticated --port 5600 --service-account revodevbackend@revo-dev-and-test.iam.gserviceaccount.com --execution-environment gen2`
+9 verbose stack Exit status 1
+9 verbose stack     at EventEmitter.<anonymous> (/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/node_modules/npm/lib/utils/lifecycle.js:217:16)
+9 verbose stack     at EventEmitter.emit (node:events:518:28)
+9 verbose stack     at ChildProcess.<anonymous> (/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/node_modules/npm/lib/utils/spawn.js:24:14)
+9 verbose stack     at ChildProcess.emit (node:events:518:28)
+9 verbose stack     at maybeClose (node:internal/child_process:1101:16)
+9 verbose stack     at ChildProcess._handle.onexit (node:internal/child_process:304:5)
+10 verbose pkgid revo-365_backend@1.0.0
+11 verbose cwd /Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend
+12 error Darwin 24.2.0
+13 error argv "/Users/jeyakumarn/.nvm/versions/node/v22.17.0/bin/node" "/Users/jeyakumarn/Documents/GitHub/Suresh-on-cloud/gcp_Revo365-backend/node_modules/.bin/npm" "run" "revo-backend-deploy"
+14 error node v22.17.0
+15 error npm  v2.15.12
+16 error code ELIFECYCLE
+17 error revo-365_backend@1.0.0 revo-backend-deploy: `gcloud run deploy revo365-sit --image gcr.io/revo-dev-and-test/revo365-sit-backend:latest --platform managed --region us-central1 --allow-unauthenticated --port 5600 --service-account revodevbackend@revo-dev-and-test.iam.gserviceaccount.com --execution-environment gen2`
+17 error Exit status 1
+18 error Failed at the revo-365_backend@1.0.0 revo-backend-deploy script 'gcloud run deploy revo365-sit --image gcr.io/revo-dev-and-test/revo365-sit-backend:latest --platform managed --region us-central1 --allow-unauthenticated --port 5600 --service-account revodevbackend@revo-dev-and-test.iam.gserviceaccount.com --execution-environment gen2'.
+18 error This is most likely a problem with the revo-365_backend package,
+18 error not with npm itself.
+18 error Tell the author that this fails on your system:
+18 error     gcloud run deploy revo365-sit --image gcr.io/revo-dev-and-test/revo365-sit-backend:latest --platform managed --region us-central1 --allow-unauthenticated --port 5600 --service-account revodevbackend@revo-dev-and-test.iam.gserviceaccount.com --execution-environment gen2
+18 error You can get information on how to open an issue for this project with:
+18 error     npm bugs revo-365_backend
+18 error Or if that isn't available, you can get their info via:
+18 error
+18 error     npm owner ls revo-365_backend
+18 error There is likely additional logging output above.
+19 verbose exit [ 1, true ]

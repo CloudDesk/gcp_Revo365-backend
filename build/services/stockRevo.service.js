@@ -11,7 +11,7 @@ export var stockRevoService;
         }
         return `(p.ecomvisible = TRUE OR p.ecomvisible IS NULL)`;
     };
-    stockRevoService.getStockRevoData = async (request, visibilityMode = "visible") => {
+    stockRevoService.getStockRevoData = async (request, visibilityMode) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
@@ -31,6 +31,9 @@ export var stockRevoService;
                     fieldKey = "s.puc";
                 if (key === "modifieddate")
                     fieldKey = "s.modifieddate";
+                // ecomvisible lives on the joined product_revo table
+                if (key === "ecomvisible")
+                    fieldKey = "p.ecomvisible";
                 if (key === "displaysize" || key === "price") {
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
@@ -59,10 +62,11 @@ export var stockRevoService;
                 }
             });
             const offset = (pageNumber - 1) * recordCount;
+            // ecomvisible is query-param driven — only inject the hardcoded clause when visibilityMode is explicitly set
+            const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
             const baseConditions = `(s.isarchive = FALSE OR s.isarchive IS NULL) 
                 AND (s.isdeleted = FALSE OR s.isdeleted IS NULL) 
-                AND (s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)
-                AND ${getVisibilityCondition(visibilityMode)}`;
+                AND (s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)${visibilityClause}`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
@@ -84,9 +88,6 @@ export var stockRevoService;
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
-    };
-    stockRevoService.getHiddenStocksRevoData = async (request) => {
-        return await stockRevoService.getStockRevoData(request, "hidden");
     };
     stockRevoService.getEachStockRevoData = async (request) => {
         try {

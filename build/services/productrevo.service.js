@@ -41,7 +41,7 @@ export var productrevoService;
         }
         return `(ecomvisible = TRUE OR ecomvisible IS NULL)`;
     };
-    productrevoService.getproductsData = async (request, visibilityMode = "visible") => {
+    productrevoService.getproductsData = async (request, visibilityMode) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
@@ -84,7 +84,8 @@ export var productrevoService;
                 }
             });
             const offset = (pageNumber - 1) * recordCount;
-            const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL) AND ${getVisibilityCondition(visibilityMode)}`;
+            const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
+            const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT * FROM product_revo ${whereClause} ${orderByClause}`;
@@ -469,14 +470,14 @@ export var productrevoService;
         }
     };
     //get
-    productrevoService.getEachProductsRevo = async function (request, id, visibilityMode = "visible") {
+    productrevoService.getEachProductsRevo = async function (request, id, visibilityMode) {
         try {
+            const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
             const queryText = `SELECT * FROM product_revo
            WHERE id = $1
              AND (isarchive = FALSE OR isarchive IS NULL)
              AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)
-             AND ${getVisibilityCondition(visibilityMode)}`;
+             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
             const result = await query(queryText, [id]);
             console.log(result, "result");
             let getvalues = { objectName: "null" };

@@ -13,13 +13,14 @@ export var productrevoController;
             reply.status(500).send(error.message);
         }
     };
-    productrevoController.getHiddenProductsrevoData = async (request, reply) => {
+    // Admin route — no visibility filter; ecomvisible driven entirely by query params
+    productrevoController.getAdminProductsrevoData = async (request, reply) => {
         try {
-            let getProductRevoResult = await productrevoService.getproductsData(request, "hidden");
+            let getProductRevoResult = await productrevoService.getproductsData(request);
             reply.send(getProductRevoResult);
         }
         catch (error) {
-            console.error('ERROR IN Controller getHiddenProductsrevoData', error);
+            console.error('ERROR IN Controller getAdminProductsrevoData', error);
             reply.status(500).send(error.message);
         }
     };
@@ -64,16 +65,29 @@ export var productrevoController;
             reply.send(`${error.message} error in get Products`);
         }
     };
+    // Admin single-product route — no visibility filter; query-param driven
     productrevoController.getEachProductsRevo = async function (request, reply) {
         try {
             const { id } = request.params;
             console.log("request.params", request.params);
-            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id), "visible");
+            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id));
             reply.send(getProductsResult);
         }
         catch (error) {
             console.error('ERROR IN  Controller getEachProductsRevo', error);
             reply.send(`${error.message} error in get Each Products`);
+        }
+    };
+    // Ecom single-product route — always filters ecomvisible = TRUE
+    productrevoController.getEachEcomProductsRevo = async function (request, reply) {
+        try {
+            const { id } = request.params;
+            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id), "visible");
+            reply.send(getProductsResult);
+        }
+        catch (error) {
+            console.error('ERROR IN  Controller getEachEcomProductsRevo', error);
+            reply.send(`${error.message} error in get Each Ecom Products`);
         }
     };
     productrevoController.updateOrderedQuantityarray = async function (request, reply) {
