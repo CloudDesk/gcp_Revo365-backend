@@ -11,15 +11,17 @@ WORKDIR /app
 # Copy package.json and package-lock.json (if available)
 COPY package*.json ./
 
+# Install application dependencies
+RUN npm i
 
 # Copy the rest of your application's source code
 COPY . .
 
+# Build the application
+RUN npm run build
+
 # Expose the port that your application will run on
 EXPOSE 5600
-
-# Explicitly install docxtemplater (in case it's not in package.json)
-RUN npm install docxtemplater
 
 # Start the application
 CMD [ "node", "build/index.js" ]
