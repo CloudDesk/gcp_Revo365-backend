@@ -104,12 +104,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         }
     }
     )
-    // verison 2 -> product
-    fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
-    fastify.get('/v2/product-hidden', { preHandler: [getSession] }, productrevoController.getHiddenProductsrevoData);
+    // version 2 -> product
+    fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getAdminProductsrevoData);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);
     fastify.get('/v2/product/Archieve', { preHandler: [getSession] }, productrevoController.getArcheivedProductsRevo);
-    fastify.get('/v2/product-ecom/:id', productrevoController.getEachProductsRevo);
+    fastify.get('/v2/product-ecom/:id', productrevoController.getEachEcomProductsRevo);
     fastify.get('/v2/product/:id', { preHandler: [getSession] }, productrevoController.getEachProductsRevo);
     fastify.post('/v2/product', { preHandler: [getSession] },/* { preHandler: [validateRequestBody(productInsertSchema)] } ,*/ productrevoController.upsertProductrevo);
     fastify.delete('/v2/product/:id', { preHandler: [getSession] },/* { preHandler: validateRequestBody(deleteProductSchema) } , */ productrevoController.deleteProductrevo);
@@ -125,9 +124,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecomvisible: true|false }
     fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
 
-    //version 2 -> stock
+    //version 2 -> stock  (ecomvisible is query-param driven: ?ecomvisible=true / ?ecomvisible=false)
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
-    fastify.get('/v2/stock-hidden', { preHandler: [getSession] }, stockRevoController.getHiddenStocksRevoData);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);

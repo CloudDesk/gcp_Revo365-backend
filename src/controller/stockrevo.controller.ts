@@ -1,21 +1,13 @@
 import { stockRevoService } from "../services/stockRevo.service.js";
 
 export module stockRevoController {
+    // Admin route — ecomvisible is query-param driven (?ecomvisible=true or ?ecomvisible=false)
     export const getStockRevoData = async (request: any, reply: any) => {
         try {
-            let result = await stockRevoService.getStockRevoData(request, "visible");
+            let result = await stockRevoService.getStockRevoData(request);
             reply.send(result);
         } catch (error) {
             console.error("Error in getStockRevoData", error);
-            reply.send(error.message);
-        }
-    };
-    export const getHiddenStocksRevoData = async (request: any, reply: any) => {
-        try {
-            let result = await stockRevoService.getHiddenStocksRevoData(request);
-            reply.send(result);
-        } catch (error) {
-            console.error("Error in getHiddenStocksRevoData", error);
             reply.send(error.message);
         }
     };

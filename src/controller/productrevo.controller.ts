@@ -19,12 +19,13 @@ export module productrevoController {
             reply.status(500).send(error.message);
         }
     }
-    export const getHiddenProductsrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
+    // Admin route — no visibility filter; ecomvisible driven entirely by query params
+    export const getAdminProductsrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-            let getProductRevoResult = await productrevoService.getproductsData(request, "hidden");
+            let getProductRevoResult = await productrevoService.getproductsData(request);
             reply.send(getProductRevoResult)
         } catch (error) {
-            console.error('ERROR IN Controller getHiddenProductsrevoData', error);
+            console.error('ERROR IN Controller getAdminProductsrevoData', error);
             reply.status(500).send(error.message);
         }
     }
@@ -67,16 +68,27 @@ export module productrevoController {
         }
     }
 
+    // Admin single-product route — no visibility filter; query-param driven
     export const getEachProductsRevo = async function (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) {
         try {
             const { id } = request.params
             console.log("request.params", request.params)
-
-            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id), "visible")
+            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id))
             reply.send(getProductsResult)
         } catch (error) {
             console.error('ERROR IN  Controller getEachProductsRevo', error);
             reply.send(`${error.message} error in get Each Products`)
+        }
+    }
+    // Ecom single-product route — always filters ecomvisible = TRUE
+    export const getEachEcomProductsRevo = async function (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) {
+        try {
+            const { id } = request.params
+            let getProductsResult = await productrevoService.getEachProductsRevo(request, Number(id), "visible")
+            reply.send(getProductsResult)
+        } catch (error) {
+            console.error('ERROR IN  Controller getEachEcomProductsRevo', error);
+            reply.send(`${error.message} error in get Each Ecom Products`)
         }
     }
     export const updateOrderedQuantityarray = async function (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) {

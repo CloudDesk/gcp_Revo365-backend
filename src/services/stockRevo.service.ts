@@ -11,7 +11,7 @@ export module stockRevoService {
         return `(p.ecomvisible = TRUE OR p.ecomvisible IS NULL)`;
     };
 
-    export const getStockRevoData = async (request: any, visibilityMode: "visible" | "hidden" = "visible") => {
+    export const getStockRevoData = async (request: any, visibilityMode?: "visible" | "hidden") => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
@@ -29,6 +29,8 @@ export module stockRevoService {
                 if (key === "id") fieldKey = "s.id";
                 if (key === "puc") fieldKey = "s.puc";
                 if (key === "modifieddate") fieldKey = "s.modifieddate";
+                // ecomvisible lives on the joined product_revo table
+                if (key === "ecomvisible") fieldKey = "p.ecomvisible";
 
                 if (key === "displaysize" || key === "price") {
                     const rangeClauses = paramValues.map(range => {
@@ -56,10 +58,11 @@ export module stockRevoService {
             });
 
             const offset = (pageNumber - 1) * recordCount;
+            // ecomvisible is query-param driven — only inject the hardcoded clause when visibilityMode is explicitly set
+            const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
             const baseConditions = `(s.isarchive = FALSE OR s.isarchive IS NULL) 
                 AND (s.isdeleted = FALSE OR s.isdeleted IS NULL) 
-                AND (s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)
-                AND ${getVisibilityCondition(visibilityMode)}`;
+                AND (s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)${visibilityClause}`;
 
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
@@ -86,9 +89,6 @@ export module stockRevoService {
         }
     }
 
-    export const getHiddenStocksRevoData = async (request: any) => {
-        return await getStockRevoData(request, "hidden");
-    }
     export const getEachStockRevoData = async (request: any) => {
         try {
             const { id } = request.params
