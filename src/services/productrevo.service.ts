@@ -862,57 +862,45 @@ export module productrevoService {
 
   export const testupsertQuantityFieldsBatch = async (batchData: any[], issold: boolean) => {
     try {
-      let updateQueryBase = `
+      // Single query template — both issold and non-issold write the same fields.
+      const updateQueryBase = `
             UPDATE product_revo
             SET quantityforlocation = 
                 jsonb_set(
                     COALESCE(quantityforlocation, '{}'::jsonb),
                     array[$1]::text[],
                     jsonb_build_object(
-                        'quantity', $2::integer,
-                        'ecompublishedquantity', $3::integer,
-                        'soldquantity', $4::integer,
-                        'availablequantity', $5::integer,
-                        'rentaltotalquantity', $6::integer,
-                        'rentalsoldquantity', $7::integer,
-                        'rentalavailablequantity', $8::integer
+                        'quantity',                $2::integer,
+                        'overallquantity',         $3::integer,
+                        'ecompublishedquantity',   $4::integer,
+                        'soldquantity',            $5::integer,
+                        'availablequantity',       $6::integer,
+                        'overallavailableqty',     $7::integer,
+                        'thirdpartyqty',           $8::integer,
+                        'thirdpartyavailableqty',  $9::integer,
+                        'rentaltotalquantity',     $10::integer,
+                        'rentalsoldquantity',      $11::integer,
+                        'rentalavailablequantity', $12::integer
                     )
                 )
-            WHERE puc = $9
+            WHERE puc = $13
             RETURNING *
         `;
-      if (issold) {
-        updateQueryBase = `
-            UPDATE product_revo
-            SET quantityforlocation = 
-              jsonb_set(
-                COALESCE(quantityforlocation, '{}'::jsonb),
-                array[$1]::text[],
-                jsonb_build_object(
-                  'quantity', $2::integer,
-                  'ecompublishedquantity', $3::integer,
-                  'soldquantity', $4::integer,
-                  'availablequantity', $5::integer,
-                  'rentaltotalquantity', $6::integer,
-                  'rentalsoldquantity', $7::integer,
-                  'rentalavailablequantity', $8::integer
-                )
-              )
-            WHERE puc = $9
-            RETURNING *
-          `;
-      }
       const updateQueries = batchData.map(data => {
         return {
           query: updateQueryBase,
           params: [
             data.location,
             data.quantity,
+            data.overallquantity,
             data.ecompublishedquantity,
             data.soldquantity,
             data.availablequantity,
+            data.overallavailableqty,
+            data.thirdpartyqty,
+            data.thirdpartyavailableqty,
             data.rentaltotalquantity,
-            data.rentalsoldquantity, // Assuming rentalsoldquantity is available here, derived from diff in previous step
+            data.rentalsoldquantity,
             data.rentalavailablequantity,
             data.puc
           ]
@@ -928,6 +916,8 @@ export module productrevoService {
       return ErrorMessage;
     }
   };
+
+
 
   export const bulkupsertProducttosetZero = (async (data, setzero) => {
     try {
@@ -1020,53 +1010,108 @@ export module productrevoService {
         }
 
       }
-
-      return data;  // return array of results
+      return data;
     } catch (error) {
       console.error('Error in updateOrderedQuantityarray:', error);
-      throw error;  // better to throw so caller knows of the error
+      throw error;
     }
   }
-
 
   export async function updateCatalogueQuantities(puc) {
     console.log('puc:', puc);
     const queryText = `
         WITH counts AS (
             SELECT 
+                COUNT(*) AS total_quantity_count,
+
+                COUNT(*) FILTER (
+                    WHERE ecompublish = true 
+                    AND stockstatus = 'Available' 
+                    AND stocktype <> 'third_party_product'
+                ) AS available_quantity_count,
+
                 COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
                 COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
                 COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count
+                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+
+                -- overallavailableqty: non-third-party ecompublish=true available
+                --   PLUS thirdpartyquantity only from ecompublish=true third_party_product rows
+                (
+                    COALESCE(SUM(CASE
+                        WHEN stocktype = 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN thirdpartyquantity
+                        ELSE 0
+                    END), 0)
+                    +
+                    COALESCE(SUM(CASE
+                        WHEN stocktype <> 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN 1
+                        ELSE 0
+                    END), 0)
+                ) AS overall_available_qty,
+
+                -- ecompublishedquantity mirrors overallavailableqty logic
+                (
+                    COALESCE(SUM(CASE
+                        WHEN stocktype = 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN thirdpartyquantity
+                        ELSE 0
+                    END), 0)
+                    +
+                    COALESCE(SUM(CASE
+                        WHEN stocktype <> 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN 1
+                        ELSE 0
+                    END), 0)
+                ) AS ecom_published_qty
+
             FROM stock_revo 
             WHERE 
                 puc = $1
-                AND isdeleted = false 
-                AND isarchive = false 
-                AND removefromrecyclebin = false 
-                AND ewaste = false
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
         )
-        UPDATE product_revo 
+        UPDATE product_revo
         SET 
+            quantity = counts.total_quantity_count,
+            availablequantity = counts.available_quantity_count,
             oncatalogueqty = counts.on_catalogue_count,
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
+            overallavailableqty = counts.overall_available_qty,
+            ecompublishedquantity = counts.ecom_published_qty
         FROM counts
         WHERE puc = $1
-        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count, (counts.rental_total_count - counts.rental_sold_count) as rental_available_count;
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
+                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
     console.log('queryText:', queryText);
     let result = await query(queryText, [puc]);
     console.log('result:', result.rows);
+
 
     if (result.rows.length > 0) {
       return {
         onCatalogueCount: result.rows[0].on_catalogue_count,
         offCatalogueCount: result.rows[0].off_catalogue_count,
         rentalTotalQuantity: result.rows[0].rental_total_count,
-        rentalAvailableQuantity: result.rows[0].rental_available_count
+        rentalAvailableQuantity: result.rows[0].rental_available_count,
+        overallavailableqty: result.rows[0].overall_available_qty,
+        ecompublishedquantity: result.rows[0].ecom_published_qty
       };
     } else {
       return { message: 'No data Found' };

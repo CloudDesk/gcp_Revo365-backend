@@ -69,9 +69,8 @@ export module stockRevoController {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoData(request.body);
             console.log("request body", request.body)
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
-                const puc = upsertStockResult.result.puc;
-                const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
+                const pucArray: string[] = upsertStockResult.affectedPucs || Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
                     product: upsertStockResult.command === "UPDATE"
                         ? `Stock Updated successfully`
@@ -91,9 +90,8 @@ export module stockRevoController {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoData(request.body);
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
-                const puc = upsertStockResult.result.puc;
-                const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
+                const pucArray: string[] = upsertStockResult.affectedPucs || Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
                     product: upsertStockResult.command === "UPDATE"
                         ? `Stock Updated successfully`
@@ -109,13 +107,13 @@ export module stockRevoController {
         }
     };
 
+
     export const upsertStockRevoDatadelete = async (request: any, reply: any) => {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoDatadelete(request.body);
             if (upsertStockResult?.command === "UPDATE" || upsertStockResult?.command === "INSERT") {
-                const puc = upsertStockResult.result.puc;
-                const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
+                const pucArray: string[] = upsertStockResult.affectedPucs || Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isdeleted === true
                         ? `Stock Deleted successfully`
@@ -137,9 +135,8 @@ export module stockRevoController {
         try {
             let upsertStockResult: any = await stockRevoService.upsertStockRevoDataarchive(request.body);
             if (upsertStockResult?.command === "UPDATE" || upsertStockResult?.command === "INSERT") {
-                const puc = upsertStockResult.result.puc; // Get the puc from the result
-                const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
+                const pucArray: string[] = upsertStockResult.affectedPucs || Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
                 let message: any = {
                     Stock: upsertStockResult.command === "UPDATE" && upsertStockResult.result.rows[0]?.isarchive === true
                         ? `Stock successfully archived`
@@ -155,16 +152,6 @@ export module stockRevoController {
             }
         } catch (error) {
             console.error("Error in upsertStockRevoDataarchive", error);
-            reply.send(error.message);
-        }
-    };
-    export const deleteStockRevoData = async (request: any, reply: any) => {
-        try {
-            const { id } = request.params
-            let deleteStockResult = await stockRevoService.deleteStockrevo(id);
-            reply.send(deleteStockResult);
-        } catch (error) {
-            console.error("Error in deleteStockRevoData", error);
             reply.send(error.message);
         }
     };
