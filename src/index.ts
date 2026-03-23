@@ -12,6 +12,7 @@ import formbody from "@fastify/formbody";
 import fs from "fs";
 
 import { connectGetSessionredis } from "./database/redis.session.js";
+import { runMigrations } from "./database/runMigrations.js";
 
 interface CustomRequest extends FastifyRequest {
   startTime?: [number, number]; 
@@ -98,6 +99,7 @@ fastify.addHook("onReady", async () => {
     let data = await checkDatabaseConnection();
     console.log(data, "inside");
     await connectGetSessionredis();
+    await runMigrations();
     // done()
     // console.log(fastify.isServerReady, 'Loging value is');
   } catch (error) {
