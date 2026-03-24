@@ -750,7 +750,10 @@ export module productrevoService {
       oncatalogueqty,
       offcatalogueqty,
       rentaltotalquantity,
-      rentalavailablequantity
+      rentalavailablequantity,
+      bin_qty,
+      archive_qty,
+      ewaste_qty
     } = upsertData;
 
     try {
@@ -780,7 +783,10 @@ export module productrevoService {
           oncatalogueqty = $8,
           offcatalogueqty = $9,
           rentaltotalquantity = $10,
-          rentalavailablequantity = $11
+          rentalavailablequantity = $11,
+          bin_qty = $12,
+          archive_qty = $13,
+          ewaste_qty = $14
     `;
 
       let updateQuery = '';
@@ -789,14 +795,14 @@ export module productrevoService {
         // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
         if (isRental) {
           console.log("DEBUG: Decrementing rentalorderedquantity");
-          updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $12`;
+          updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $15`;
         } else {
           console.log("DEBUG: Decrementing orderedquantity");
-          updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+          updateQueryBase += `, orderedquantity = orderedquantity - $15`;
         }
-        updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
+        updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
       } else {
-        updateQuery = `${updateQueryBase} WHERE puc = $12 RETURNING *`;
+        updateQuery = `${updateQueryBase} WHERE puc = $15 RETURNING *`;
       }
 
       let updateParams = [];
@@ -813,6 +819,9 @@ export module productrevoService {
           offcatalogueqty,
           rentaltotalquantity,
           rentalavailablequantity,
+          bin_qty,
+          archive_qty,
+          ewaste_qty,
           orderedquantityNumber,
           puc
         ];
@@ -829,6 +838,9 @@ export module productrevoService {
           offcatalogueqty,
           rentaltotalquantity,
           rentalavailablequantity,
+          bin_qty,
+          archive_qty,
+          ewaste_qty,
           puc
         ];
       }
@@ -1019,27 +1031,36 @@ export module productrevoService {
 
   export async function updateCatalogueQuantities(puc) {
     console.log('puc:', puc);
+    // Standard filter for active/live stock
+    const activeFilters = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
+
     const queryText = `
         WITH counts AS (
             SELECT 
-                COUNT(*) AS total_quantity_count,
+                -- Track Live Quantities (Used for sales/display)
+                (
+                    COUNT(*) FILTER (WHERE ${activeFilters} AND stocktype <> 'third_party_product')
+                    +
+                    COALESCE(SUM(thirdpartyquantity) FILTER (WHERE ${activeFilters} AND stocktype = 'third_party_product'), 0)
+                ) AS total_quantity_count,
 
                 COUNT(*) FILTER (
-                    WHERE ecompublish = true 
+                    WHERE ${activeFilters}
+                    AND ecompublish = true 
                     AND stockstatus = 'Available' 
                     AND stocktype <> 'third_party_product'
                 ) AS available_quantity_count,
 
-                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
 
-                -- overallavailableqty: non-third-party ecompublish=true available
-                --   PLUS thirdpartyquantity only from ecompublish=true third_party_product rows
+                -- overallavailableqty logic (Live stock only)
                 (
                     COALESCE(SUM(CASE
-                        WHEN stocktype = 'third_party_product'
+                        WHEN ${activeFilters}
+                          AND stocktype = 'third_party_product'
                           AND ecompublish = true
                           AND stockstatus = 'Available'
                         THEN thirdpartyquantity
@@ -1047,7 +1068,8 @@ export module productrevoService {
                     END), 0)
                     +
                     COALESCE(SUM(CASE
-                        WHEN stocktype <> 'third_party_product'
+                        WHEN ${activeFilters}
+                          AND stocktype <> 'third_party_product'
                           AND ecompublish = true
                           AND stockstatus = 'Available'
                         THEN 1
@@ -1055,10 +1077,11 @@ export module productrevoService {
                     END), 0)
                 ) AS overall_available_qty,
 
-                -- ecompublishedquantity mirrors overallavailableqty logic
+                -- ecompublishedquantity logic (Live stock only)
                 (
                     COALESCE(SUM(CASE
-                        WHEN stocktype = 'third_party_product'
+                        WHEN ${activeFilters}
+                          AND stocktype = 'third_party_product'
                           AND ecompublish = true
                           AND stockstatus = 'Available'
                         THEN thirdpartyquantity
@@ -1066,21 +1089,22 @@ export module productrevoService {
                     END), 0)
                     +
                     COALESCE(SUM(CASE
-                        WHEN stocktype <> 'third_party_product'
+                        WHEN ${activeFilters}
+                          AND stocktype <> 'third_party_product'
                           AND ecompublish = true
                           AND stockstatus = 'Available'
                         THEN 1
                         ELSE 0
                     END), 0)
-                ) AS ecom_published_qty
+                ) AS ecom_published_qty,
+
+                -- Track Flagged/Removed Quantities
+                COUNT(*) FILTER (WHERE isdeleted = true) AS bin_count,
+                COUNT(*) FILTER (WHERE isarchive = true) AS archive_count,
+                COUNT(*) FILTER (WHERE (ewaste = true OR removefromrecyclebin = true)) AS ewaste_count
 
             FROM stock_revo 
-            WHERE 
-                puc = $1
-                AND (isdeleted = false OR isdeleted IS NULL)
-                AND (isarchive = false OR isarchive IS NULL)
-                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                AND (ewaste = false OR ewaste IS NULL)
+            WHERE puc = $1
         )
         UPDATE product_revo
         SET 
@@ -1092,9 +1116,12 @@ export module productrevoService {
             rentalsoldquantity = counts.rental_sold_count,
             rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
             overallavailableqty = counts.overall_available_qty,
-            ecompublishedquantity = counts.ecom_published_qty
+            ecompublishedquantity = counts.ecom_published_qty,
+            bin_qty = counts.bin_count,
+            archive_qty = counts.archive_count,
+            ewaste_qty = counts.ewaste_count
         FROM counts
-        WHERE puc = $1
+        WHERE product_revo.puc = $1
         RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
                   (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;

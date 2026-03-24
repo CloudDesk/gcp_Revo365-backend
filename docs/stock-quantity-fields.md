@@ -31,7 +31,7 @@ These fields are recomputed from scratch on every stock insert/update via:
 
 | Field | Formula | Includes 3P `thirdpartyquantity`? |
 |---|---|---|
-| `quantity` | `COUNT(*)` all active rows | ❌ (rows only) |
+| `quantity` | `COUNT(non-3P rows)` + `SUM(thirdpartyquantity for 3P)` | ✅ |
 | `availablequantity` | `COUNT(non-3P, ecompublish=true, stockstatus='Available')` | ❌ |
 | `overallavailableqty` | `availablequantity` + `SUM(thirdpartyquantity WHERE 3P AND ecompublish=true)` | ✅ ecom=true only |
 | `ecompublishedquantity` | Same formula as `overallavailableqty` | ✅ ecom=true only |

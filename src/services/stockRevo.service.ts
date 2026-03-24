@@ -118,24 +118,45 @@ export module stockRevoService {
                 console.log(stockRevoData.releaseyear, "releaseyear")
             }
             const { id, ...upsertFields } = stockRevoData;
-            const fieldNames = Object.keys(upsertFields);
-            console.log(fieldNames, "fieldNames")
-            const fieldValues = Object.values(upsertFields);
-            console.log(fieldValues, "fieldValues")
             let command: string;
-
             let affectedPucs = new Set<string>();
+
             if (id) {
-                const oldStockResult = await query(`SELECT puc FROM stock_revo WHERE id = $1`, [id]);
+                // Fetch current stocktype to check for third_party_product restrictions
+                const oldStockResult = await query(`SELECT puc, stocktype FROM stock_revo WHERE id = $1`, [id]);
                 if (oldStockResult.rows.length > 0) {
-                    affectedPucs.add(oldStockResult.rows[0].puc);
+                    const currentRow = oldStockResult.rows[0];
+                    affectedPucs.add(currentRow.puc);
+
+                    // If existing stock is third_party_product, restrict updates
+                    if (currentRow.stocktype === 'third_party_product') {
+                        // Allow updates only for E-commerce toggle (ecompublish) and Asset number (serialnumber)
+                        const allowedFields = ['ecompublish', 'serialnumber'];
+                        Object.keys(upsertFields).forEach(key => {
+                            if (!allowedFields.includes(key)) {
+                                delete upsertFields[key];
+                            }
+                        });
+                    }
                 }
+
+                const fieldNames = Object.keys(upsertFields);
+                const fieldValues = Object.values(upsertFields);
+
+                if (fieldNames.length === 0) {
+                    // No valid fields to update for this stock type, return current record
+                    const record = await query(`SELECT * FROM stock_revo WHERE id = $1`, [id]);
+                    return { command: "UPDATE", result: record, totalCount: 0, affectedPucs: Array.from(affectedPucs) };
+                }
+
                 querydata = `UPDATE stock_revo SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
                 command = "UPDATE";
             } else {
+                const fieldNames = Object.keys(upsertFields);
+                const fieldValues = Object.values(upsertFields);
                 querydata = `INSERT INTO stock_revo (${fieldNames.join(", ")}) VALUES (${fieldNames
                     .map((_, index) => `$${index + 1}`)
                     .join(", ")}) RETURNING *`;
@@ -231,8 +252,12 @@ export module stockRevoService {
 
     export const updateEwaste = async (id: number) => {
         try {
-            const result = await query(`UPDATE stock_revo SET ewaste = true WHERE id = $1`, [id]);
-            if (result.command == 'UPDATE') {
+            const result = await query(`UPDATE stock_revo SET ewaste = true WHERE id = $1 RETURNING puc`, [id]);
+            if (result.command == 'UPDATE' && result.rows.length > 0) {
+                const puc = result.rows[0].puc;
+                // Trigger recalculations for the product
+                await productrevoService.updateCatalogueQuantities(puc);
+                await updateQuantity([puc]);
                 return { message: 'E-waste updated successfully', rowCount: result.rowCount };
             } else {
                 return { message: 'No stock found with the provided ID', rowCount: 0 };
@@ -318,6 +343,7 @@ export module stockRevoService {
             }
             const puc = result.rows[0].puc;
             await productrevoService.updateCatalogueQuantities(puc);
+            await updateQuantity([puc]);
             const countQuery = `
                 SELECT COUNT(*) FROM stock_revo 
                 WHERE puc = $1
@@ -361,6 +387,7 @@ export module stockRevoService {
             }
             const puc = result.rows[0].puc;
             await productrevoService.updateCatalogueQuantities(puc);
+            await updateQuantity([puc]);
             const countQuery = `
                 SELECT COUNT(*) FROM stock_revo 
                 WHERE puc = $1
@@ -428,19 +455,20 @@ export module stockRevoService {
             const quantitiesList = [];
 
             for (const puc of pucs) {
+                const activeFilters = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
                 const quantityQuery = `
                     SELECT 
-                        COUNT(*) AS quantity,
+                        (
+                            COUNT(*) FILTER (WHERE ${activeFilters} AND stocktype <> 'third_party_product')
+                            +
+                            COALESCE(SUM(thirdpartyquantity) FILTER (WHERE ${activeFilters} AND stocktype = 'third_party_product'), 0)
+                        ) AS quantity,
 
                     -- ecompublishedquantity: count ecompublish=true non-third-party rows
                     -- PLUS the thirdpartyquantity of ecompublish=true third_party_product rows
                     (
                         COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND (ewaste = false OR ewaste IS NULL)
+                            WHERE ${activeFilters}
                             AND ecompublish = true
                             AND stockstatus = 'Available'
                             AND stocktype <> 'third_party_product'
@@ -448,11 +476,7 @@ export module stockRevoService {
                         +
                         COALESCE(
                             SUM(thirdpartyquantity) FILTER (
-                                WHERE puc = $1
-                                AND (isdeleted = false OR isdeleted IS NULL)
-                                AND (isarchive = false OR isarchive IS NULL)
-                                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                                AND (ewaste = false OR ewaste IS NULL)
+                                WHERE ${activeFilters}
                                 AND ecompublish = true
                                 AND stockstatus = 'Available'
                                 AND stocktype = 'third_party_product'
@@ -461,29 +485,17 @@ export module stockRevoService {
                     ) AS ecompublishedquantity,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = true AND stockstatus = 'Sold'
                     ) AS soldquantity,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = false AND stockstatus = 'Rental Sold'
                     ) AS rentalsoldquantity,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype <> 'third_party_product'
@@ -494,21 +506,13 @@ export module stockRevoService {
                     (
                         COALESCE(
                             SUM(thirdpartyquantity) FILTER (
-                                WHERE puc = $1
-                                AND (isdeleted = false OR isdeleted IS NULL)
-                                AND (isarchive = false OR isarchive IS NULL)
-                                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                                AND (ewaste = false OR ewaste IS NULL)
+                                WHERE ${activeFilters}
                                 AND ecompublish = true
                                 AND stocktype = 'third_party_product'
                             ), 0
                         ) +
                         COUNT(*) FILTER (
-                            WHERE puc = $1
-                            AND (isdeleted = false OR isdeleted IS NULL)
-                            AND (isarchive = false OR isarchive IS NULL)
-                            AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                            AND (ewaste = false OR ewaste IS NULL)
+                            WHERE ${activeFilters}
                             AND ecompublish = true 
                             AND stockstatus = 'Available' 
                             AND stocktype <> 'third_party_product'
@@ -516,45 +520,33 @@ export module stockRevoService {
                     ) AS overallavailableqty,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'on_catalogue_product'
                     ) AS oncatalogueqty,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'off_catalogue_product'
                     ) AS offcatalogueqty,
 
                     COUNT(*) FILTER (
-                        WHERE puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)
+                        WHERE ${activeFilters}
                         AND ecompublish = false
                         AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold')
                         AND stocktype = 'rental_product'
-                    ) AS rentaltotalquantity
+                    ) AS rentaltotalquantity,
+
+                    -- Track Flagged/Removed Quantities
+                    COUNT(*) FILTER (WHERE isdeleted = true) AS bin_qty,
+                    COUNT(*) FILTER (WHERE isarchive = true) AS archive_qty,
+                    COUNT(*) FILTER (WHERE (ewaste = true OR removefromrecyclebin = true)) AS ewaste_qty
 
                     FROM stock_revo
-                    WHERE
-                        puc = $1
-                        AND (isdeleted = false OR isdeleted IS NULL)
-                        AND (isarchive = false OR isarchive IS NULL)
-                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                        AND (ewaste = false OR ewaste IS NULL)`;
+                    WHERE puc = $1`;
 
                 const quantityResult = await query(quantityQuery, [puc]);
 
@@ -567,6 +559,9 @@ export module stockRevoService {
                 const oncatalogueqty = parseInt(quantityResult.rows[0].oncatalogueqty, 10);
                 const offcatalogueqty = parseInt(quantityResult.rows[0].offcatalogueqty, 10);
                 const rentaltotalquantity = parseInt(quantityResult.rows[0].rentaltotalquantity, 10);
+                const bin_qty = parseInt(quantityResult.rows[0].bin_qty, 10);
+                const archive_qty = parseInt(quantityResult.rows[0].archive_qty, 10);
+                const ewaste_qty = parseInt(quantityResult.rows[0].ewaste_qty, 10);
                 const rentalavailablequantity = rentaltotalquantity - rentalsoldquantity;
 
                 const quantities = {
@@ -580,7 +575,10 @@ export module stockRevoService {
                     oncatalogueqty: oncatalogueqty,
                     offcatalogueqty: offcatalogueqty,
                     rentaltotalquantity: rentaltotalquantity,
-                    rentalavailablequantity: rentalavailablequantity
+                    rentalavailablequantity: rentalavailablequantity,
+                    bin_qty,
+                    archive_qty,
+                    ewaste_qty
                 };
 
                 console.log("--quantities", quantities);
