@@ -1,19 +1,46 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 
 export module demandrequestService{
 
-    export const getDemandRequest = async () => {
+    export const getDemandRequest = async (request: any) => {
         try {
-            const querydata = `select * from demandrequest`;
-            const result = await query(querydata,[]);
-            // console.log("Query Result in getDemandRequest:", result);
-            console.log("Query Result in getDemandRequest:", result.rows);
-            return result.rows;
+            const pageNumber = parseInt(request.query.page) || 1;
+            const recordCount = parseInt(request.query.count) || 10;
+            const keys = Object.keys(request.query);
+            const values: string[] = Object.values(request.query);
+
+            let whereClauses: string[] = [];
+            let parameterIndex = 1;
+            const queryParams: any[] = [];
+
+            keys.forEach((key, index) => {
+                if (key !== 'page' && key !== 'count') {
+                    const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+                    const clauses = paramValues.map((_: any, idx: number) => `${key} = $${parameterIndex + idx}`);
+                    whereClauses.push(`(${clauses.join(' OR ')})`);
+                    queryParams.push(...paramValues);
+                    parameterIndex += paramValues.length;
+                }
+            });
+
+            const offset = (pageNumber - 1) * recordCount;
+            const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+            let dataQuery = `SELECT * FROM demandrequest ${whereClause} ORDER BY id DESC`;
+            if (pageNumber && recordCount) {
+                dataQuery += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
+
+            const result = await query(dataQuery, queryParams);
+            const datatypeCheckResult = await dataTypeCheck(result);
+            return datatypeCheckResult;
         } catch (error) {
             console.error("Query Execution Error: IN getDemandRequest", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            return ErrorMessage
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
         }
     }
 

@@ -9,7 +9,7 @@ export module demandrequestController {
 
     export const getDemandRequest = async (request: any, reply: any) => {
         try {
-            let getDemandRequestResult: any = await demandrequestService.getDemandRequest();
+            let getDemandRequestResult: any = await demandrequestService.getDemandRequest(request);
             if (getDemandRequestResult.length > 0) {
                 reply.status(200).send(getDemandRequestResult);
             } else {
