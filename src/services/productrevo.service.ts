@@ -5,10 +5,436 @@ import imageResize from "../imageResize/imageRessize.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { cartservice } from "./cart.service.js";
 import { performance } from 'perf_hooks';
+import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
 
 export module productrevoService {
 
   const TIMEOUT_THRESHOLD = 5000;
+  const BULK_PICKLIST_OBJECT = "product_revo";
+  const MAX_EXPECTED_VALUES = 12;
+
+  type BulkValidationError = {
+    rowNumber: number;
+    index: number;
+    field: string;
+    receivedValue: any;
+    reason: string;
+    expected?: string[] | string;
+    suggestion?: string | null;
+    source: "payload" | "picklist" | "supplier";
+  };
+
+  type BulkValidationResult = {
+    isValid: boolean;
+    totalRows: number;
+    validRowCount: number;
+    invalidRowCount: number;
+    errors: BulkValidationError[];
+  };
+
+  type PicklistRow = {
+    fieldname?: string | null;
+    label?: string | null;
+    value?: string | null;
+    controlledfieldname?: string | null;
+    controlledvalue?: string | null;
+    controlledlabel?: string | null;
+    parent?: string | null;
+  };
+
+  type SupplierRow = {
+    id: number;
+    suppliername: string | null;
+  };
+
+  const normalizeValue = (value: any): string => {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value.trim().toLowerCase();
+    if (typeof value === "number" || typeof value === "boolean") return String(value).trim().toLowerCase();
+    if (Array.isArray(value)) return value.map((entry) => normalizeValue(entry)).filter(Boolean).join(",");
+    return String(value).trim().toLowerCase();
+  };
+
+  const extractComparableValues = (value: any): string[] => {
+    if (value === null || value === undefined || value === "") return [];
+    if (Array.isArray(value)) return value.map((entry) => normalizeValue(entry)).filter(Boolean);
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            return parsed.map((entry) => normalizeValue(entry)).filter(Boolean);
+          }
+        } catch (_error) {
+          // Fall back to normal string handling.
+        }
+      }
+      return [normalizeValue(trimmed)];
+    }
+    return [normalizeValue(value)];
+  };
+
+  const levenshteinDistance = (left: string, right: string): number => {
+    if (left === right) return 0;
+    if (!left.length) return right.length;
+    if (!right.length) return left.length;
+
+    const matrix: number[][] = Array.from({ length: left.length + 1 }, () =>
+      new Array(right.length + 1).fill(0)
+    );
+
+    for (let i = 0; i <= left.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= right.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= left.length; i++) {
+      for (let j = 1; j <= right.length; j++) {
+        const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+
+    return matrix[left.length][right.length];
+  };
+
+  const getClosestSuggestion = (input: string, candidates: string[]): string | null => {
+    if (!input || !candidates.length) return null;
+    let bestCandidate = "";
+    let bestScore = Number.MAX_SAFE_INTEGER;
+
+    for (const candidate of candidates) {
+      const score = levenshteinDistance(input, candidate);
+      if (score < bestScore) {
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+    }
+
+    if (!bestCandidate) return null;
+    return bestScore <= Math.max(2, Math.floor(bestCandidate.length * 0.3)) ? bestCandidate : null;
+  };
+
+  const buildExpectedList = (values: Set<string>): string[] => {
+    return Array.from(values).filter(Boolean).sort().slice(0, MAX_EXPECTED_VALUES);
+  };
+
+  const getSchemaPropertySet = (): Set<string> => {
+    const schema = productrevoInsertSchema as { properties?: Record<string, unknown> };
+    return new Set<string>(Object.keys(schema.properties ?? {}));
+  };
+
+  const getNonNullFieldNames = (row: Record<string, any>): string[] =>
+    Object.keys(row).filter((key) => row[key] !== null && row[key] !== undefined && row[key] !== "");
+
+  const fetchBulkValidationLookups = async () => {
+    const [picklistResult, supplierResult] = await Promise.all([
+      query(
+        `SELECT fieldname, label, value, controlledfieldname, controlledvalue, controlledlabel, parent
+         FROM picklist
+         WHERE object = $1`,
+        [BULK_PICKLIST_OBJECT]
+      ),
+      query(`SELECT id, suppliername FROM supplier`, []),
+    ]);
+
+    const picklistRows = (picklistResult.rows || []) as PicklistRow[];
+    const supplierRows = (supplierResult.rows || []) as SupplierRow[];
+
+    const allowedByField = new Map<string, Set<string>>();
+    const dependentRowsByField = new Map<string, PicklistRow[]>();
+
+    for (const row of picklistRows) {
+      const fieldName = normalizeValue(row.fieldname);
+      if (!fieldName) continue;
+
+      if (!allowedByField.has(fieldName)) {
+        allowedByField.set(fieldName, new Set<string>());
+      }
+
+      const allowedSet = allowedByField.get(fieldName) as Set<string>;
+      const labelNormalized = normalizeValue(row.label);
+      const valueNormalized = normalizeValue(row.value);
+
+      if (labelNormalized) allowedSet.add(labelNormalized);
+      if (valueNormalized) allowedSet.add(valueNormalized);
+
+      const hasDependentConstraint = normalizeValue(row.controlledfieldname) && (
+        normalizeValue(row.controlledvalue) || normalizeValue(row.controlledlabel) || normalizeValue(row.parent)
+      );
+
+      if (hasDependentConstraint) {
+        if (!dependentRowsByField.has(fieldName)) {
+          dependentRowsByField.set(fieldName, []);
+        }
+        (dependentRowsByField.get(fieldName) as PicklistRow[]).push(row);
+      }
+    }
+
+    const supplierById = new Map<number, string>();
+    const supplierNameToIds = new Map<string, Set<number>>();
+
+    for (const supplier of supplierRows) {
+      supplierById.set(Number(supplier.id), supplier.suppliername || "");
+      const normalizedSupplierName = normalizeValue(supplier.suppliername);
+      if (!normalizedSupplierName) continue;
+      if (!supplierNameToIds.has(normalizedSupplierName)) {
+        supplierNameToIds.set(normalizedSupplierName, new Set<number>());
+      }
+      (supplierNameToIds.get(normalizedSupplierName) as Set<number>).add(Number(supplier.id));
+    }
+
+    return {
+      allowedByField,
+      dependentRowsByField,
+      supplierById,
+      supplierNameToIds,
+    };
+  };
+
+  export const validateBulkProductPayload = async (productrevoDataArray: any[]): Promise<BulkValidationResult> => {
+    try {
+      if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
+        return {
+          isValid: false,
+          totalRows: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 0,
+          validRowCount: 0,
+          invalidRowCount: 1,
+          errors: [
+            {
+              rowNumber: 2,
+              index: 0,
+              field: "payload",
+              receivedValue: productrevoDataArray,
+              reason: "Expected a non-empty array of product rows.",
+              source: "payload",
+            },
+          ],
+        };
+      }
+
+      const schemaFieldSet = getSchemaPropertySet();
+      const {
+        allowedByField,
+        dependentRowsByField,
+        supplierById,
+        supplierNameToIds,
+      } = await fetchBulkValidationLookups();
+
+      const errors: BulkValidationError[] = [];
+      const invalidRows = new Set<number>();
+
+      for (let index = 0; index < productrevoDataArray.length; index++) {
+        const row = productrevoDataArray[index];
+        const rowNumber = index + 2;
+
+        if (!row || Array.isArray(row) || typeof row !== "object") {
+          errors.push({
+            rowNumber,
+            index,
+            field: "row",
+            receivedValue: row,
+            reason: "Each entry must be a valid object.",
+            source: "payload",
+          });
+          invalidRows.add(index);
+          continue;
+        }
+
+        const nonNullFields = getNonNullFieldNames(row);
+        if (!nonNullFields.length) {
+          errors.push({
+            rowNumber,
+            index,
+            field: "row",
+            receivedValue: row,
+            reason: "Row has no non-null fields.",
+            source: "payload",
+          });
+          invalidRows.add(index);
+          continue;
+        }
+
+        for (const fieldName of Object.keys(row)) {
+          if (!schemaFieldSet.has(fieldName)) {
+            errors.push({
+              rowNumber,
+              index,
+              field: fieldName,
+              receivedValue: row[fieldName],
+              reason: "Unknown field in payload.",
+              expected: Array.from(schemaFieldSet).sort().slice(0, MAX_EXPECTED_VALUES),
+              source: "payload",
+            });
+            invalidRows.add(index);
+          }
+        }
+
+        for (const [picklistField, allowedValues] of allowedByField.entries()) {
+          if (!(picklistField in row)) continue;
+          const receivedComparableValues = extractComparableValues(row[picklistField]);
+          if (!receivedComparableValues.length) continue;
+
+          const dependentRows = dependentRowsByField.get(picklistField) || [];
+          let dependentAllowedValues: Set<string> | null = null;
+
+          if (dependentRows.length) {
+            const matchedDependentRows = dependentRows.filter((dependentRow) => {
+              const controllerField = normalizeValue(dependentRow.controlledfieldname);
+              if (!controllerField || !(controllerField in row)) return false;
+
+              const incomingControllerValues = extractComparableValues(row[controllerField]);
+              if (!incomingControllerValues.length) return false;
+
+              const ruleControllerValues = [
+                normalizeValue(dependentRow.controlledvalue),
+                normalizeValue(dependentRow.controlledlabel),
+                normalizeValue(dependentRow.parent),
+              ].filter(Boolean);
+
+              return incomingControllerValues.some((incomingValue) =>
+                ruleControllerValues.includes(incomingValue)
+              );
+            });
+
+            if (matchedDependentRows.length) {
+              dependentAllowedValues = new Set<string>();
+              for (const matched of matchedDependentRows) {
+                const labelNormalized = normalizeValue(matched.label);
+                const valueNormalized = normalizeValue(matched.value);
+                if (labelNormalized) dependentAllowedValues.add(labelNormalized);
+                if (valueNormalized) dependentAllowedValues.add(valueNormalized);
+              }
+            }
+          }
+
+          const activeAllowedSet = dependentAllowedValues && dependentAllowedValues.size
+            ? dependentAllowedValues
+            : allowedValues;
+
+          const expectedValues = buildExpectedList(activeAllowedSet);
+          for (const receivedValue of receivedComparableValues) {
+            if (!activeAllowedSet.has(receivedValue)) {
+              const suggestion = getClosestSuggestion(receivedValue, expectedValues);
+              errors.push({
+                rowNumber,
+                index,
+                field: picklistField,
+                receivedValue: row[picklistField],
+                reason: dependentAllowedValues
+                  ? "Value is not valid for the selected dependent picklist context."
+                  : "Value is not part of the allowed picklist values.",
+                expected: expectedValues,
+                suggestion,
+                source: "picklist",
+              });
+              invalidRows.add(index);
+              break;
+            }
+          }
+        }
+
+        const supplierIdRaw = row.supplierid;
+        const supplierNameRaw = row.suppliername;
+
+        const hasSupplierId = supplierIdRaw !== null && supplierIdRaw !== undefined && supplierIdRaw !== "";
+        const hasSupplierName = supplierNameRaw !== null && supplierNameRaw !== undefined && supplierNameRaw !== "";
+
+        let normalizedSupplierName = "";
+        let supplierIdNumeric: number | null = null;
+
+        if (hasSupplierId) {
+          supplierIdNumeric = Number(supplierIdRaw);
+          if (!Number.isFinite(supplierIdNumeric)) {
+            errors.push({
+              rowNumber,
+              index,
+              field: "supplierid",
+              receivedValue: supplierIdRaw,
+              reason: "Supplier ID must be a valid number.",
+              source: "supplier",
+            });
+            invalidRows.add(index);
+          } else if (!supplierById.has(supplierIdNumeric)) {
+            errors.push({
+              rowNumber,
+              index,
+              field: "supplierid",
+              receivedValue: supplierIdRaw,
+              reason: "Supplier ID not found in supplier lookup.",
+              source: "supplier",
+            });
+            invalidRows.add(index);
+          }
+        }
+
+        if (hasSupplierName) {
+          normalizedSupplierName = normalizeValue(supplierNameRaw);
+          if (!normalizedSupplierName || !supplierNameToIds.has(normalizedSupplierName)) {
+            errors.push({
+              rowNumber,
+              index,
+              field: "suppliername",
+              receivedValue: supplierNameRaw,
+              reason: "Supplier name not found in supplier lookup.",
+              expected: Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES),
+              suggestion: getClosestSuggestion(
+                normalizedSupplierName,
+                Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES)
+              ),
+              source: "supplier",
+            });
+            invalidRows.add(index);
+          }
+        }
+
+        if (hasSupplierId && hasSupplierName && supplierIdNumeric !== null && normalizedSupplierName) {
+          const idsForName = supplierNameToIds.get(normalizedSupplierName);
+          if (idsForName && !idsForName.has(supplierIdNumeric)) {
+            errors.push({
+              rowNumber,
+              index,
+              field: "supplierid/suppliername",
+              receivedValue: { supplierid: supplierIdRaw, suppliername: supplierNameRaw },
+              reason: "Supplier ID and Supplier Name do not match the same supplier record.",
+              source: "supplier",
+            });
+            invalidRows.add(index);
+          }
+        }
+      }
+
+      return {
+        isValid: errors.length === 0,
+        totalRows: productrevoDataArray.length,
+        validRowCount: productrevoDataArray.length - invalidRows.size,
+        invalidRowCount: invalidRows.size,
+        errors,
+      };
+    } catch (error) {
+      console.error("Query Execution Error: IN validateBulkProductPayload", error);
+      return {
+        isValid: false,
+        totalRows: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 0,
+        validRowCount: 0,
+        invalidRowCount: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 1,
+        errors: [
+          {
+            rowNumber: 2,
+            index: 0,
+            field: "validation",
+            receivedValue: null,
+            reason: `Validation failed unexpectedly: ${(error as Error).message}`,
+            source: "payload",
+          },
+        ],
+      };
+    }
+  };
 
   /**
    * Builds a new statushistory entry.

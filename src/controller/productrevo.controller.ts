@@ -196,6 +196,15 @@ export module productrevoController {
                 return reply.status(400).send({ error: 'Invalid input: Expected a non-empty array of products' });
             }
 
+            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray);
+            if (!validationResult.isValid) {
+                return reply.status(400).send({
+                    success: false,
+                    message: "Bulk validation failed. Fix the highlighted rows and retry.",
+                    validation: validationResult,
+                });
+            }
+
             const result = await productrevoService.insertBulkProduct(productrevoDataArray);
 
             if (result.success) {
@@ -215,13 +224,49 @@ export module productrevoController {
         }
     };
 
+    export const validateBulkProduct = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const productrevoDataArray = request.body as any[];
+            if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
+                return reply.status(400).send({
+                    success: false,
+                    message: "Invalid input: Expected a non-empty array of products.",
+                });
+            }
+
+            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray);
+
+            if (validationResult.isValid) {
+                return reply.status(200).send({
+                    success: true,
+                    message: "Validation successful. Data is ready for bulk insert.",
+                    validation: validationResult,
+                });
+            }
+
+            return reply.status(400).send({
+                success: false,
+                message: "Validation failed. Please correct the invalid rows.",
+                validation: validationResult,
+            });
+        } catch (error) {
+            console.error("ERROR IN Controller validateBulkProduct", error);
+            return reply.status(500).send({
+                success: false,
+                message: `Bulk validation failed unexpectedly: ${(error as Error).message}`,
+            });
+        }
+    };
+
     export const downloadBulkProductTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-            const workbook = await productBulkTemplateService.generateProductBulkTemplate();
+            const { profile } = (request.query || {}) as { profile?: string };
+            const workbook = await productBulkTemplateService.generateProductBulkTemplate(profile);
             const workbookBuffer = await workbook.xlsx.writeBuffer();
             const buffer = Buffer.isBuffer(workbookBuffer) ? workbookBuffer : Buffer.from(workbookBuffer);
             const fileDate = new Date().toISOString().slice(0, 10);
-            const fileName = `Product_Bulk_Template_${fileDate}.xlsx`;
+            const profileKey = profile || productBulkTemplateService.defaultProfile;
+            const fileName = `Product_Bulk_Template_${profileKey}_${fileDate}.xlsx`;
 
             reply.header(
                 "Content-Type",
@@ -232,7 +277,9 @@ export module productrevoController {
             return reply.send(buffer);
         } catch (error) {
             console.error("ERROR IN Controller downloadBulkProductTemplate", error);
-            reply.status(500).send({ error: `Failed to generate template: ${(error as Error).message}` });
+            const message = (error as Error).message || "Unknown error";
+            const statusCode = message.startsWith("Invalid template profile") ? 400 : 500;
+            reply.status(statusCode).send({ error: `Failed to generate template: ${message}` });
         }
     };
 
