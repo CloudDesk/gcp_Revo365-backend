@@ -1,6 +1,7 @@
 import { fileURLToPath } from "url";
 import { dirname, join, resolve } from "path";
 import {
+  ENV_INTERNAL_TASK_SECRET,
   GCP_PROJECT_ID,
   GCP_PROJECT_LOCATION,
   GCP_PROJECT_QUEUE,
@@ -50,6 +51,9 @@ export async function createHttpTask(merchantid: any) {
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payloadString),
+          ...(ENV_INTERNAL_TASK_SECRET
+            ? { "X-Task-Secret": ENV_INTERNAL_TASK_SECRET }
+            : {}),
         },
         httpMethod: "POST",
         url,

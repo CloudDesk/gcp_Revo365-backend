@@ -3,6 +3,7 @@ import { productrevoService } from "../services/productrevo.service.js";
 import { stockRevoService } from "../services/stockRevo.service.js";
 import { getSession } from "../services/session.service.js";
 import uploadtos3 from "../aws/uploadtos3.js";
+import { productBulkTemplateService } from "../services/productBulkTemplate.service.js";
 // Note: stockRevoService import retained for other potential usages in this module.
 
 interface idparams {
@@ -211,6 +212,27 @@ export module productrevoController {
         } catch (error) {
             console.error('ERROR IN Controller insertBulkProduct', error);
             reply.status(500).send({ error: `Error in bulk product insert: ${(error as Error).message}` });
+        }
+    };
+
+    export const downloadBulkProductTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const workbook = await productBulkTemplateService.generateProductBulkTemplate();
+            const workbookBuffer = await workbook.xlsx.writeBuffer();
+            const buffer = Buffer.isBuffer(workbookBuffer) ? workbookBuffer : Buffer.from(workbookBuffer);
+            const fileDate = new Date().toISOString().slice(0, 10);
+            const fileName = `Product_Bulk_Template_${fileDate}.xlsx`;
+
+            reply.header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            );
+            reply.header("Content-Disposition", `attachment; filename="${fileName}"`);
+
+            return reply.send(buffer);
+        } catch (error) {
+            console.error("ERROR IN Controller downloadBulkProductTemplate", error);
+            reply.status(500).send({ error: `Failed to generate template: ${(error as Error).message}` });
         }
     };
 

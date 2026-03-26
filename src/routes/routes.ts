@@ -60,8 +60,25 @@ import { googlereviewController } from "../controller/googlereview.controller.js
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
+    const taskOrSessionAuth = async (request: any, reply: any) => {
+        const taskSecretHeader = request.headers["x-task-secret"];
+        const receivedTaskSecret = Array.isArray(taskSecretHeader)
+            ? taskSecretHeader[0]
+            : taskSecretHeader;
+
+        if (
+            ENV_INTERNAL_TASK_SECRET &&
+            receivedTaskSecret &&
+            String(receivedTaskSecret) === String(ENV_INTERNAL_TASK_SECRET)
+        ) {
+            return;
+        }
+
+        return getSession(request, reply);
+    };
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
     // fastify.get('/product/Archieve/:pageNumber/:recordCount', productController.getArcheivedProducts);
@@ -121,6 +138,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
     fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct)
+    fastify.get('/v2/product/bulk/template', { preHandler: [getSession] }, productrevoController.downloadBulkProductTemplate);
     // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecomvisible: true|false }
     fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
 
@@ -284,6 +302,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/payment/razorpay', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpay);
     fastify.post('/payment/razorpay/ticket', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpayTicket);
     fastify.post('/payment/confirmation-razorpay', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpay);
+    fastify.post('/payment/razorpay/webhook', { config: { rawBody: true } }, transactionController.paymentWebhookRazorpay);
     fastify.post('/payment/confirmation-razorpay/tickets', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpayTicket);
 
     fastify.post('/payment/status', transactionController.paymentConfirmation);
@@ -344,7 +363,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
 
-    fastify.post('/delete/merchantid', ordersController.deleteFailedOrder)
+    fastify.post('/delete/merchantid', { preHandler: [taskOrSessionAuth] }, ordersController.deleteFailedOrder)
 
     // Dashboard
     // orders - product_revo
