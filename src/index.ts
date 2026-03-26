@@ -8,6 +8,7 @@ import { checkDatabaseConnection } from "./database/postgres.js";
 import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
+import fastifyRawBody from "fastify-raw-body";
 
 import fs from "fs";
 
@@ -39,6 +40,12 @@ fs.stat(logFilePath, (err, stats) => {
 });
 
 fastify.register(cors);
+fastify.register(fastifyRawBody, {
+  global: false,
+  field: "rawBody",
+  encoding: "utf8",
+  runFirst: true,
+});
 
 // Log each request to CSV
 fastify.addHook("onRequest", (request: CustomRequest, reply, done) => {

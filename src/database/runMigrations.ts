@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pool from './postgres.js';
@@ -12,26 +12,45 @@ const __dirname  = dirname(__filename);
  * Called once from index.ts onReady hook.
  */
 export async function runMigrations(): Promise<void> {
-  const migrationPath = join(__dirname, 'migrations', 'rating_extend.sql');
+  const migrationDir = join(__dirname, 'migrations');
+  let migrationFiles: string[] = [];
 
-  let sql: string;
   try {
-    sql = readFileSync(migrationPath, 'utf-8');
+    migrationFiles = readdirSync(migrationDir)
+      .filter((file) => file.endsWith('.sql'))
+      .sort((a, b) => a.localeCompare(b));
   } catch (err) {
-    console.warn('[Migrations] Could not read migration file:', migrationPath, err);
+    console.warn('[Migrations] Could not read migration directory:', migrationDir, err);
+    return;
+  }
+
+  if (migrationFiles.length === 0) {
+    console.log('[Migrations] No migration files found.');
     return;
   }
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query(sql);
-    await client.query('COMMIT');
-    console.log('[Migrations] rating_extend.sql applied successfully.');
-  } catch (err: any) {
-    await client.query('ROLLBACK');
-    // Log but don't crash the server — the columns likely already exist
-    console.error('[Migrations] rating_extend.sql failed (already applied?):', err.message);
+    for (const fileName of migrationFiles) {
+      const migrationPath = join(migrationDir, fileName);
+      let sql = '';
+      try {
+        sql = readFileSync(migrationPath, 'utf-8');
+      } catch (readErr) {
+        console.warn('[Migrations] Could not read migration file:', migrationPath, readErr);
+        continue;
+      }
+
+      try {
+        await client.query('BEGIN');
+        await client.query(sql);
+        await client.query('COMMIT');
+        console.log(`[Migrations] ${fileName} applied successfully.`);
+      } catch (migrationErr: any) {
+        await client.query('ROLLBACK');
+        console.error(`[Migrations] ${fileName} failed:`, migrationErr?.message || migrationErr);
+      }
+    }
   } finally {
     client.release();
   }

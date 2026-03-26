@@ -8,6 +8,7 @@ import Razorpay from "razorpay";
 import {
   ENV_RAZORPAY_KEY_ID,
   ENV_RAZORPAY_KEY_SECRET,
+  ENV_RAZORPAY_WEBHOOK_SECRET,
   REDIRECT_URL_FAILURE,
   REDIRECT_URL_PAYMENT_STATUS,
   REDIRECT_URL_SUCCESS,
@@ -17,17 +18,17 @@ import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
 import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
-import { stat } from "fs";
 import loginShiprocket from "../shiprocket/shiprocketAuth.js";
+import { redisClient } from "../database/redis.session.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
 //razorpay pay
 const RAZORPAY_KEY_ID = ENV_RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = ENV_RAZORPAY_KEY_SECRET;
+const RAZORPAY_WEBHOOK_SECRET = ENV_RAZORPAY_WEBHOOK_SECRET;
 const keyIndex = 1;
-console.log("Razorpay Key ID:", RAZORPAY_KEY_ID);
-console.log("Razorpay Key Secret:", RAZORPAY_KEY_SECRET);
+console.log("Razorpay gateway initialized");
 let transactionDataset: any = {};
 let dummyorderdata: any[] = [];
 let cartIddata: any[] = [];
@@ -38,6 +39,537 @@ const razorpay = new Razorpay({
   key_id: RAZORPAY_KEY_ID,
   key_secret: RAZORPAY_KEY_SECRET,
 });
+
+const toSafeNumber = (value: any, defaultValue = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+};
+
+const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: any) => {
+  if (!Array.isArray(orderItems) || orderItems.length === 0) {
+    return toSafeNumber(fallbackAmount, 0);
+  }
+
+  const computed = orderItems.reduce((total, item) => {
+    const quantity = toSafeNumber(item?.quantity, 0);
+    const productAmount = toSafeNumber(item?.productamount, 0);
+    const lineOrderAmount = toSafeNumber(item?.orderamount, 0);
+
+    if (productAmount > 0 && quantity > 0) {
+      return total + productAmount * quantity;
+    }
+    if (lineOrderAmount > 0) {
+      return total + lineOrderAmount;
+    }
+    return total;
+  }, 0);
+
+  return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
+};
+
+const groupOrderQuantities = (orderItems: any[] = []) => {
+  const grouped = new Map<number, number>();
+  for (const item of orderItems) {
+    const productId = toSafeNumber(item?.productid, 0);
+    const qty = toSafeNumber(item?.quantity, 0);
+    if (!productId || qty <= 0) continue;
+    grouped.set(productId, (grouped.get(productId) || 0) + qty);
+  }
+  return grouped;
+};
+
+const releaseInventoryLocksByOrderItems = async (orderItems: any[] = []) => {
+  const grouped = groupOrderQuantities(orderItems);
+  if (grouped.size === 0) {
+    return;
+  }
+
+  const entries = Array.from(grouped.entries());
+  const values: any[] = [];
+  const cases: string[] = [];
+  const inClauses: string[] = [];
+
+  entries.forEach(([productId, qty], index) => {
+    const productIdPlaceholder = index * 2 + 1;
+    const qtyPlaceholder = index * 2 + 2;
+    values.push(productId, qty);
+    cases.push(
+      `WHEN id = $${productIdPlaceholder} THEN GREATEST(lock_qty - $${qtyPlaceholder}, 0)`
+    );
+    inClauses.push(`$${productIdPlaceholder}`);
+  });
+
+  const releaseQuery = `
+    UPDATE product_revo
+    SET lock_qty = CASE
+      ${cases.join(" ")}
+      ELSE lock_qty
+    END
+    WHERE id IN (${inClauses.join(", ")})
+  `;
+
+  await query(releaseQuery, values);
+};
+
+const safeCleanupPendingOrder = async (merchantTransactionId: string) => {
+  if (!merchantTransactionId) return;
+  try {
+    await ordersService.deleteFailedOrder(merchantTransactionId);
+  } catch (cleanupError) {
+    console.error("Failed to cleanup pending order:", cleanupError?.message || cleanupError);
+  }
+};
+
+const parseHeaderValue = (headerValue: any): string | null => {
+  if (!headerValue) return null;
+  if (Array.isArray(headerValue)) {
+    return headerValue[0] || null;
+  }
+  return String(headerValue);
+};
+
+const timingSafeHexEqual = (expectedHex: string, receivedHex: string) => {
+  try {
+    const expected = Buffer.from(expectedHex || "", "hex");
+    const received = Buffer.from(receivedHex || "", "hex");
+    if (expected.length === 0 || received.length === 0) return false;
+    if (expected.length !== received.length) return false;
+    return crypto.timingSafeEqual(
+      new Uint8Array(expected),
+      new Uint8Array(received)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const acquireProcessingLock = async (lockKey: string, ttlSeconds = 120) => {
+  if (!lockKey || !redisClient || !redisClient.isOpen) {
+    return { acquired: true, key: null as string | null };
+  }
+
+  const redisKey = `payment:lock:${lockKey}`;
+  const result = await redisClient.set(redisKey, "1", {
+    NX: true,
+    EX: ttlSeconds,
+  });
+  return { acquired: result === "OK", key: redisKey };
+};
+
+const releaseProcessingLock = async (lockKey: string | null) => {
+  if (!lockKey || !redisClient || !redisClient.isOpen) return;
+  try {
+    await redisClient.del(lockKey);
+  } catch (lockReleaseError) {
+    console.error("Unable to release processing lock:", lockReleaseError?.message || lockReleaseError);
+  }
+};
+
+const createWebhookEventLedgerEntry = async (eventId: string, eventName: string, payload: any) => {
+  if (!eventId) return null;
+  try {
+    const insertResult = await query(
+      `INSERT INTO payment_webhook_events (provider, event_id, event_name, payload, status)
+       VALUES ($1, $2, $3, $4::jsonb, $5)
+       ON CONFLICT (provider, event_id) DO NOTHING
+       RETURNING id`,
+      ["razorpay", eventId, eventName || null, JSON.stringify(payload || {}), "received"]
+    );
+
+    if (insertResult.rows.length === 0) {
+      return { duplicate: true, id: null };
+    }
+
+    return { duplicate: false, id: insertResult.rows[0].id };
+  } catch (error) {
+    return null;
+  }
+};
+
+const markWebhookEventLedgerStatus = async (
+  ledgerId: number | null,
+  status: "processed" | "failed" | "ignored",
+  errorMessage?: string
+) => {
+  if (!ledgerId) return;
+  try {
+    await query(
+      `UPDATE payment_webhook_events
+       SET status = $1,
+           error_message = $2,
+           processed_at = NOW()
+       WHERE id = $3`,
+      [status, errorMessage || null, ledgerId]
+    );
+  } catch (error) {
+    console.error("Unable to update webhook ledger status:", error?.message || error);
+  }
+};
+
+const hasProcessedWebhookEvent = async (eventId: string) => {
+  if (!eventId || !redisClient || !redisClient.isOpen) {
+    return false;
+  }
+
+  const redisKey = `razorpay:webhook:event:${eventId}`;
+  const existing = await redisClient.get(redisKey);
+  if (existing) return true;
+
+  await redisClient.setEx(redisKey, 60 * 60 * 24 * 7, "1");
+  return false;
+};
+
+const getOrderContextByMerchantTransactionId = async (merchantTransactionId: string) => {
+  const ordersResult = await query(
+    `SELECT * FROM orders WHERE merchanttransactionid = $1`,
+    [merchantTransactionId]
+  );
+  const thirdPartyOrdersResult = await query(
+    `SELECT * FROM thirdpartyorders WHERE merchanttransactionid = $1`,
+    [merchantTransactionId]
+  );
+  const orderLineResult = await query(
+    `SELECT * FROM orderline WHERE merchanttransactionid = $1`,
+    [merchantTransactionId]
+  );
+
+  const combinedOrderRows = [...ordersResult.rows, ...thirdPartyOrdersResult.rows];
+  if (combinedOrderRows.length === 0) {
+    return null;
+  }
+
+  const expectedAmountRupees =
+    ordersResult.rows.reduce((sum, row) => sum + toSafeNumber(row?.orderamount, 0), 0) +
+    thirdPartyOrdersResult.rows.reduce((sum, row) => sum + toSafeNumber(row?.orderamount, 0), 0);
+
+  const primaryOrderRow = orderLineResult.rows[0] || combinedOrderRows[0];
+  const userId = primaryOrderRow?.userid;
+  const addressId = primaryOrderRow?.addressid;
+
+  const userResult = userId
+    ? await query(
+      `SELECT firstname, lastname, useremail, usermobilenumber FROM users WHERE id = $1`,
+      [userId]
+    )
+    : { rows: [] };
+  const addressResult = addressId
+    ? await query(
+      `SELECT address, city, state, pincode, mobilenumber FROM address WHERE id = $1`,
+      [addressId]
+    )
+    : { rows: [] };
+
+  const orderLineItems = orderLineResult.rows.map((row) => ({
+    id: row.id,
+    productid: row.productid,
+    quantity: row.quantity,
+    ordername: row.ordername,
+    userid: row.userid,
+    addressid: row.addressid,
+    invoicefor: row.invoicefor,
+    paymentmethod: row.paymentmethod,
+    orderamount: row.orderamount,
+    productamount: row.productamount,
+    productname: row.productname,
+  }));
+
+  const productIdsFromOrderLine = orderLineItems
+    .map((row) => row.productid)
+    .filter((id) => id !== null && id !== undefined);
+
+  const productIds =
+    productIdsFromOrderLine.length > 0
+      ? Array.from(new Set(productIdsFromOrderLine))
+      : Array.from(
+        new Set(
+          combinedOrderRows.flatMap((row) =>
+            Array.isArray(row?.productid) ? row.productid : [row?.productid]
+          )
+        )
+      ).filter((id) => id !== null && id !== undefined);
+
+  const transactionFor =
+    primaryOrderRow?.invoicefor ||
+    primaryOrderRow?.transactionfor ||
+    "product";
+
+  return {
+    merchantTransactionId,
+    combinedOrderRows,
+    orderLineItems,
+    primaryOrderRow,
+    user: userResult.rows[0] || null,
+    address: addressResult.rows[0] || null,
+    userId,
+    transactionFor,
+    productIds,
+    expectedAmountRupees,
+  };
+};
+
+const createShiprocketOrderForTransaction = async (context: any, transactionData: any) => {
+  try {
+    const token = await loginShiprocket();
+    const orderData = context.orderLineItems[0] || context.primaryOrderRow;
+    if (!orderData || !context.user || !context.address) {
+      return;
+    }
+
+    const shiprocketPayload = {
+      order_id: transactionData.merchanttransactionId,
+      order_date: new Date().toISOString(),
+      pickup_location: "warehouse",
+      billing_customer_name: context.user?.firstname || "Customer",
+      billing_last_name: context.user?.lastname || "Customer",
+      billing_address: context.address?.address || "Not Provided",
+      billing_address_2: "Not Given",
+      billing_city: context.address?.city || "Unknown City",
+      billing_pincode: context.address?.pincode || "000000",
+      billing_state: context.address?.state || "Unknown State",
+      billing_country: "India",
+      billing_email: context.user?.useremail || transactionData.name,
+      billing_phone: context.user?.usermobilenumber || transactionData.mobilenumber,
+      shipping_customer_name: context.user?.firstname || "Customer",
+      shipping_last_name: context.user?.lastname || "Customer",
+      shipping_address: context.address?.address || "Not Provided",
+      shipping_address_2: "Not Given",
+      shipping_city: context.address?.city || "Unknown City",
+      shipping_pincode: context.address?.pincode || "000000",
+      shipping_state: context.address?.state || "Unknown State",
+      shipping_country: "India",
+      shipping_is_billing: true,
+      shipping_email: context.user?.useremail || transactionData.name,
+      shipping_phone: context.user?.usermobilenumber || transactionData.mobilenumber,
+      order_items: [
+        {
+          name: orderData.productname || "Product",
+          sku: `SKU-${orderData.productid}`,
+          units: toSafeNumber(orderData.quantity, 1),
+          selling_price: toSafeNumber(orderData.productamount, 0),
+        },
+      ],
+      payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
+      sub_total: toSafeNumber(orderData.orderamount, transactionData.amount),
+      length: 10,
+      breadth: 10,
+      height: 10,
+      weight: 0.5,
+    };
+
+    let shiprocketOrderData = null;
+    try {
+      const shiprocketResponse = await axios.post(
+        `${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`,
+        shiprocketPayload,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      shiprocketOrderData = shiprocketResponse.data;
+    } catch (error) {
+      console.error("Shiprocket order creation failed:", error.response?.data || error.message);
+      return;
+    }
+
+    if (!shiprocketOrderData) {
+      return;
+    }
+
+    await query(
+      `UPDATE orders 
+       SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
+       WHERE merchanttransactionid = $6`,
+      [
+        shiprocketOrderData.order_id,
+        shiprocketOrderData.shipment_id,
+        shiprocketOrderData.status_code,
+        shiprocketOrderData.status,
+        shiprocketOrderData.channel_order_id,
+        transactionData.merchanttransactionId,
+      ]
+    );
+
+    await query(
+      `UPDATE thirdpartyorders 
+       SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
+       WHERE merchanttransactionid = $6`,
+      [
+        shiprocketOrderData.order_id,
+        shiprocketOrderData.shipment_id,
+        shiprocketOrderData.status_code,
+        shiprocketOrderData.status,
+        shiprocketOrderData.channel_order_id,
+        transactionData.merchanttransactionId,
+      ]
+    );
+  } catch (error) {
+    console.error("Shiprocket integration failed:", error?.message || error);
+  }
+};
+
+const finalizeCapturedRazorpayPayment = async ({
+  razorpayPaymentId,
+  razorpayOrderId,
+  razorpaySignature,
+  verifyCheckoutSignature,
+  source,
+}) => {
+  const gatewayOrder = await razorpay.orders.fetch(razorpayOrderId);
+  const merchantTransactionId = gatewayOrder?.receipt;
+
+  if (!merchantTransactionId) {
+    return { status: 400, message: "Unable to map Razorpay order to merchant transaction" };
+  }
+
+  const lock = await acquireProcessingLock(
+    `razorpay:${merchantTransactionId}:${razorpayPaymentId}`,
+    180
+  );
+  if (!lock.acquired) {
+    const existingTransaction = await query(
+      `SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`,
+      [razorpayPaymentId, razorpayOrderId, merchantTransactionId]
+    );
+    if (existingTransaction.rows.length > 0) {
+      return {
+        status: 200,
+        message: "Payment already processed",
+        data: { redirectUrl: REDIRECT_URL_SUCCESS },
+      };
+    }
+    return { status: 202, message: "Payment processing in progress" };
+  }
+
+  try {
+    const existingTransaction = await query(
+      `SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`,
+      [razorpayPaymentId, razorpayOrderId, merchantTransactionId]
+    );
+    if (existingTransaction.rows.length > 0) {
+      return {
+        status: 200,
+        message: "Payment already processed",
+        data: { redirectUrl: REDIRECT_URL_SUCCESS },
+      };
+    }
+
+    if (verifyCheckoutSignature) {
+      const generatedSignature = crypto
+        .createHmac("sha256", RAZORPAY_KEY_SECRET)
+        .update(`${gatewayOrder.id}|${razorpayPaymentId}`)
+        .digest("hex");
+
+      if (!timingSafeHexEqual(generatedSignature, razorpaySignature || "")) {
+        await safeCleanupPendingOrder(merchantTransactionId);
+        return { status: 400, message: "Invalid payment signature" };
+      }
+    }
+
+    const payment = await razorpay.payments.fetch(razorpayPaymentId);
+    if (payment?.order_id !== gatewayOrder.id) {
+      return { status: 400, message: "Payment does not belong to the expected order" };
+    }
+
+    if (payment.status !== "captured") {
+      if (payment.status === "failed") {
+        await safeCleanupPendingOrder(merchantTransactionId);
+      }
+      if (source === "webhook" && payment.status === "authorized") {
+        return { status: 200, message: "Payment authorized, waiting for capture" };
+      }
+      return { status: 400, message: "Payment not captured" };
+    }
+
+    const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+    if (!context) {
+      return { status: 400, message: "Payment timed out, try again." };
+    }
+
+    const alreadySucceeded = context.combinedOrderRows.some(
+      (row) => row?.ispaymentsucceed === true || row?.ispaymentsucceed === "true"
+    );
+    if (alreadySucceeded) {
+      return {
+        status: 200,
+        message: "Payment already processed",
+        data: { redirectUrl: REDIRECT_URL_SUCCESS },
+      };
+    }
+
+    const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
+    if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+      return { status: 400, message: "Amount mismatch between order and payment" };
+    }
+
+    const transactionPayload = {
+      transaction: {
+        merchanttransactionId: merchantTransactionId,
+        name: context.user?.useremail || "unknown",
+        amount: toSafeNumber(context.expectedAmountRupees, 0),
+        mobilenumber:
+          context.user?.usermobilenumber || context.address?.mobilenumber || null,
+        productid: context.productIds,
+        transactionfor: context.transactionFor,
+        userId: context.userId,
+        transactiondata: payment,
+        razorpay_signature: razorpaySignature || "",
+      },
+      order: context.orderLineItems,
+    };
+
+    let result: any;
+    try {
+      result = await transactionService.insertTransactionData(
+        transactionPayload,
+        context.combinedOrderRows
+      );
+    } catch (error) {
+      if (error?.code === "23505") {
+        return {
+          status: 200,
+          message: "Payment already processed",
+          data: { redirectUrl: REDIRECT_URL_SUCCESS },
+        };
+      }
+      throw error;
+    }
+
+    if (
+      !result?.orderdata ||
+      !result?.transactionData ||
+      result.orderdata.length === 0 ||
+      result.transactionData.length === 0
+    ) {
+      return {
+        status: 400,
+        message:
+          "Transaction failure. If payment debited, it will be refunded in 5 business days",
+      };
+    }
+
+    const updateProductQtyData = context.orderLineItems.map((item) => ({
+      id: item.productid,
+      orderedquantity: item.quantity,
+      ordername: item.ordername,
+    }));
+    if (updateProductQtyData.length > 0) {
+      await productrevoService.updateOrderedQuantityarray(updateProductQtyData);
+    }
+
+    await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
+
+    return {
+      status: 200,
+      message: "Payment verified and processed successfully",
+      data: { redirectUrl: REDIRECT_URL_SUCCESS },
+    };
+  } finally {
+    await releaseProcessingLock(lock.key);
+  }
+};
 
 export module transactionService {
   export const getTransactionData = async (request) => {
@@ -695,12 +1227,8 @@ export module transactionService {
         };
       } else {
         console.log("online pay");
-        // Step 1: Inventory check
-        dummyorderdata = orderdata.map((element: any) => ({ ...element }));
-        productupdateorderqty = orderdata.map((element: any) => ({
-          ...element,
-        }));
-        let insertdata = await productrevoService.bulkupsertProducttosetZero(
+        // Step 1: Reserve inventory for this checkout attempt
+        await productrevoService.bulkupsertProducttosetZero(
           orderdata,
           false
         );
@@ -743,11 +1271,7 @@ export module transactionService {
         console.log("All quantities available:", allQuantitiesAvailable);
 
         if (!allQuantitiesAvailable) {
-
-          await productrevoService.bulkupsertProducttosetZero(
-            dummyorderdata,
-            true
-          );
+          await releaseInventoryLocksByOrderItems(orderdata);
           return {
             status: 400,
             message:
@@ -755,12 +1279,15 @@ export module transactionService {
           };
         }
 
-        transactionDataset = request.body;
-        console.log("Transaction Data from inital:", transactionDataset);
         console.log("Merc Id:", merchanttransactionId);
+        const authoritativeAmount = computePayableAmountFromOrderInput(
+          orderdata,
+          amount
+        );
+
         // Step 2: Create Razorpay order
         const order = await razorpay.orders.create({
-          amount: Number(transactionDataset.transaction.amount) * 100,
+          amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
           currency: "INR",
           receipt: merchanttransactionId,
           notes: {
@@ -771,14 +1298,9 @@ export module transactionService {
           },
         });
 
-        console.log("order is : " + JSON.stringify(order));
-        console.log("Razorpay Order ID:", order);
-        // Step 3: Update order data with Razorpay order ID
+        // Step 3: Persist provisional order rows tied to merchant transaction id
         request.body.order.forEach((e) => {
-          e.merchanttransactionid = merchanttransactionId; // Use Razorpay order ID
-        });
-        request.body.order.forEach((e) => {
-          cartIddata.push(e.cartId);
+          e.merchanttransactionid = merchanttransactionId;
         });
 
         // Step 4: Create HTTP task and insert order data
@@ -797,19 +1319,15 @@ export module transactionService {
             request.body.order
           );
           console.log("Insert Order Data Result:", insertorderdata.rows);
-          insersertdordderdatawithprocessing = insertorderdata.rows;
         } catch (error) {
           console.log(
             error.message,
             "Error in Task paymentInitializationRazorpay"
           );
-          await productrevoService.bulkupsertProducttosetZero(
-            dummyorderdata,
-            true
-          );
+          await releaseInventoryLocksByOrderItems(orderdata);
           return {
             status: 500,
-            message: "Error processing order. Inventory has been reset.",
+            message: "Error processing order. Inventory reservation has been released.",
           };
         }
 
@@ -930,387 +1448,134 @@ export module transactionService {
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+      await releaseInventoryLocksByOrderItems(request?.body?.order || []);
       return ErrorMessage;
     }
   };
 
   export const paymentConfirmationRazorpay = async (request) => {
-    console.log("Inside paymentConfirmationRazorpay service");
-    console.log(request, "Request1");
-    console.log(transactionDataset, "from conform");
-    console.log("Dummy");
     try {
       const { razorpay_payment_id, razorpay_order_id, razorpay_signature } =
-        request.body;
-      console.log(request.body, "Request body in paymentConfirmationRazorpay");
-      // Validate input
+        request.body || {};
+
       if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
-        console.log("Come's inside first if");
         return {
           status: 400,
           message: "Missing required payment verification fields",
         };
       }
 
-      // Verify Razorpay signature
-      const generatedSignature = crypto
-        .createHmac("sha256", RAZORPAY_KEY_SECRET)
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest("hex");
-      console.log(generatedSignature, "Generated Signature");
-      console.log(razorpay_signature, "Existing Signature");
-      transactionDataset.transaction.razorpay_signature = razorpay_signature;
-      console.log("updated", transactionDataset);
-      if (generatedSignature !== razorpay_signature) {
-        console.log("Come's inside invalid signature");
-        await productrevoService.bulkupsertProducttosetZero(
-          dummyorderdata,
-          true
-        );
-        return { status: 400, message: "Invalid payment signature" };
-      }
-
-      // Fetch payment details from Razorpay
-      const payment = await razorpay.payments.fetch(razorpay_payment_id);
-      console.log(payment, "Payment details from Razorpay");
-      if (payment.status !== "captured") {
-        await productrevoService.bulkupsertProducttosetZero(
-          dummyorderdata,
-          true
-        );
-        return { status: 400, message: "Payment not captured" };
-      }
-
-      // Check if merchantTransactionId exists in orders
-      const merchantTransactionId =
-        transactionDataset.transaction?.merchanttransactionId;
-      console.log(merchantTransactionId, "Merchant Transaction ID 1");
-      console.log(
-        transactionDataset.transaction?.merchanttransactionId,
-        "Merchant Transaction ID 2"
-      );
-      if (!merchantTransactionId) {
-        return { status: 400, message: "No transaction data found" };
-      }
-
-      const checkMerchantId = await query(
-        `SELECT merchanttransactionid FROM orders WHERE merchanttransactionid = $1`,
-        [merchantTransactionId]
-      );
-      console.log(checkMerchantId.rows, "Check Merchant ID in orders");
-
-      // Step 2: If not found in orders, check in thirdpartyorders
-      let checkMerchantIdThirdParty = { rows: [] };
-      if (checkMerchantId.rows.length === 0) {
-        checkMerchantIdThirdParty = await query(
-          `SELECT merchanttransactionid FROM thirdpartyorders WHERE merchanttransactionid = $1`,
-          [merchantTransactionId]
-        );
-        console.log(
-          checkMerchantIdThirdParty.rows,
-          "Check Merchant ID in thirdpartyorders"
-        );
-      }
-      if (
-        checkMerchantId.rows.length === 0 &&
-        checkMerchantIdThirdParty.rows.length === 0
-      ) {
-        await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
-        return { status: 400, message: "Payment timed out, try again." };
-      }
-
-      const token = await loginShiprocket();
-      // ✅ Shiprocket Payload Construction
-      const orderData = transactionDataset.order[0];
-      const transactionData = transactionDataset.transaction;
-
-      // Fetch user & address from DB (since Shiprocket needs name, phone, address, etc.)
-      const userQuery = await query(`SELECT firstname, lastname, useremail, usermobilenumber FROM users WHERE id = $1`, [transactionData.userId]);
-      const addressQuery = await query(`SELECT address, city, state, pincode FROM address WHERE id = $1`, [orderData.addressid]);
-
-      const user = userQuery.rows[0];
-      const address = addressQuery.rows[0];
-
-      // Construct payload
-      const shiprocketPayload = {
-        order_id: transactionData.merchanttransactionId, // your order unique ID
-        order_date: new Date().toISOString(), // current date or order.createddate if available
-        pickup_location: "warehouse",
-        // pickup_location: orderData.storelocation || "73, Singanna Chetty St, Chindatripet, Anna Salai, Chintadripet, Chennai, Tamil Nadu 600002",
-        billing_customer_name: user?.firstname || "Customer",
-        billing_last_name: user?.lastname || "Customer",
-        billing_address: address?.address || "Not Provided",
-        billing_address_2: "Not Given",
-        billing_city: address?.city || "Unknown City",
-        billing_pincode: address?.pincode || "000000",
-        billing_state: address?.state || "Unknown State",
-        billing_country: "India",
-        billing_email: user?.useremail || transactionData.name,
-        billing_phone: user?.usermobilenumber || transactionData.mobilenumber,
-        shipping_customer_name: user?.firstname || 'Customer',
-        shipping_last_name: user?.lastname || 'Customer',
-        shipping_address: address?.address || "Not Provided",
-        shipping_address_2: 'Not Given',
-        shipping_city: address?.city || "Unknown City",
-        shipping_pincode: address?.pincode || "000000",
-        shipping_state: address?.state || "Unknown State",
-        shipping_country: "India",
-        shipping_is_billing: true,
-        shipping_email: user?.useremail || transactionData.name,
-        shipping_phone: user?.usermobilenumber || transactionData.mobilenumber,
-        order_items: [
-          {
-            name: orderData.productname,
-            sku: `SKU-${orderData.productid}`,
-            units: orderData.quantity,
-            selling_price: orderData.productamount,
-          },
-        ],
-        payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
-        sub_total: orderData.orderamount,
-        length: 10,
-        breadth: 10,
-        height: 10,
-        weight: 0.5,
-      };
-
-      // 👇 Log payload only for verification
-      console.log("🧾 Shiprocket Payload Preview ===>", JSON.stringify(shiprocketPayload, null, 2));
-      console.log('Test')
-
-      let shiprocketOrderData = null;
-      try {
-        const shiprocketResponse = await axios.post(
-          `${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`,
-          shiprocketPayload,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-
-        shiprocketOrderData = shiprocketResponse.data;
-        console.log("✅ Shiprocket order creation response:", shiprocketOrderData);
-        console.log('Stop After Shiprocket order creation')
-
-        // Store order + shipment data in DB
-        await query(
-          `UPDATE orders 
-     SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
-     WHERE merchanttransactionid = $6`,
-          [
-            shiprocketOrderData.order_id,
-            shiprocketOrderData.shipment_id,
-            shiprocketOrderData.status_code,
-            shiprocketOrderData.status,
-            shiprocketOrderData.channel_order_id,
-            transactionData.merchanttransactionId,
-          ]
-        );
-
-        await query(
-          `UPDATE thirdpartyorders 
-     SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
-     WHERE merchanttransactionid = $6`,
-          [
-            shiprocketOrderData.order_id,
-            shiprocketOrderData.shipment_id,
-            shiprocketOrderData.status_code,
-            shiprocketOrderData.status,
-            shiprocketOrderData.channel_order_id,
-            transactionData.merchanttransactionId,
-          ]
-        );
-        console.log("Stop after Update DB1")
-      } catch (error) {
-        console.error("❌ Error creating Shiprocket order:", error.response?.data || error.message);
-      }
-
-      // ✅ STEP 2: Assign Courier (Generate AWB)
-      if (shiprocketOrderData?.shipment_id) {
-        try {
-          console.log(`Before Assign Courier: ${Number(shiprocketOrderData.shipment_id)}`)
-
-          const readyToShip = await axios.post(
-            `${process.env.SHIPROCKET_BASE_URL}/orders/readytoship`,
-            { shipment_id: [Number(shiprocketOrderData.shipment_id)] },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-            }
-          );
-
-          console.log("📦 Ready to Ship Response:", readyToShip.data);
-
-          await new Promise((r) => setTimeout(r, 15000));
-          console.log("Order ID:", shiprocketOrderData.order_id);
-          console.log("Shiprocket Token:", token ? "✅ Present" : "❌ Missing");
-
-          const courierResponse = await axios.post(
-            `${process.env.SHIPROCKET_BASE_URL}/courier/assign/auto`,
-            { shipment_id: Number(shiprocketOrderData.shipment_id) },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-            }
-          );
-
-          const courierData = courierResponse.data;
-          console.log("🚚 Courier Assigned Response:", courierData);
-          console.log("Stop After Assign courier")
-
-          // Update AWB & courier details in DB
-          await query(
-            `UPDATE orders 
-       SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
-       WHERE merchanttransactionid = $4`,
-            [
-              courierData.awb_code || null,
-              courierData.courier_name || null,
-              courierData.courier_company_id || null,
-              transactionData.merchanttransactionId,
-            ]
-          );
-
-          await query(
-            `UPDATE thirdpartyorders 
-       SET shiprocket_awb_code = $1, shiprocket_courier_name = $2, shiprocket_courier_company_id = $3 
-       WHERE merchanttransactionid = $4`,
-            [
-              courierData.awb_code || null,
-              courierData.courier_name || null,
-              courierData.courier_company_id || null,
-              transactionData.merchanttransactionId,
-            ]
-          );
-
-          console.log("✅ Courier assigned and AWB updated in DB");
-        } catch (error) {
-          console.error("❌ Error assigning courier:", error.response?.data || error.message);
-          console.log('Inside Error')
-        }
-      } else {
-        console.log("⚠️ Shipment ID missing — cannot assign courier.");
-      }
-
-      // Update transaction and order data
-      console.log(
-        transactionDataset.transaction.transactiondata,
-        "===",
-        payment
-      );
-      transactionDataset.transaction.transactiondata = payment;
-      const message = { payment: "Payment done successfully" };
-      const result = await insertTransactionData(
-        transactionDataset,
-        insersertdordderdatawithprocessing
-        // razorpay_signature
-      );
-      console.log(result, "Result after insertTransactionData");
-      console.log("end");
-      if (
-        result.orderdata &&
-        result.orderdata.length > 0 &&
-        result.transactionData &&
-        result.transactionData.length > 0
-      ) {
-        console.log("Come's inside if orderdata and transactionData");
-        // Logic updated to fetch from DB instead of unreliable global variable
-        if (true) {
-          console.log("Come's inside confirmation block");
-
-          // User confirmed ordername exists in orderline table
-          const orderLineItemsQuery = `SELECT productid, quantity, ordername FROM orderline WHERE merchanttransactionid = $1`;
-          console.log("Fetching items for transaction:", transactionDataset.merchanttransactionId);
-          const orderLineItemsResult = await query(orderLineItemsQuery, [transactionDataset.merchanttransactionId]);
-
-          let updateproductorderquantiydata = [];
-
-          if (orderLineItemsResult.rows.length > 0) {
-            console.log("Fetched items from DB:", JSON.stringify(orderLineItemsResult.rows, null, 2));
-            updateproductorderquantiydata = orderLineItemsResult.rows.map(
-              (e) => ({
-                id: e.productid,
-                orderedquantity: e.quantity,
-                ordername: e.ordername
-              })
-            );
-          } else {
-            console.log("Warning: No items found in DB, using fallback global variable");
-            updateproductorderquantiydata = productupdateorderqty.map(
-              (e) => ({
-                id: e.productid,
-                orderedquantity: e.quantity,
-                ordername: e.ordername
-              })
-            );
-          }
-
-          const updatedOrderQuantity =
-            await productrevoService.updateOrderedQuantityarray(
-              updateproductorderquantiydata
-            );
-          // console.log("Updated Order Quantity:", updatedOrderQuantity);
-          console.log(cartIddata, "cart id to delete");
-          console.log("final");
-          if (cartIddata[0] === undefined) {
-            console.log("No cart data to delete");
-          } else {
-            const deleteCartData = await cartservice.deleteCart(cartIddata);
-            console.log("deleteCartData", deleteCartData);
-            console.log("Message Data");
-          }
-
-          // const messageData = {
-          //   title: "Hello User",
-          //   body: "Payment Done Successfully",
-          // };
-          // await messageinitialization(
-          //   transactionDataset.transaction.userId,
-          //   messageData
-          // );
-          // If updateOrderedQuantityarray returns void, check for undefined instead
-          // if (updatedOrderQuantity === undefined) {
-          //   await productrevoService.bulkupsertProducttosetZero(
-          //     dummyorderdata,
-          //     true
-          //   );
-          //   return {
-          //     status: 500,
-          //     message: "Failed to update product quantities",
-          //   };
-          // }
-        }
-        return {
-          status: 200,
-          message: "Payment verified and processed successfully",
-          data: { redirectUrl: REDIRECT_URL_SUCCESS },
-        };
-      } else {
-        await productrevoService.bulkupsertProducttosetZero(
-          dummyorderdata,
-          true
-        );
-        return {
-          status: 400,
-          message:
-            "Transaction failure. If payment debited, it will be refunded in 5 business days",
-        };
-      }
+      return await finalizeCapturedRazorpayPayment({
+        razorpayPaymentId: razorpay_payment_id,
+        razorpayOrderId: razorpay_order_id,
+        razorpaySignature: razorpay_signature,
+        verifyCheckoutSignature: true,
+        source: "checkout",
+      });
     } catch (error) {
       console.error(
         "Query Execution Error: IN paymentConfirmationRazorpay",
         error
       );
-      await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
       return { status: 500, message: "Error verifying Razorpay payment" };
+    }
+  };
+
+  export const paymentWebhookRazorpay = async (request) => {
+    let webhookLedgerId: number | null = null;
+    try {
+      if (!RAZORPAY_WEBHOOK_SECRET) {
+        return { status: 500, message: "Webhook secret is not configured" };
+      }
+
+      const receivedSignature = parseHeaderValue(
+        request.headers["x-razorpay-signature"]
+      );
+      if (!receivedSignature) {
+        return { status: 400, message: "Missing webhook signature" };
+      }
+
+      const rawBody = request.rawBody;
+      if (!rawBody) {
+        return { status: 400, message: "Missing raw webhook body" };
+      }
+
+      const expectedSignature = crypto
+        .createHmac("sha256", RAZORPAY_WEBHOOK_SECRET)
+        .update(rawBody)
+        .digest("hex");
+
+      if (!timingSafeHexEqual(expectedSignature, receivedSignature)) {
+        return { status: 400, message: "Invalid webhook signature" };
+      }
+
+      const eventPayload = request.body || {};
+      const eventName = eventPayload?.event;
+      const eventId = parseHeaderValue(request.headers["x-razorpay-event-id"]);
+      if (eventId) {
+        const ledgerResult = await createWebhookEventLedgerEntry(
+          eventId,
+          eventName,
+          eventPayload
+        );
+        if (ledgerResult?.duplicate) {
+          return { status: 200, message: "Duplicate webhook ignored" };
+        }
+        if (ledgerResult?.id) {
+          webhookLedgerId = ledgerResult.id;
+        } else if (await hasProcessedWebhookEvent(eventId)) {
+          return { status: 200, message: "Duplicate webhook ignored" };
+        }
+      }
+
+      const paymentEntity = eventPayload?.payload?.payment?.entity;
+
+      const paymentId = paymentEntity?.id;
+      const orderId = paymentEntity?.order_id || eventPayload?.payload?.order?.entity?.id;
+
+      if (
+        eventName === "order.paid" ||
+        eventName === "payment.captured" ||
+        eventName === "payment.authorized"
+      ) {
+        if (!paymentId || !orderId) {
+          await markWebhookEventLedgerStatus(webhookLedgerId, "ignored");
+          return { status: 200, message: "Webhook event ignored due to missing IDs" };
+        }
+        const result = await finalizeCapturedRazorpayPayment({
+          razorpayPaymentId: paymentId,
+          razorpayOrderId: orderId,
+          razorpaySignature: "",
+          verifyCheckoutSignature: false,
+          source: "webhook",
+        });
+        await markWebhookEventLedgerStatus(webhookLedgerId, "processed");
+        return result;
+      }
+
+      if (eventName === "payment.failed" && orderId) {
+        try {
+          const gatewayOrder = await razorpay.orders.fetch(orderId);
+          if (gatewayOrder?.receipt) {
+            await safeCleanupPendingOrder(gatewayOrder.receipt);
+          }
+        } catch (error) {
+          console.error("Failed to process payment.failed webhook:", error?.message || error);
+        }
+        await markWebhookEventLedgerStatus(webhookLedgerId, "processed");
+        return { status: 200, message: "Failure webhook processed" };
+      }
+
+      await markWebhookEventLedgerStatus(webhookLedgerId, "ignored");
+      return { status: 200, message: "Webhook event ignored" };
+    } catch (error) {
+      await markWebhookEventLedgerStatus(
+        webhookLedgerId,
+        "failed",
+        error?.message || "Webhook processing failed"
+      );
+      console.error("Query Execution Error: IN paymentWebhookRazorpay", error);
+      return { status: 500, message: "Error processing Razorpay webhook" };
     }
   };
 
