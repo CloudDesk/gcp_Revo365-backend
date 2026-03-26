@@ -30,6 +30,14 @@ type FieldOverride = {
   notes?: string;
 };
 
+type TemplateProfileName = "legacy_product_bulk" | "full_schema";
+
+type TemplateProfile = {
+  key: TemplateProfileName;
+  description: string;
+  fields: readonly string[] | "ALL";
+};
+
 const EXCLUDED_TEMPLATE_FIELDS = new Set<string>([
   "isdeleted",
   "removefromrecyclebin",
@@ -50,6 +58,21 @@ const CORE_BULK_UPLOAD_FIELDS = [
 ] as const;
 
 const CORE_FIELD_SET = new Set<string>(CORE_BULK_UPLOAD_FIELDS);
+
+const TEMPLATE_PROFILES: Record<TemplateProfileName, TemplateProfile> = {
+  legacy_product_bulk: {
+    key: "legacy_product_bulk",
+    description: "Legacy 8-field product bulk template used by existing upload flow.",
+    fields: CORE_BULK_UPLOAD_FIELDS,
+  },
+  full_schema: {
+    key: "full_schema",
+    description: "All schema-driven fields except internal/excluded fields.",
+    fields: "ALL",
+  },
+};
+
+const DEFAULT_TEMPLATE_PROFILE: TemplateProfileName = "legacy_product_bulk";
 
 const FIELD_OVERRIDES: Record<string, FieldOverride> = {
   subcategory: {
@@ -154,7 +177,17 @@ const getFallbackExample = (fieldKey: string, filteredTypes: string[]): string |
   return `sample_${fieldKey}`;
 };
 
-const buildTemplateFields = (): TemplateField[] => {
+const resolveTemplateProfile = (requestedProfile?: string): TemplateProfile => {
+  const profileKey = (requestedProfile || DEFAULT_TEMPLATE_PROFILE) as TemplateProfileName;
+  const profile = TEMPLATE_PROFILES[profileKey];
+  if (!profile) {
+    const supported = Object.keys(TEMPLATE_PROFILES).join(", ");
+    throw new Error(`Invalid template profile '${requestedProfile}'. Supported profiles: ${supported}`);
+  }
+  return profile;
+};
+
+const buildTemplateFields = (profile: TemplateProfile): TemplateField[] => {
   const schema = productrevoInsertSchema as {
     properties?: Record<string, SchemaProperty>;
     required?: string[];
@@ -163,18 +196,27 @@ const buildTemplateFields = (): TemplateField[] => {
   const properties = schema.properties ?? {};
   const requiredFromSchema = new Set<string>(schema.required ?? []);
   const priorityFieldRank = new Map<string, number>(
-    CORE_BULK_UPLOAD_FIELDS.map((fieldName, index) => [fieldName, index])
+    (profile.fields === "ALL" ? CORE_BULK_UPLOAD_FIELDS : profile.fields).map((fieldName, index) => [
+      fieldName,
+      index,
+    ])
   );
+  const selectedFields =
+    profile.fields === "ALL" ? null : new Set<string>(profile.fields.filter((fieldName) => fieldName in properties));
 
   return Object.entries(properties)
-    .filter(([key]) => FIELD_OVERRIDES[key]?.include !== false && !EXCLUDED_TEMPLATE_FIELDS.has(key))
+    .filter(([key]) => {
+      if (FIELD_OVERRIDES[key]?.include === false || EXCLUDED_TEMPLATE_FIELDS.has(key)) return false;
+      if (!selectedFields) return true;
+      return selectedFields.has(key);
+    })
     .map(([key, property]) => {
       const typeList = getTypeList(property);
       const nullable = typeList.includes("null");
       const filteredTypes = typeList.filter((item) => item !== "null");
       const resolvedTypes = filteredTypes.length ? filteredTypes : ["string"];
       const override = FIELD_OVERRIDES[key];
-      const isCoreField = CORE_FIELD_SET.has(key);
+      const isCoreField = CORE_FIELD_SET.has(key) && profile.key === "legacy_product_bulk";
       const rank = priorityFieldRank.has(key)
         ? (priorityFieldRank.get(key) as number)
         : Number.MAX_SAFE_INTEGER;
@@ -242,11 +284,11 @@ const addTemplateSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[]): 
   });
 };
 
-const addInstructionSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[]): void => {
+const addInstructionSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[], profile: TemplateProfile): void => {
   const ws = workbook.addWorksheet("Instructions");
 
   ws.getCell("A1").value =
-    "Use Products_Template sheet for upload. Keep headers unchanged. Core fields are kept first (legacy upload format). Arrays must be valid JSON array strings (example: [\"a\",\"b\"]).";
+    `Profile: ${profile.key}. ${profile.description} Keep headers unchanged. Arrays must be valid JSON array strings (example: [\"a\",\"b\"]).`;
   ws.mergeCells("A1:G1");
   ws.getCell("A1").alignment = { wrapText: true, vertical: "top" };
   ws.getCell("A1").font = { bold: true };
@@ -288,17 +330,23 @@ const addInstructionSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[]
 };
 
 export module productBulkTemplateService {
-  export const generateProductBulkTemplate = async (): Promise<ExcelJS.Workbook> => {
+  export const generateProductBulkTemplate = async (
+    requestedProfile?: string
+  ): Promise<ExcelJS.Workbook> => {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "Revo365 Backend";
     workbook.created = new Date();
     workbook.modified = new Date();
 
-    const fields = buildTemplateFields();
+    const profile = resolveTemplateProfile(requestedProfile);
+    const fields = buildTemplateFields(profile);
 
     addTemplateSheet(workbook, fields);
-    addInstructionSheet(workbook, fields);
+    addInstructionSheet(workbook, fields, profile);
 
     return workbook;
   };
+
+  export const defaultProfile = DEFAULT_TEMPLATE_PROFILE;
+  export const supportedProfiles = Object.keys(TEMPLATE_PROFILES);
 }
