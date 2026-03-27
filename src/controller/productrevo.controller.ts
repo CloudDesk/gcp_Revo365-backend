@@ -10,6 +10,9 @@ interface idparams {
     id: number
 }
 
+const resolveBulkMode = (query: any): "strict" | "skip_duplicates" =>
+    query?.mode === "skip_duplicates" ? "skip_duplicates" : "strict";
+
 export module productrevoController {
     export const getProductsrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
@@ -192,11 +195,14 @@ export module productrevoController {
         try {
             console.log('insertBulkProduct controller called');
             const productrevoDataArray = request.body as any[];
+            const mode = resolveBulkMode((request.query || {}) as any);
+            const uploadedByRaw = (request as any)?.session?.id;
+            const uploadedBy = Number.isFinite(Number(uploadedByRaw)) ? Number(uploadedByRaw) : null;
             if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
                 return reply.status(400).send({ error: 'Invalid input: Expected a non-empty array of products' });
             }
 
-            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray);
+            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray, { mode });
             if (!validationResult.isValid) {
                 return reply.status(400).send({
                     success: false,
@@ -205,16 +211,37 @@ export module productrevoController {
                 });
             }
 
-            const result = await productrevoService.insertBulkProduct(productrevoDataArray);
+            const result = await productrevoService.insertBulkProduct(productrevoDataArray, {
+                mode,
+                uploadedBy,
+            });
 
             if (result.success) {
+                const summaryMessage = result.insertedCount > 0
+                    ? `${result.insertedCount} product(s) inserted successfully`
+                    : "No new rows inserted. All rows were treated as duplicates.";
                 reply.status(200).send({
-                    message: `${result.insertedCount} product(s) inserted successfully`,
+                    success: true,
+                    message: summaryMessage,
+                    mode,
+                    insertedCount: result.insertedCount,
+                    skippedCount: result.skippedCount,
+                    duplicateRowCount: result.duplicateRowCount,
+                    payloadHash: result.payloadHash,
+                    duplicateOf: result.duplicateOf,
                     errors: result.errors.length > 0 ? result.errors : undefined,
                 });
             } else {
-                reply.status(400).send({
-                    error: 'Failed to insert products check excel data that you uploaded',
+                const statusCode = result.errorCode === "DUPLICATE_BULK_UPLOAD" || result.errorCode === "DUPLICATE_ROWS"
+                    ? 409
+                    : 400;
+                reply.status(statusCode).send({
+                    success: false,
+                    code: result.errorCode || "BULK_INSERT_FAILED",
+                    message: result.error || 'Failed to insert products. Check uploaded data.',
+                    mode,
+                    payloadHash: result.payloadHash,
+                    duplicateOf: result.duplicateOf,
                     details: result.errors,
                 });
             }
@@ -227,6 +254,7 @@ export module productrevoController {
     export const validateBulkProduct = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             const productrevoDataArray = request.body as any[];
+            const mode = resolveBulkMode((request.query || {}) as any);
             if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
                 return reply.status(400).send({
                     success: false,
@@ -234,12 +262,13 @@ export module productrevoController {
                 });
             }
 
-            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray);
+            const validationResult = await productrevoService.validateBulkProductPayload(productrevoDataArray, { mode });
 
             if (validationResult.isValid) {
                 return reply.status(200).send({
                     success: true,
                     message: "Validation successful. Data is ready for bulk insert.",
+                    mode,
                     validation: validationResult,
                 });
             }
@@ -247,6 +276,7 @@ export module productrevoController {
             return reply.status(400).send({
                 success: false,
                 message: "Validation failed. Please correct the invalid rows.",
+                mode,
                 validation: validationResult,
             });
         } catch (error) {

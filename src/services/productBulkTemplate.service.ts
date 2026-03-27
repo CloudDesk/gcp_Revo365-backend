@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
+import { query } from "../database/postgres.js";
 
 type SchemaProperty = {
   type?: string | string[];
@@ -38,6 +39,13 @@ type TemplateProfile = {
   fields: readonly string[] | "ALL";
 };
 
+type SupplierPoReferenceRow = {
+  supplierid: number | null;
+  suppliername: string | null;
+  ponumber: string | null;
+  po_status: string | null;
+};
+
 const EXCLUDED_TEMPLATE_FIELDS = new Set<string>([
   "isdeleted",
   "removefromrecyclebin",
@@ -53,6 +61,7 @@ const CORE_BULK_UPLOAD_FIELDS = [
   "ponumber",
   "price",
   "brand",
+  "supplierid",
   "suppliername",
   "model",
 ] as const;
@@ -62,7 +71,7 @@ const CORE_FIELD_SET = new Set<string>(CORE_BULK_UPLOAD_FIELDS);
 const TEMPLATE_PROFILES: Record<TemplateProfileName, TemplateProfile> = {
   legacy_product_bulk: {
     key: "legacy_product_bulk",
-    description: "Legacy 8-field product bulk template used by existing upload flow.",
+    description: "Core product bulk template with mandatory supplierid and suppliername column.",
     fields: CORE_BULK_UPLOAD_FIELDS,
   },
   full_schema: {
@@ -100,9 +109,15 @@ const FIELD_OVERRIDES: Record<string, FieldOverride> = {
     required: true,
     example: 25000,
   },
-  suppliername: {
+  supplierid: {
     required: true,
+    example: 41,
+    notes: "Mandatory. Use supplier master ID (not supplier name) for scalable bulk uploads.",
+  },
+  suppliername: {
+    required: false,
     example: "Teqit Test",
+    notes: "Optional helper field. Backend auto-fills canonical suppliername from supplierid at insert time.",
   },
   ecomvisible: {
     example: true,
@@ -284,11 +299,109 @@ const addTemplateSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[]): 
   });
 };
 
+const buildValidationRangeFormula = (
+  sheetName: string,
+  columnLetter: string,
+  rowCount: number
+): string | null => {
+  if (rowCount <= 0) return null;
+  const endRow = Math.max(2, rowCount + 1);
+  return `'${sheetName}'!$${columnLetter}$2:$${columnLetter}$${endRow}`;
+};
+
+const applyReferenceDataValidations = (
+  templateSheet: ExcelJS.Worksheet,
+  fields: TemplateField[],
+  referenceRowCount: number
+): void => {
+  if (referenceRowCount <= 0) return;
+
+  const supplierIdColumnIndex = fields.findIndex((field) => field.key === "supplierid");
+  const poNumberColumnIndex = fields.findIndex((field) => field.key === "ponumber");
+
+  const supplierIdFormula = buildValidationRangeFormula("Supplier_PO_Reference", "A", referenceRowCount);
+  const poNumberFormula = buildValidationRangeFormula("Supplier_PO_Reference", "C", referenceRowCount);
+
+  const maxEditableRows = 1000;
+  for (let rowNumber = 3; rowNumber <= maxEditableRows; rowNumber++) {
+    if (supplierIdColumnIndex >= 0 && supplierIdFormula) {
+      templateSheet.getCell(rowNumber, supplierIdColumnIndex + 1).dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: [supplierIdFormula],
+        showErrorMessage: true,
+        errorTitle: "Invalid Supplier ID",
+        error: "Select a supplierid from the Supplier_PO_Reference sheet.",
+      };
+    }
+
+    if (poNumberColumnIndex >= 0 && poNumberFormula) {
+      templateSheet.getCell(rowNumber, poNumberColumnIndex + 1).dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: [poNumberFormula],
+        showErrorMessage: true,
+        errorTitle: "Invalid PO Number",
+        error: "Select a ponumber from the Supplier_PO_Reference sheet.",
+      };
+    }
+  }
+};
+
+const fetchSupplierPoReferenceData = async (): Promise<SupplierPoReferenceRow[]> => {
+  const result = await query(
+    `SELECT po.supplierid, s.suppliername, po.ponumber, po.po_status
+     FROM purchaseorder AS po
+     LEFT JOIN supplier AS s ON s.id = po.supplierid
+     WHERE po.ponumber IS NOT NULL AND po.ponumber <> ''
+     ORDER BY po.id DESC`,
+    []
+  );
+
+  return (result.rows || []) as SupplierPoReferenceRow[];
+};
+
+const addSupplierPoReferenceSheet = (
+  workbook: ExcelJS.Workbook,
+  referenceData: SupplierPoReferenceRow[]
+): void => {
+  const ws = workbook.addWorksheet("Supplier_PO_Reference");
+
+  ws.columns = [
+    { header: "supplierid", key: "supplierid", width: 14 },
+    { header: "suppliername", key: "suppliername", width: 34 },
+    { header: "ponumber", key: "ponumber", width: 34 },
+    { header: "po_status", key: "po_status", width: 20 },
+  ];
+
+  styleHeaderRow(ws.getRow(1));
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+
+  if (!referenceData.length) {
+    ws.addRow({
+      supplierid: "",
+      suppliername: "No supplier/PO reference rows found",
+      ponumber: "",
+      po_status: "",
+    });
+    return;
+  }
+
+  referenceData.forEach((row) => {
+    ws.addRow({
+      supplierid: row.supplierid ?? "",
+      suppliername: row.suppliername ?? "",
+      ponumber: row.ponumber ?? "",
+      po_status: row.po_status ?? "",
+    });
+  });
+};
+
 const addInstructionSheet = (workbook: ExcelJS.Workbook, fields: TemplateField[], profile: TemplateProfile): void => {
   const ws = workbook.addWorksheet("Instructions");
 
   ws.getCell("A1").value =
-    `Profile: ${profile.key}. ${profile.description} Keep headers unchanged. Arrays must be valid JSON array strings (example: [\"a\",\"b\"]).`;
+    `Profile: ${profile.key}. ${profile.description} Keep headers unchanged. Arrays must be valid JSON array strings (example: [\"a\",\"b\"]). Use Supplier_PO_Reference sheet for valid supplierid and ponumber values.`;
   ws.mergeCells("A1:G1");
   ws.getCell("A1").alignment = { wrapText: true, vertical: "top" };
   ws.getCell("A1").font = { bold: true };
@@ -340,9 +453,15 @@ export module productBulkTemplateService {
 
     const profile = resolveTemplateProfile(requestedProfile);
     const fields = buildTemplateFields(profile);
+    const referenceData = await fetchSupplierPoReferenceData();
 
     addTemplateSheet(workbook, fields);
+    const templateSheet = workbook.getWorksheet("Products_Template");
+    if (templateSheet) {
+      applyReferenceDataValidations(templateSheet, fields, referenceData.length);
+    }
     addInstructionSheet(workbook, fields, profile);
+    addSupplierPoReferenceSheet(workbook, referenceData);
 
     return workbook;
   };
