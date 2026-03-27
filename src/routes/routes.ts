@@ -40,7 +40,7 @@ import { constEstimationController } from "../controller/costestimation.controll
 import { revoinvoicecontroller } from "../controller/revoinvoice.controller.js";
 import { tablecontoller } from "../controller/table.controller.js";
 import { permissionscontroller } from "../controller/permissions.controller.js";
-import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
+import { addressInsertSchema } from "../schemas/address.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { servicecostestimationSchema } from "../schemas/servicecostestimation.schema.js";
 import { revoinvoiceSchema } from "../schemas/revoinvoice.schema.js";
@@ -226,7 +226,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //address
     fastify.get('/address', { preHandler: [getSession] }, addressController.getAddressData);
     fastify.get('/address/:userId', { preHandler: [getSession] }, addressController.getUserAddressData);
-    fastify.post('/address', { preHandler: [validateRequestBody(inventoryusersSchema)] }, addressController.upsertAddress);
+    fastify.post('/address', { preHandler: [validateRequestBody(addressInsertSchema)] }, addressController.upsertAddress);
     fastify.delete('/address/:id', { preHandler: [getSession] }, addressController.deleteAddress);
 
     //orders
