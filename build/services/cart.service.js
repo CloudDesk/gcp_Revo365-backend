@@ -366,6 +366,22 @@ export var cartservice;
             let querydata;
             let params;
             const { id, ...upsertFields } = cartData;
+            if (!id && upsertFields.userid && upsertFields.productid) {
+                const checkParams = [upsertFields.userid, upsertFields.productid];
+                let checkQuery = `SELECT * FROM cart WHERE userid = $1 AND productid = $2`;
+                if (upsertFields.iscart === true) {
+                    checkQuery += ` AND iscart = true`;
+                }
+                else if (upsertFields.iswishlist === true) {
+                    checkQuery += ` AND iswishlist = true`;
+                }
+                if (upsertFields.iscart === true || upsertFields.iswishlist === true) {
+                    const existingResult = await query(checkQuery, checkParams);
+                    if (existingResult.rows.length > 0) {
+                        return { ...existingResult, command: "INSERT" };
+                    }
+                }
+            }
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {

@@ -546,9 +546,11 @@ export var ordersService;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
-            a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city
+            a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
+            p."large" AS products_large, p.warranty AS products_warranty
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
+        LEFT JOIN product_revo p ON p.id = orderline.productid
         LEFT JOIN (
             SELECT orderid, invoiceurl, createddate AS invoicecreateddate
             FROM (
@@ -571,9 +573,11 @@ export var ordersService;
             // Simple query for third-party orders
             let thirdPartyQueryText = `SELECT orderline.*, NULL AS invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
-            a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city
+            a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
+            p."large" AS products_large, p.warranty AS products_warranty
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
+        LEFT JOIN product_revo p ON p.id = orderline.productid
         LEFT JOIN (
             SELECT starrating, productid, id, orderlineid, comments, url
             FROM rating
@@ -611,7 +615,7 @@ export var ordersService;
             //     body: "Payment Done Successfully",
             // };
             // console.log("Order Line Data:", datatypeCheckResult);
-            return combinedResult.rows;
+            return { data: combinedResult.rows, total: combinedResult.rows.length };
         }
         catch (error) {
             console.error("Query Execution Error: IN getOrderLineData", error);
@@ -671,9 +675,11 @@ export var ordersService;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
-            a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city
+            a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city,
+            p."large" AS products_large, p.warranty AS products_warranty
 FROM orderline
 JOIN  address a on orderline.addressid = a.id
+LEFT JOIN product_revo p ON p.id = orderline.productid
 LEFT JOIN (
     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
     FROM (
@@ -683,7 +689,6 @@ LEFT JOIN (
     ) AS ranked
     WHERE rn = 1
 ) AS invoice ON orderline.uniqueorderid = invoice.orderid
-
 LEFT JOIN (
     SELECT starrating, productid,id,orderlineid,comments,url
     FROM rating
@@ -694,9 +699,8 @@ ${whereClause} ${orderByClause}`;
                 queryParams.push(offset, recordCount);
             }
             const result = await query(queryText, queryParams);
-            console.log('Query Result:', result.rows);
             let datatypeCheckResult = await dataTypeCheck(result);
-            return datatypeCheckResult;
+            return { data: datatypeCheckResult, total: Array.isArray(datatypeCheckResult) ? datatypeCheckResult.length : 0 };
         }
         catch (error) {
             console.error("Query Execution Error: IN getInvOrderLineData", error);

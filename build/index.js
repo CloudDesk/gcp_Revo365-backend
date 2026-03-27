@@ -8,8 +8,10 @@ import { checkDatabaseConnection } from "./database/postgres.js";
 import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
+import fastifyRawBody from "fastify-raw-body";
 import fs from "fs";
 import { connectGetSessionredis } from "./database/redis.session.js";
+import { runMigrations } from "./database/runMigrations.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const parentDir = resolve(__dirname, "..");
@@ -26,6 +28,12 @@ fs.stat(logFilePath, (err, stats) => {
     }
 });
 fastify.register(cors);
+fastify.register(fastifyRawBody, {
+    global: false,
+    field: "rawBody",
+    encoding: "utf8",
+    runFirst: true,
+});
 // Log each request to CSV
 fastify.addHook("onRequest", (request, reply, done) => {
     request.startTime = process.hrtime(); // Start timer
@@ -78,6 +86,7 @@ fastify.addHook("onReady", async () => {
         let data = await checkDatabaseConnection();
         console.log(data, "inside");
         await connectGetSessionredis();
+        await runMigrations();
         // done()
         // console.log(fastify.isServerReady, 'Loging value is');
     }

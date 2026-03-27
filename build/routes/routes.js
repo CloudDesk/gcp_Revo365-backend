@@ -51,7 +51,20 @@ import { googlereviewController } from "../controller/googlereview.controller.js
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 const Revo365Routes = async function (fastify, opts) {
+    const taskOrSessionAuth = async (request, reply) => {
+        const taskSecretHeader = request.headers["x-task-secret"];
+        const receivedTaskSecret = Array.isArray(taskSecretHeader)
+            ? taskSecretHeader[0]
+            : taskSecretHeader;
+        if (ENV_INTERNAL_TASK_SECRET &&
+            receivedTaskSecret &&
+            String(receivedTaskSecret) === String(ENV_INTERNAL_TASK_SECRET)) {
+            return;
+        }
+        return getSession(request, reply);
+    };
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
     // fastify.get('/product/Archieve/:pageNumber/:recordCount', productController.getArcheivedProducts);
@@ -105,7 +118,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/v2/product-similar', { preHandler: [getSession] }, productrevoController.getSimilarProducts);
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
+    fastify.post('/v2/product/bulk/validate', { preHandler: [getSession] }, productrevoController.validateBulkProduct);
     fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct);
+    fastify.get('/v2/product/bulk/template', { preHandler: [getSession] }, productrevoController.downloadBulkProductTemplate);
     // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecomvisible: true|false }
     fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
     //version 2 -> stock  (ecomvisible is query-param driven: ?ecomvisible=true / ?ecomvisible=false)
@@ -113,7 +128,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);
-    fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
+    // fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
     fastify.get('/v2/stock/Archieve', { preHandler: [getSession] }, stockRevoController.getArcheivedStocksRevo);
     fastify.get('/stock/updaterecyclebin', { preHandler: [getSession] }, stockRevoController.updateRemovedFromRecyclebinRevo);
     fastify.delete('/v2/stock/isdelete', { preHandler: [validateRequestBody(deletestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDatadelete);
@@ -236,6 +251,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/payment/razorpay', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpay);
     fastify.post('/payment/razorpay/ticket', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpayTicket);
     fastify.post('/payment/confirmation-razorpay', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpay);
+    fastify.post('/payment/razorpay/webhook', { config: { rawBody: true } }, transactionController.paymentWebhookRazorpay);
     fastify.post('/payment/confirmation-razorpay/tickets', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpayTicket);
     fastify.post('/payment/status', transactionController.paymentConfirmation);
     //transaction
@@ -281,7 +297,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
-    fastify.post('/delete/merchantid', ordersController.deleteFailedOrder);
+    fastify.post('/delete/merchantid', { preHandler: [taskOrSessionAuth] }, ordersController.deleteFailedOrder);
     // Dashboard
     // orders - product_revo
     fastify.get('/dashboard/totalsales', { preHandler: [getSession] }, dashboardController.getPerMonthSalesData);
@@ -378,6 +394,26 @@ const Revo365Routes = async function (fastify, opts) {
             message: 'Diagnostics completed. Check your server console for detailed output.'
         });
     });
+    // ─────────────────────────────────────────────────────────────────────
+    // PRODUCT REVIEWS (rating table extended)
+    // ─────────────────────────────────────────────────────────────────────
+    // Customer-facing — open reads
+    fastify.get('/products/:productId/reviews', ratingController.getReviewsForProduct);
+    fastify.get('/products/:productId/reviews/stats', ratingController.getReviewStats);
+    // Customer-facing — session required
+    fastify.post('/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createReview);
+    fastify.put('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.updateReview);
+    fastify.delete('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewCustomer);
+    fastify.post('/reviews/:reviewId/report', { preHandler: [getSession] }, ratingController.reportReview);
+    fastify.post('/reviews/:reviewId/helpful', { preHandler: [getSession] }, ratingController.markHelpful);
+    // Admin-facing — session required
+    fastify.get('/admin/reviews', { preHandler: [getSession] }, ratingController.getAdminReviews);
+    fastify.post('/admin/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createAdminReview);
+    fastify.post('/admin/products/:productId/reviews/bulk', { preHandler: [getSession] }, ratingController.bulkCreateAdminReviews);
+    fastify.patch('/admin/reviews/:reviewId/hide', { preHandler: [getSession] }, ratingController.hideReview);
+    fastify.patch('/admin/reviews/:reviewId/unhide', { preHandler: [getSession] }, ratingController.unhideReview);
+    fastify.post('/admin/reviews/:reviewId/reply', { preHandler: [getSession] }, ratingController.addAdminReply);
+    fastify.delete('/admin/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewAdmin);
 };
 export default Revo365Routes;
 //# sourceMappingURL=routes.js.map

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import { GCP_PROJECT_ID, GCP_PROJECT_LOCATION, GCP_PROJECT_QUEUE, GCP_TASK_URL, } from "../config/config.js";
+import { ENV_INTERNAL_TASK_SECRET, GCP_PROJECT_ID, GCP_PROJECT_LOCATION, GCP_PROJECT_QUEUE, GCP_TASK_URL, } from "../config/config.js";
 let project = GCP_PROJECT_ID;
 let queue = GCP_PROJECT_QUEUE;
 let location = GCP_PROJECT_LOCATION;
@@ -42,6 +42,9 @@ export async function createHttpTask(merchantid) {
                 headers: {
                     "Content-Type": "application/json",
                     "Content-Length": Buffer.byteLength(payloadString),
+                    ...(ENV_INTERNAL_TASK_SECRET
+                        ? { "X-Task-Secret": ENV_INTERNAL_TASK_SECRET }
+                        : {}),
                 },
                 httpMethod: "POST",
                 url,

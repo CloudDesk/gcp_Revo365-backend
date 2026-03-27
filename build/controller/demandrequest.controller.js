@@ -4,7 +4,7 @@ export var demandrequestController;
 (function (demandrequestController) {
     demandrequestController.getDemandRequest = async (request, reply) => {
         try {
-            let getDemandRequestResult = await demandrequestService.getDemandRequest();
+            let getDemandRequestResult = await demandrequestService.getDemandRequest(request);
             if (getDemandRequestResult.length > 0) {
                 reply.status(200).send(getDemandRequestResult);
             }

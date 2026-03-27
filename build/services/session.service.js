@@ -27,9 +27,10 @@ export const getSession = async (req, reply) => {
         }
         const sessionData = await redisClient.get(sessionId);
         if (sessionData) {
-            const sessionDataSize = Buffer.byteLength(sessionData, 'utf8');
             await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, sessionData);
-            return JSON.parse(sessionData);
+            // Attach to req so controllers can access the logged-in user's data
+            req.session = JSON.parse(sessionData);
+            return;
         }
         else {
             return reply.status(401).send({ error: 'Unauthorized: No valid session' });

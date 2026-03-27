@@ -111,8 +111,9 @@ export var userInventoryService;
                 if (validatepassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
+                        id: result.rows[0].id, // ← needed for hiddenby, adminreplyby etc.
                         useremail: request.params.useremail,
-                        userpassword: request.params.userpassword,
+                        role: result.rows[0].role,
                     };
                     let sessionsaved = await saveSession(sessionId, sessionData);
                     if (sessionsaved) {

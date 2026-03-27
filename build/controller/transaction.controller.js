@@ -96,7 +96,7 @@ export var transactionController;
             console.log('inside razorpay confirmation controller');
             let transactionData = await transactionService.paymentConfirmationRazorpay(request);
             console.log('transactionData', transactionData);
-            if (transactionData?.status == 400 || transactionData?.status == 500) {
+            if (transactionData?.status && transactionData.status !== 200) {
                 reply.status(transactionData.status).send({
                     message: transactionData.message,
                     data: transactionData.data || {},
@@ -110,6 +110,18 @@ export var transactionController;
             console.error("Query Execution Error: IN paymentConfirmationRazorpay Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             reply.send(ErrorMessage);
+        }
+    };
+    transactionController.paymentWebhookRazorpay = async (request, reply) => {
+        try {
+            const webhookResult = await transactionService.paymentWebhookRazorpay(request);
+            reply.status(webhookResult?.status || 200).send({
+                message: webhookResult?.message || "Webhook processed",
+            });
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN paymentWebhookRazorpay Controller", error);
+            reply.status(500).send({ message: "Webhook processing failed" });
         }
     };
     transactionController.paymentInitializationRazorpayTicket = async (request, reply) => {

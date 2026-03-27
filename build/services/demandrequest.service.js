@@ -1,14 +1,36 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 export var demandrequestService;
 (function (demandrequestService) {
-    demandrequestService.getDemandRequest = async () => {
+    demandrequestService.getDemandRequest = async (request) => {
         try {
-            const querydata = `select * from demandrequest`;
-            const result = await query(querydata, []);
-            // console.log("Query Result in getDemandRequest:", result);
-            console.log("Query Result in getDemandRequest:", result.rows);
-            return result.rows;
+            const pageNumber = parseInt(request.query.page) || 1;
+            const recordCount = parseInt(request.query.count) || 10;
+            const keys = Object.keys(request.query);
+            const values = Object.values(request.query);
+            let whereClauses = [];
+            let parameterIndex = 1;
+            const queryParams = [];
+            keys.forEach((key, index) => {
+                if (key !== 'page' && key !== 'count') {
+                    const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
+                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    whereClauses.push(`(${clauses.join(' OR ')})`);
+                    queryParams.push(...paramValues);
+                    parameterIndex += paramValues.length;
+                }
+            });
+            const offset = (pageNumber - 1) * recordCount;
+            const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+            let dataQuery = `SELECT * FROM demandrequest ${whereClause} ORDER BY id DESC`;
+            if (pageNumber && recordCount) {
+                dataQuery += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+                queryParams.push(offset, recordCount);
+            }
+            const result = await query(dataQuery, queryParams);
+            const datatypeCheckResult = await dataTypeCheck(result);
+            return datatypeCheckResult;
         }
         catch (error) {
             console.error("Query Execution Error: IN getDemandRequest", error);

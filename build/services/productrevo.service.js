@@ -3,9 +3,358 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import imageResize from "../imageResize/imageRessize.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { cartservice } from "./cart.service.js";
+import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
 export var productrevoService;
 (function (productrevoService) {
     const TIMEOUT_THRESHOLD = 5000;
+    const BULK_PICKLIST_OBJECT = "product_revo";
+    const MAX_EXPECTED_VALUES = 12;
+    const normalizeValue = (value) => {
+        if (value === null || value === undefined)
+            return "";
+        if (typeof value === "string")
+            return value.trim().toLowerCase();
+        if (typeof value === "number" || typeof value === "boolean")
+            return String(value).trim().toLowerCase();
+        if (Array.isArray(value))
+            return value.map((entry) => normalizeValue(entry)).filter(Boolean).join(",");
+        return String(value).trim().toLowerCase();
+    };
+    const extractComparableValues = (value) => {
+        if (value === null || value === undefined || value === "")
+            return [];
+        if (Array.isArray(value))
+            return value.map((entry) => normalizeValue(entry)).filter(Boolean);
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (!trimmed)
+                return [];
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    if (Array.isArray(parsed)) {
+                        return parsed.map((entry) => normalizeValue(entry)).filter(Boolean);
+                    }
+                }
+                catch (_error) {
+                    // Fall back to normal string handling.
+                }
+            }
+            return [normalizeValue(trimmed)];
+        }
+        return [normalizeValue(value)];
+    };
+    const levenshteinDistance = (left, right) => {
+        if (left === right)
+            return 0;
+        if (!left.length)
+            return right.length;
+        if (!right.length)
+            return left.length;
+        const matrix = Array.from({ length: left.length + 1 }, () => new Array(right.length + 1).fill(0));
+        for (let i = 0; i <= left.length; i++)
+            matrix[i][0] = i;
+        for (let j = 0; j <= right.length; j++)
+            matrix[0][j] = j;
+        for (let i = 1; i <= left.length; i++) {
+            for (let j = 1; j <= right.length; j++) {
+                const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+                matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
+            }
+        }
+        return matrix[left.length][right.length];
+    };
+    const getClosestSuggestion = (input, candidates) => {
+        if (!input || !candidates.length)
+            return null;
+        let bestCandidate = "";
+        let bestScore = Number.MAX_SAFE_INTEGER;
+        for (const candidate of candidates) {
+            const score = levenshteinDistance(input, candidate);
+            if (score < bestScore) {
+                bestScore = score;
+                bestCandidate = candidate;
+            }
+        }
+        if (!bestCandidate)
+            return null;
+        return bestScore <= Math.max(2, Math.floor(bestCandidate.length * 0.3)) ? bestCandidate : null;
+    };
+    const buildExpectedList = (values) => {
+        return Array.from(values).filter(Boolean).sort().slice(0, MAX_EXPECTED_VALUES);
+    };
+    const getSchemaPropertySet = () => {
+        const schema = productrevoInsertSchema;
+        return new Set(Object.keys(schema.properties ?? {}));
+    };
+    const getNonNullFieldNames = (row) => Object.keys(row).filter((key) => row[key] !== null && row[key] !== undefined && row[key] !== "");
+    const fetchBulkValidationLookups = async () => {
+        const [picklistResult, supplierResult] = await Promise.all([
+            query(`SELECT fieldname, label, value, controlledfieldname, controlledvalue, controlledlabel, parent
+         FROM picklist
+         WHERE object = $1`, [BULK_PICKLIST_OBJECT]),
+            query(`SELECT id, suppliername FROM supplier`, []),
+        ]);
+        const picklistRows = (picklistResult.rows || []);
+        const supplierRows = (supplierResult.rows || []);
+        const allowedByField = new Map();
+        const dependentRowsByField = new Map();
+        for (const row of picklistRows) {
+            const fieldName = normalizeValue(row.fieldname);
+            if (!fieldName)
+                continue;
+            if (!allowedByField.has(fieldName)) {
+                allowedByField.set(fieldName, new Set());
+            }
+            const allowedSet = allowedByField.get(fieldName);
+            const labelNormalized = normalizeValue(row.label);
+            const valueNormalized = normalizeValue(row.value);
+            if (labelNormalized)
+                allowedSet.add(labelNormalized);
+            if (valueNormalized)
+                allowedSet.add(valueNormalized);
+            const hasDependentConstraint = normalizeValue(row.controlledfieldname) && (normalizeValue(row.controlledvalue) || normalizeValue(row.controlledlabel) || normalizeValue(row.parent));
+            if (hasDependentConstraint) {
+                if (!dependentRowsByField.has(fieldName)) {
+                    dependentRowsByField.set(fieldName, []);
+                }
+                dependentRowsByField.get(fieldName).push(row);
+            }
+        }
+        const supplierById = new Map();
+        const supplierNameToIds = new Map();
+        for (const supplier of supplierRows) {
+            supplierById.set(Number(supplier.id), supplier.suppliername || "");
+            const normalizedSupplierName = normalizeValue(supplier.suppliername);
+            if (!normalizedSupplierName)
+                continue;
+            if (!supplierNameToIds.has(normalizedSupplierName)) {
+                supplierNameToIds.set(normalizedSupplierName, new Set());
+            }
+            supplierNameToIds.get(normalizedSupplierName).add(Number(supplier.id));
+        }
+        return {
+            allowedByField,
+            dependentRowsByField,
+            supplierById,
+            supplierNameToIds,
+        };
+    };
+    productrevoService.validateBulkProductPayload = async (productrevoDataArray) => {
+        try {
+            if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
+                return {
+                    isValid: false,
+                    totalRows: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 0,
+                    validRowCount: 0,
+                    invalidRowCount: 1,
+                    errors: [
+                        {
+                            rowNumber: 2,
+                            index: 0,
+                            field: "payload",
+                            receivedValue: productrevoDataArray,
+                            reason: "Expected a non-empty array of product rows.",
+                            source: "payload",
+                        },
+                    ],
+                };
+            }
+            const schemaFieldSet = getSchemaPropertySet();
+            const { allowedByField, dependentRowsByField, supplierById, supplierNameToIds, } = await fetchBulkValidationLookups();
+            const errors = [];
+            const invalidRows = new Set();
+            for (let index = 0; index < productrevoDataArray.length; index++) {
+                const row = productrevoDataArray[index];
+                const rowNumber = index + 2;
+                if (!row || Array.isArray(row) || typeof row !== "object") {
+                    errors.push({
+                        rowNumber,
+                        index,
+                        field: "row",
+                        receivedValue: row,
+                        reason: "Each entry must be a valid object.",
+                        source: "payload",
+                    });
+                    invalidRows.add(index);
+                    continue;
+                }
+                const nonNullFields = getNonNullFieldNames(row);
+                if (!nonNullFields.length) {
+                    errors.push({
+                        rowNumber,
+                        index,
+                        field: "row",
+                        receivedValue: row,
+                        reason: "Row has no non-null fields.",
+                        source: "payload",
+                    });
+                    invalidRows.add(index);
+                    continue;
+                }
+                for (const fieldName of Object.keys(row)) {
+                    if (!schemaFieldSet.has(fieldName)) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: fieldName,
+                            receivedValue: row[fieldName],
+                            reason: "Unknown field in payload.",
+                            expected: Array.from(schemaFieldSet).sort().slice(0, MAX_EXPECTED_VALUES),
+                            source: "payload",
+                        });
+                        invalidRows.add(index);
+                    }
+                }
+                for (const [picklistField, allowedValues] of allowedByField.entries()) {
+                    if (!(picklistField in row))
+                        continue;
+                    const receivedComparableValues = extractComparableValues(row[picklistField]);
+                    if (!receivedComparableValues.length)
+                        continue;
+                    const dependentRows = dependentRowsByField.get(picklistField) || [];
+                    let dependentAllowedValues = null;
+                    if (dependentRows.length) {
+                        const matchedDependentRows = dependentRows.filter((dependentRow) => {
+                            const controllerField = normalizeValue(dependentRow.controlledfieldname);
+                            if (!controllerField || !(controllerField in row))
+                                return false;
+                            const incomingControllerValues = extractComparableValues(row[controllerField]);
+                            if (!incomingControllerValues.length)
+                                return false;
+                            const ruleControllerValues = [
+                                normalizeValue(dependentRow.controlledvalue),
+                                normalizeValue(dependentRow.controlledlabel),
+                                normalizeValue(dependentRow.parent),
+                            ].filter(Boolean);
+                            return incomingControllerValues.some((incomingValue) => ruleControllerValues.includes(incomingValue));
+                        });
+                        if (matchedDependentRows.length) {
+                            dependentAllowedValues = new Set();
+                            for (const matched of matchedDependentRows) {
+                                const labelNormalized = normalizeValue(matched.label);
+                                const valueNormalized = normalizeValue(matched.value);
+                                if (labelNormalized)
+                                    dependentAllowedValues.add(labelNormalized);
+                                if (valueNormalized)
+                                    dependentAllowedValues.add(valueNormalized);
+                            }
+                        }
+                    }
+                    const activeAllowedSet = dependentAllowedValues && dependentAllowedValues.size
+                        ? dependentAllowedValues
+                        : allowedValues;
+                    const expectedValues = buildExpectedList(activeAllowedSet);
+                    for (const receivedValue of receivedComparableValues) {
+                        if (!activeAllowedSet.has(receivedValue)) {
+                            const suggestion = getClosestSuggestion(receivedValue, expectedValues);
+                            errors.push({
+                                rowNumber,
+                                index,
+                                field: picklistField,
+                                receivedValue: row[picklistField],
+                                reason: dependentAllowedValues
+                                    ? "Value is not valid for the selected dependent picklist context."
+                                    : "Value is not part of the allowed picklist values.",
+                                expected: expectedValues,
+                                suggestion,
+                                source: "picklist",
+                            });
+                            invalidRows.add(index);
+                            break;
+                        }
+                    }
+                }
+                const supplierIdRaw = row.supplierid;
+                const supplierNameRaw = row.suppliername;
+                const hasSupplierId = supplierIdRaw !== null && supplierIdRaw !== undefined && supplierIdRaw !== "";
+                const hasSupplierName = supplierNameRaw !== null && supplierNameRaw !== undefined && supplierNameRaw !== "";
+                let normalizedSupplierName = "";
+                let supplierIdNumeric = null;
+                if (hasSupplierId) {
+                    supplierIdNumeric = Number(supplierIdRaw);
+                    if (!Number.isFinite(supplierIdNumeric)) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "supplierid",
+                            receivedValue: supplierIdRaw,
+                            reason: "Supplier ID must be a valid number.",
+                            source: "supplier",
+                        });
+                        invalidRows.add(index);
+                    }
+                    else if (!supplierById.has(supplierIdNumeric)) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "supplierid",
+                            receivedValue: supplierIdRaw,
+                            reason: "Supplier ID not found in supplier lookup.",
+                            source: "supplier",
+                        });
+                        invalidRows.add(index);
+                    }
+                }
+                if (hasSupplierName) {
+                    normalizedSupplierName = normalizeValue(supplierNameRaw);
+                    if (!normalizedSupplierName || !supplierNameToIds.has(normalizedSupplierName)) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "suppliername",
+                            receivedValue: supplierNameRaw,
+                            reason: "Supplier name not found in supplier lookup.",
+                            expected: Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES),
+                            suggestion: getClosestSuggestion(normalizedSupplierName, Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES)),
+                            source: "supplier",
+                        });
+                        invalidRows.add(index);
+                    }
+                }
+                if (hasSupplierId && hasSupplierName && supplierIdNumeric !== null && normalizedSupplierName) {
+                    const idsForName = supplierNameToIds.get(normalizedSupplierName);
+                    if (idsForName && !idsForName.has(supplierIdNumeric)) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "supplierid/suppliername",
+                            receivedValue: { supplierid: supplierIdRaw, suppliername: supplierNameRaw },
+                            reason: "Supplier ID and Supplier Name do not match the same supplier record.",
+                            source: "supplier",
+                        });
+                        invalidRows.add(index);
+                    }
+                }
+            }
+            return {
+                isValid: errors.length === 0,
+                totalRows: productrevoDataArray.length,
+                validRowCount: productrevoDataArray.length - invalidRows.size,
+                invalidRowCount: invalidRows.size,
+                errors,
+            };
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN validateBulkProductPayload", error);
+            return {
+                isValid: false,
+                totalRows: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 0,
+                validRowCount: 0,
+                invalidRowCount: Array.isArray(productrevoDataArray) ? productrevoDataArray.length : 1,
+                errors: [
+                    {
+                        rowNumber: 2,
+                        index: 0,
+                        field: "validation",
+                        receivedValue: null,
+                        reason: `Validation failed unexpectedly: ${error.message}`,
+                        source: "payload",
+                    },
+                ],
+            };
+        }
+    };
     /**
      * Builds a new statushistory entry.
      *
@@ -661,7 +1010,7 @@ export var productrevoService;
     };
     productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold, isRental = false) => {
         console.log('--upsertQuantityFields', upsertData);
-        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity } = upsertData;
+        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity, bin_qty, archive_qty, ewaste_qty } = upsertData;
         try {
             let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
             let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
@@ -688,7 +1037,10 @@ export var productrevoService;
           oncatalogueqty = $8,
           offcatalogueqty = $9,
           rentaltotalquantity = $10,
-          rentalavailablequantity = $11
+          rentalavailablequantity = $11,
+          bin_qty = $12,
+          archive_qty = $13,
+          ewaste_qty = $14
     `;
             let updateQuery = '';
             console.log("DEBUG upsertQuantityFields - issold:", issold, "isRental:", isRental, "orderedquantityNumber:", orderedquantityNumber);
@@ -696,16 +1048,16 @@ export var productrevoService;
                 // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
                 if (isRental) {
                     console.log("DEBUG: Decrementing rentalorderedquantity");
-                    updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $12`;
+                    updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $15`;
                 }
                 else {
                     console.log("DEBUG: Decrementing orderedquantity");
-                    updateQueryBase += `, orderedquantity = orderedquantity - $12`;
+                    updateQueryBase += `, orderedquantity = orderedquantity - $15`;
                 }
-                updateQuery = `${updateQueryBase} WHERE puc = $13 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
             }
             else {
-                updateQuery = `${updateQueryBase} WHERE puc = $12 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $15 RETURNING *`;
             }
             let updateParams = [];
             if (issold && !isNaN(orderedquantityNumber)) {
@@ -721,6 +1073,9 @@ export var productrevoService;
                     offcatalogueqty,
                     rentaltotalquantity,
                     rentalavailablequantity,
+                    bin_qty,
+                    archive_qty,
+                    ewaste_qty,
                     orderedquantityNumber,
                     puc
                 ];
@@ -738,6 +1093,9 @@ export var productrevoService;
                     offcatalogueqty,
                     rentaltotalquantity,
                     rentalavailablequantity,
+                    bin_qty,
+                    archive_qty,
+                    ewaste_qty,
                     puc
                 ];
             }
@@ -767,57 +1125,45 @@ export var productrevoService;
     };
     productrevoService.testupsertQuantityFieldsBatch = async (batchData, issold) => {
         try {
-            let updateQueryBase = `
+            // Single query template — both issold and non-issold write the same fields.
+            const updateQueryBase = `
             UPDATE product_revo
             SET quantityforlocation = 
                 jsonb_set(
                     COALESCE(quantityforlocation, '{}'::jsonb),
                     array[$1]::text[],
                     jsonb_build_object(
-                        'quantity', $2::integer,
-                        'ecompublishedquantity', $3::integer,
-                        'soldquantity', $4::integer,
-                        'availablequantity', $5::integer,
-                        'rentaltotalquantity', $6::integer,
-                        'rentalsoldquantity', $7::integer,
-                        'rentalavailablequantity', $8::integer
+                        'quantity',                $2::integer,
+                        'overallquantity',         $3::integer,
+                        'ecompublishedquantity',   $4::integer,
+                        'soldquantity',            $5::integer,
+                        'availablequantity',       $6::integer,
+                        'overallavailableqty',     $7::integer,
+                        'thirdpartyqty',           $8::integer,
+                        'thirdpartyavailableqty',  $9::integer,
+                        'rentaltotalquantity',     $10::integer,
+                        'rentalsoldquantity',      $11::integer,
+                        'rentalavailablequantity', $12::integer
                     )
                 )
-            WHERE puc = $9
+            WHERE puc = $13
             RETURNING *
         `;
-            if (issold) {
-                updateQueryBase = `
-            UPDATE product_revo
-            SET quantityforlocation = 
-              jsonb_set(
-                COALESCE(quantityforlocation, '{}'::jsonb),
-                array[$1]::text[],
-                jsonb_build_object(
-                  'quantity', $2::integer,
-                  'ecompublishedquantity', $3::integer,
-                  'soldquantity', $4::integer,
-                  'availablequantity', $5::integer,
-                  'rentaltotalquantity', $6::integer,
-                  'rentalsoldquantity', $7::integer,
-                  'rentalavailablequantity', $8::integer
-                )
-              )
-            WHERE puc = $9
-            RETURNING *
-          `;
-            }
             const updateQueries = batchData.map(data => {
                 return {
                     query: updateQueryBase,
                     params: [
                         data.location,
                         data.quantity,
+                        data.overallquantity,
                         data.ecompublishedquantity,
                         data.soldquantity,
                         data.availablequantity,
+                        data.overallavailableqty,
+                        data.thirdpartyqty,
+                        data.thirdpartyavailableqty,
                         data.rentaltotalquantity,
-                        data.rentalsoldquantity, // Assuming rentalsoldquantity is available here, derived from diff in previous step
+                        data.rentalsoldquantity,
                         data.rentalavailablequantity,
                         data.puc
                     ]
@@ -915,41 +1261,109 @@ export var productrevoService;
                     data.push(result);
                 }
             }
-            return data; // return array of results
+            return data;
         }
         catch (error) {
             console.error('Error in updateOrderedQuantityarray:', error);
-            throw error; // better to throw so caller knows of the error
+            throw error;
         }
     }
     productrevoService.updateOrderedQuantityarray = updateOrderedQuantityarray;
     async function updateCatalogueQuantities(puc) {
         console.log('puc:', puc);
+        // Standard filter for active/live stock
+        const activeFilters = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
         const queryText = `
         WITH counts AS (
             SELECT 
-                COALESCE(SUM(CASE WHEN stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count
+                -- Track Live Quantities (Used for sales/display)
+                (
+                    COUNT(*) FILTER (WHERE ${activeFilters} AND stocktype <> 'third_party_product')
+                    +
+                    COALESCE(SUM(thirdpartyquantity) FILTER (WHERE ${activeFilters} AND stocktype = 'third_party_product'), 0)
+                ) AS total_quantity_count,
+
+                COUNT(*) FILTER (
+                    WHERE ${activeFilters}
+                    AND ecompublish = true 
+                    AND stockstatus = 'Available' 
+                    AND stocktype <> 'third_party_product'
+                ) AS available_quantity_count,
+
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+
+                -- overallavailableqty logic (Live stock only)
+                (
+                    COALESCE(SUM(CASE
+                        WHEN ${activeFilters}
+                          AND stocktype = 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN thirdpartyquantity
+                        ELSE 0
+                    END), 0)
+                    +
+                    COALESCE(SUM(CASE
+                        WHEN ${activeFilters}
+                          AND stocktype <> 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN 1
+                        ELSE 0
+                    END), 0)
+                ) AS overall_available_qty,
+
+                -- ecompublishedquantity logic (Live stock only)
+                (
+                    COALESCE(SUM(CASE
+                        WHEN ${activeFilters}
+                          AND stocktype = 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN thirdpartyquantity
+                        ELSE 0
+                    END), 0)
+                    +
+                    COALESCE(SUM(CASE
+                        WHEN ${activeFilters}
+                          AND stocktype <> 'third_party_product'
+                          AND ecompublish = true
+                          AND stockstatus = 'Available'
+                        THEN 1
+                        ELSE 0
+                    END), 0)
+                ) AS ecom_published_qty,
+
+                -- Track Flagged/Removed Quantities
+                COUNT(*) FILTER (WHERE isdeleted = true) AS bin_count,
+                COUNT(*) FILTER (WHERE isarchive = true) AS archive_count,
+                COUNT(*) FILTER (WHERE (ewaste = true OR removefromrecyclebin = true)) AS ewaste_count
+
             FROM stock_revo 
-            WHERE 
-                puc = $1
-                AND isdeleted = false 
-                AND isarchive = false 
-                AND removefromrecyclebin = false 
-                AND ewaste = false
+            WHERE puc = $1
         )
-        UPDATE product_revo 
+        UPDATE product_revo
         SET 
+            quantity = counts.total_quantity_count,
+            availablequantity = counts.available_quantity_count,
             oncatalogueqty = counts.on_catalogue_count,
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
+            overallavailableqty = counts.overall_available_qty,
+            ecompublishedquantity = counts.ecom_published_qty,
+            bin_qty = counts.bin_count,
+            archive_qty = counts.archive_count,
+            ewaste_qty = counts.ewaste_count
         FROM counts
-        WHERE puc = $1
-        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count, (counts.rental_total_count - counts.rental_sold_count) as rental_available_count;
+        WHERE product_revo.puc = $1
+        RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
+                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
         console.log('queryText:', queryText);
         let result = await query(queryText, [puc]);
@@ -959,7 +1373,9 @@ export var productrevoService;
                 onCatalogueCount: result.rows[0].on_catalogue_count,
                 offCatalogueCount: result.rows[0].off_catalogue_count,
                 rentalTotalQuantity: result.rows[0].rental_total_count,
-                rentalAvailableQuantity: result.rows[0].rental_available_count
+                rentalAvailableQuantity: result.rows[0].rental_available_count,
+                overallavailableqty: result.rows[0].overall_available_qty,
+                ecompublishedquantity: result.rows[0].ecom_published_qty
             };
         }
         else {
