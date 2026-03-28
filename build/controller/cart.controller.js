@@ -44,11 +44,10 @@ export var cartController;
             let upsertCartResult = await cartservice.upsertCart(cartData);
             if (upsertCartResult.command === "UPDATE" ||
                 upsertCartResult.command === "INSERT") {
-                let message = {};
-                message = {
-                    message: upsertCartResult.command === "UPDATE"
-                        ? `Product Added to Cart `
-                        : `Product Added to Cart `,
+                const isWishlist = cartData.iswishlist === true || cartData.iswishlist === 'true';
+                const label = isWishlist ? "Wishlist" : "Cart";
+                const message = {
+                    message: `Product Added to ${label} successfully`,
                 };
                 reply.status(200).send(message);
             }

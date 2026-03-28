@@ -54,3 +54,112 @@ The system triggers a full recount on the product table every time a status chan
 Order Placement: orderedquantity ↑, overallavailableqty ↓, quantityforlocation.branch.orderedquantity ↑.
 Order Sold: One stock_revo row changes status to 'Sold'. physical availablequantity ↓, orderedquantity ↓, overallavailableqty remains net correct.
 Cancellation: orderedquantity ↓, overallavailableqty ↑, quantityforlocation.branch.orderedquantity ↓.
+
+---
+
+before order placement 
+
+{
+	"id": 164,
+	"price": 25000,
+	"bin_qty": 0,
+	"lock_qty": 0,
+	"quantity": 2,
+	"ewaste_qty": 0,
+	"archive_qty": 0,
+	"productname": "test mobile - 4",
+	"soldquantity": 0,
+	"oncatalogueqty": 2,
+	"offcatalogueqty": 0,
+	"orderedquantity": 0,
+	"availablequantity": 2,
+	"rentalsoldquantity": 0,
+	"overallavailableqty": 2,
+	"quantityforlocation": {
+		"head_office": {
+			"quantity": 2,
+			"soldquantity": 0,
+			"thirdpartyqty": 0,
+			"orderedquantity": 0,
+			"overallquantity": 2,
+			"availablequantity": 2,
+			"rentalsoldquantity": 0,
+			"overallavailableqty": 2,
+			"rentaltotalquantity": 0,
+			"ecompublishedquantity": 2,
+			"thirdpartyavailableqty": 0,
+			"thirdpartysoldquantity": 0,
+			"rentalavailablequantity": 0,
+			"thirdpartyorderquantity": 0
+		}
+	},
+	"rentaltotalquantity": 0,
+	"ecompublishedquantity": 2,
+	"rentalorderedquantity": 0,
+	"rentalavailablequantity": 0
+}
+
+After Order placement - 1 quantity
+{
+	"id": 164,
+	"price": 25000,
+	"bin_qty": 0,
+	"lock_qty": 0,
+	"quantity": 2,
+	"ewaste_qty": 0,
+	"archive_qty": 0,
+	"productname": "test mobile - 4",
+	"soldquantity": 0,
+	"oncatalogueqty": 2,
+	"offcatalogueqty": 0,
+	"orderedquantity": 1,
+	"availablequantity": 2,
+	"rentalsoldquantity": 0,
+	"overallavailableqty": 1,
+	"quantityforlocation": {
+		"head_office": {
+			"quantity": 2,
+			"soldquantity": 0,
+			"thirdpartyqty": 0,
+			"orderedquantity": 1,           ← now correctly ↑
+			"overallquantity": 2,
+			"availablequantity": 1,         ← now correctly ↓
+			"rentalsoldquantity": 0,
+			"overallavailableqty": 1,       ← now correctly ↓
+			"rentaltotalquantity": 0,
+			"ecompublishedquantity": 1,     ← now correctly ↓
+			"thirdpartyavailableqty": 0,
+			"thirdpartysoldquantity": 0,
+			"rentalavailablequantity": 0,
+			"thirdpartyorderquantity": 0
+		}
+	},
+	"rentaltotalquantity": 0,
+	"ecompublishedquantity": 1,
+	"rentalorderedquantity": 0,
+	"rentalavailablequantity": 0
+}
+
+---
+
+### Bug Fix Notes (2026-03-29)
+
+**Problem**: After order placement, `quantityforlocation.branch.*` fields were NOT updating:
+- `orderedquantity` stayed 0 (should be ↑)  
+- `availablequantity` stayed unchanged (should be ↓)  
+- `overallavailableqty` stayed unchanged (should be ↓)
+
+**Root Cause 1 — `order_metrics` CTE used `o.storelocation`**:  
+`orders.storelocation` is often `null` when the frontend doesn't send it. The `LEFT JOIN order_metrics om ON grid.location = om.location` then never matched (null ≠ 'head_office'), so `ordered_qty` was always 0 for every branch.
+
+**Fix**: Added a `LEFT JOIN LATERAL` fallback in the `order_metrics` CTE:
+```sql
+COALESCE(NULLIF(o.storelocation, ''), s.location) AS location
+```
+This reads the location directly from `stock_revo` for that PUC when `storelocation` is missing.
+
+**Root Cause 2 — `availablequantity` not subtracting `ordered_qty`**:  
+In `batchUpdateData`, `overallavailableqty` and `ecompublishedquantity` correctly subtracted `ordered_qty`, but `availablequantity` was written as-is (raw stock count). Fixed to:
+```ts
+availablequantity: Math.max(0, parseInt(row.availablequantity, 10) - parseInt(row.ordered_qty, 10))
+```

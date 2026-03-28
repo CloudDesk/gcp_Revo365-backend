@@ -246,7 +246,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/orders/transactions', { preHandler: [getSession] }, ordersController.getInvoiceDataForOrderid)
 
     //third party orders - inventory
-    fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
+    fastify.get('/thirdpartyorders', { preHandler: [getSession] }, thirdPartyController.getThirdpartyOrderData);
+    // Admin: mark 3rd-party order as dispatched / shipped / delivered / cancelled
+    // body: { id: number, orderstatus: 'dispatched'|'shipped'|'delivered'|'cancelled' }
+    fastify.post('/thirdpartyorders/status', { preHandler: [getSession] }, thirdPartyController.updateThirdPartyOrderStatus);
 
     fastify.post('/test/task', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray)
 

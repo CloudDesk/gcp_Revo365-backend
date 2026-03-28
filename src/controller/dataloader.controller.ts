@@ -4,7 +4,9 @@ import { dataLoaderService } from "../services/dataloader.service.js"
 import { productService } from "../services/product.service.js";
 import _ from 'lodash'
 import { stockRevoService } from "../services/stockRevo.service.js";
+import { productrevoService } from "../services/productrevo.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+
 export module dataLoaderController {
 
     export const insertDataLoaderData = async (request: any, reply: any) => {
@@ -119,29 +121,37 @@ export module dataLoaderController {
         try {
             let upsertStockResult: any = await dataLoaderService.upsertBulkDataStock(request, reply)
             if (upsertStockResult?.result?.command === "UPDATE" || upsertStockResult?.result?.command === "INSERT") {
-                const puc = upsertStockResult.result.rows[0].puc;
-                const pucArray: string[] = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                console.log("PUC Array for updateQuantity:", pucArray);
-                console.log('Stop here for debugging');
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
+                // Collect all unique PUCs from inserted rows (may span multiple products)
+                const pucArray: string[] = Array.from(
+                    new Set(upsertStockResult.result.rows.map((row: any) => row.puc))
+                ) as string[];
+                console.log("PUC Array for quantity update:", pucArray);
+
+                // Step 1: updateQuantity — recalculates stock counts + calls testinupdateQuantity for JSONB
+                await stockRevoService.updateQuantity(pucArray);
+
+                // Step 2: updateCatalogueQuantities — ensures product_revo aggregate fields
+                // (overallavailableqty, ecompublishedquantity, oncatalogueqty, offcatalogueqty, etc.)
+                // are fully synced. This matches the single-stock creation path.
+                for (const puc of pucArray) {
+                    await productrevoService.updateCatalogueQuantities(puc);
+                }
+
                 let message: any = {
                     Stock: upsertStockResult?.result?.command === "UPDATE"
                         ? `Stock Updated successfully`
-                        : `Stock Inserted successfully `,
+                        : `Stock Inserted successfully`,
                     "Total Records": upsertStockResult.totalRecords,
                     "Success Count": upsertStockResult.successCount
-                    // totalCount: upsertStockResult.totalCount, // Include the total count in the response
                 };
                 reply.status(200).send(message);
             } else {
                 reply.status(404).send({ error: [upsertStockResult] });
             }
-            // return result
         } catch (error) {
-            console.log('ERROR IN  Controller insertBulkDataStock', error);
+            console.log('ERROR IN Controller insertBulkDataStock', error);
             let errordata = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);
-
         }
     }
 }

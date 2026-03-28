@@ -2101,13 +2101,13 @@ export module productrevoService {
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
 
-                -- overallavailableqty logic (Live stock only)
+                -- overallavailableqty = physical ecom=true Available count
+                --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                 (
                     COALESCE(SUM(CASE
                         WHEN ${activeFilters}
                           AND stocktype = 'third_party_product'
                           AND ecompublish = true
-                          AND stockstatus = 'Available'
                         THEN thirdpartyquantity
                         ELSE 0
                     END), 0)
@@ -2122,13 +2122,13 @@ export module productrevoService {
                     END), 0)
                 ) AS overall_available_qty,
 
-                -- ecompublishedquantity logic (Live stock only)
+                -- ecompublishedquantity = physical ecom=true Available count
+                --                       + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                 (
                     COALESCE(SUM(CASE
                         WHEN ${activeFilters}
                           AND stocktype = 'third_party_product'
                           AND ecompublish = true
-                          AND stockstatus = 'Available'
                         THEN thirdpartyquantity
                         ELSE 0
                     END), 0)

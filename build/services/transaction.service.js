@@ -20,6 +20,7 @@ const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
 const RAZORPAY_KEY_ID = ENV_RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = ENV_RAZORPAY_KEY_SECRET;
 const RAZORPAY_WEBHOOK_SECRET = ENV_RAZORPAY_WEBHOOK_SECRET;
+const RAZORPAY_WEBHOOK_LOG_PREFIX = "[RazorpayWebhook]";
 const keyIndex = 1;
 console.log("Razorpay gateway initialized");
 let transactionDataset = {};
@@ -107,6 +108,112 @@ const parseHeaderValue = (headerValue) => {
         return headerValue[0] || null;
     }
     return String(headerValue);
+};
+const shortRef = (value, prefix = 6, suffix = 4) => {
+    if (!value)
+        return null;
+    const str = String(value);
+    if (str.length <= prefix + suffix)
+        return str;
+    return `${str.slice(0, prefix)}...${str.slice(-suffix)}`;
+};
+const resolveWebhookTraceId = (eventId, paymentId) => {
+    if (eventId)
+        return eventId;
+    if (paymentId)
+        return `payment-${paymentId}`;
+    return `trace-${Date.now()}`;
+};
+const logWebhookStep = (traceId, step, details) => {
+    if (details && Object.keys(details).length > 0) {
+        console.log(`${RAZORPAY_WEBHOOK_LOG_PREFIX} [${traceId}] ${step}`, details);
+        return;
+    }
+    console.log(`${RAZORPAY_WEBHOOK_LOG_PREFIX} [${traceId}] ${step}`);
+};
+const summarizeStatusCounts = (rows, field) => {
+    const counts = {};
+    rows.forEach((row) => {
+        const key = row?.[field] === null || row?.[field] === undefined
+            ? "null"
+            : String(row[field]);
+        counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+};
+const summarizeWebhookPayload = (eventPayload) => {
+    const paymentEntity = eventPayload?.payload?.payment?.entity || {};
+    const orderEntity = eventPayload?.payload?.order?.entity || {};
+    return {
+        event: eventPayload?.event || null,
+        accountId: eventPayload?.account_id || null,
+        createdAt: eventPayload?.created_at || null,
+        contains: Object.keys(eventPayload?.payload || {}),
+        payment: {
+            id: paymentEntity?.id || null,
+            orderId: paymentEntity?.order_id || orderEntity?.id || null,
+            status: paymentEntity?.status || null,
+            amount: paymentEntity?.amount || null,
+            currency: paymentEntity?.currency || null,
+            method: paymentEntity?.method || null,
+            captured: paymentEntity?.captured || null,
+            errorCode: paymentEntity?.error_code || null,
+            errorDescription: paymentEntity?.error_description || null,
+        },
+        order: {
+            id: orderEntity?.id || null,
+            amount: orderEntity?.amount || null,
+            status: orderEntity?.status || null,
+            paidAt: orderEntity?.paid_at || null,
+        },
+    };
+};
+const getMerchantTransactionStateSnapshot = async (merchantTransactionId) => {
+    if (!merchantTransactionId)
+        return null;
+    try {
+        const [ordersResult, thirdPartyOrdersResult, orderLineResult, transactionResult] = await Promise.all([
+            query(`SELECT orderstatus, ispaymentsucceed FROM orders WHERE merchanttransactionid = $1`, [merchantTransactionId]),
+            query(`SELECT orderstatus, ispaymentsucceed FROM thirdpartyorders WHERE merchanttransactionid = $1`, [merchantTransactionId]),
+            query(`SELECT orderstatus FROM orderline WHERE merchanttransactionid = $1`, [merchantTransactionId]),
+            query(`SELECT transactionid, razorpay_payment_id, razorpay_order_id
+           FROM transaction
+           WHERE merchanttransactionid = $1
+           ORDER BY createddate DESC
+           LIMIT 5`, [merchantTransactionId]),
+        ]);
+        return {
+            merchantTransactionId,
+            orders: {
+                count: ordersResult.rowCount,
+                statusCounts: summarizeStatusCounts(ordersResult.rows, "orderstatus"),
+                paymentSuccessCounts: summarizeStatusCounts(ordersResult.rows, "ispaymentsucceed"),
+            },
+            thirdPartyOrders: {
+                count: thirdPartyOrdersResult.rowCount,
+                statusCounts: summarizeStatusCounts(thirdPartyOrdersResult.rows, "orderstatus"),
+                paymentSuccessCounts: summarizeStatusCounts(thirdPartyOrdersResult.rows, "ispaymentsucceed"),
+            },
+            orderLine: {
+                count: orderLineResult.rowCount,
+                statusCounts: summarizeStatusCounts(orderLineResult.rows, "orderstatus"),
+            },
+            transactions: {
+                count: transactionResult.rowCount,
+                latest: transactionResult.rows.map((row) => ({
+                    transactionid: row?.transactionid,
+                    razorpayPaymentId: row?.razorpay_payment_id,
+                    razorpayOrderId: row?.razorpay_order_id,
+                })),
+            },
+        };
+    }
+    catch (error) {
+        return {
+            merchantTransactionId,
+            snapshotError: error?.message || "Unable to fetch state snapshot",
+        };
+    }
 };
 const timingSafeHexEqual = (expectedHex, receivedHex) => {
     try {
@@ -328,27 +435,64 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
         console.error("Shiprocket integration failed:", error?.message || error);
     }
 };
-const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrderId, razorpaySignature, verifyCheckoutSignature, source, }) => {
+const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrderId, razorpaySignature, verifyCheckoutSignature, source, traceId = null, }) => {
+    const resolvedTraceId = traceId || `finalize-${source || "unknown"}`;
+    logWebhookStep(resolvedTraceId, "FINALIZE_START", {
+        source,
+        razorpayPaymentId: shortRef(razorpayPaymentId),
+        razorpayOrderId: shortRef(razorpayOrderId),
+        verifyCheckoutSignature,
+    });
     const gatewayOrder = await razorpay.orders.fetch(razorpayOrderId);
     const merchantTransactionId = gatewayOrder?.receipt;
+    logWebhookStep(resolvedTraceId, "GATEWAY_ORDER_FETCHED", {
+        razorpayOrderId: gatewayOrder?.id || razorpayOrderId,
+        merchantTransactionId,
+    });
     if (!merchantTransactionId) {
+        logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+            status: 400,
+            message: "Unable to map Razorpay order to merchant transaction",
+        });
         return { status: 400, message: "Unable to map Razorpay order to merchant transaction" };
     }
     const lock = await acquireProcessingLock(`razorpay:${merchantTransactionId}:${razorpayPaymentId}`, 180);
+    logWebhookStep(resolvedTraceId, "LOCK_ATTEMPT", {
+        merchantTransactionId,
+        lockAcquired: lock.acquired,
+    });
     if (!lock.acquired) {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 200,
+                message: "Payment already processed",
+                reason: "lock-not-acquired-existing-transaction",
+            });
             return {
                 status: 200,
                 message: "Payment already processed",
                 data: { redirectUrl: REDIRECT_URL_SUCCESS },
             };
         }
+        logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+            merchantTransactionId,
+            status: 202,
+            message: "Payment processing in progress",
+            reason: "lock-not-acquired-no-transaction",
+        });
         return { status: 202, message: "Payment processing in progress" };
     }
     try {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 200,
+                message: "Payment already processed",
+                reason: "existing-transaction-before-process",
+            });
             return {
                 status: 200,
                 message: "Payment already processed",
@@ -360,30 +504,89 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 .createHmac("sha256", RAZORPAY_KEY_SECRET)
                 .update(`${gatewayOrder.id}|${razorpayPaymentId}`)
                 .digest("hex");
+            logWebhookStep(resolvedTraceId, "CHECKOUT_SIGNATURE_VERIFICATION", {
+                merchantTransactionId,
+                generatedSignatureRef: shortRef(generatedSignature),
+                receivedSignatureRef: shortRef(razorpaySignature),
+            });
             if (!timingSafeHexEqual(generatedSignature, razorpaySignature || "")) {
                 await safeCleanupPendingOrder(merchantTransactionId);
+                const cleanupSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+                logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                    merchantTransactionId,
+                    status: 400,
+                    message: "Invalid payment signature",
+                    cleanupSnapshot,
+                });
                 return { status: 400, message: "Invalid payment signature" };
             }
         }
         const payment = await razorpay.payments.fetch(razorpayPaymentId);
+        logWebhookStep(resolvedTraceId, "PAYMENT_FETCHED", {
+            merchantTransactionId,
+            paymentStatus: payment?.status,
+            paymentAmount: payment?.amount,
+            paymentCurrency: payment?.currency,
+            paymentMethod: payment?.method,
+            paymentOrderId: payment?.order_id,
+        });
         if (payment?.order_id !== gatewayOrder.id) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Payment does not belong to the expected order",
+            });
             return { status: 400, message: "Payment does not belong to the expected order" };
         }
         if (payment.status !== "captured") {
             if (payment.status === "failed") {
                 await safeCleanupPendingOrder(merchantTransactionId);
+                const failedCleanupSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+                logWebhookStep(resolvedTraceId, "PAYMENT_FAILED_CLEANUP", {
+                    merchantTransactionId,
+                    failedCleanupSnapshot,
+                });
             }
             if (source === "webhook" && payment.status === "authorized") {
+                logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                    merchantTransactionId,
+                    status: 200,
+                    message: "Payment authorized, waiting for capture",
+                });
                 return { status: 200, message: "Payment authorized, waiting for capture" };
             }
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Payment not captured",
+            });
             return { status: 400, message: "Payment not captured" };
         }
         const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
         if (!context) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Payment timed out, try again.",
+            });
             return { status: 400, message: "Payment timed out, try again." };
         }
+        logWebhookStep(resolvedTraceId, "ORDER_CONTEXT_RESOLVED", {
+            merchantTransactionId,
+            totalOrderRows: context?.combinedOrderRows?.length || 0,
+            totalOrderLineRows: context?.orderLineItems?.length || 0,
+            transactionFor: context?.transactionFor,
+            expectedAmountRupees: context?.expectedAmountRupees,
+        });
         const alreadySucceeded = context.combinedOrderRows.some((row) => row?.ispaymentsucceed === true || row?.ispaymentsucceed === "true");
         if (alreadySucceeded) {
+            const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 200,
+                message: "Payment already processed",
+                alreadyProcessedSnapshot,
+            });
             return {
                 status: 200,
                 message: "Payment already processed",
@@ -392,6 +595,13 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         }
         const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
         if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Amount mismatch between order and payment",
+                expectedAmountPaise,
+                receivedAmountPaise: Number(payment.amount),
+            });
             return { status: 400, message: "Amount mismatch between order and payment" };
         }
         const transactionPayload = {
@@ -410,10 +620,22 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         };
         let result;
         try {
+            logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_START", {
+                merchantTransactionId,
+                orderLineItems: context.orderLineItems.length,
+            });
             result = await transactionService.insertTransactionData(transactionPayload, context.combinedOrderRows);
         }
         catch (error) {
             if (error?.code === "23505") {
+                const duplicateSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+                logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                    merchantTransactionId,
+                    status: 200,
+                    message: "Payment already processed",
+                    reason: "unique-constraint",
+                    duplicateSnapshot,
+                });
                 return {
                     status: 200,
                     message: "Payment already processed",
@@ -422,10 +644,24 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             }
             throw error;
         }
+        logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
+            merchantTransactionId,
+            transactionCount: Array.isArray(result?.transactionData)
+                ? result.transactionData.length
+                : 0,
+            orderDataRows: Array.isArray(result?.orderdata) ? result.orderdata.length : 0,
+        });
         if (!result?.orderdata ||
             !result?.transactionData ||
             result.orderdata.length === 0 ||
             result.transactionData.length === 0) {
+            const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
+                failedProcessSnapshot,
+            });
             return {
                 status: 400,
                 message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
@@ -437,9 +673,30 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             ordername: item.ordername,
         }));
         if (updateProductQtyData.length > 0) {
+            logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_START", {
+                merchantTransactionId,
+                items: updateProductQtyData,
+            });
             await productrevoService.updateOrderedQuantityarray(updateProductQtyData);
+            logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_DONE", {
+                merchantTransactionId,
+                updatedProducts: updateProductQtyData.length,
+            });
         }
+        logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_START", {
+            merchantTransactionId,
+        });
         await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
+        logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_DONE", {
+            merchantTransactionId,
+        });
+        const successSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+        logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+            merchantTransactionId,
+            status: 200,
+            message: "Payment verified and processed successfully",
+            successSnapshot,
+        });
         return {
             status: 200,
             message: "Payment verified and processed successfully",
@@ -447,6 +704,9 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         };
     }
     finally {
+        logWebhookStep(resolvedTraceId, "LOCK_RELEASE", {
+            lockKey: lock.key,
+        });
         await releaseProcessingLock(lock.key);
     }
 };
@@ -578,6 +838,7 @@ export var transactionService;
             });
             try {
                 let createHttpTaskResult = await createHttpTask(response.data.data.merchantTransactionId);
+                console.log(createHttpTaskResult, " ===>> createHttpTaskResult");
                 if (createHttpTaskResult?.success === false) {
                     return {
                         status: 400,
@@ -645,6 +906,7 @@ export var transactionService;
                             updateproductorderquantiydata.push({
                                 id: e.productid,
                                 orderedquantity: e.quantity,
+                                ordername: e.ordername, // needed to distinguish rental vs normal
                             });
                         });
                         const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
@@ -993,11 +1255,9 @@ export var transactionService;
                 // Step 4: Create HTTP task and insert order data
                 try {
                     let createHttpTaskResult = await createHttpTask(merchanttransactionId);
+                    console.log("Create Http Task Result:", createHttpTaskResult);
                     if (createHttpTaskResult?.success === false) {
-                        return {
-                            status: 400,
-                            message: "Task Not Created For Making Order. Please contact Admin",
-                        };
+                        console.warn("Cloud Task could not be created for transaction cleanup. Proceeding with order placement anyway. Error:", createHttpTaskResult.error);
                     }
                     console.log("Insert Order Data Result:", request.body.order);
                     let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
@@ -1148,36 +1408,82 @@ export var transactionService;
     transactionService.paymentWebhookRazorpay = async (request) => {
         let webhookLedgerId = null;
         try {
+            const rawEventId = parseHeaderValue(request.headers["x-razorpay-event-id"]);
+            const bodyPaymentId = request?.body?.payload?.payment?.entity?.id ||
+                request?.body?.payload?.order?.entity?.id ||
+                null;
+            const traceId = resolveWebhookTraceId(rawEventId, bodyPaymentId);
+            logWebhookStep(traceId, "REQUEST_RECEIVED", {
+                hasRawBody: Boolean(request.rawBody),
+                hasBody: Boolean(request.body),
+                headerKeys: Object.keys(request.headers || {}),
+            });
             if (!RAZORPAY_WEBHOOK_SECRET) {
+                logWebhookStep(traceId, "WEBHOOK_SECRET_MISSING", {
+                    responseStatus: 500,
+                    responseMessage: "Webhook secret is not configured",
+                });
                 return { status: 500, message: "Webhook secret is not configured" };
             }
             const receivedSignature = parseHeaderValue(request.headers["x-razorpay-signature"]);
             if (!receivedSignature) {
+                logWebhookStep(traceId, "SIGNATURE_MISSING", {
+                    responseStatus: 400,
+                    responseMessage: "Missing webhook signature",
+                });
                 return { status: 400, message: "Missing webhook signature" };
             }
             const rawBody = request.rawBody;
             if (!rawBody) {
+                logWebhookStep(traceId, "RAW_BODY_MISSING", {
+                    responseStatus: 400,
+                    responseMessage: "Missing raw webhook body",
+                });
                 return { status: 400, message: "Missing raw webhook body" };
             }
             const expectedSignature = crypto
                 .createHmac("sha256", RAZORPAY_WEBHOOK_SECRET)
                 .update(rawBody)
                 .digest("hex");
+            logWebhookStep(traceId, "SIGNATURE_COMPUTED", {
+                expectedSignatureRef: shortRef(expectedSignature),
+                receivedSignatureRef: shortRef(receivedSignature),
+            });
             if (!timingSafeHexEqual(expectedSignature, receivedSignature)) {
+                logWebhookStep(traceId, "SIGNATURE_INVALID", {
+                    responseStatus: 400,
+                    responseMessage: "Invalid webhook signature",
+                });
                 return { status: 400, message: "Invalid webhook signature" };
             }
             const eventPayload = request.body || {};
             const eventName = eventPayload?.event;
-            const eventId = parseHeaderValue(request.headers["x-razorpay-event-id"]);
+            const eventId = rawEventId;
+            const payloadSummary = summarizeWebhookPayload(eventPayload);
+            logWebhookStep(traceId, "PAYLOAD_PARSED", payloadSummary);
             if (eventId) {
                 const ledgerResult = await createWebhookEventLedgerEntry(eventId, eventName, eventPayload);
+                logWebhookStep(traceId, "LEDGER_ENTRY_RESULT", {
+                    eventId,
+                    duplicate: ledgerResult?.duplicate || false,
+                    ledgerId: ledgerResult?.id || null,
+                });
                 if (ledgerResult?.duplicate) {
+                    logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                        responseStatus: 200,
+                        responseMessage: "Duplicate webhook ignored",
+                    });
                     return { status: 200, message: "Duplicate webhook ignored" };
                 }
                 if (ledgerResult?.id) {
                     webhookLedgerId = ledgerResult.id;
                 }
                 else if (await hasProcessedWebhookEvent(eventId)) {
+                    logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                        responseStatus: 200,
+                        responseMessage: "Duplicate webhook ignored",
+                        reason: "redis-dedupe",
+                    });
                     return { status: 200, message: "Duplicate webhook ignored" };
                 }
             }
@@ -1189,36 +1495,79 @@ export var transactionService;
                 eventName === "payment.authorized") {
                 if (!paymentId || !orderId) {
                     await markWebhookEventLedgerStatus(webhookLedgerId, "ignored");
+                    logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                        eventName,
+                        responseStatus: 200,
+                        responseMessage: "Webhook event ignored due to missing IDs",
+                    });
                     return { status: 200, message: "Webhook event ignored due to missing IDs" };
                 }
+                logWebhookStep(traceId, "EVENT_ROUTED_TO_FINALIZE", {
+                    eventName,
+                    paymentId,
+                    orderId,
+                });
                 const result = await finalizeCapturedRazorpayPayment({
                     razorpayPaymentId: paymentId,
                     razorpayOrderId: orderId,
                     razorpaySignature: "",
                     verifyCheckoutSignature: false,
                     source: "webhook",
+                    traceId,
                 });
-                await markWebhookEventLedgerStatus(webhookLedgerId, "processed");
+                await markWebhookEventLedgerStatus(webhookLedgerId, result?.status === 500 ? "failed" : "processed", result?.status === 500 ? result?.message : undefined);
+                logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                    eventName,
+                    responseStatus: result?.status || 200,
+                    responseMessage: result?.message || "Webhook processed",
+                });
                 return result;
             }
             if (eventName === "payment.failed" && orderId) {
+                let merchantTransactionId = null;
                 try {
                     const gatewayOrder = await razorpay.orders.fetch(orderId);
                     if (gatewayOrder?.receipt) {
+                        merchantTransactionId = gatewayOrder.receipt;
                         await safeCleanupPendingOrder(gatewayOrder.receipt);
+                        const failedEventSnapshot = await getMerchantTransactionStateSnapshot(gatewayOrder.receipt);
+                        logWebhookStep(traceId, "PAYMENT_FAILED_CLEANUP_DONE", {
+                            eventName,
+                            orderId,
+                            merchantTransactionId: gatewayOrder.receipt,
+                            failedEventSnapshot,
+                        });
                     }
                 }
                 catch (error) {
                     console.error("Failed to process payment.failed webhook:", error?.message || error);
                 }
                 await markWebhookEventLedgerStatus(webhookLedgerId, "processed");
+                logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                    eventName,
+                    orderId,
+                    merchantTransactionId,
+                    responseStatus: 200,
+                    responseMessage: "Failure webhook processed",
+                });
                 return { status: 200, message: "Failure webhook processed" };
             }
             await markWebhookEventLedgerStatus(webhookLedgerId, "ignored");
+            logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                eventName,
+                responseStatus: 200,
+                responseMessage: "Webhook event ignored",
+            });
             return { status: 200, message: "Webhook event ignored" };
         }
         catch (error) {
+            const traceId = resolveWebhookTraceId(parseHeaderValue(request.headers["x-razorpay-event-id"]), request?.body?.payload?.payment?.entity?.id);
             await markWebhookEventLedgerStatus(webhookLedgerId, "failed", error?.message || "Webhook processing failed");
+            logWebhookStep(traceId, "WEBHOOK_RESPONSE", {
+                responseStatus: 500,
+                responseMessage: "Error processing Razorpay webhook",
+                errorMessage: error?.message || "Webhook processing failed",
+            });
             console.error("Query Execution Error: IN paymentWebhookRazorpay", error);
             return { status: 500, message: "Error processing Razorpay webhook" };
         }

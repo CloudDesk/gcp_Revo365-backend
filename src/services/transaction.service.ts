@@ -1123,6 +1123,7 @@ export module transactionService {
               updateproductorderquantiydata.push({
                 id: e.productid,
                 orderedquantity: e.quantity,
+                ordername: e.ordername,  // needed to distinguish rental vs normal
               });
             });
             const updatedOrderQuantity: any =

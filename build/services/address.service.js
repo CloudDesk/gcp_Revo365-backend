@@ -51,8 +51,36 @@ export var addressService;
             let querydata;
             let params;
             const { id, ...upsertFields } = addressData;
-            const fieldNames = Object.keys(upsertFields);
-            const fieldValues = Object.values(upsertFields);
+            const allowedInputFields = [
+                "userid",
+                "name",
+                "mobilenumber",
+                "pincode",
+                "address",
+                "landmark",
+                "state",
+                "city",
+                "email",
+                "doornumber",
+            ];
+            const filteredEntries = Object.entries(upsertFields).filter(([field, value]) => allowedInputFields.includes(field) && value !== undefined);
+            const filteredFields = Object.fromEntries(filteredEntries);
+            const now = Date.now();
+            if (id) {
+                filteredFields.modifieddate = now;
+            }
+            else {
+                filteredFields.createddate = now;
+                filteredFields.modifieddate = now;
+            }
+            const fieldNames = Object.keys(filteredFields);
+            const fieldValues = Object.values(filteredFields);
+            if (fieldNames.length === 0) {
+                return {
+                    command: "Fail",
+                    message: "No valid address fields provided",
+                };
+            }
             if (id) {
                 querydata = `UPDATE address SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
@@ -66,6 +94,11 @@ export var addressService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            console.log(`[DEBUG][POST /address] address ${id ? "updated" : "created"}:`, {
+                id: result.rows?.[0]?.id,
+                userid: result.rows?.[0]?.userid,
+                city: result.rows?.[0]?.city,
+            });
             return result;
         }
         catch (error) {
