@@ -48,8 +48,9 @@ The system triggers a full recount on the product table every time a status chan
 3.  **`updateQuantity([puc])`**: Refreshes the location-wise JSONB breakdown in `product_revo`.
 4.  **Persistent Dashboard**: These numbers now remain fully synced without manual refreshes.
 
-ALTER_TABLE.sql
 
-ALTER TABLE product_revo ADD COLUMN IF NOT EXISTS bin_qty INTEGER DEFAULT 0;
-ALTER TABLE product_revo ADD COLUMN IF NOT EXISTS archive_qty INTEGER DEFAULT 0;
-ALTER TABLE product_revo ADD COLUMN IF NOT EXISTS ewaste_qty INTEGER DEFAULT 0;
+--
+
+Order Placement: orderedquantity ↑, overallavailableqty ↓, quantityforlocation.branch.orderedquantity ↑.
+Order Sold: One stock_revo row changes status to 'Sold'. physical availablequantity ↓, orderedquantity ↓, overallavailableqty remains net correct.
+Cancellation: orderedquantity ↓, overallavailableqty ↑, quantityforlocation.branch.orderedquantity ↓.

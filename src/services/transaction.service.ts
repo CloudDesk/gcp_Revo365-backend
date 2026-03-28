@@ -1034,6 +1034,7 @@ export module transactionService {
         let createHttpTaskResult = await createHttpTask(
           response.data.data.merchantTransactionId
         );
+        console.log(createHttpTaskResult, " ===>> createHttpTaskResult");
         if (createHttpTaskResult?.success === false) {
           return {
             status: 400,
@@ -1612,12 +1613,12 @@ export module transactionService {
         // Step 4: Create HTTP task and insert order data
         try {
           let createHttpTaskResult = await createHttpTask(merchanttransactionId);
+          console.log("Create Http Task Result:", createHttpTaskResult);
           if (createHttpTaskResult?.success === false) {
-            return {
-              status: 400,
-              message:
-                "Task Not Created For Making Order. Please contact Admin",
-            };
+            console.warn(
+              "Cloud Task could not be created for transaction cleanup. Proceeding with order placement anyway. Error:",
+              createHttpTaskResult.error
+            );
           }
           console.log("Insert Order Data Result:", request.body.order);
           let insertorderdata = await ordersService.bulkInsertOrder(

@@ -620,6 +620,19 @@ export module stockRevoService {
                     SELECT p.puc, l.location 
                     FROM (SELECT unnest($1::text[]) as puc) p
                     CROSS JOIN (SELECT unnest($2::text[]) as location) l
+                ),
+                order_metrics AS (
+                    SELECT 
+                        p.puc,
+                        o.storelocation AS location,
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Orders' AND ol.orderstatus NOT IN ('payment_failed', 'cancelled', 'returned') THEN ol.quantity ELSE 0 END), 0) AS ordered_qty,
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Third Party Orders' AND ol.orderstatus NOT IN ('payment_failed', 'cancelled', 'returned') THEN ol.quantity ELSE 0 END), 0) AS thirdpartyorder_qty,
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Third Party Orders' AND ol.orderstatus IN ('delivered', 'shipped', 'Sold') THEN ol.quantity ELSE 0 END), 0) AS thirdpartysold_qty
+                    FROM orderline ol
+                    JOIN orders o ON ol.uniqueorderid = o.orderid
+                    JOIN product_revo p ON ol.productid = p.id
+                    WHERE p.puc = ANY($1::text[])
+                    GROUP BY p.puc, o.storelocation
                 )
                 SELECT 
                     grid.puc,
@@ -696,7 +709,11 @@ export module stockRevoService {
                         WHERE s.ecompublish = false
                         AND s.stockstatus = 'Rental Sold'
                         AND s.stocktype = 'rental_product'
-                    ) AS rentalsoldquantity
+                    ) AS rentalsoldquantity,
+
+                    COALESCE(om.ordered_qty, 0) AS ordered_qty,
+                    COALESCE(om.thirdpartyorder_qty, 0) AS thirdpartyorder_qty,
+                    COALESCE(om.thirdpartysold_qty, 0) AS thirdpartysold_qty
 
                 FROM grid
                 LEFT JOIN stock_revo s ON s.puc = grid.puc AND s.location = grid.location
@@ -704,25 +721,31 @@ export module stockRevoService {
                     AND (s.isarchive = false OR s.isarchive IS NULL)
                     AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
                     AND (s.ewaste = false OR s.ewaste IS NULL)
-                GROUP BY grid.puc, grid.location
+                LEFT JOIN order_metrics om ON grid.puc = om.puc AND grid.location = om.location
+                GROUP BY grid.puc, grid.location, om.ordered_qty, om.thirdpartyorder_qty, om.thirdpartysold_qty
             `;
             const quantityResult = await query(quantityQuery, [pucs, locations]);
-            const batchUpdateData = quantityResult.rows.map((row) => ({
+            const batchUpdateData = quantityResult.rows.map((row: any) => ({
                 puc: row.puc,
                 location: row.location,
                 quantity: parseInt(row.quantity, 10),
                 overallquantity: parseInt(row.overallquantity, 10),
-                ecompublishedquantity: parseInt(row.ecompublishedquantity, 10),
+                ecompublishedquantity: Math.max(0, parseInt(row.ecompublishedquantity, 10) - (parseInt(row.ordered_qty, 10) + parseInt(row.thirdpartyorder_qty, 10))),
                 soldquantity: parseInt(row.soldquantity, 10),
                 availablequantity: parseInt(row.availablequantity, 10),
-                overallavailableqty: parseInt(row.overallavailableqty, 10),
+                overallavailableqty: Math.max(0, parseInt(row.overallavailableqty, 10) - (parseInt(row.ordered_qty, 10) + parseInt(row.thirdpartyorder_qty, 10))),
                 thirdpartyqty: parseInt(row.thirdpartyqty, 10),
                 thirdpartyavailableqty: parseInt(row.thirdpartyavailableqty, 10),
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
                 rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
-                rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10)
+                rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10),
+                ordered_qty: parseInt(row.ordered_qty, 10),
+                thirdpartyorder_qty: parseInt(row.thirdpartyorder_qty, 10),
+                thirdpartysold_qty: parseInt(row.thirdpartysold_qty, 10)
             }));
+            console.log('ANTIGRAVITY_LOG: batchUpdateData before batchUpdateData', JSON.stringify(batchUpdateData, null, 2));
             const updateResults = await productrevoService.testupsertQuantityFieldsBatch(batchUpdateData, issold);
+            console.log('ANTIGRAVITY_LOG: updateResults batchUpdateData', JSON.stringify(updateResults, null, 2));
             return updateResults;
 
         } catch (error) {

@@ -237,8 +237,12 @@ export module cartservice {
             }
 
             // Fetch all products from the cart for the given user
-            const isthirdPartyStockCheck = `SELECT productid FROM cart WHERE userid = $1 AND iscart = true AND iswishlist = false`;
-            const isthirdPartyStockCheckResult: any = await query(isthirdPartyStockCheck, [values[0]]);
+            const isCart = request.query.iscart !== undefined ? (request.query.iscart === 'true' || request.query.iscart === true) : (request.url.includes('/cart') ? true : false);
+            const isWishlist = request.query.iswishlist !== undefined ? (request.query.iswishlist === 'true' || request.query.iswishlist === true) : (request.url.includes('/wishlist') ? true : false);
+
+            const userId = request.query.userid || request.params.userId;
+            const isthirdPartyStockCheck = `SELECT productid FROM cart WHERE userid = $1 AND iscart = ${isCart} AND iswishlist = ${isWishlist}`;
+            const isthirdPartyStockCheckResult: any = userId ? await query(isthirdPartyStockCheck, [userId]) : { rows: [] };
             console.log("isthirdPartyStockCheckResult--", isthirdPartyStockCheckResult.rows);
 
             // Group products by productid to handle duplicates and avoid redundant queries
@@ -324,7 +328,7 @@ export module cartservice {
                 p.weight AS products_weight
             FROM cart c
             INNER JOIN product_revo p ON p.id = c.productid 
-            WHERE iscart = true AND iswishlist = false
+            WHERE c.iscart = ${isCart} AND c.iswishlist = ${isWishlist}
         `;
 
             // Add product IDs and third-party quantities to query parameters
@@ -412,6 +416,29 @@ export module cartservice {
             const fieldValues = Object.values(upsertFields);
 
             if (id) {
+                // If ID is provided, check if the update would create a duplicate of another record
+                if (upsertFields.userid && upsertFields.productid) {
+                    const findDuplicateQuery = `
+                        SELECT id FROM cart 
+                        WHERE userid = $1 AND productid = $2 AND iscart = $3 AND iswishlist = $4 AND id != $5
+                        LIMIT 1`;
+                    const duplicateResult = await query(findDuplicateQuery, [
+                        upsertFields.userid,
+                        upsertFields.productid,
+                        upsertFields.iscart ?? false,
+                        upsertFields.iswishlist ?? false,
+                        id
+                    ]);
+
+                    if (duplicateResult.rows.length > 0) {
+                        // A duplicate already exists. So delete the record we were trying to update (as it's being 'moved')
+                        await query(`DELETE FROM cart WHERE id = $1`, [id]);
+                        // And return the record that already exists there
+                        const existingRecord = await query(`SELECT * FROM cart WHERE id = $1`, [duplicateResult.rows[0].id]);
+                        return { ...existingRecord, command: "UPDATE" };
+                    }
+                }
+
                 querydata = `UPDATE cart SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;

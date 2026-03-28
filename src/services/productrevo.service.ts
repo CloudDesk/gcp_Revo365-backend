@@ -7,6 +7,7 @@ import { cartservice } from "./cart.service.js";
 import { performance } from 'perf_hooks';
 import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
 import { createHash } from "crypto";
+// import { stockRevoService } from './stockRevo.service.js'; // REMOVED TO BREAK CIRCULAR LOOP
 
 export module productrevoService {
 
@@ -1741,12 +1742,12 @@ export module productrevoService {
       if (quertTogetThirdpartyproduct.rows.length > 0) {
         const stockid = quertTogetThirdpartyproduct.rows[0].id;
         const thirdpartyquantity = quertTogetThirdpartyproduct.rows[0].thirdpartyquantity;
-        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = (${thirdpartyquantity} + availablequantity) WHERE puc = $1  RETURNING *`;
+        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = GREATEST(0, (${thirdpartyquantity} + COALESCE(availablequantity, 0)) - COALESCE(orderedquantity, 0)) WHERE puc = $1  RETURNING *`;
         const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
         console.log("result of update overall available quantity", result.rows);
         return result.rows[0];
       } else {
-        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = availablequantity WHERE puc = $1  RETURNING *`;
+        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = GREATEST(0, COALESCE(availablequantity, 0) - COALESCE(orderedquantity, 0)) WHERE puc = $1  RETURNING *`;
         const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
         return result.rows[0];
       }
@@ -1794,11 +1795,11 @@ export module productrevoService {
       let updateQueryBase = `
       UPDATE product_revo 
       SET quantity = $1, 
-          ecompublishedquantity = $2, 
+          ecompublishedquantity = GREATEST(0, $2 - COALESCE(orderedquantity, 0)), 
           soldquantity = $3, 
           availablequantity = $4, 
           productstatus = $5, 
-          overallavailableqty = $6, 
+          overallavailableqty = GREATEST(0, $6 - COALESCE(orderedquantity, 0)), 
           rentalsoldquantity = $7,
           oncatalogueqty = $8,
           offcatalogueqty = $9,
@@ -1912,10 +1913,13 @@ export module productrevoService {
                         'thirdpartyavailableqty',  $9::integer,
                         'rentaltotalquantity',     $10::integer,
                         'rentalsoldquantity',      $11::integer,
-                        'rentalavailablequantity', $12::integer
+                        'rentalavailablequantity', $12::integer,
+                        'orderedquantity',         $13::integer,
+                        'thirdpartyorderquantity', $14::integer,
+                        'thirdpartysoldquantity',  $15::integer
                     )
                 )
-            WHERE puc = $13
+            WHERE puc = $16
             RETURNING *
         `;
       const updateQueries = batchData.map(data => {
@@ -1934,6 +1938,9 @@ export module productrevoService {
             data.rentaltotalquantity,
             data.rentalsoldquantity,
             data.rentalavailablequantity,
+            data.ordered_qty,
+            data.thirdpartyorder_qty,
+            data.thirdpartysold_qty,
             data.puc
           ]
         };
@@ -2005,12 +2012,12 @@ export module productrevoService {
   }
 
 
-  export async function updateOrderedQuantityarray(updatedData) {
+   export async function updateOrderedQuantityarray(updatedData) {
     try {
-      console.log('Inside updateorderqty');
-      console.log('Inside updateorderqty', updatedData);
-
+      console.log('ANTIGRAVITY_LOG: updateOrderedQuantityarray triggered', JSON.stringify(updatedData));
       let data = [];
+      const updatedPucs = new Set<string>();
+
       for (const e of updatedData) {
         const { id, orderedquantity } = e;
         console.log(id, orderedquantity, 'kkkk');
@@ -2024,24 +2031,42 @@ export module productrevoService {
           const queryText = `
         UPDATE product_revo
         SET rentalorderedquantity = rentalorderedquantity + $1,
-            lock_qty = lock_qty - $1 
+            lock_qty = lock_qty - $1,
+            -- rentalavailablequantity is usually computed, but let's ensure it stays consistent if stored
+            rentalavailablequantity = rentalavailablequantity - $1
         WHERE id = $2
         RETURNING *`;
           let result = await query(queryText, [orderedquantity, id]);
-          data.push(result);
+          if (result.rows?.[0]) {
+            data.push(result);
+            updatedPucs.add(result.rows[0].puc);
+          }
         } else {
-          console.log('Updating orderedquantity for normal product');
+          console.log('ANTIGRAVITY_LOG: Updating orderedquantity for normal product ID:', id);
           const queryText = `
         UPDATE product_revo
-        SET orderedquantity = orderedquantity + $1,
-            lock_qty = lock_qty - $1 
+        SET orderedquantity = COALESCE(orderedquantity, 0) + $1,
+            lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1),
+            overallavailableqty = GREATEST(0, COALESCE(overallavailableqty, 0) - $1),
+            ecompublishedquantity = GREATEST(0, COALESCE(ecompublishedquantity, 0) - $1)
         WHERE id = $2
         RETURNING *`;
           let result = await query(queryText, [orderedquantity, id]);
-          data.push(result);
+          console.log('ANTIGRAVITY_LOG: Result for ID', id, result.rows?.[0]);
+          if (result.rows?.[0]) {
+            data.push(result);
+            updatedPucs.add(result.rows[0].puc);
+          }
         }
-
       }
+
+      // Trigger location-wise JSONB update via dynamic import to break circularity
+      if (updatedPucs.size > 0) {
+        console.log('ANTIGRAVITY_LOG: Triggering JSONB update for PUCs:', Array.from(updatedPucs));
+        const { stockRevoService } = await import('./stockRevo.service.js');
+        await stockRevoService.testinupdateQuantity(Array.from(updatedPucs) as string[], false);
+      }
+
       return data;
     } catch (error) {
       console.error('Error in updateOrderedQuantityarray:', error);
@@ -2135,8 +2160,8 @@ export module productrevoService {
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
             rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
-            overallavailableqty = counts.overall_available_qty,
-            ecompublishedquantity = counts.ecom_published_qty,
+            overallavailableqty = counts.overall_available_qty - COALESCE(orderedquantity, 0),
+            ecompublishedquantity = counts.ecom_published_qty - COALESCE(orderedquantity, 0),
             bin_qty = counts.bin_count,
             archive_qty = counts.archive_count,
             ewaste_qty = counts.ewaste_count
@@ -2169,13 +2194,26 @@ export module productrevoService {
   export async function updateCancelledOrderedQuantity(productIds: Array<number>, quantitydata: number) {
 
     try {
-      const queryvalue = `UPDATE product_revo SET orderedquantity = orderedquantity - ${quantitydata} 
-      WHERE id = ANY($1::int[])    AND orderedquantity > 0
-      returning *`;
-      let resultdata = await query(queryvalue, [productIds]);
-      return resultdata
+      const queryvalue = `UPDATE product_revo 
+      SET orderedquantity = GREATEST(0, orderedquantity - $2),
+          overallavailableqty = overallavailableqty + $2,
+          ecompublishedquantity = ecompublishedquantity + $2
+      WHERE id = ANY($1::int[]) AND orderedquantity >= $2
+      RETURNING *`;
+      let resultdata = await query(queryvalue, [productIds, quantitydata]);
+      console.log('ANTIGRAVITY_LOG: Cancel order result count:', resultdata.rows?.length);
+      
+      // Sync locations if any rows updated via dynamic import
+      if (resultdata.rows?.length > 0) {
+        const pucs = [...new Set(resultdata.rows.map(r => r.puc))] as string[];
+        const { stockRevoService } = await import('./stockRevo.service.js');
+        await stockRevoService.testinupdateQuantity(pucs, false);
+      }
+
+      return resultdata;
     } catch (error) {
       console.error('Error in updateCancelledOrderedQuantity:', error);
+      throw error;
     }
   }
 }
