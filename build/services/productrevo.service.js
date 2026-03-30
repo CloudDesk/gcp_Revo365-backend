@@ -4,11 +4,26 @@ import imageResize from "../imageResize/imageRessize.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { cartservice } from "./cart.service.js";
 import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
+import { createHash } from "crypto";
 export var productrevoService;
 (function (productrevoService) {
     const TIMEOUT_THRESHOLD = 5000;
     const BULK_PICKLIST_OBJECT = "product_revo";
     const MAX_EXPECTED_VALUES = 12;
+    const BULK_IMPORT_JOBS_TABLE = "product_bulk_import_jobs";
+    const BULK_IMPORT_ROW_DEDUPE_TABLE = "product_bulk_row_dedupe";
+    const DEFAULT_BULK_MODE = "strict";
+    const MAX_DUPLICATE_ERROR_ROWS = 100;
+    const HASH_IGNORE_FIELDS = new Set([
+        "id",
+        "createddate",
+        "modifieddate",
+        "createdby",
+        "modifiedby",
+        "suppliername",
+    ]);
+    const MIGRATION_TABLE_MISSING_CODE = "42P01";
+    const MIGRATION_COLUMN_MISSING_CODE = "42703";
     const normalizeValue = (value) => {
         if (value === null || value === undefined)
             return "";
@@ -88,6 +103,101 @@ export var productrevoService;
         return new Set(Object.keys(schema.properties ?? {}));
     };
     const getNonNullFieldNames = (row) => Object.keys(row).filter((key) => row[key] !== null && row[key] !== undefined && row[key] !== "");
+    const resolveBulkInsertMode = (mode) => mode === "skip_duplicates" ? "skip_duplicates" : DEFAULT_BULK_MODE;
+    const isMigrationGapError = (error) => {
+        const code = error?.code;
+        return code === MIGRATION_TABLE_MISSING_CODE || code === MIGRATION_COLUMN_MISSING_CODE;
+    };
+    const canonicalizeForHash = (value) => {
+        if (value === null || value === undefined)
+            return null;
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            return trimmed === "" ? null : trimmed;
+        }
+        if (typeof value === "number" || typeof value === "boolean")
+            return value;
+        if (Array.isArray(value)) {
+            return value.map((entry) => canonicalizeForHash(entry)).filter((entry) => entry !== null);
+        }
+        if (typeof value === "object") {
+            const entries = Object.entries(value)
+                .filter(([key]) => !HASH_IGNORE_FIELDS.has(key))
+                .map(([key, raw]) => [key, canonicalizeForHash(raw)])
+                .filter(([, normalized]) => normalized !== null)
+                .sort(([left], [right]) => left.localeCompare(right));
+            return Object.fromEntries(entries);
+        }
+        return String(value);
+    };
+    const hashFromString = (value) => createHash("sha256").update(value).digest("hex");
+    const buildRowFingerprint = (row) => {
+        const normalizedRow = canonicalizeForHash(row);
+        return hashFromString(JSON.stringify(normalizedRow));
+    };
+    const buildPayloadFingerprint = (rowFingerprints) => {
+        const sortedFingerprints = [...rowFingerprints].sort();
+        return hashFromString(JSON.stringify(sortedFingerprints));
+    };
+    const getDuplicateScanFallback = (productrevoDataArray) => ({
+        payloadHash: buildPayloadFingerprint(productrevoDataArray.map((row) => row && typeof row === "object" && !Array.isArray(row)
+            ? buildRowFingerprint(row)
+            : hashFromString(String(row)))),
+        rowFingerprints: productrevoDataArray.map((row) => row && typeof row === "object" && !Array.isArray(row)
+            ? buildRowFingerprint(row)
+            : hashFromString(String(row))),
+        duplicateRows: [],
+        duplicatePayloadJob: null,
+        migrationReady: false,
+    });
+    const scanBulkDuplicates = async (productrevoDataArray) => {
+        const rowFingerprints = productrevoDataArray.map((row) => row && typeof row === "object" && !Array.isArray(row)
+            ? buildRowFingerprint(row)
+            : hashFromString(String(row)));
+        const payloadHash = buildPayloadFingerprint(rowFingerprints);
+        try {
+            const [existingRowHashesResult, existingJobResult] = await Promise.all([
+                query(`SELECT row_hash, product_id
+           FROM ${BULK_IMPORT_ROW_DEDUPE_TABLE}
+           WHERE row_hash = ANY($1::text[])`, [Array.from(new Set(rowFingerprints))]),
+                query(`SELECT id, payload_hash, status, inserted_count, skipped_count, duplicate_row_count, completed_at
+           FROM ${BULK_IMPORT_JOBS_TABLE}
+           WHERE payload_hash = $1 AND status = 'completed'
+           ORDER BY completed_at DESC NULLS LAST, id DESC
+           LIMIT 1`, [payloadHash]),
+            ]);
+            const existingRowHashMap = new Map();
+            for (const row of (existingRowHashesResult.rows || [])) {
+                existingRowHashMap.set(row.row_hash, row.product_id ?? null);
+            }
+            const duplicateRows = rowFingerprints
+                .map((fingerprint, index) => {
+                if (!existingRowHashMap.has(fingerprint))
+                    return null;
+                return {
+                    rowNumber: index + 2,
+                    index,
+                    fingerprint,
+                    existingProductId: existingRowHashMap.get(fingerprint) ?? null,
+                };
+            })
+                .filter((row) => Boolean(row));
+            return {
+                payloadHash,
+                rowFingerprints,
+                duplicateRows,
+                duplicatePayloadJob: (existingJobResult.rows || [])[0] || null,
+                migrationReady: true,
+            };
+        }
+        catch (error) {
+            if (isMigrationGapError(error)) {
+                console.warn(`[bulk-dedupe] Migration objects missing (${BULK_IMPORT_JOBS_TABLE}/${BULK_IMPORT_ROW_DEDUPE_TABLE}). Dedupe checks skipped.`);
+                return getDuplicateScanFallback(productrevoDataArray);
+            }
+            throw error;
+        }
+    };
     const fetchBulkValidationLookups = async () => {
         const [picklistResult, supplierResult] = await Promise.all([
             query(`SELECT fieldname, label, value, controlledfieldname, controlledvalue, controlledlabel, parent
@@ -140,8 +250,22 @@ export var productrevoService;
             supplierNameToIds,
         };
     };
-    productrevoService.validateBulkProductPayload = async (productrevoDataArray) => {
+    const fetchSupplierNameByIds = async (supplierIds) => {
+        const normalizedSupplierIds = Array.from(new Set(supplierIds.filter((id) => Number.isInteger(id) && id > 0)));
+        if (!normalizedSupplierIds.length)
+            return new Map();
+        const supplierResult = await query(`SELECT id, suppliername
+       FROM supplier
+       WHERE id = ANY($1::int[])`, [normalizedSupplierIds]);
+        const supplierNameById = new Map();
+        for (const supplier of (supplierResult.rows || [])) {
+            supplierNameById.set(Number(supplier.id), supplier.suppliername || "");
+        }
+        return supplierNameById;
+    };
+    productrevoService.validateBulkProductPayload = async (productrevoDataArray, options) => {
         try {
+            const mode = resolveBulkInsertMode(options?.mode);
             if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
                 return {
                     isValid: false,
@@ -161,8 +285,32 @@ export var productrevoService;
                 };
             }
             const schemaFieldSet = getSchemaPropertySet();
-            const { allowedByField, dependentRowsByField, supplierById, supplierNameToIds, } = await fetchBulkValidationLookups();
+            const { allowedByField, dependentRowsByField, supplierById, } = await fetchBulkValidationLookups();
+            const purchaseOrderCandidates = new Set();
+            for (const row of productrevoDataArray) {
+                if (!row || Array.isArray(row) || typeof row !== "object")
+                    continue;
+                const rawPo = row.ponumber;
+                if (rawPo === null || rawPo === undefined || rawPo === "")
+                    continue;
+                const poAsString = typeof rawPo === "string" ? rawPo : String(rawPo);
+                const poTrimmed = poAsString.trim();
+                if (!poAsString)
+                    continue;
+                purchaseOrderCandidates.add(poAsString);
+                if (poTrimmed)
+                    purchaseOrderCandidates.add(poTrimmed);
+            }
+            let existingPurchaseOrders = new Set();
+            if (purchaseOrderCandidates.size) {
+                const poResult = await query(`SELECT ponumber FROM purchaseorder WHERE ponumber = ANY($1::text[])`, [Array.from(purchaseOrderCandidates)]);
+                existingPurchaseOrders = new Set((poResult.rows || [])
+                    .map((row) => row.ponumber)
+                    .filter((value) => Boolean(value)));
+            }
+            const duplicateScan = await scanBulkDuplicates(productrevoDataArray);
             const errors = [];
+            const warnings = [];
             const invalidRows = new Set();
             for (let index = 0; index < productrevoDataArray.length; index++) {
                 const row = productrevoDataArray[index];
@@ -271,7 +419,18 @@ export var productrevoService;
                 const hasSupplierName = supplierNameRaw !== null && supplierNameRaw !== undefined && supplierNameRaw !== "";
                 let normalizedSupplierName = "";
                 let supplierIdNumeric = null;
-                if (hasSupplierId) {
+                if (!hasSupplierId) {
+                    errors.push({
+                        rowNumber,
+                        index,
+                        field: "supplierid",
+                        receivedValue: supplierIdRaw,
+                        reason: "supplierid is mandatory for bulk upload.",
+                        source: "supplier",
+                    });
+                    invalidRows.add(index);
+                }
+                else {
                     supplierIdNumeric = Number(supplierIdRaw);
                     if (!Number.isFinite(supplierIdNumeric)) {
                         errors.push({
@@ -280,6 +439,17 @@ export var productrevoService;
                             field: "supplierid",
                             receivedValue: supplierIdRaw,
                             reason: "Supplier ID must be a valid number.",
+                            source: "supplier",
+                        });
+                        invalidRows.add(index);
+                    }
+                    else if (!Number.isInteger(supplierIdNumeric) || supplierIdNumeric <= 0) {
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "supplierid",
+                            receivedValue: supplierIdRaw,
+                            reason: "Supplier ID must be a positive integer.",
                             source: "supplier",
                         });
                         invalidRows.add(index);
@@ -298,33 +468,95 @@ export var productrevoService;
                 }
                 if (hasSupplierName) {
                     normalizedSupplierName = normalizeValue(supplierNameRaw);
-                    if (!normalizedSupplierName || !supplierNameToIds.has(normalizedSupplierName)) {
+                    if (supplierIdNumeric !== null && supplierById.has(supplierIdNumeric)) {
+                        const canonicalSupplierName = supplierById.get(supplierIdNumeric) || "";
+                        const canonicalSupplierNameNormalized = normalizeValue(canonicalSupplierName);
+                        if (normalizedSupplierName &&
+                            canonicalSupplierNameNormalized &&
+                            normalizedSupplierName !== canonicalSupplierNameNormalized) {
+                            warnings.push({
+                                rowNumber,
+                                index,
+                                field: "suppliername",
+                                receivedValue: supplierNameRaw,
+                                reason: "suppliername does not match supplierid. Backend will auto-fill canonical suppliername from supplierid.",
+                                suggestion: canonicalSupplierName || null,
+                                source: "supplier",
+                            });
+                        }
+                    }
+                }
+                const poNumberRaw = row.ponumber;
+                const hasPoNumber = poNumberRaw !== null && poNumberRaw !== undefined && poNumberRaw !== "";
+                if (hasPoNumber) {
+                    const poAsString = typeof poNumberRaw === "string" ? poNumberRaw : String(poNumberRaw);
+                    const poTrimmed = poAsString.trim();
+                    if (!poTrimmed) {
                         errors.push({
                             rowNumber,
                             index,
-                            field: "suppliername",
-                            receivedValue: supplierNameRaw,
-                            reason: "Supplier name not found in supplier lookup.",
-                            expected: Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES),
-                            suggestion: getClosestSuggestion(normalizedSupplierName, Array.from(supplierNameToIds.keys()).slice(0, MAX_EXPECTED_VALUES)),
-                            source: "supplier",
+                            field: "ponumber",
+                            receivedValue: poNumberRaw,
+                            reason: "PO number cannot be empty or whitespace.",
+                            source: "purchaseorder",
+                        });
+                        invalidRows.add(index);
+                    }
+                    else if (!existingPurchaseOrders.has(poAsString)) {
+                        const hasSpaceMismatch = poAsString !== poTrimmed && existingPurchaseOrders.has(poTrimmed);
+                        errors.push({
+                            rowNumber,
+                            index,
+                            field: "ponumber",
+                            receivedValue: poNumberRaw,
+                            reason: hasSpaceMismatch
+                                ? "PO number has leading/trailing spaces. Use exact purchaseorder.ponumber."
+                                : "PO number not found in purchaseorder. Create PO first or use an existing PO number.",
+                            suggestion: hasSpaceMismatch ? poTrimmed : null,
+                            source: "purchaseorder",
                         });
                         invalidRows.add(index);
                     }
                 }
-                if (hasSupplierId && hasSupplierName && supplierIdNumeric !== null && normalizedSupplierName) {
-                    const idsForName = supplierNameToIds.get(normalizedSupplierName);
-                    if (idsForName && !idsForName.has(supplierIdNumeric)) {
-                        errors.push({
-                            rowNumber,
-                            index,
-                            field: "supplierid/suppliername",
-                            receivedValue: { supplierid: supplierIdRaw, suppliername: supplierNameRaw },
-                            reason: "Supplier ID and Supplier Name do not match the same supplier record.",
-                            source: "supplier",
-                        });
+            }
+            const duplicatePayload = Boolean(duplicateScan.duplicatePayloadJob);
+            if (duplicateScan.migrationReady && duplicatePayload) {
+                const duplicatePayloadError = {
+                    rowNumber: 2,
+                    index: 0,
+                    field: "payload",
+                    receivedValue: null,
+                    reason: "This bulk dataset was already imported earlier.",
+                    source: "dedupe",
+                };
+                if (mode === "strict") {
+                    errors.push(duplicatePayloadError);
+                    for (let index = 0; index < productrevoDataArray.length; index++) {
                         invalidRows.add(index);
                     }
+                }
+                else {
+                    warnings.push(duplicatePayloadError);
+                }
+            }
+            if (duplicateScan.migrationReady && duplicateScan.duplicateRows.length > 0) {
+                const duplicateMessages = duplicateScan.duplicateRows.slice(0, MAX_DUPLICATE_ERROR_ROWS).map((duplicateRow) => ({
+                    rowNumber: duplicateRow.rowNumber,
+                    index: duplicateRow.index,
+                    field: "row",
+                    receivedValue: null,
+                    reason: "Row already exists from a previous import.",
+                    suggestion: mode === "strict" ? "Use mode=skip_duplicates to insert only new rows." : null,
+                    source: "dedupe",
+                }));
+                if (mode === "strict") {
+                    duplicateScan.duplicateRows.forEach((entry) => invalidRows.add(entry.index));
+                    duplicateMessages.forEach((entry) => {
+                        errors.push(entry);
+                    });
+                }
+                else {
+                    warnings.push(...duplicateMessages);
                 }
             }
             return {
@@ -333,6 +565,15 @@ export var productrevoService;
                 validRowCount: productrevoDataArray.length - invalidRows.size,
                 invalidRowCount: invalidRows.size,
                 errors,
+                warnings: warnings.length ? warnings : undefined,
+                dedupe: {
+                    mode,
+                    payloadHash: duplicateScan.payloadHash,
+                    duplicatePayload,
+                    duplicateRows: duplicateScan.duplicateRows.length,
+                    insertableRows: Math.max(0, productrevoDataArray.length - duplicateScan.duplicateRows.length),
+                    duplicateOfJobId: duplicateScan.duplicatePayloadJob?.id,
+                },
             };
         }
         catch (error) {
@@ -730,46 +971,258 @@ export var productrevoService;
             return ErrorMessage;
         }
     };
-    productrevoService.insertBulkProduct = async (productrevoDataArray) => {
+    productrevoService.insertBulkProduct = async (productrevoDataArray, options) => {
+        const mode = resolveBulkInsertMode(options?.mode);
+        const uploadedBy = typeof options?.uploadedBy === "number" ? options.uploadedBy : null;
         try {
-            console.log('In insertBulkProduct', productrevoDataArray);
-            if (!productrevoDataArray.length) {
-                return { success: false, error: 'No products to insert', errors: [] };
+            console.log("In insertBulkProduct", { rowCount: productrevoDataArray?.length, mode });
+            if (!Array.isArray(productrevoDataArray) || productrevoDataArray.length === 0) {
+                return {
+                    success: false,
+                    insertedCount: 0,
+                    skippedCount: 0,
+                    duplicateRowCount: 0,
+                    error: "No products to insert",
+                    errors: [],
+                };
             }
-            const results = [];
+            const duplicateScan = await scanBulkDuplicates(productrevoDataArray);
+            const supplierNameById = await fetchSupplierNameByIds(productrevoDataArray
+                .map((row) => Number(row?.supplierid))
+                .filter((id) => Number.isInteger(id) && id > 0));
+            const duplicateRowsByIndex = new Map(duplicateScan.duplicateRows.map((row) => [row.index, row]));
+            if (duplicateScan.migrationReady && duplicateScan.duplicatePayloadJob && mode === "strict") {
+                return {
+                    success: false,
+                    insertedCount: 0,
+                    skippedCount: productrevoDataArray.length,
+                    duplicateRowCount: productrevoDataArray.length,
+                    payloadHash: duplicateScan.payloadHash,
+                    errorCode: "DUPLICATE_BULK_UPLOAD",
+                    error: "This bulk dataset has already been imported.",
+                    duplicateOf: {
+                        jobId: duplicateScan.duplicatePayloadJob.id,
+                        importedAt: duplicateScan.duplicatePayloadJob.completed_at,
+                        insertedCount: duplicateScan.duplicatePayloadJob.inserted_count,
+                        skippedCount: duplicateScan.duplicatePayloadJob.skipped_count,
+                        duplicateRowCount: duplicateScan.duplicatePayloadJob.duplicate_row_count,
+                    },
+                    errors: [],
+                };
+            }
+            if (duplicateScan.migrationReady && duplicateScan.duplicateRows.length > 0 && mode === "strict") {
+                return {
+                    success: false,
+                    insertedCount: 0,
+                    skippedCount: duplicateScan.duplicateRows.length,
+                    duplicateRowCount: duplicateScan.duplicateRows.length,
+                    payloadHash: duplicateScan.payloadHash,
+                    errorCode: "DUPLICATE_ROWS",
+                    error: "Duplicate rows found. Use mode=skip_duplicates to insert only new rows.",
+                    errors: duplicateScan.duplicateRows.slice(0, MAX_DUPLICATE_ERROR_ROWS).map((row) => ({
+                        index: row.index,
+                        error: `Row already exists (row ${row.rowNumber}).`,
+                    })),
+                };
+            }
+            const indexesToInsert = productrevoDataArray
+                .map((_row, index) => index)
+                .filter((index) => !(duplicateScan.migrationReady && mode === "skip_duplicates" && duplicateRowsByIndex.has(index)));
+            const preSkippedDuplicates = productrevoDataArray.length - indexesToInsert.length;
             const errors = [];
-            for (let i = 0; i < productrevoDataArray.length; i++) {
-                const productData = productrevoDataArray[i];
-                const fieldNames = Object.keys(productData).filter((key) => productData[key] !== null && productData[key] !== undefined);
-                const fieldValues = fieldNames.map((name) => productData[name]);
-                let queryStr = `INSERT INTO product_revo (${fieldNames.join(', ')}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(', ')}) RETURNING *`;
-                try {
-                    const result = await query(queryStr, fieldValues);
-                    if (result.command === 'INSERT') {
-                        results.push(result);
+            let insertedCount = 0;
+            let skippedCount = preSkippedDuplicates;
+            let jobId = null;
+            const client = await pool.connect();
+            try {
+                await client.query("BEGIN");
+                if (duplicateScan.migrationReady) {
+                    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [duplicateScan.payloadHash]);
+                    const existingJobResult = await client.query(`SELECT id, payload_hash, status, inserted_count, skipped_count, duplicate_row_count, completed_at
+             FROM ${BULK_IMPORT_JOBS_TABLE}
+             WHERE payload_hash = $1 AND status = 'completed'
+             ORDER BY completed_at DESC NULLS LAST, id DESC
+             LIMIT 1`, [duplicateScan.payloadHash]);
+                    const existingJob = (existingJobResult.rows || [])[0] || null;
+                    if (existingJob && mode === "strict") {
+                        await client.query("ROLLBACK");
+                        return {
+                            success: false,
+                            insertedCount: 0,
+                            skippedCount: productrevoDataArray.length,
+                            duplicateRowCount: productrevoDataArray.length,
+                            payloadHash: duplicateScan.payloadHash,
+                            errorCode: "DUPLICATE_BULK_UPLOAD",
+                            error: "This bulk dataset has already been imported.",
+                            duplicateOf: {
+                                jobId: existingJob.id,
+                                importedAt: existingJob.completed_at,
+                                insertedCount: existingJob.inserted_count,
+                                skippedCount: existingJob.skipped_count,
+                                duplicateRowCount: existingJob.duplicate_row_count,
+                            },
+                            errors: [],
+                        };
                     }
-                    else {
-                        errors.push({ index: i, error: 'Failed to insert product' });
+                    if (existingJob && mode === "skip_duplicates") {
+                        await client.query("ROLLBACK");
+                        return {
+                            success: true,
+                            insertedCount: 0,
+                            skippedCount: productrevoDataArray.length,
+                            duplicateRowCount: productrevoDataArray.length,
+                            payloadHash: duplicateScan.payloadHash,
+                            duplicateOf: {
+                                jobId: existingJob.id,
+                                importedAt: existingJob.completed_at,
+                                insertedCount: existingJob.inserted_count,
+                                skippedCount: existingJob.skipped_count,
+                                duplicateRowCount: existingJob.duplicate_row_count,
+                            },
+                            errors: [],
+                        };
+                    }
+                    const jobInsertResult = await client.query(`INSERT INTO ${BULK_IMPORT_JOBS_TABLE}
+               (payload_hash, uploaded_by, mode, status, total_rows, inserted_count, skipped_count, duplicate_row_count, created_at)
+             VALUES ($1, $2, $3, 'processing', $4, 0, 0, $5, NOW())
+             ON CONFLICT (payload_hash) DO NOTHING
+             RETURNING id`, [duplicateScan.payloadHash, uploadedBy, mode, productrevoDataArray.length, preSkippedDuplicates]);
+                    jobId = jobInsertResult.rows?.[0]?.id ?? null;
+                    if (jobId === null) {
+                        const anyExistingJobResult = await client.query(`SELECT id, payload_hash, status, inserted_count, skipped_count, duplicate_row_count, completed_at
+               FROM ${BULK_IMPORT_JOBS_TABLE}
+               WHERE payload_hash = $1
+               ORDER BY id DESC
+               LIMIT 1`, [duplicateScan.payloadHash]);
+                        const anyExistingJob = (anyExistingJobResult.rows || [])[0] || null;
+                        if (anyExistingJob) {
+                            await client.query("ROLLBACK");
+                            return {
+                                success: false,
+                                insertedCount: 0,
+                                skippedCount: productrevoDataArray.length,
+                                duplicateRowCount: productrevoDataArray.length,
+                                payloadHash: duplicateScan.payloadHash,
+                                errorCode: "DUPLICATE_BULK_UPLOAD",
+                                error: anyExistingJob.status === "processing"
+                                    ? "Same bulk dataset is already being imported. Please retry in a moment."
+                                    : "This bulk dataset has already been imported.",
+                                duplicateOf: {
+                                    jobId: anyExistingJob.id,
+                                    importedAt: anyExistingJob.completed_at,
+                                    insertedCount: anyExistingJob.inserted_count,
+                                    skippedCount: anyExistingJob.skipped_count,
+                                    duplicateRowCount: anyExistingJob.duplicate_row_count,
+                                },
+                                errors: [],
+                            };
+                        }
                     }
                 }
-                catch (err) {
-                    console.error(`Error inserting product at index ${i}:`, err);
-                    errors.push({ index: i, error: err.message || 'Database error' });
+                for (const index of indexesToInsert) {
+                    const productDataInput = productrevoDataArray[index];
+                    const productData = { ...productDataInput };
+                    const supplierIdNumeric = Number(productDataInput?.supplierid);
+                    if (Number.isInteger(supplierIdNumeric) && supplierNameById.has(supplierIdNumeric)) {
+                        productData.suppliername = supplierNameById.get(supplierIdNumeric) || null;
+                    }
+                    const fieldNames = Object.keys(productData).filter((key) => productData[key] !== null && productData[key] !== undefined);
+                    const fieldValues = fieldNames.map((name) => productData[name]);
+                    const rowFingerprint = duplicateScan.rowFingerprints[index] || buildRowFingerprint(productData);
+                    let reservedDedupeId = null;
+                    if (duplicateScan.migrationReady) {
+                        const reserveResult = await client.query(`INSERT INTO ${BULK_IMPORT_ROW_DEDUPE_TABLE} (row_hash, source_job_id)
+               VALUES ($1, $2)
+               ON CONFLICT (row_hash) DO NOTHING
+               RETURNING id`, [rowFingerprint, jobId]);
+                        if (!reserveResult.rowCount) {
+                            if (mode === "skip_duplicates") {
+                                skippedCount += 1;
+                                continue;
+                            }
+                            throw new Error(`Duplicate row detected during insert for index ${index}`);
+                        }
+                        reservedDedupeId = reserveResult.rows[0].id;
+                    }
+                    const queryStr = `INSERT INTO product_revo (${fieldNames.join(", ")}) VALUES (${fieldNames
+                        .map((_, fieldIndex) => `$${fieldIndex + 1}`)
+                        .join(", ")}) RETURNING *`;
+                    try {
+                        const result = await client.query(queryStr, fieldValues);
+                        if (result.command === "INSERT") {
+                            insertedCount += 1;
+                            if (duplicateScan.migrationReady && reservedDedupeId !== null) {
+                                const insertedProductId = result.rows?.[0]?.id ?? null;
+                                await client.query(`UPDATE ${BULK_IMPORT_ROW_DEDUPE_TABLE}
+                   SET product_id = $1
+                   WHERE id = $2`, [insertedProductId, reservedDedupeId]);
+                            }
+                        }
+                        else {
+                            errors.push({ index, error: "Failed to insert product" });
+                        }
+                    }
+                    catch (err) {
+                        console.error(`Error inserting product at index ${index}:`, err);
+                        errors.push({ index, error: err.message || "Database error" });
+                        if (duplicateScan.migrationReady && reservedDedupeId !== null) {
+                            await client.query(`DELETE FROM ${BULK_IMPORT_ROW_DEDUPE_TABLE} WHERE id = $1`, [reservedDedupeId]);
+                        }
+                    }
                 }
+                if (duplicateScan.migrationReady && jobId !== null) {
+                    await client.query(`UPDATE ${BULK_IMPORT_JOBS_TABLE}
+             SET status = 'completed',
+                 inserted_count = $1,
+                 skipped_count = $2,
+                 duplicate_row_count = $3,
+                 completed_at = NOW(),
+                 response_summary = $4
+             WHERE id = $5`, [
+                        insertedCount,
+                        skippedCount,
+                        skippedCount,
+                        JSON.stringify({
+                            mode,
+                            payloadHash: duplicateScan.payloadHash,
+                            totalRows: productrevoDataArray.length,
+                            insertedCount,
+                            skippedCount,
+                            errorsCount: errors.length,
+                        }),
+                        jobId,
+                    ]);
+                }
+                await client.query("COMMIT");
             }
-            const insertedCount = results.length;
+            catch (txError) {
+                await client.query("ROLLBACK");
+                throw txError;
+            }
+            finally {
+                client.release();
+            }
+            const success = errors.length === 0 && (insertedCount > 0 || skippedCount > 0);
             return {
-                success: insertedCount > 0,
+                success,
                 insertedCount,
-                errors: errors.length > 0 ? errors : [],
+                skippedCount,
+                duplicateRowCount: skippedCount,
+                payloadHash: duplicateScan.payloadHash,
+                errors,
             };
         }
         catch (error) {
-            console.error('Query Execution Error: IN insertBulkProduct', error);
-            let errorMessage = await ErrorHandler.handleQueryError(error);
-            return { success: false, error: errorMessage, errors: [{ index: -1, error: errorMessage }] };
+            console.error("Query Execution Error: IN insertBulkProduct", error);
+            const errorMessage = await ErrorHandler.handleQueryError(error);
+            return {
+                success: false,
+                insertedCount: 0,
+                skippedCount: 0,
+                duplicateRowCount: 0,
+                error: typeof errorMessage === "string" ? errorMessage : "Bulk insert failed",
+                errors: [{ index: -1, error: String(errorMessage) }],
+            };
         }
     };
     productrevoService.getArcheivedProductsrevo = async (request) => {
