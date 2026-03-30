@@ -1305,6 +1305,10 @@ ${whereClause} ${orderByClause}`;
 
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
                     const result = await query(querydata, params);
+                    // Recompute branch-level JSONB after orderline status transition.
+                    // ordered_qty excludes ready_to_dispatch, so this clears stale
+                    // quantityforlocation[branch].orderedquantity after RFID scan.
+                    await stockRevoService.testinupdateQuantity(pucArray, false);
                     return result;
                 }
             }
