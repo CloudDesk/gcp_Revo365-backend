@@ -534,6 +534,9 @@ export var ordersService;
                     if (key === "userid") {
                         key = "orderline.userid";
                     }
+                    else if (key === "id") {
+                        key = "orderline.id";
+                    }
                     const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
@@ -608,7 +611,7 @@ export var ordersService;
                 rows: [...result.rows, ...thirdPartyResult.rows]
                 // rowCount: result.rowCount + thirdPartyResult.rowCount
             };
-            console.log("Combined Result:", combinedResult);
+            // console.log("Combined Result:", combinedResult);
             // let datatypeCheckResult = await dataTypeCheck(combinedResult);
             // const messageData = {
             //     title: "Hello User",
@@ -1287,6 +1290,10 @@ ${whereClause} ${orderByClause}`;
                         RETURNING *`;
                     const params = ordersToUpdate.map(e => e.orderlinenumber);
                     const result = await query(querydata, params);
+                    // Recompute branch-level JSONB after orderline status transition.
+                    // ordered_qty excludes ready_to_dispatch, so this clears stale
+                    // quantityforlocation[branch].orderedquantity after RFID scan.
+                    await stockRevoService.testinupdateQuantity(pucArray, false);
                     return result;
                 }
             }

@@ -578,6 +578,8 @@ export module ordersService {
                 } else if (key !== "page" && key !== "count") {
                     if (key === "userid") {
                         key = "orderline.userid";
+                    } else if (key === "id") {
+                        key = "orderline.id";
                     }
                     const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
@@ -664,7 +666,7 @@ export module ordersService {
                 rows: [...result.rows, ...thirdPartyResult.rows]
                 // rowCount: result.rowCount + thirdPartyResult.rowCount
             };
-            console.log("Combined Result:", combinedResult);
+         // console.log("Combined Result:", combinedResult);
             // let datatypeCheckResult = await dataTypeCheck(combinedResult);
             // const messageData = {
             //     title: "Hello User",

@@ -40,11 +40,37 @@ const toPositiveInteger = (value) => {
     }
     return Math.trunc(parsed);
 };
+const parseInvoiceDate = (invoiceRow) => {
+    const invoiceDateValue = Number(invoiceRow?.invoicedate);
+    if (Number.isFinite(invoiceDateValue) && invoiceDateValue > 0) {
+        const normalizedInvoiceDate = String(Math.trunc(invoiceDateValue)).length <= 10
+            ? invoiceDateValue * 1000
+            : invoiceDateValue;
+        return new Date(normalizedInvoiceDate);
+    }
+    const createdDateValue = Number(invoiceRow?.createddate);
+    if (Number.isFinite(createdDateValue) && createdDateValue > 0) {
+        const normalizedCreatedDate = String(Math.trunc(createdDateValue)).length <= 10
+            ? createdDateValue * 1000
+            : createdDateValue;
+        return new Date(normalizedCreatedDate);
+    }
+    return null;
+};
+const getBillingMonthIndex = (startDate, targetDate) => {
+    let monthsDiff = (targetDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+        (targetDate.getUTCMonth() - startDate.getUTCMonth());
+    if (targetDate.getUTCDate() < startDate.getUTCDate()) {
+        monthsDiff -= 1;
+    }
+    return monthsDiff + 1;
+};
 const buildReplacementContext = async (ticketId) => {
     const ticketResult = await query(`
       SELECT
         t.*,
         ol.id AS resolved_orderlineid,
+        ol.orderid AS resolved_orderid,
         ol.uniqueorderid AS resolved_uniqueorderid,
         ol.orderlinenumber AS resolved_orderlinenumber,
         ol.productid AS resolved_productid,
@@ -100,6 +126,7 @@ const buildReplacementContext = async (ticketId) => {
         ? null
         : {
             id: ticketRow.resolved_orderlineid,
+            orderid: ticketRow.resolved_orderid,
             uniqueorderid: ticketRow.resolved_uniqueorderid,
             orderlinenumber: ticketRow.resolved_orderlinenumber,
             productid: ticketRow.resolved_productid,
@@ -120,7 +147,39 @@ const buildReplacementContext = async (ticketId) => {
             userid: ticketRow.resolved_userid,
             modifieddate: ticketRow.resolved_orderline_modifieddate,
         };
-    const monthsalreadybilled = Number(linkedOrderline?.generatedmonthscount ?? 0);
+    const invoiceResult = linkedOrderline?.uniqueorderid
+        ? await query(`
+          SELECT id, invoicenumber, invoicedate, createddate, invoiceurl
+          FROM revoinvoice
+          WHERE orderid = $1
+            AND invoicefor = 'rental'
+          ORDER BY createddate DESC NULLS LAST, id DESC
+        `, [linkedOrderline.uniqueorderid])
+        : { rows: [] };
+    const orderlineGeneratedMonths = Number(linkedOrderline?.generatedmonthscount ?? 0);
+    const billedCycleIndices = new Set();
+    const rentalStartDate = linkedOrderline?.rentstartdate
+        ? new Date(linkedOrderline.rentstartdate)
+        : null;
+    if (rentalStartDate &&
+        !Number.isNaN(rentalStartDate.getTime()) &&
+        invoiceResult.rows.length > 0) {
+        invoiceResult.rows.forEach((invoiceRow) => {
+            const invoiceDate = parseInvoiceDate(invoiceRow);
+            if (!invoiceDate || Number.isNaN(invoiceDate.getTime())) {
+                return;
+            }
+            if (invoiceDate < rentalStartDate) {
+                return;
+            }
+            const billingMonthIndex = getBillingMonthIndex(rentalStartDate, invoiceDate);
+            if (billingMonthIndex > 0) {
+                billedCycleIndices.add(billingMonthIndex);
+            }
+        });
+    }
+    const invoicedMonths = billedCycleIndices.size;
+    const monthsalreadybilled = Math.max(orderlineGeneratedMonths, invoicedMonths);
     const remainingmonths = Math.max(Number(linkedOrderline?.rentalfor ?? 0) - monthsalreadybilled, 0);
     const resolvedAssetNumber = normalizeText(linkedOrderline?.assetnumber ?? ticketRow.assetnumber);
     const linkedOrderlineNumber = normalizeText(linkedOrderline?.orderlinenumber);
@@ -172,6 +231,20 @@ const buildReplacementContext = async (ticketId) => {
         currentstock: stockResult.rows[0] ?? null,
         monthsalreadybilled,
         remainingmonths,
+        invoiceprogress: {
+            totalmonths: Number(linkedOrderline?.rentalfor ?? 0),
+            monthsalreadybilled,
+            invoicedmonths: invoicedMonths,
+            orderlinegeneratedmonths: orderlineGeneratedMonths,
+            invoicecount: invoiceResult.rows.length,
+            invoices: invoiceResult.rows,
+            lastinvoicedate: invoiceResult.rows.length > 0
+                ? parseInvoiceDate(invoiceResult.rows[0])?.toISOString() ?? null
+                : null,
+            iscurrentcycleinvoiced: rentalStartDate && !Number.isNaN(rentalStartDate.getTime())
+                ? billedCycleIndices.has(getBillingMonthIndex(rentalStartDate, new Date()))
+                : false,
+        },
         replacementhistory: historyResult.rows,
     };
 };
@@ -192,7 +265,7 @@ const getActiveReplacementRecord = async (executor, context, ticketId) => {
     }
     return result.rows[0] ?? null;
 };
-const getReplacementCandidateStock = async (assetOrRfid) => {
+const getReplacementCandidateStock = async (assetOrRfid, expectedProductId) => {
     const result = await query(`
       SELECT
         s.*,
@@ -204,11 +277,34 @@ const getReplacementCandidateStock = async (assetOrRfid) => {
         CAST(s.assetnumber AS TEXT) = $1
         OR CAST(s.rfid AS TEXT) = $1
       ORDER BY
+        -- When the same entered value exists as both an RFID and an asset number
+        -- on different rows, prefer the RFID match first.
+        CASE WHEN CAST(s.rfid AS TEXT) = $1 THEN 0 ELSE 1 END,
+        CASE
+          WHEN $2::int IS NOT NULL AND p.id = $2 THEN 0
+          ELSE 1
+        END,
+        CASE
+          WHEN LOWER(COALESCE(s.stockstatus, '')) = 'available' THEN 0
+          ELSE 1
+        END,
+        CASE
+          WHEN LOWER(COALESCE(s.stocktype, '')) = 'rental_product' THEN 0
+          ELSE 1
+        END,
+        CASE
+          WHEN COALESCE(s.ecompublish, FALSE) = FALSE THEN 0
+          ELSE 1
+        END,
+        CASE
+          WHEN COALESCE(NULLIF(TRIM(CAST(s.orderlinenumber AS TEXT)), ''), '') = '' THEN 0
+          ELSE 1
+        END,
         CASE WHEN CAST(s.assetnumber AS TEXT) = $1 THEN 0 ELSE 1 END,
         s.modifieddate DESC NULLS LAST,
         s.id DESC
       LIMIT 1
-    `, [assetOrRfid]);
+    `, [assetOrRfid, expectedProductId ?? null]);
     return result.rows[0] ?? null;
 };
 export var ticketReplacementService;
@@ -915,7 +1011,7 @@ export var ticketReplacementService;
                 normalizeComparableText(newassetnumber) === normalizeComparableText(oldAssetNumber)) {
                 throw new Error("Commercial replacement asset number must be different from the old asset number.");
             }
-            const candidateStock = await getReplacementCandidateStock(newassetnumber);
+            const candidateStock = await getReplacementCandidateStock(newassetnumber, Number(newproductid));
             if (!candidateStock) {
                 throw new Error("No stock record found for the provided replacement asset number or RFID.");
             }
@@ -1293,6 +1389,9 @@ export var ticketReplacementService;
             const replacementStatus = normalizeComparableText(activeReplacement.replacementstatus);
             if (FINAL_REPLACEMENT_STATUSES.has(replacementStatus)) {
                 throw new Error("This replacement flow is already closed.");
+            }
+            if (replacementStatus !== OLD_ASSET_RECEIVED_STATUS) {
+                throw new Error("Receive the old asset before stopping the rental contract.");
             }
             if (context.ticket.stoprental === true) {
                 throw new Error("Rental is already stopped for this ticket.");

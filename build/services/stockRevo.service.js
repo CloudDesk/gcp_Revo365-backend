@@ -600,14 +600,16 @@ export var stockRevoService;
                     FROM (SELECT unnest($1::text[]) as puc) p
                     CROSS JOIN (SELECT unnest($2::text[]) as location) l
                 ),
-                -- Resolve per-location ordered quantities. 
-                -- When orders.storelocation is null (not provided by frontend), 
-                -- fall back to the stock_revo location for that PUC so the join 
-                -- with the grid always finds a match.
+                -- Resolve per-location ordered quantities.
+                -- Priority:
+                -- 1) orderline.deliveryfrom (set during RFID dispatch)
+                -- 2) orders.storelocation (if provided by frontend)
+                -- 3) fallback to the best available stock location for the PUC
                 order_metrics AS (
                     SELECT 
                         p.puc,
                         COALESCE(
+                            NULLIF(ol.deliveryfrom, ''),
                             NULLIF(o.storelocation, ''),
                             s.location
                         ) AS location,
@@ -624,18 +626,35 @@ export var stockRevoService;
                     FROM orderline ol
                     JOIN orders o ON ol.uniqueorderid = o.orderid
                     JOIN product_revo p ON ol.productid = p.id
-                    -- Fallback join: get the stock location when storelocation is blank/null
+                    -- Fallback join: when both deliveryfrom and storelocation are blank/null,
+                    -- choose the location with highest currently available physical stock.
                     LEFT JOIN LATERAL (
-                        SELECT location FROM stock_revo
-                        WHERE puc = p.puc
-                          AND (isdeleted = false OR isdeleted IS NULL)
-                          AND (isarchive = false OR isarchive IS NULL)
-                          AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                          AND (ewaste = false OR ewaste IS NULL)
+                        SELECT s2.location
+                        FROM stock_revo s2
+                        WHERE s2.puc = p.puc
+                          AND (s2.isdeleted = false OR s2.isdeleted IS NULL)
+                          AND (s2.isarchive = false OR s2.isarchive IS NULL)
+                          AND (s2.removefromrecyclebin = false OR s2.removefromrecyclebin IS NULL)
+                          AND (s2.ewaste = false OR s2.ewaste IS NULL)
+                        GROUP BY s2.location
+                        ORDER BY
+                          COUNT(*) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stockstatus = 'Available'
+                              AND s2.stocktype <> 'third_party_product'
+                          ) DESC,
+                          COALESCE(SUM(s2.thirdpartyquantity) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stocktype = 'third_party_product'
+                          ), 0) DESC,
+                          s2.location ASC
                         LIMIT 1
-                    ) s ON (o.storelocation IS NULL OR o.storelocation = '')
+                    ) s ON (
+                        (ol.deliveryfrom IS NULL OR ol.deliveryfrom = '')
+                        AND (o.storelocation IS NULL OR o.storelocation = '')
+                    )
                     WHERE p.puc = ANY($1::text[])
-                    GROUP BY p.puc, COALESCE(NULLIF(o.storelocation, ''), s.location)
+                    GROUP BY p.puc, COALESCE(NULLIF(ol.deliveryfrom, ''), NULLIF(o.storelocation, ''), s.location)
                 )
                 SELECT 
                     grid.puc,
