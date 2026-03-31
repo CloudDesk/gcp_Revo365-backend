@@ -71,7 +71,13 @@ export module userController {
         try {
             // console.log("Request Body in upsertUser:", request.body);
             const userData = request.body;
+            const debugUserData = { ...userData };
+            if (debugUserData.userpassword) {
+                debugUserData.userpassword = "***";
+            }
+            console.log("[DEBUG][POST /users] request payload:", debugUserData);
             let upsertUserResult: any = await userService.upsertUser(userData);
+            console.log("[DEBUG][POST /users] service response command:", upsertUserResult?.command);
             if (upsertUserResult.command == 'UPDATE') {
                 reply.status(200).send('User Updated successfully');
             } else if (upsertUserResult.command == 'INSERT') {

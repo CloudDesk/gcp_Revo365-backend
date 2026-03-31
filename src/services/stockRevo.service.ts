@@ -410,6 +410,16 @@ export module stockRevoService {
         try {
             let totalRecords = jsonresult.length;
             for (let i = 0; i < jsonresult.length; i++) {
+                // Enforce same rules as getDataLoaderDataStock preview route:
+                // - rental_product must always be ecompublish=false
+                // - null/empty rfid means not yet tagged => ecompublish=false
+                if (jsonresult[i].stocktype === 'rental_product') {
+                    jsonresult[i].ecompublish = false;
+                }
+                if (!jsonresult[i].rfid || jsonresult[i].rfid === '') {
+                    jsonresult[i].ecompublish = false;
+                }
+
                 if (jsonresult[i].manufacturedyear) {
                     let convertDateToUTC = await DateCustomize.ConvertDDMMYYYtoutc(jsonresult[i].manufacturedyear)
                     jsonresult[i].manufacturedyear = convertDateToUTC
@@ -464,8 +474,8 @@ export module stockRevoService {
                             COALESCE(SUM(thirdpartyquantity) FILTER (WHERE ${activeFilters} AND stocktype = 'third_party_product'), 0)
                         ) AS quantity,
 
-                    -- ecompublishedquantity: count ecompublish=true non-third-party rows
-                    -- PLUS the thirdpartyquantity of ecompublish=true third_party_product rows
+                    -- ecompublishedquantity = physical ecom=true Available count
+                    --                       + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                     (
                         COUNT(*) FILTER (
                             WHERE ${activeFilters}
@@ -478,7 +488,6 @@ export module stockRevoService {
                             SUM(thirdpartyquantity) FILTER (
                                 WHERE ${activeFilters}
                                 AND ecompublish = true
-                                AND stockstatus = 'Available'
                                 AND stocktype = 'third_party_product'
                             ), 0
                         )
@@ -501,8 +510,10 @@ export module stockRevoService {
                         AND stocktype <> 'third_party_product'
                     ) AS availablequantity,
 
-                    -- overallavailableqty: non-third-party available stock
-                    -- PLUS thirdpartyquantity only from active, ecompublish=true third_party_product rows
+                    -- overallavailableqty = physical ecom=true Available count
+                    --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows
+                    -- (no stockstatus filter on 3rd-party: their qty is virtual, tracked by thirdpartyquantity column)
+                    -- thirdpartyorderquantity deduction is handled in testinupdateQuantity JSONB layer
                     (
                         COALESCE(
                             SUM(thirdpartyquantity) FILTER (
@@ -620,6 +631,62 @@ export module stockRevoService {
                     SELECT p.puc, l.location 
                     FROM (SELECT unnest($1::text[]) as puc) p
                     CROSS JOIN (SELECT unnest($2::text[]) as location) l
+                ),
+                -- Resolve per-location ordered quantities.
+                -- Priority:
+                -- 1) orderline.deliveryfrom (set during RFID dispatch)
+                -- 2) orders.storelocation (if provided by frontend)
+                -- 3) fallback to the best available stock location for the PUC
+                order_metrics AS (
+                    SELECT 
+                        p.puc,
+                        COALESCE(
+                            NULLIF(ol.deliveryfrom, ''),
+                            NULLIF(o.storelocation, ''),
+                            s.location
+                        ) AS location,
+                        -- ordered_qty: active orders only (exclude terminal + fulfilled statuses)
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Orders'
+                            AND ol.orderstatus NOT IN ('payment_failed', 'cancelled', 'returned', 'delivered', 'Sold', 'ready_to_dispatch', 'shipped')
+                            THEN ol.quantity ELSE 0 END), 0) AS ordered_qty,
+                        -- thirdpartyorder_qty: active 3rd-party orders only
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Third Party Orders'
+                            AND ol.orderstatus NOT IN ('payment_failed', 'cancelled', 'returned', 'delivered', 'Sold', 'ready_to_dispatch', 'shipped')
+                            THEN ol.quantity ELSE 0 END), 0) AS thirdpartyorder_qty,
+                        -- thirdpartysold_qty: 3rd-party lines that have been physically fulfilled
+                        COALESCE(SUM(CASE WHEN ol.ordertype = 'Third Party Orders' AND ol.orderstatus IN ('delivered', 'shipped', 'Sold') THEN ol.quantity ELSE 0 END), 0) AS thirdpartysold_qty
+                    FROM orderline ol
+                    JOIN orders o ON ol.uniqueorderid = o.orderid
+                    JOIN product_revo p ON ol.productid = p.id
+                    -- Fallback join: when both deliveryfrom and storelocation are blank/null,
+                    -- choose the location with highest currently available physical stock.
+                    LEFT JOIN LATERAL (
+                        SELECT s2.location
+                        FROM stock_revo s2
+                        WHERE s2.puc = p.puc
+                          AND (s2.isdeleted = false OR s2.isdeleted IS NULL)
+                          AND (s2.isarchive = false OR s2.isarchive IS NULL)
+                          AND (s2.removefromrecyclebin = false OR s2.removefromrecyclebin IS NULL)
+                          AND (s2.ewaste = false OR s2.ewaste IS NULL)
+                        GROUP BY s2.location
+                        ORDER BY
+                          COUNT(*) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stockstatus = 'Available'
+                              AND s2.stocktype <> 'third_party_product'
+                          ) DESC,
+                          COALESCE(SUM(s2.thirdpartyquantity) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stocktype = 'third_party_product'
+                          ), 0) DESC,
+                          s2.location ASC
+                        LIMIT 1
+                    ) s ON (
+                        (ol.deliveryfrom IS NULL OR ol.deliveryfrom = '')
+                        AND (o.storelocation IS NULL OR o.storelocation = '')
+                    )
+                    WHERE p.puc = ANY($1::text[])
+                    GROUP BY p.puc, COALESCE(NULLIF(ol.deliveryfrom, ''), NULLIF(o.storelocation, ''), s.location)
                 )
                 SELECT 
                     grid.puc,
@@ -635,7 +702,8 @@ export module stockRevoService {
                         ), 0)
                     ) AS quantity,
 
-                    -- ecompublishedquantity per location
+                    -- ecompublishedquantity = physical ecom=true Available count
+                    --                       + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                     (
                         COUNT(s.id) FILTER (
                             WHERE s.ecompublish = true
@@ -645,7 +713,6 @@ export module stockRevoService {
                         +
                         COALESCE(SUM(s.thirdpartyquantity) FILTER (
                             WHERE s.ecompublish = true
-                            AND s.stockstatus = 'Available'
                             AND s.stocktype = 'third_party_product'
                         ), 0)
                     ) AS ecompublishedquantity,
@@ -659,6 +726,8 @@ export module stockRevoService {
                         AND s.stocktype <> 'third_party_product'
                     ) AS availablequantity,
 
+                    -- overallavailableqty = physical ecom=true Available count
+                    --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                     (
                         COUNT(s.id) FILTER (
                             WHERE s.ecompublish = true AND s.stockstatus = 'Available'
@@ -667,7 +736,6 @@ export module stockRevoService {
                         +
                         COALESCE(SUM(s.thirdpartyquantity) FILTER (
                             WHERE s.ecompublish = true
-                            AND s.stockstatus = 'Available'
                             AND s.stocktype = 'third_party_product'
                         ), 0)
                     ) AS overallavailableqty,
@@ -680,9 +748,9 @@ export module stockRevoService {
                         WHERE s.stocktype = 'third_party_product'
                     ), 0) AS thirdpartyqty,
 
+                    -- thirdpartyavailableqty = ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                     COALESCE(SUM(s.thirdpartyquantity) FILTER (
                         WHERE s.ecompublish = true
-                        AND s.stockstatus = 'Available'
                         AND s.stocktype = 'third_party_product'
                     ), 0) AS thirdpartyavailableqty,
 
@@ -696,7 +764,11 @@ export module stockRevoService {
                         WHERE s.ecompublish = false
                         AND s.stockstatus = 'Rental Sold'
                         AND s.stocktype = 'rental_product'
-                    ) AS rentalsoldquantity
+                    ) AS rentalsoldquantity,
+
+                    COALESCE(om.ordered_qty, 0) AS ordered_qty,
+                    COALESCE(om.thirdpartyorder_qty, 0) AS thirdpartyorder_qty,
+                    COALESCE(om.thirdpartysold_qty, 0) AS thirdpartysold_qty
 
                 FROM grid
                 LEFT JOIN stock_revo s ON s.puc = grid.puc AND s.location = grid.location
@@ -704,25 +776,32 @@ export module stockRevoService {
                     AND (s.isarchive = false OR s.isarchive IS NULL)
                     AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
                     AND (s.ewaste = false OR s.ewaste IS NULL)
-                GROUP BY grid.puc, grid.location
+                LEFT JOIN order_metrics om ON grid.puc = om.puc AND grid.location = om.location
+                GROUP BY grid.puc, grid.location, om.ordered_qty, om.thirdpartyorder_qty, om.thirdpartysold_qty
             `;
             const quantityResult = await query(quantityQuery, [pucs, locations]);
-            const batchUpdateData = quantityResult.rows.map((row) => ({
+            const batchUpdateData = quantityResult.rows.map((row: any) => ({
                 puc: row.puc,
                 location: row.location,
                 quantity: parseInt(row.quantity, 10),
                 overallquantity: parseInt(row.overallquantity, 10),
-                ecompublishedquantity: parseInt(row.ecompublishedquantity, 10),
+                ecompublishedquantity: Math.max(0, parseInt(row.ecompublishedquantity, 10) - (parseInt(row.ordered_qty, 10) + parseInt(row.thirdpartyorder_qty, 10))),
                 soldquantity: parseInt(row.soldquantity, 10),
-                availablequantity: parseInt(row.availablequantity, 10),
-                overallavailableqty: parseInt(row.overallavailableqty, 10),
+                // Subtract ordered_qty for normal orders (mirrors overallavailableqty logic)
+                availablequantity: Math.max(0, parseInt(row.availablequantity, 10) - parseInt(row.ordered_qty, 10)),
+                overallavailableqty: Math.max(0, parseInt(row.overallavailableqty, 10) - (parseInt(row.ordered_qty, 10) + parseInt(row.thirdpartyorder_qty, 10))),
                 thirdpartyqty: parseInt(row.thirdpartyqty, 10),
                 thirdpartyavailableqty: parseInt(row.thirdpartyavailableqty, 10),
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
                 rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
-                rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10)
+                rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10),
+                ordered_qty: parseInt(row.ordered_qty, 10),
+                thirdpartyorder_qty: parseInt(row.thirdpartyorder_qty, 10),
+                thirdpartysold_qty: parseInt(row.thirdpartysold_qty, 10)
             }));
+            console.log('ANTIGRAVITY_LOG: batchUpdateData before batchUpdateData', JSON.stringify(batchUpdateData, null, 2));
             const updateResults = await productrevoService.testupsertQuantityFieldsBatch(batchUpdateData, issold);
+            console.log('ANTIGRAVITY_LOG: updateResults batchUpdateData', JSON.stringify(updateResults, null, 2));
             return updateResults;
 
         } catch (error) {

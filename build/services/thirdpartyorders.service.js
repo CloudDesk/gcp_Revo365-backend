@@ -157,12 +157,62 @@ export var thirdPartyOrdersService;
                 }
             }
             else {
-                // console.log('Update Values Array is empty, no orders to update.');
+                // console.log('Update Values Array is empty, no orders to update.')
                 return { data: `No orders to update`, status: 'failure' };
             }
         }
         catch (error) {
-            console.error("Error in updateOrder:", error);
+            console.error("Error in updateThirdPartyOrder:", error);
+            throw error;
+        }
+    };
+    thirdPartyOrdersService.updateThirdPartyOrderStatus = async (data) => {
+        try {
+            const { id, orderstatus } = data;
+            // Allowed statuses admin can set on a 3rd-party order
+            const allowedStatuses = ['dispatched', 'shipped', 'delivered', 'cancelled', 'processing', 'ordered'];
+            if (!allowedStatuses.includes(orderstatus)) {
+                return { error: `Invalid status '${orderstatus}'. Allowed: ${allowedStatuses.join(', ')}` };
+            }
+            // 1. Update thirdpartyorders row
+            const dateField = orderstatus === 'delivered' ? ', delivereddate = NOW()'
+                : orderstatus === 'dispatched' ? ', dispatcheddate = NOW()'
+                    : orderstatus === 'cancelled' ? ', cancelleddate = NOW()'
+                        : '';
+            const orderUpdateResult = await query(`UPDATE thirdpartyorders SET orderstatus = $1 ${dateField} WHERE id = $2 RETURNING *`, [orderstatus, id]);
+            if (orderUpdateResult.rowCount === 0) {
+                return { error: `No thirdpartyorder found with id: ${id}` };
+            }
+            // 2. Update all linked orderlines to the same status
+            const orderlineUpdateResult = await query(`UPDATE orderline SET orderstatus = $1 WHERE thirdpartyorderid = $2 RETURNING *`, [orderstatus, id]);
+            // 3. For cancellation: trigger JSONB recompute so thirdpartyorderquantity drops
+            // For delivered/shipped: CTE already excludes these statuses — JSONB auto-clears on next recompute
+            if (orderstatus === 'cancelled' && orderlineUpdateResult.rows.length > 0) {
+                const pucSet = new Set();
+                for (const row of orderlineUpdateResult.rows) {
+                    if (row.puc)
+                        pucSet.add(row.puc);
+                    else {
+                        // Fetch puc from product_revo via productid
+                        const pucResult = await query(`SELECT puc FROM product_revo WHERE id = $1 LIMIT 1`, [row.productid]);
+                        if (pucResult.rows[0]?.puc)
+                            pucSet.add(pucResult.rows[0].puc);
+                    }
+                }
+                if (pucSet.size > 0) {
+                    const { stockRevoService } = await import('./stockRevo.service.js');
+                    await stockRevoService.testinupdateQuantity(Array.from(pucSet), false);
+                }
+            }
+            return {
+                success: true,
+                order: orderUpdateResult.rows[0],
+                orderlines: orderlineUpdateResult.rows,
+                message: `3rd-party order ${id} marked as '${orderstatus}'`
+            };
+        }
+        catch (error) {
+            console.error('Error in updateThirdPartyOrderStatus:', error);
             throw error;
         }
     };
