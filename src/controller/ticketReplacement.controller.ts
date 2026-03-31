@@ -59,4 +59,39 @@ export module ticketReplacementController {
       reply.status(400).send({ message });
     }
   };
+
+  export const assignCommercialReplacement = async (request: any, reply: any) => {
+    try {
+      const result = await ticketReplacementService.assignCommercialReplacement(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'assignCommercialReplacement':", error);
+      const message =
+        error?.message || "Failed to assign the commercial replacement asset.";
+      reply.status(400).send({ message });
+    }
+  };
+
+  export const rejectReplacement = async (request: any, reply: any) => {
+    try {
+      const result = await ticketReplacementService.rejectReplacement(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'rejectReplacement':", error);
+      const message = error?.message || "Failed to reject the rental replacement flow.";
+      reply.status(400).send({ message });
+    }
+  };
+
+  export const stopRental = async (request: any, reply: any) => {
+    try {
+      const result = await ticketReplacementService.stopRental(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'stopRental':", error);
+      const message = error?.message || "Failed to stop the rental contract.";
+      reply.status(400).send({ message });
+    }
+  };
 }
+

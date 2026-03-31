@@ -62,7 +62,7 @@ import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
-import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema } from "../schemas/ticketReplacement.schema.js";
+import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, stopRentalSchema } from "../schemas/ticketReplacement.schema.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -364,6 +364,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/tickets/:id/rental-replacement/initiate', { preHandler: [getSession, validateRequestBody(initiateRentalReplacementSchema)] }, ticketReplacementController.initiateRentalReplacement);
     fastify.post('/tickets/:id/rental-replacement/receive-old-asset', { preHandler: [getSession, validateRequestBody(receiveOldAssetSchema)] }, ticketReplacementController.receiveOldAsset);
     fastify.post('/tickets/:id/rental-replacement/assign-technical', { preHandler: [getSession, validateRequestBody(assignTechnicalReplacementSchema)] }, ticketReplacementController.assignTechnicalReplacement);
+    fastify.post('/tickets/:id/rental-replacement/assign-commercial', { preHandler: [getSession, validateRequestBody(assignCommercialReplacementSchema)] }, ticketReplacementController.assignCommercialReplacement);
+    fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
+    fastify.post('/tickets/:id/rental-replacement/stop-rental', { preHandler: [getSession, validateRequestBody(stopRentalSchema)] }, ticketReplacementController.stopRental);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
     fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
@@ -520,6 +523,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 }
 
 export default Revo365Routes
+
 
 
 

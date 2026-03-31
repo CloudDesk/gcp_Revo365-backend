@@ -1006,32 +1006,106 @@ ${whereClause} ${orderByClause}`;
         }
     };
 
+    const parseOrderlineIds = (value: any) => {
+        if (value == null || value === "") {
+            return [] as number[];
+        }
+
+        const rawValues = Array.isArray(value)
+            ? value
+            : String(value)
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+
+        const parsedValues = rawValues
+            .map((entry: any) => Number(entry))
+            .filter((entry: number) => Number.isFinite(entry) && entry > 0)
+            .map((entry: number) => Math.trunc(entry));
+
+        return Array.from(new Set(parsedValues));
+    };
+
+    const getBillingChainKey = (row: any) => Number(row.parentorderlineid ?? row.id);
+
     export const getInvoiceGeneratedData = async (request: any) => {
         try {
-            console.log('Inside getInvoiceGeneratedData function with request:', request.params);
+            console.log('Inside getInvoiceGeneratedData function with request:', request.params, request.query);
             const orderId = request.params.uniqueorderid;
-            console.log('Order ID:', orderId);
-            const result = await query(`SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
-            console.log('Query Result:', result.rows);
-            if (result.rows.length === 0) {
-                return { error: "No order found for the given order ID." };
+            const requestedOrderlineIds = parseOrderlineIds(request.query?.orderlineids);
+
+            let result;
+            if (requestedOrderlineIds.length > 0) {
+                result = await query(
+                    `
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [requestedOrderlineIds]
+                );
             } else {
-                const rows = result.rows;
-
-                const aggregated = {
-                    // If all invoicegenerated true, then true, else false
-                    invoicegenerated: rows.every(r => r.invoicegenerated === true),
-
-                    // Maximum generatedmonthscount among orderlines
-                    generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
-
-                    // Maximum rentalfor (longest rental period)
-                    rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
-                };
-
-                return aggregated;
-
+                result = await query(
+                    `
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [orderId]
+                );
             }
+
+            if (result.rows.length === 0) {
+                return {
+                    invoicegenerated: false,
+                    generatedmonthscount: 0,
+                    rentalfor: 0,
+                    activebillinglineids: [],
+                    hasbillingconflict: false,
+                    billingconflictchains: []
+                };
+            }
+
+            const rows = result.rows;
+            const chainCounts = rows.reduce((acc: Record<string, number>, row: any) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+
+            return {
+                invoicegenerated: rows.every((r: any) => r.invoicegenerated === true),
+                generatedmonthscount: Math.max(...rows.map((r: any) => r.generatedmonthscount ?? 0)),
+                rentalfor: Math.max(...rows.map((r: any) => r.rentalfor ?? 0)),
+                activebillinglineids: rows.map((row: any) => row.id),
+                hasbillingconflict: billingconflictchains.length > 0,
+                billingconflictchains
+            };
         } catch (error) {
             console.error("Query Execution Error: IN getInvoiceGeneratedData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
@@ -1044,29 +1118,78 @@ ${whereClause} ${orderByClause}`;
         try {
             console.log("Inside update", request.body);
             const { uniqueorderid } = request.body;
-            console.log("Unique Order ID:", uniqueorderid);
+            const requestedOrderlineIds = parseOrderlineIds(request.body?.orderlineids);
+            console.log("Unique Order ID:", uniqueorderid, 'Requested orderline ids:', requestedOrderlineIds);
 
-            // 1️⃣ Get all orderlines for this uniqueorderid
-            const { rows } = await query(
-                `SELECT id, rentalfor, generatedmonthscount 
-       FROM orderline 
-       WHERE uniqueorderid = $1`,
-                [uniqueorderid]
-            );
-            console.log("Orderlines fetched:", rows);
-            if (!rows.length) {
-                return { success: false, message: "No orderlines found" };
+            let rows: any[] = [];
+            if (requestedOrderlineIds.length > 0) {
+                const result = await query(
+                    `
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [requestedOrderlineIds]
+                );
+                rows = result.rows;
+            } else {
+                const result = await query(
+                    `
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [uniqueorderid]
+                );
+                rows = result.rows;
             }
 
-            // 2️⃣ Filter the orderlines that still have months left
-            const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
+            console.log("Orderlines fetched:", rows);
+            if (!rows.length) {
+                return { success: false, message: "No active billing orderlines found" };
+            }
+
+            const chainCounts = rows.reduce((acc: Record<string, number>, row: any) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+
+            if (billingconflictchains.length > 0) {
+                return {
+                    success: false,
+                    message: "Multiple active billing lines exist in the same contract chain. Reconcile the billing chain before generating rental invoices.",
+                    billingconflictchains
+                };
+            }
+
+            const stillActive = rows.filter(
+                (row: any) =>
+                    Number(row.generatedmonthscount ?? 0) < Number(row.rentalfor ?? 0)
+            );
             console.log("Active rentals to update:", stillActive);
 
             if (!stillActive.length) {
                 return { success: false, message: "No active rental products to update" };
             }
 
-            // 3️⃣ Update only active rentals
             const idsToUpdate = stillActive.map(r => r.id);
             console.log("IDs to update:", idsToUpdate);
 
@@ -1092,9 +1215,6 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
-
-
-
     export const upsertOrderrfid = async (orderData: any) => {
         try {
             let querydata: string;
@@ -1964,3 +2084,5 @@ Thank You!`,
     };
 
 }
+
+

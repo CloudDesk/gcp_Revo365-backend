@@ -56,5 +56,38 @@ export var ticketReplacementController;
             reply.status(400).send({ message });
         }
     };
+    ticketReplacementController.assignCommercialReplacement = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.assignCommercialReplacement(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'assignCommercialReplacement':", error);
+            const message = error?.message || "Failed to assign the commercial replacement asset.";
+            reply.status(400).send({ message });
+        }
+    };
+    ticketReplacementController.rejectReplacement = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.rejectReplacement(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'rejectReplacement':", error);
+            const message = error?.message || "Failed to reject the rental replacement flow.";
+            reply.status(400).send({ message });
+        }
+    };
+    ticketReplacementController.stopRental = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.stopRental(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'stopRental':", error);
+            const message = error?.message || "Failed to stop the rental contract.";
+            reply.status(400).send({ message });
+        }
+    };
 })(ticketReplacementController || (ticketReplacementController = {}));
 //# sourceMappingURL=ticketReplacement.controller.js.map
