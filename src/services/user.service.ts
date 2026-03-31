@@ -288,6 +288,10 @@ export module userService {
         `;
 
         const result = await query(insertQuery, insertValues);
+        console.log("[DEBUG][POST /users] user created:", {
+          id: result.rows?.[0]?.id,
+          useremail: result.rows?.[0]?.useremail,
+        });
 
         return {
           command: "INSERT",
@@ -351,6 +355,10 @@ export module userService {
 
       const result = await query(updateQuery, [...updateValues, id]);
       console.log("Update Result:", result.rows);
+      console.log("[DEBUG][POST /users] user updated:", {
+        id,
+        updatedFields: updateQueryFields,
+      });
 
       return {
         command: "UPDATE",

@@ -39,7 +39,9 @@ export var addressController;
     addressController.upsertAddress = async (request, reply) => {
         try {
             const addressData = request.body;
+            console.log("[DEBUG][POST /address] request payload:", addressData);
             let upsertAddressResult = await addressService.upsertAddress(addressData);
+            console.log("[DEBUG][POST /address] service response command:", upsertAddressResult?.command);
             if (upsertAddressResult.command === "UPDATE" || upsertAddressResult.command === "INSERT") {
                 let message = {};
                 message = {

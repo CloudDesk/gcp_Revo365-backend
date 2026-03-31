@@ -849,15 +849,21 @@ ${whereClause} ${orderByClause}`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            if (result.rows[0].orderstatus === 'cancelled') {
-                let productid = result.rows[0].productid;
-                let quantitydata = result.rows[0].quantity;
-                let updateQuantity = await productrevoService.updateCancelledOrderedQuantity([productid], Number(quantitydata));
-                let userid = result.rows[0].userid;
-                let getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
+            const updatedRow = result.rows[0];
+            const newStatus = updatedRow?.orderstatus;
+            if (newStatus === 'cancelled') {
+                // productid on orders is already an int[] — do NOT double-wrap it
+                const productIds = Array.isArray(updatedRow.productid)
+                    ? updatedRow.productid
+                    : [updatedRow.productid];
+                const quantitydata = Number(updatedRow.quantity);
+                // Decrement orderedquantity and refresh quantityforlocation JSONB
+                await productrevoService.updateCancelledOrderedQuantity(productIds, quantitydata);
+                const userid = updatedRow.userid;
+                const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
                 const template = emailTemplates.orders.cancelled;
-                const orderId = result.rows[0].orderid;
-                const orderAmount = result.rows[0].orderamount;
+                const orderId = updatedRow.orderid;
+                const orderAmount = updatedRow.orderamount;
                 let maildata = {
                     body: {
                         to: getuser.rows[0].useremail,
@@ -867,7 +873,19 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                let sendEmailResult = await sendMail(maildata, false);
+                await sendMail(maildata, false);
+            }
+            else if (newStatus === 'delivered' || newStatus === 'Sold') {
+                // Order is fully fulfilled — release the reserved orderedquantity
+                // so quantityforlocation stops subtracting it from available qty.
+                // updateCancelledOrderedQuantity handles both orderedquantity decrement
+                // and the testinupdateQuantity JSONB refresh.
+                const productIds = Array.isArray(updatedRow.productid)
+                    ? updatedRow.productid
+                    : [updatedRow.productid];
+                const quantitydata = Number(updatedRow.quantity);
+                await productrevoService.updateCancelledOrderedQuantity(productIds, quantitydata);
+                console.log(`[upsertOrder] Released orderedquantity for ${newStatus} order ${updatedRow.orderid}`);
             }
             return result;
         }
@@ -899,15 +917,21 @@ ${whereClause} ${orderByClause}`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            if (result.rows[0].orderstatus === 'cancelled') {
-                let productid = result.rows[0].productid;
-                let quantitydata = result.rows[0].quantity;
-                let updateQuantity = await productrevoService.updateCancelledOrderedQuantity([productid], Number(quantitydata));
-                let userid = result.rows[0].userid;
-                let getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
+            const lineRow = result.rows[0];
+            const lineStatus = lineRow?.orderstatus;
+            const lineType = lineRow?.ordertype;
+            if (lineStatus === 'cancelled') {
+                // Only normal orders track orderedquantity — 3rd-party orders do not
+                if (lineType === 'Orders') {
+                    const productid = lineRow.productid; // single int on orderline
+                    const quantitydata = Number(lineRow.quantity);
+                    await productrevoService.updateCancelledOrderedQuantity([productid], quantitydata);
+                }
+                const userid = lineRow.userid;
+                const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
                 const template = emailTemplates.orders.cancelled;
-                const orderId = result.rows[0].orderid;
-                const orderAmount = result.rows[0].orderamount;
+                const orderId = lineRow.orderid;
+                const orderAmount = lineRow.orderamount;
                 let maildata = {
                     body: {
                         to: getuser.rows[0].useremail,
@@ -917,7 +941,16 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                let sendEmailResult = await sendMail(maildata, false);
+                await sendMail(maildata, false);
+            }
+            else if (lineStatus === 'delivered' || lineStatus === 'Sold') {
+                // Orderline fulfilled — release reserved orderedquantity (normal orders only)
+                if (lineType === 'Orders') {
+                    const productid = lineRow.productid;
+                    const quantitydata = Number(lineRow.quantity);
+                    await productrevoService.updateCancelledOrderedQuantity([productid], quantitydata);
+                    console.log(`[updateorderlineitem] Released orderedquantity for ${lineStatus} orderline ${lineRow.orderlinenumber}`);
+                }
             }
             return result;
         }

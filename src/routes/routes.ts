@@ -9,7 +9,6 @@ import { recordCount } from "../controller/recordcount.controller.js";
 import { globalSearchController } from "../controller/globalsearch.controller.js";
 import { recycleBinController } from "../controller/recyclebin.controller.js";
 import { cartController } from "../controller/cart.controller.js";
-import { wishListController } from "../controller/wishlist.controller.js";
 import { userController } from "../controller/user.controller.js";
 import { supplierController } from "../controller/supplier.controller.js";
 import { addressController } from "../controller/address.controller.js";
@@ -40,7 +39,7 @@ import { constEstimationController } from "../controller/costestimation.controll
 import { revoinvoicecontroller } from "../controller/revoinvoice.controller.js";
 import { tablecontoller } from "../controller/table.controller.js";
 import { permissionscontroller } from "../controller/permissions.controller.js";
-import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
+import { addressInsertSchema } from "../schemas/address.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { servicecostestimationSchema } from "../schemas/servicecostestimation.schema.js";
 import { revoinvoiceSchema } from "../schemas/revoinvoice.schema.js";
@@ -194,11 +193,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/demandrequest', { preHandler: [getSession] }, demandrequestController.getDemandRequest);
     fastify.post('/demandrequest', { preHandler: [getSession] }, demandrequestController.upsertDemandRequest);
 
-    //wishlist
-    fastify.get('/wishlist', { preHandler: [getSession] }, wishListController.getWishlistData);
-    fastify.get('/wishlist/:userId', { preHandler: [getSession] }, wishListController.getUserWishlistData);
-    fastify.delete('/wishlist/:id', { preHandler: [getSession] }, wishListController.deleteFromWishlist);
-    fastify.post('/wishlist', { preHandler: [getSession] }, wishListController.upsertToWishlist);
+    //wishlist (using consolidated cartController)
+    fastify.get('/wishlist', { preHandler: [getSession] }, cartController.getCartData);
+    fastify.get('/wishlist/:userId', { preHandler: [getSession] }, cartController.getUserCartData);
+    fastify.delete('/wishlist/:id', { preHandler: [getSession] }, cartController.deleteCart);
+    fastify.post('/wishlist', { preHandler: [getSession] }, cartController.upsertCart);
 
     //users
     fastify.get('/users', { preHandler: [getSession] }, userController.getUsersData);
@@ -228,7 +227,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //address
     fastify.get('/address', { preHandler: [getSession] }, addressController.getAddressData);
     fastify.get('/address/:userId', { preHandler: [getSession] }, addressController.getUserAddressData);
-    fastify.post('/address', { preHandler: [validateRequestBody(inventoryusersSchema)] }, addressController.upsertAddress);
+    fastify.post('/address', { preHandler: [validateRequestBody(addressInsertSchema)] }, addressController.upsertAddress);
     fastify.delete('/address/:id', { preHandler: [getSession] }, addressController.deleteAddress);
 
     //orders
@@ -249,7 +248,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/v2/orders/transactions', { preHandler: [getSession] }, ordersController.getInvoiceDataForOrderid)
 
     //third party orders - inventory
-    fastify.get('/thirdpartyorders', thirdPartyController.getThirdpartyOrderData);
+    fastify.get('/thirdpartyorders', { preHandler: [getSession] }, thirdPartyController.getThirdpartyOrderData);
+    // Admin: mark 3rd-party order as dispatched / shipped / delivered / cancelled
+    // body: { id: number, orderstatus: 'dispatched'|'shipped'|'delivered'|'cancelled' }
+    fastify.post('/thirdpartyorders/status', { preHandler: [getSession] }, thirdPartyController.updateThirdPartyOrderStatus);
 
     fastify.post('/test/task', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray)
 
