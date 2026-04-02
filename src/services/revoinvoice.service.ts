@@ -64,7 +64,7 @@ export module revoinvoiceservice {
         try {
             let invoicefor = invoicedata[0].invoicefor
             let template = ''
-            if (invoicefor === 'product') {
+            if (invoicefor === 'product' || invoicefor === 'penalty') {
                 template = "invoice/revoinvoiceproduct.docx";
 
             } else if (invoicefor === 'service') {

@@ -313,6 +313,7 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         : { rows: [] };
     const orderLineItems = orderLineResult.rows.map((row) => ({
         id: row.id,
+        uniqueorderid: row.uniqueorderid,
         productid: row.productid,
         quantity: row.quantity,
         ordername: row.ordername,
@@ -345,6 +346,20 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         productIds,
         expectedAmountRupees,
     };
+};
+const resolveUniqueOrderIdFromContext = (context) => {
+    const candidates = [
+        context?.primaryOrderRow?.uniqueorderid,
+        context?.orderLineItems?.[0]?.uniqueorderid,
+        context?.combinedOrderRows?.[0]?.orderid,
+        context?.combinedOrderRows?.[0]?.uniqueorderid,
+    ];
+    for (const candidate of candidates) {
+        if (candidate != null && String(candidate).trim() !== "") {
+            return String(candidate).trim();
+        }
+    }
+    return null;
 };
 const createShiprocketOrderForTransaction = async (context, transactionData) => {
     try {
@@ -464,6 +479,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     if (!lock.acquired) {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
                 status: 200,
@@ -473,7 +489,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+                },
             };
         }
         logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
@@ -487,6 +506,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     try {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
                 status: 200,
@@ -496,7 +516,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+                },
             };
         }
         if (verifyCheckoutSignature) {
@@ -590,7 +613,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(context),
+                },
             };
         }
         const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
@@ -639,7 +665,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 return {
                     status: 200,
                     message: "Payment already processed",
-                    data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                    data: {
+                        redirectUrl: REDIRECT_URL_SUCCESS,
+                        uniqueorderid: resolveUniqueOrderIdFromContext(await getOrderContextByMerchantTransactionId(merchantTransactionId)),
+                    },
                 };
             }
             throw error;
@@ -700,7 +729,11 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         return {
             status: 200,
             message: "Payment verified and processed successfully",
-            data: { redirectUrl: REDIRECT_URL_SUCCESS },
+            uniqueorderid: resolveUniqueOrderIdFromContext(context),
+            data: {
+                redirectUrl: REDIRECT_URL_SUCCESS,
+                uniqueorderid: resolveUniqueOrderIdFromContext(context),
+            },
         };
     }
     finally {
@@ -1187,9 +1220,11 @@ export var transactionService;
                 console.log("end");
                 return {
                     status: 200,
+                    uniqueorderid: insertorderdata.rows[0].orderid,
                     data: {
                         status: "success",
                         message: "Order placed successfully",
+                        uniqueorderid: insertorderdata.rows[0].orderid,
                         // orderId: order.id,
                         // amount: order.amount,
                         // currency: order.currency,

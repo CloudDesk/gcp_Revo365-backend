@@ -62,6 +62,8 @@ import { enquiryExportController } from "../controller/enquiryExport.controller.
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
 import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, stopRentalSchema } from "../schemas/ticketReplacement.schema.js";
+import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
+import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -369,6 +371,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/tickets/:id/rental-replacement/assign-commercial', { preHandler: [getSession, validateRequestBody(assignCommercialReplacementSchema)] }, ticketReplacementController.assignCommercialReplacement);
     fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
     fastify.post('/tickets/:id/rental-replacement/stop-rental', { preHandler: [getSession, validateRequestBody(stopRentalSchema)] }, ticketReplacementController.stopRental);
+    fastify.get('/rental-agreements/create-context', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementCreateContext);
+    fastify.get('/rental-agreements', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreements);
+    fastify.get('/rental-agreements/:id', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementById);
+    fastify.post('/rental-agreements', { preHandler: [getSession, validateRequestBody(createRentalAgreementSchema)] }, rentalAgreementController.createRentalAgreement);
+    fastify.post('/rental-agreements/:id/generate-pdf', { preHandler: [getSession, validateRequestBody(regenerateRentalAgreementPdfSchema)] }, rentalAgreementController.regenerateRentalAgreementPdf);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
     fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
