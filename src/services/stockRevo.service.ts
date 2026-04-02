@@ -636,13 +636,15 @@ export module stockRevoService {
                 -- Priority:
                 -- 1) orderline.deliveryfrom (set during RFID dispatch)
                 -- 2) orders.storelocation (if provided by frontend)
-                -- 3) fallback to the best available stock location for the PUC
+                -- 3) orders.location (legacy/fallback order location)
+                -- 4) fallback to the best available stock location for the PUC
                 order_metrics AS (
                     SELECT 
                         p.puc,
                         COALESCE(
                             NULLIF(ol.deliveryfrom, ''),
                             NULLIF(o.storelocation, ''),
+                            NULLIF(o.location, ''),
                             s.location
                         ) AS location,
                         -- ordered_qty: active orders only (exclude terminal + fulfilled statuses)
@@ -658,7 +660,7 @@ export module stockRevoService {
                     FROM orderline ol
                     JOIN orders o ON ol.uniqueorderid = o.orderid
                     JOIN product_revo p ON ol.productid = p.id
-                    -- Fallback join: when both deliveryfrom and storelocation are blank/null,
+                    -- Fallback join: when deliveryfrom/storelocation/location are blank/null,
                     -- choose the location with highest currently available physical stock.
                     LEFT JOIN LATERAL (
                         SELECT s2.location
@@ -684,9 +686,10 @@ export module stockRevoService {
                     ) s ON (
                         (ol.deliveryfrom IS NULL OR ol.deliveryfrom = '')
                         AND (o.storelocation IS NULL OR o.storelocation = '')
+                        AND (o.location IS NULL OR o.location = '')
                     )
                     WHERE p.puc = ANY($1::text[])
-                    GROUP BY p.puc, COALESCE(NULLIF(ol.deliveryfrom, ''), NULLIF(o.storelocation, ''), s.location)
+                    GROUP BY p.puc, COALESCE(NULLIF(ol.deliveryfrom, ''), NULLIF(o.storelocation, ''), NULLIF(o.location, ''), s.location)
                 )
                 SELECT 
                     grid.puc,

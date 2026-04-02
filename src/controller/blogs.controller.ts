@@ -9,7 +9,6 @@ export module blogscontroller {
         try {
             const bannerData = request.body;
             let upsertBlogResult = await blogService.upsertBlogs(bannerData);
-            console.log("Upsert Banner Result:", upsertBlogResult);
             if (upsertBlogResult.command === "UPDATE" || upsertBlogResult.command === "INSERT") {
                 let message: any = {};
                 message = {
@@ -30,7 +29,6 @@ export module blogscontroller {
     export const getAllBlogs = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             let getAllBlogsResult = await blogService.getAllBlogs();
-            console.log("Get All Blogs Result:", getAllBlogsResult);
             reply.status(200).send(getAllBlogsResult);
         } catch (error) {
             console.log('ERROR IN  Controller getAllBlogs', error);
@@ -39,7 +37,6 @@ export module blogscontroller {
     }
     export const deleteBlog = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
         try {
-            console.log('Inside controller')
             const { id } = request.params;
             let deleteBlogResult = await blogService.deleteBlog(Number(id));
             reply.send(deleteBlogResult);

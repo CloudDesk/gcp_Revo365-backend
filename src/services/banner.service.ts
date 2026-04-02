@@ -4,7 +4,6 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 export module bannerService {
   export const upsertBanner = async (bannerData: any[]) => {
     try {
-        console.log("Banner Data Received for Upsert:", bannerData);
       let results = [];
       for(const banner of bannerData) {
         let querydata, params;
@@ -55,7 +54,6 @@ export module bannerService {
     try {
         const querydata = `SELECT * FROM banner`;
         const result =  await query(querydata,[]);
-        console.log("Get All Banner Result:", result);
         return result.rows;
         
     } catch (error) {
@@ -65,7 +63,6 @@ export module bannerService {
 
   export const deleteBanner = async (id: number) => {
     try {
-        console.log("Deleting Banner with ID:", id);
       const result: any = await query(`DELETE FROM banner WHERE id = $1`, [id]);
       if (result.rowCount != 0) {
         return `Data Deleted Successfully`;

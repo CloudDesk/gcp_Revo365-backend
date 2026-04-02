@@ -7,16 +7,12 @@ const PASSWORD = SHIPROCKET_PASSWORD as string;
 
 async function loginShiprocket(): Promise<string | null> {
   try {
-    console.log(BASE,EMAIL,PASSWORD,'cred')
     const response = await axios.post(`${BASE}/auth/login`, {
       email: EMAIL,
       password: PASSWORD,
     });
 
     const token: string = response.data.token;
-    console.log("✅ Login successful!");
-    console.log("Token:", token);
-
     return token;
   } catch (error: any) {
     console.error("❌ Login failed:", error.response?.data || error.message);
@@ -30,5 +26,3 @@ export default loginShiprocket;
 // if (import.meta.url === `file://${process.argv[1]}`) {
 //   loginShiprocket();
 // }
-
-loginShiprocket();

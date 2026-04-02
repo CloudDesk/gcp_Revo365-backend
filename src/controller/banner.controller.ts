@@ -13,7 +13,6 @@ export module bannerController {
         try {
             const bannerData = request.body;
             let upsertBannerResult = await bannerService.upsertBanner(bannerData);
-            console.log("Upsert Banner Result:", upsertBannerResult);
             if (upsertBannerResult.command === "UPDATE" || upsertBannerResult.command === "INSERT") {
                 let message: any = {};
                 message = {
@@ -34,7 +33,6 @@ export module bannerController {
     export const getAllBanner = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             let getAllBannerResult = await bannerService.getAllBanner();
-            console.log("Get All Banner Result:", getAllBannerResult);
             reply.status(200).send(getAllBannerResult);
         } catch (error) {
             console.log('ERROR IN  Controller getAllBanner', error);

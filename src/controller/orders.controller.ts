@@ -113,7 +113,6 @@ export module ordersController {
     export const getorderlinedata = async (request) => {
         try {
             let data = await ordersService.getOrderLineData(request)
-            console.log("data", data);
             return data
         } catch (error) {
             console.error("Query Execution Error: IN getorderlinedata Controller", error);
@@ -146,7 +145,6 @@ export module ordersController {
 
     export const getInvoiceDataForOrderid = async (request: any, reply: any) => {
         try {
-            console.log('Request in Controller getInvoiceDataForOrderid:', request);
             let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request)
             reply.send(getInvoiceDataResult)
         } catch (error) {

@@ -30,7 +30,8 @@ const logFilePath = "./request_logs.csv";
 const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 // Create Fastify instance
-const fastify: any = Fastify({ logger: true });
+// Keep logger enabled for errors/startup logs, but disable per-request noise.
+const fastify: any = Fastify({ logger: true, disableRequestLogging: true });
 
 // Log CSV header if file is empty
 fs.stat(logFilePath, (err, stats) => {
@@ -94,17 +95,13 @@ fastify.register(formbody);
 fastify.register(Multer.contentParser);
 fastify.register(Revo365Routes, { fastifyInstance: fastify });
 
-console.log(join(parentDir, "/uploads"), "INDEX PATH");
-console.log(parentDir, "INDEX PATH 2");
 fastify.register(fastifyStatic, {
   root: join(parentDir, "/uploads"),
 });
-console.log('test updated');
 
 fastify.addHook("onReady", async () => {
   try {
-    let data = await checkDatabaseConnection();
-    console.log(data, "inside");
+    await checkDatabaseConnection();
     await connectGetSessionredis();
     await runMigrations();
     // done()

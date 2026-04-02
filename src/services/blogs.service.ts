@@ -4,16 +4,12 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 export module blogService {
     export const upsertBlogs = async (Data: any[]) => {
         try {
-            console.log("Blog Data Received for Upsert:", Data);
-          
             let results = [];
             for(const blogs of Data) {
               let querydata, params;
               const { id, ...upsertFields } = blogs;
               const fieldNames = Object.keys(upsertFields);
-              console.log(fieldNames, "fieldNames")
               const fieldValues = Object.values(upsertFields);
-              console.log(fieldValues, "fieldValues")
               if (id) {
                 querydata = `UPDATE blogs SET ${fieldNames
                   .map((field, index) => `${field} = $${index + 1}`)
@@ -29,9 +25,6 @@ export module blogService {
               }
       
               const result = await query(querydata, params);
-              console.log(result, "result")
-              console.log(querydata, "querydata")
-              console.log(params, "params")
               results.push(result);
             }
       
@@ -59,7 +52,6 @@ export module blogService {
         try {
             const querydata = `SELECT * FROM blogs`;
             const result =  await query(querydata,[]);
-            console.log("Get All Banner Result:", result);
             return result.rows;
             
         } catch (error) {
@@ -69,7 +61,6 @@ export module blogService {
 
       export const deleteBlog = async (id: number) => {
         try {
-            console.log("Deleting blog with ID:", id);
           const result: any = await query(`DELETE FROM blogs WHERE id = $1`, [id]);
           if (result.rowCount != 0) {
             return `Data Deleted Successfully`;

@@ -3,6 +3,35 @@ import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
+import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+
+// ─── Email Helpers (Internal) ───────────────────────────────────────────────
+
+const fireInvoiceReadyEmail = async (ticketnumber: string, invoiceurl: string) => {
+    try {
+        const result = await query(`
+            SELECT u.useremail 
+            FROM tickets t
+            JOIN users u ON t.userid = u.id
+            WHERE t.ticketnumber = $1
+            LIMIT 1
+        `, [ticketnumber]);
+        if (result.rows.length > 0 && result.rows[0].useremail) {
+            const customer = result.rows[0];
+            const t = emailTemplates.tickets.invoice_ready;
+            await sendTransactionalMail({
+                to: customer.useremail,
+                subject: t.subject.replace('{ticketNumber}', ticketnumber),
+                text: t.text
+                    .replace('{ticketNumber}', ticketnumber)
+                    .replace('{invoiceUrl}', invoiceurl || 'N/A')
+            });
+        }
+    } catch (e: any) {
+        console.error('[fireInvoiceReadyEmail] Error:', e?.message || e);
+    }
+};
 
 export module revoinvoiceservice {
     export const getRevoInvoiceData = async (request: any) => {
@@ -128,6 +157,12 @@ export module revoinvoiceservice {
 
             const result = await query(querydata, params);
             console.log(result, "result in upsertRevoInvoice");
+            if (result && result.rows.length > 0) {
+                const row = result.rows[0];
+                if (row.invoicefor === 'service' && row.ticketnumber && row.invoiceurl) {
+                    await fireInvoiceReadyEmail(row.ticketnumber, row.invoiceurl);
+                }
+            }
             return result;
         } catch (error) {
             console.error("Query Execution Error: IN upsertRevoInvoice", error);

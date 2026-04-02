@@ -5,7 +5,7 @@ import { QueryResult } from "pg";
 import { cartservice } from "./cart.service.js";
 import { stockRevoService } from "./stockRevo.service.js";
 import { productrevoService } from "./productrevo.service.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { transactionService } from "./transaction.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
@@ -72,9 +72,7 @@ export module ordersService {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
-            console.log("keys", keys)
             const values = Object.values(request.query);
-            console.log("values", values)
             let whereClauses: string[] = [];
             let parameterIndex = 1;
             const queryParams: any[] = [];
@@ -166,7 +164,6 @@ export module ordersService {
             }
 
             const result = await query(queryText, queryParams);
-            console.log("result", result)
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element: any) => {
                 if (element.invoiceurl) {
@@ -546,9 +543,7 @@ export module ordersService {
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
-            console.log("keys", keys);
             const values = Object.values(request.query);
-            console.log("values", values);
 
             let whereClauses: string[] = [];
             let parameterIndex = 1;
@@ -664,7 +659,6 @@ export module ordersService {
                 rows: [...result.rows, ...thirdPartyResult.rows]
                 // rowCount: result.rowCount + thirdPartyResult.rowCount
             };
-            console.log("Combined Result:", combinedResult);
             // let datatypeCheckResult = await dataTypeCheck(combinedResult);
             // const messageData = {
             //     title: "Hello User",
@@ -682,13 +676,10 @@ export module ordersService {
     export const getInvOrderLineData = async (request) => {
 
         try {
-            console.log('Inside getInvOrderLineData');
-            console.log("Request Query:", request.query);
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
             const values = Object.values(request.query);
-            console.log("--keys", keys, "--values", values);
 
             let whereClauses: string[] = [];
             let parameterIndex = 1;
@@ -949,7 +940,7 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                await sendMail(maildata, false);
+                await sendTransactionalMail(maildata.body);
             } else if (newStatus === 'delivered' || newStatus === 'Sold') {
                 // Order is fully fulfilled — release the reserved orderedquantity
                 // so quantityforlocation stops subtracting it from available qty.
@@ -1020,7 +1011,7 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                await sendMail(maildata, false);
+                await sendTransactionalMail(maildata.body);
             } else if (lineStatus === 'delivered' || lineStatus === 'Sold') {
                 // Orderline fulfilled — release reserved orderedquantity (normal orders only)
                 if (lineType === 'Orders') {
@@ -1576,6 +1567,13 @@ ${whereClause} ${orderByClause}`;
                     return acc + (e.productamount * e.quantity);
                 }, 0);
                 let orderProductIds = ordersToInsert.map((e: any) => e.productid);
+                const normalizedStoreLocation = typeof storelocation === 'string'
+                    ? storelocation.trim()
+                    : storelocation;
+                const normalizedOrderLocation = typeof ordersToInsert[0]?.location === 'string'
+                    ? ordersToInsert[0].location.trim()
+                    : ordersToInsert[0]?.location;
+                const resolvedStoreLocation = normalizedStoreLocation || normalizedOrderLocation || null;
 
                 console.log('Order quantity for orders:', orderQuantity);
                 console.log('Order amount for orders:', orderAmount);
@@ -1604,7 +1602,7 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].totalrentalamount,
                     sgst,
                     cgst,
-                    storelocation,
+                    resolvedStoreLocation,
                     ordersToInsert[0].assetnumber,
                     ordersToInsert[0].location,
                     ordersToInsert[0].vendorname,
@@ -1874,7 +1872,7 @@ Thank You!`,
                 };
 
             }
-            let sendemail = await sendMail(maildata, false);
+            let sendemail = await sendTransactionalMail(maildata.body);
             return result.rows;
 
         } catch (error) {
