@@ -184,6 +184,31 @@ export module inventoryReservationService {
     }
   };
 
+  export const getReservationsForMerchantTransactionId = async (
+    merchantTransactionId: string,
+    statuses: Array<"held" | "committed" | "released" | "consumed"> = ["held"]
+  ) => {
+    try {
+      if (!merchantTransactionId || !Array.isArray(statuses) || statuses.length === 0) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      return await query(
+        `
+        SELECT *
+        FROM inventory_reservations
+        WHERE merchanttransactionid = $1
+          AND status = ANY($2::text[])
+        ORDER BY created_at ASC, id ASC
+        `,
+        [merchantTransactionId, statuses]
+      );
+    } catch (error) {
+      console.error("Error in getReservationsForMerchantTransactionId:", error);
+      throw await ErrorHandler.handleQueryError(error);
+    }
+  };
+
   export const releaseHeldReservationsForMerchantTransactionId = async (
     merchantTransactionId: string,
     reason = "released"

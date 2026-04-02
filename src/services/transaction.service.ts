@@ -160,6 +160,100 @@ const validateReservationCapacity = async (orderItems: any[] = []) => {
   };
 };
 
+const buildProductCommitUpdatesFromRows = (rows: any[] = []) => {
+  const grouped = new Map<string, { id: number; orderedquantity: number; ordername: string }>();
+
+  for (const row of rows || []) {
+    const productId = toSafeNumber(row?.productid, 0);
+    const quantity = toSafeNumber(row?.quantity, 0);
+    if (!productId || quantity <= 0) continue;
+
+    const reservationType = String(row?.reservation_type || "").trim().toLowerCase();
+    const normalizedOrderName = String(row?.ordername || "").trim().toLowerCase();
+    const ordername =
+      reservationType === "rental" || normalizedOrderName === "rental" ? "rental" : "online";
+    const key = `${productId}::${ordername}`;
+    const existing = grouped.get(key);
+
+    if (existing) {
+      existing.orderedquantity += quantity;
+      continue;
+    }
+
+    grouped.set(key, {
+      id: productId,
+      orderedquantity: quantity,
+      ordername,
+    });
+  }
+
+  return Array.from(grouped.values());
+};
+
+const clearLegacyLockQtyForRows = async (rows: any[] = []) => {
+  const grouped = new Map<number, number>();
+
+  for (const row of rows || []) {
+    const productId = toSafeNumber(row?.productid, 0);
+    const quantity = toSafeNumber(row?.quantity, 0);
+    if (!productId || quantity <= 0) continue;
+    grouped.set(productId, (grouped.get(productId) || 0) + quantity);
+  }
+
+  for (const [productId, quantity] of grouped.entries()) {
+    await query(
+      `
+      UPDATE product_revo
+      SET lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1)
+      WHERE id = $2
+      `,
+      [quantity, productId]
+    );
+  }
+};
+
+const commitMerchantTransactionInventory = async (
+  merchantTransactionId: string,
+  fallbackOrderLineItems: any[] = []
+) => {
+  const heldReservationResult =
+    await inventoryReservationService.getReservationsForMerchantTransactionId(
+      merchantTransactionId,
+      ["held"]
+    );
+  const heldReservationRows = heldReservationResult?.rows || [];
+
+  const reservationDrivenUpdates = buildProductCommitUpdatesFromRows(heldReservationRows);
+  const fallbackUpdates = buildProductCommitUpdatesFromRows(
+    (fallbackOrderLineItems || []).filter((item: any) => item?.ordertype === "Orders")
+  );
+
+  const quantityUpdates =
+    reservationDrivenUpdates.length > 0 ? reservationDrivenUpdates : fallbackUpdates;
+
+  if (quantityUpdates.length > 0) {
+    await productrevoService.updateOrderedQuantityarray(quantityUpdates);
+  }
+
+  const legacyLockRows =
+    heldReservationRows.length > 0
+      ? heldReservationRows
+      : (fallbackOrderLineItems || []).filter((item: any) => item?.ordertype === "Orders");
+
+  if (legacyLockRows.length > 0) {
+    await clearLegacyLockQtyForRows(legacyLockRows);
+  }
+
+  await inventoryReservationService.commitHeldReservationsForMerchantTransactionId(
+    merchantTransactionId
+  );
+
+  return {
+    quantityUpdates,
+    heldReservationRows,
+  };
+};
+
 const deletePurchasedCartEntries = async (
   userId: any,
   orderItems: any[] = []
@@ -1154,28 +1248,20 @@ const finalizeCapturedRazorpayPayment = async ({
       };
     }
 
-    const committedInternalLines = context.orderLineItems.filter(
-      (item) => item?.ordertype === "Orders"
+    logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_START", {
+      merchantTransactionId,
+      source: "reservation_ledger_with_orderline_fallback",
+    });
+    const inventoryCommitResult = await commitMerchantTransactionInventory(
+      merchantTransactionId,
+      context.orderLineItems
     );
-    const updateProductQtyData = committedInternalLines.map((item) => ({
-      id: item.productid,
-      orderedquantity: item.quantity,
-      ordername: item.ordername,
-    }));
-    if (updateProductQtyData.length > 0) {
-      logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_START", {
-        merchantTransactionId,
-        items: updateProductQtyData,
-      });
-      await productrevoService.updateOrderedQuantityarray(updateProductQtyData);
-      logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_DONE", {
-        merchantTransactionId,
-        updatedProducts: updateProductQtyData.length,
-      });
-    }
-    await inventoryReservationService.commitHeldReservationsForMerchantTransactionId(
-      merchantTransactionId
-    );
+    logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_DONE", {
+      merchantTransactionId,
+      updatedProducts: inventoryCommitResult.quantityUpdates.length,
+      updatedItems: inventoryCommitResult.quantityUpdates,
+      heldReservationRows: inventoryCommitResult.heldReservationRows.length,
+    });
 
     await deletePurchasedCartEntries(context.userId, context.orderLineItems);
 
@@ -1479,31 +1565,18 @@ export module transactionService {
           result.transactionData &&
           result.transactionData.length > 0
         ) {
-          const committedInternalLines = context.orderLineItems.filter(
-            (item: any) => item?.ordertype === "Orders"
+          await commitMerchantTransactionInventory(
+            merchantTransactionId,
+            context.orderLineItems
           );
-          if (committedInternalLines.length > 0) {
-            const updateproductorderquantiydata = committedInternalLines.map((e: any) => ({
-              id: e.productid,
-              orderedquantity: e.quantity,
-              ordername: e.ordername,
-            }));
-            const updatedOrderQuantity: any =
-              await productrevoService.updateOrderedQuantityarray(
-                updateproductorderquantiydata
-              );
-            await deletePurchasedCartEntries(context.userId, context.orderLineItems);
-            const messageData = {
-              title: "Hello User",
-              body: "Payment Done Successfully",
-            };
-            await messageinitialization(
-              context.userId,
-              messageData
-            );
-          }
-          await inventoryReservationService.commitHeldReservationsForMerchantTransactionId(
-            merchantTransactionId
+          await deletePurchasedCartEntries(context.userId, context.orderLineItems);
+          const messageData = {
+            title: "Hello User",
+            body: "Payment Done Successfully",
+          };
+          await messageinitialization(
+            context.userId,
+            messageData
           );
           await syncShiprocketAfterSuccessfulPayment(merchantTransactionId, {
             name: context.user?.useremail || "unknown",
@@ -1833,21 +1906,9 @@ export module transactionService {
           };
         }
 
-        const committedInternalLines = context.orderLineItems.filter(
-          (item: any) => item?.ordertype === "Orders"
-        );
-        if (committedInternalLines.length > 0) {
-          const updateproductorderquantiydata = committedInternalLines.map((e: any) => ({
-            id: e.productid,
-            orderedquantity: e.quantity,
-            ordername: e.ordername,
-          }));
-          await productrevoService.updateOrderedQuantityarray(
-            updateproductorderquantiydata
-          );
-        }
-        await inventoryReservationService.commitHeldReservationsForMerchantTransactionId(
-          merchanttransactionId
+        await commitMerchantTransactionInventory(
+          merchanttransactionId,
+          context.orderLineItems
         );
         await deletePurchasedCartEntries(context.userId, orderdata);
         await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
