@@ -2,6 +2,7 @@ import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { productrevoService } from "./productrevo.service.js";
+import { inventoryReservationService } from "./inventoryReservation.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export module stockRevoService {
     const getVisibilityCondition = (mode: "visible" | "hidden") => {
@@ -1004,8 +1005,27 @@ export module stockRevoService {
                 console.log(`Allocated ${result.rowCount} rental items for Product ID ${productid}`);
 
                 if (result.rowCount > 0) {
-                    const puc = result.rows[0].puc;
-                    await productrevoService.updateCatalogueQuantities(puc);
+                    const pucArray = Array.from(
+                        new Set(result.rows.map((row: any) => row.puc).filter(Boolean))
+                    ) as string[];
+                    if (pucArray.length > 0) {
+                        await updateQuantity(pucArray, result.rowCount, true, true);
+                    }
+                    const orderLines = await query(
+                        `
+                        SELECT merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+                        FROM orderline
+                        WHERE uniqueorderid = $1
+                        `,
+                        [orderid]
+                    );
+                    if (orderLines.rows.length > 0) {
+                        await inventoryReservationService.transitionCommittedReservationsForOrderLines(
+                            orderLines.rows,
+                            "consumed",
+                            "rental_allocation"
+                        );
+                    }
                 }
             }
         } catch (error) {

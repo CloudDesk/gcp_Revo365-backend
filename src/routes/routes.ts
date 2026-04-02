@@ -306,6 +306,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/payment/razorpay/ticket', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpayTicket);
     fastify.post('/payment/confirmation-razorpay', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpay);
     fastify.post('/payment/razorpay/webhook', { config: { rawBody: true } }, transactionController.paymentWebhookRazorpay);
+    fastify.post('/payment/shiprocket/sync', { preHandler: [getSession] }, transactionController.syncShiprocketShipmentStatus);
     fastify.post('/payment/confirmation-razorpay/tickets', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpayTicket);
 
     fastify.post('/payment/status', transactionController.paymentConfirmation);

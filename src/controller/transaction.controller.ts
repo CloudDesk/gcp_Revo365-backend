@@ -134,6 +134,16 @@ export module transactionController {
     }
   };
 
+  export const syncShiprocketShipmentStatus = async (request, reply) => {
+    try {
+      const result = await transactionService.syncShiprocketShipmentStatus(request);
+      reply.status(result?.status || 200).send(result);
+    } catch (error) {
+      console.error("Query Execution Error: IN syncShiprocketShipmentStatus Controller", error);
+      reply.status(500).send({ message: "Shipment sync failed" });
+    }
+  };
+
   export const paymentInitializationRazorpayTicket = async (request: any, reply: any) => {
     try {
       let transactionData: any = await transactionService.paymentInitializationRazorpayTicket(
