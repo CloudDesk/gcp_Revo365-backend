@@ -48,8 +48,9 @@ const toSafeNumber = (value: any, defaultValue = 0) => {
 };
 
 const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: any) => {
+  const fallback = toSafeNumber(fallbackAmount, 0);
   if (!Array.isArray(orderItems) || orderItems.length === 0) {
-    return toSafeNumber(fallbackAmount, 0);
+    return fallback;
   }
 
   const computed = orderItems.reduce((total, item) => {
@@ -57,16 +58,18 @@ const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: a
     const productAmount = toSafeNumber(item?.productamount, 0);
     const lineOrderAmount = toSafeNumber(item?.orderamount, 0);
 
-    if (productAmount > 0 && quantity > 0) {
-      return total + productAmount * quantity;
-    }
     if (lineOrderAmount > 0) {
       return total + lineOrderAmount;
+    }
+    if (productAmount > 0 && quantity > 0) {
+      return total + productAmount * quantity;
     }
     return total;
   }, 0);
 
-  return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
+  // Frontend total may include shipping/tax not represented in order lines.
+  // Use the higher value so Razorpay amount stays aligned with checkout summary.
+  return Math.max(computed, fallback);
 };
 
 const groupOrderQuantities = (orderItems: any[] = []) => {
@@ -1205,7 +1208,7 @@ const finalizeCapturedRazorpayPayment = async ({
       expectedAmountRupees: context?.expectedAmountRupees,
     });
 
-    const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
+    const expectedAmountPaise = Math.round(toSafeNumber(gatewayOrder?.amount, 0));
     if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
       logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
         merchantTransactionId,
@@ -1217,11 +1220,13 @@ const finalizeCapturedRazorpayPayment = async ({
       return { status: 400, message: "Amount mismatch between order and payment" };
     }
 
+    const settledAmountRupees = Number(payment.amount) / 100;
+
     const transactionPayload = {
       transaction: {
         merchanttransactionId: merchantTransactionId,
         name: context.user?.useremail || "unknown",
-        amount: toSafeNumber(context.expectedAmountRupees, 0),
+        amount: toSafeNumber(settledAmountRupees, 0),
         mobilenumber:
           context.user?.usermobilenumber || context.address?.mobilenumber || null,
         productid: context.productIds,

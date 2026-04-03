@@ -192,13 +192,13 @@ export var inventoryReservationService;
                 const committedRows = await query(`
           SELECT *
           FROM inventory_reservations
-          WHERE merchanttransactionid = $1
-            AND productid = $2
-            AND reservation_type = $3
+          WHERE merchanttransactionid = $1::varchar
+            AND productid = $2::int
+            AND reservation_type = $3::varchar
             AND status = 'committed'
           ORDER BY
             CASE
-              WHEN COALESCE(location, '') = COALESCE($4, '') THEN 0
+              WHEN COALESCE(location, ''::varchar) = COALESCE($4::varchar, ''::varchar) THEN 0
               WHEN location IS NULL THEN 1
               ELSE 2
             END,
