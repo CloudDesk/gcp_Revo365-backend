@@ -915,17 +915,30 @@ const shiprocketAlreadySyncedForMerchant = async (merchantTransactionId) => {
  * Safe to call multiple times: skips if shipment ids already stored.
  */
 const syncShiprocketAfterSuccessfulPayment = async (merchantTransactionId, transactionMeta) => {
-    if (!merchantTransactionId)
-        return;
+    if (!merchantTransactionId) {
+        return {
+            ok: false,
+            reason: "missing_merchant_transaction_id",
+            merchantTransactionId: null,
+        };
+    }
     try {
         if (await shiprocketAlreadySyncedForMerchant(merchantTransactionId)) {
             console.log("[Shiprocket] Already synced; skip", shortRef(merchantTransactionId, 8, 6));
-            return;
+            return {
+                ok: true,
+                reason: "already_synced",
+                merchantTransactionId,
+            };
         }
         const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
         if (!context) {
             console.warn("[Shiprocket] No order context for merchant tx", merchantTransactionId);
-            return;
+            return {
+                ok: false,
+                reason: "missing_order_context",
+                merchantTransactionId,
+            };
         }
         const tx = {
             merchanttransactionId: merchantTransactionId,
@@ -936,25 +949,55 @@ const syncShiprocketAfterSuccessfulPayment = async (merchantTransactionId, trans
                 context.address?.mobilenumber ??
                 null,
         };
-        await createShiprocketOrderForTransaction(context, tx);
+        const createResult = await createShiprocketOrderForTransaction(context, tx);
+        if (!createResult.ok) {
+            console.error("[Shiprocket] create failed after payment", {
+                merchantTransactionId,
+                reason: createResult.reason,
+                pickupLocation: createResult.pickupLocation || null,
+                attempts: createResult.attempts || 0,
+                statusCode: createResult.statusCode ?? null,
+                response: createResult.response ?? null,
+                error: createResult.error ?? null,
+            });
+        }
+        return createResult;
     }
     catch (e) {
         console.error("[Shiprocket] syncShiprocketAfterSuccessfulPayment:", e?.message || e);
+        return {
+            ok: false,
+            reason: "sync_exception",
+            merchantTransactionId,
+            error: e?.response?.data || e?.message || e,
+        };
     }
 };
 const createShiprocketOrderForTransaction = async (context, transactionData) => {
     try {
         const merchantTx = transactionData?.merchanttransactionId;
         if (!merchantTx) {
-            return;
+            return {
+                ok: false,
+                reason: "missing_merchant_transaction_id",
+                merchantTransactionId: null,
+            };
         }
         if (await shiprocketAlreadySyncedForMerchant(merchantTx)) {
             console.log("[Shiprocket] create skipped — DB already has shipment ids");
-            return;
+            return {
+                ok: true,
+                reason: "already_synced",
+                merchantTransactionId: merchantTx,
+            };
         }
         const orderData = context.orderLineItems[0] || context.primaryOrderRow;
         if (!orderData || !context.user || !context.address) {
-            return;
+            return {
+                ok: false,
+                reason: "missing_required_order_context",
+                merchantTransactionId: merchantTx,
+            };
         }
         const pickupLocation = context.orderLineItems.find((item) => item?.deliveryfrom)?.deliveryfrom ||
             context.combinedOrderRows.find((row) => row?.deliveryfrom)?.deliveryfrom ||
@@ -1017,17 +1060,33 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
         const baseUrl = process.env.SHIPROCKET_BASE_URL;
         if (!baseUrl) {
             console.error("[Shiprocket] SHIPROCKET_BASE_URL is not set");
-            return;
+            return {
+                ok: false,
+                reason: "missing_shiprocket_base_url",
+                merchantTransactionId: merchantTx,
+                pickupLocation,
+            };
         }
         const maxAttempts = 3;
         const retryDelaysMs = [0, 600, 2000];
         let shiprocketOrderData = null;
+        let lastError = null;
+        let lastResponse = null;
+        let lastStatusCode = null;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             if (retryDelaysMs[attempt] > 0) {
                 await sleep(retryDelaysMs[attempt]);
             }
             try {
                 const token = await loginShiprocket();
+                if (!token) {
+                    lastError = "shiprocket_login_failed";
+                    console.error(`[Shiprocket] login failed (attempt ${attempt + 1}/${maxAttempts})`, {
+                        merchantTransactionId: merchantTx,
+                        pickupLocation,
+                    });
+                    continue;
+                }
                 const shiprocketResponse = await axios.post(`${baseUrl}/orders/create/adhoc`, shiprocketPayload, {
                     headers: {
                         Authorization: `Bearer ${token}`,
@@ -1035,19 +1094,41 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
                     },
                 });
                 const data = shiprocketResponse.data;
+                lastResponse = data;
+                lastStatusCode = shiprocketResponse.status || null;
                 if (data && (data.order_id != null || data.shipment_id != null)) {
                     shiprocketOrderData = data;
                     break;
                 }
-                console.warn(`[Shiprocket] Unexpected response (attempt ${attempt + 1}/${maxAttempts})`, data);
+                console.warn(`[Shiprocket] Unexpected response (attempt ${attempt + 1}/${maxAttempts})`, {
+                    merchantTransactionId: merchantTx,
+                    pickupLocation,
+                    httpStatus: shiprocketResponse.status || null,
+                    response: data,
+                });
             }
             catch (error) {
-                console.error(`[Shiprocket] order create failed (attempt ${attempt + 1}/${maxAttempts}):`, error.response?.data || error.message);
-                shiprocketOrderData = null;
+                lastError = error?.response?.data || error?.message || error;
+                lastStatusCode = error?.response?.status || null;
+                console.error(`[Shiprocket] order create failed (attempt ${attempt + 1}/${maxAttempts}):`, {
+                    merchantTransactionId: merchantTx,
+                    pickupLocation,
+                    httpStatus: error?.response?.status || null,
+                    error: error?.response?.data || error?.message,
+                });
             }
         }
         if (!shiprocketOrderData) {
-            return;
+            return {
+                ok: false,
+                reason: "shiprocket_create_failed",
+                merchantTransactionId: merchantTx,
+                pickupLocation,
+                attempts: maxAttempts,
+                statusCode: lastStatusCode,
+                error: lastError,
+                response: lastResponse,
+            };
         }
         await query(`UPDATE orders 
        SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
@@ -1069,9 +1150,26 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
             shiprocketOrderData.channel_order_id,
             transactionData.merchanttransactionId,
         ]);
+        return {
+            ok: true,
+            reason: "shipment_created",
+            merchantTransactionId: merchantTx,
+            pickupLocation,
+            attempts: 1,
+            statusCode: 200,
+            shiprocketOrderId: normalizeOptionalText(shiprocketOrderData.order_id),
+            shiprocketShipmentId: normalizeOptionalText(shiprocketOrderData.shipment_id),
+            response: shiprocketOrderData,
+        };
     }
     catch (error) {
         console.error("Shiprocket integration failed:", error?.message || error);
+        return {
+            ok: false,
+            reason: "shiprocket_integration_exception",
+            merchantTransactionId: transactionData?.merchanttransactionId || null,
+            error: error?.response?.data || error?.message || error,
+        };
     }
 };
 const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrderId, razorpaySignature, verifyCheckoutSignature, source, traceId = null, }) => {
@@ -1333,10 +1431,27 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_START", {
             merchantTransactionId,
         });
-        await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
-        logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_DONE", {
-            merchantTransactionId,
-        });
+        const shiprocketCreateResult = await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
+        if (shiprocketCreateResult?.ok) {
+            logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_DONE", {
+                merchantTransactionId,
+                reason: shiprocketCreateResult.reason,
+                pickupLocation: shiprocketCreateResult.pickupLocation || null,
+                shiprocketOrderId: shiprocketCreateResult.shiprocketOrderId || null,
+                shiprocketShipmentId: shiprocketCreateResult.shiprocketShipmentId || null,
+            });
+        }
+        else {
+            logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_FAILED", {
+                merchantTransactionId,
+                reason: shiprocketCreateResult?.reason || "unknown",
+                pickupLocation: shiprocketCreateResult?.pickupLocation || null,
+                attempts: shiprocketCreateResult?.attempts || 0,
+                statusCode: shiprocketCreateResult?.statusCode ?? null,
+                response: shiprocketCreateResult?.response ?? null,
+                error: shiprocketCreateResult?.error ?? null,
+            });
+        }
         const successSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
         logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
             merchantTransactionId,
