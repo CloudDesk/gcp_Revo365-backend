@@ -845,10 +845,17 @@ export module ordersService {
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty
+            p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
+            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
+            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
+            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
+        LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
+        LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
         LEFT JOIN (
             SELECT orderid, invoiceurl, createddate AS invoicecreateddate
             FROM (
@@ -875,10 +882,17 @@ export module ordersService {
             let thirdPartyQueryText = `SELECT orderline.*, NULL AS invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty
+            p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
+            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
+            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
+            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
+        LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
+        LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
         LEFT JOIN (
             SELECT starrating, productid, id, orderlineid, comments, url
             FROM rating
@@ -982,10 +996,17 @@ export module ordersService {
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty
+            p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
+            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
+            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
+            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
 FROM orderline
 JOIN  address a on orderline.addressid = a.id
 LEFT JOIN product_revo p ON p.id = orderline.productid
+LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
+LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
 LEFT JOIN (
     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
     FROM (

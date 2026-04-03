@@ -37,6 +37,120 @@ const toSafeNumber = (value, defaultValue = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : defaultValue;
 };
+const normalizeOptionalLocation = (value) => {
+    if (value === null || value === undefined)
+        return null;
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+};
+const isRentalOrderItem = (item) => {
+    const invoiceFor = String(item?.invoicefor || "").trim().toLowerCase();
+    const orderName = String(item?.ordername || "").trim().toLowerCase();
+    return invoiceFor === "product rental" || orderName === "rental";
+};
+const resolveRequestedLocation = (item) => normalizeOptionalLocation(item?.deliveryfrom) ||
+    normalizeOptionalLocation(item?.storelocation) ||
+    normalizeOptionalLocation(item?.storeLocation) ||
+    normalizeOptionalLocation(item?.location) ||
+    null;
+const allocateProductLocationsForOrder = async (orderItems = []) => {
+    const productItems = (orderItems || []).filter((item) => {
+        const productId = toSafeNumber(item?.productid, 0);
+        const quantity = toSafeNumber(item?.quantity, 0);
+        return productId > 0 && quantity > 0 && !isRentalOrderItem(item);
+    });
+    if (productItems.length === 0) {
+        return;
+    }
+    const productIds = Array.from(new Set(productItems.map((item) => toSafeNumber(item?.productid, 0)).filter((id) => id > 0)));
+    if (productIds.length === 0) {
+        return;
+    }
+    const availabilityResult = await query(`
+    SELECT
+      p.id AS productid,
+      s.location,
+      COUNT(*)::int AS available_qty
+    FROM stock_revo s
+    JOIN product_revo p ON p.puc = s.puc
+    WHERE p.id = ANY($1::int[])
+      AND s.ecompublish = true
+      AND s.stockstatus = 'Available'
+      AND s.stocktype IN ('on_catalogue_product', 'off_catalogue_product')
+      AND (s.isdeleted = false OR s.isdeleted IS NULL)
+      AND (s.isarchive = false OR s.isarchive IS NULL)
+      AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+      AND (s.ewaste = false OR s.ewaste IS NULL)
+      AND s.location IS NOT NULL
+      AND s.location <> ''
+    GROUP BY p.id, s.location
+    `, [productIds]);
+    const availabilityByProduct = new Map();
+    for (const row of availabilityResult.rows || []) {
+        const productId = toSafeNumber(row?.productid, 0);
+        const location = normalizeOptionalLocation(row?.location);
+        const availableQty = toSafeNumber(row?.available_qty, 0);
+        if (!productId || !location || availableQty <= 0)
+            continue;
+        if (!availabilityByProduct.has(productId)) {
+            availabilityByProduct.set(productId, []);
+        }
+        availabilityByProduct.get(productId).push({ location, availableQty });
+    }
+    availabilityByProduct.forEach((locations) => {
+        locations.sort((a, b) => {
+            if (b.availableQty !== a.availableQty)
+                return b.availableQty - a.availableQty;
+            return a.location.localeCompare(b.location);
+        });
+    });
+    const demandByProductLocation = new Map();
+    for (const item of productItems) {
+        const productId = toSafeNumber(item?.productid, 0);
+        const requestedQty = toSafeNumber(item?.quantity, 0);
+        if (!productId || requestedQty <= 0)
+            continue;
+        const locations = availabilityByProduct.get(productId) || [];
+        if (locations.length === 0)
+            continue;
+        const requestedLocation = resolveRequestedLocation(item);
+        let chosenLocation = null;
+        let bestRemaining = -1;
+        for (const candidate of locations) {
+            const demandKey = `${productId}::${candidate.location}`;
+            const reservedSoFar = demandByProductLocation.get(demandKey) || 0;
+            const remaining = candidate.availableQty - reservedSoFar;
+            if (requestedLocation && candidate.location === requestedLocation && remaining >= requestedQty) {
+                chosenLocation = candidate.location;
+                break;
+            }
+            if (!requestedLocation && remaining >= requestedQty) {
+                chosenLocation = candidate.location;
+                break;
+            }
+            if (remaining > bestRemaining) {
+                bestRemaining = remaining;
+                chosenLocation = candidate.location;
+            }
+        }
+        if (!chosenLocation)
+            continue;
+        const chosenKey = `${productId}::${chosenLocation}`;
+        demandByProductLocation.set(chosenKey, (demandByProductLocation.get(chosenKey) || 0) + requestedQty);
+        item.location = chosenLocation;
+        if (!normalizeOptionalLocation(item?.storelocation)) {
+            item.storelocation = chosenLocation;
+        }
+    }
+};
+const resolveTransactionStoreLocation = (orderItems = []) => {
+    const productLocations = (orderItems || [])
+        .filter((item) => !isRentalOrderItem(item))
+        .map((item) => resolveRequestedLocation(item))
+        .filter((location) => Boolean(location));
+    const uniqueLocations = Array.from(new Set(productLocations));
+    return uniqueLocations.length === 1 ? uniqueLocations[0] : null;
+};
 const computePayableAmountFromOrderInput = (orderItems, fallbackAmount) => {
     const fallback = toSafeNumber(fallbackAmount, 0);
     if (!Array.isArray(orderItems) || orderItems.length === 0) {
@@ -683,30 +797,54 @@ const mapShiprocketStatusToOrderStatus = (rawStatus) => {
     }
     return "ordered";
 };
+const toNullableInteger = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+        return null;
+    return Math.trunc(parsed);
+};
 const extractShiprocketTrackingSummary = (payload) => {
     const trackingData = payload?.tracking_data || payload?.data?.tracking_data || payload?.data || {};
+    const scans = payload?.scans ||
+        payload?.data?.scans ||
+        trackingData?.shipment_track_activities ||
+        [];
     const primaryTrack = trackingData?.shipment_track?.[0] ||
         trackingData?.shipment_track_activities?.[0] ||
         trackingData?.track_status ||
         {};
-    const rawStatus = trackingData?.shipment_status_label ||
+    const firstScan = Array.isArray(scans) && scans.length > 0 ? scans[0] : {};
+    const rawStatus = payload?.current_status ||
+        payload?.shipment_status ||
+        payload?.data?.current_status ||
+        payload?.data?.shipment_status ||
+        trackingData?.shipment_status_label ||
         trackingData?.current_status ||
         primaryTrack?.current_status ||
         primaryTrack?.activity ||
+        firstScan?.activity ||
         payload?.status ||
         null;
     return {
         rawStatus,
         mappedOrderStatus: mapShiprocketStatusToOrderStatus(rawStatus),
-        awbCode: trackingData?.awb_code ||
+        awbCode: payload?.awb ||
+            payload?.awb_code ||
+            payload?.data?.awb ||
+            payload?.data?.awb_code ||
+            trackingData?.awb_code ||
             trackingData?.awb ||
             primaryTrack?.awb_code ||
             null,
-        shipmentStatusCode: trackingData?.shipment_status ||
-            trackingData?.track_status ||
-            payload?.status_code ||
-            null,
+        shipmentStatusCode: toNullableInteger(payload?.shipment_status_id) ??
+            toNullableInteger(payload?.current_status_id) ??
+            toNullableInteger(payload?.data?.shipment_status_id) ??
+            toNullableInteger(payload?.data?.current_status_id) ??
+            toNullableInteger(trackingData?.shipment_status) ??
+            toNullableInteger(trackingData?.track_status) ??
+            toNullableInteger(payload?.status_code),
         trackingData,
+        scans,
     };
 };
 const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatus) => {
@@ -716,7 +854,9 @@ const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatu
     if (mappedStatus === "delivered") {
         lineUpdateQuery = `
       UPDATE orderline
-      SET orderstatus = $1
+      SET orderstatus = $1,
+          dispatcheddate = COALESCE(dispatcheddate, NOW()),
+          delivereddate = COALESCE(delivereddate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered')
       RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -725,7 +865,9 @@ const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatu
     else if (mappedStatus === "shipped") {
         lineUpdateQuery = `
       UPDATE orderline
-      SET orderstatus = $1
+      SET orderstatus = $1,
+          readytodispatchdate = COALESCE(readytodispatchdate, NOW()),
+          dispatcheddate = COALESCE(dispatcheddate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped')
       RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -734,7 +876,8 @@ const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatu
     else if (mappedStatus === "ready_to_dispatch") {
         lineUpdateQuery = `
       UPDATE orderline
-      SET orderstatus = $1
+      SET orderstatus = $1,
+          readytodispatchdate = COALESCE(readytodispatchdate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped', 'ready_to_dispatch')
       RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -744,7 +887,7 @@ const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatu
         return;
     }
     const lineUpdateResult = await query(lineUpdateQuery, [mappedStatus, merchantTransactionId]);
-    if (mappedStatus === "shipped" && lineUpdateResult.rows.length > 0) {
+    if ((mappedStatus === "shipped" || mappedStatus === "delivered") && lineUpdateResult.rows.length > 0) {
         await inventoryReservationService.transitionCommittedReservationsForOrderLines(lineUpdateResult.rows, "consumed", "shipment_sync");
     }
     const uniqueOrderIds = Array.from(new Set(lineUpdateResult.rows.map((row) => row.uniqueorderid).filter(Boolean)));
@@ -1281,6 +1424,8 @@ export var transactionService;
         try {
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
+            await allocateProductLocationsForOrder(orderdata);
+            request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
             const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(orderdata, merchanttransactionId);
             if (fulfillmentBuckets.validationErrors.length > 0) {
                 return {
@@ -1596,6 +1741,8 @@ export var transactionService;
             console.log("Inside paymentInitializationRazorpay service");
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
+            await allocateProductLocationsForOrder(orderdata);
+            request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
             console.log(">>body", request.body, ">>body");
             console.log(">>Tran", request.body.transaction, ">>Tran");
             console.log(">>orde", request.body.order, ">>orde");
