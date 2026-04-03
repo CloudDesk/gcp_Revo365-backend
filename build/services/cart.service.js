@@ -206,7 +206,6 @@ export var cartservice;
             const recordcount = request.query.count;
             const keys = Object.keys(request.query);
             const values = Object.values(request.query);
-            console.log("keys--", keys, "values", values);
             let whereClause = "";
             let parameterIndex = 1;
             const queryParams = [];

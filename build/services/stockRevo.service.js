@@ -2,6 +2,7 @@ import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { productrevoService } from "./productrevo.service.js";
+import { inventoryReservationService } from "./inventoryReservation.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export var stockRevoService;
 (function (stockRevoService) {
@@ -600,15 +601,19 @@ export var stockRevoService;
                     FROM (SELECT unnest($1::text[]) as puc) p
                     CROSS JOIN (SELECT unnest($2::text[]) as location) l
                 ),
-                -- Resolve per-location ordered quantities. 
-                -- When orders.storelocation is null (not provided by frontend), 
-                -- fall back to the stock_revo location for that PUC so the join 
-                -- with the grid always finds a match.
+                -- Resolve per-location ordered quantities.
+                -- Priority:
+                -- 1) orderline.deliveryfrom (set during RFID dispatch)
+                -- 2) orders.storelocation (if provided by frontend)
+                -- 3) orders.location (legacy/fallback order location)
+                -- 4) fallback to the best available stock location for the PUC
                 order_metrics AS (
                     SELECT 
                         p.puc,
                         COALESCE(
+                            NULLIF(ol.deliveryfrom, ''),
                             NULLIF(o.storelocation, ''),
+                            NULLIF(o.location, ''),
                             s.location
                         ) AS location,
                         -- ordered_qty: active orders only (exclude terminal + fulfilled statuses)
@@ -624,18 +629,36 @@ export var stockRevoService;
                     FROM orderline ol
                     JOIN orders o ON ol.uniqueorderid = o.orderid
                     JOIN product_revo p ON ol.productid = p.id
-                    -- Fallback join: get the stock location when storelocation is blank/null
+                    -- Fallback join: when deliveryfrom/storelocation/location are blank/null,
+                    -- choose the location with highest currently available physical stock.
                     LEFT JOIN LATERAL (
-                        SELECT location FROM stock_revo
-                        WHERE puc = p.puc
-                          AND (isdeleted = false OR isdeleted IS NULL)
-                          AND (isarchive = false OR isarchive IS NULL)
-                          AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                          AND (ewaste = false OR ewaste IS NULL)
+                        SELECT s2.location
+                        FROM stock_revo s2
+                        WHERE s2.puc = p.puc
+                          AND (s2.isdeleted = false OR s2.isdeleted IS NULL)
+                          AND (s2.isarchive = false OR s2.isarchive IS NULL)
+                          AND (s2.removefromrecyclebin = false OR s2.removefromrecyclebin IS NULL)
+                          AND (s2.ewaste = false OR s2.ewaste IS NULL)
+                        GROUP BY s2.location
+                        ORDER BY
+                          COUNT(*) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stockstatus = 'Available'
+                              AND s2.stocktype <> 'third_party_product'
+                          ) DESC,
+                          COALESCE(SUM(s2.thirdpartyquantity) FILTER (
+                            WHERE s2.ecompublish = true
+                              AND s2.stocktype = 'third_party_product'
+                          ), 0) DESC,
+                          s2.location ASC
                         LIMIT 1
-                    ) s ON (o.storelocation IS NULL OR o.storelocation = '')
+                    ) s ON (
+                        (ol.deliveryfrom IS NULL OR ol.deliveryfrom = '')
+                        AND (o.storelocation IS NULL OR o.storelocation = '')
+                        AND (o.location IS NULL OR o.location = '')
+                    )
                     WHERE p.puc = ANY($1::text[])
-                    GROUP BY p.puc, COALESCE(NULLIF(o.storelocation, ''), s.location)
+                    GROUP BY p.puc, COALESCE(NULLIF(ol.deliveryfrom, ''), NULLIF(o.storelocation, ''), NULLIF(o.location, ''), s.location)
                 )
                 SELECT 
                     grid.puc,
@@ -921,8 +944,18 @@ export var stockRevoService;
                 const result = await query(updateQuery, [orderid, productid, quantity]);
                 console.log(`Allocated ${result.rowCount} rental items for Product ID ${productid}`);
                 if (result.rowCount > 0) {
-                    const puc = result.rows[0].puc;
-                    await productrevoService.updateCatalogueQuantities(puc);
+                    const pucArray = Array.from(new Set(result.rows.map((row) => row.puc).filter(Boolean)));
+                    if (pucArray.length > 0) {
+                        await stockRevoService.updateQuantity(pucArray, result.rowCount, true, true);
+                    }
+                    const orderLines = await query(`
+                        SELECT merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+                        FROM orderline
+                        WHERE uniqueorderid = $1
+                        `, [orderid]);
+                    if (orderLines.rows.length > 0) {
+                        await inventoryReservationService.transitionCommittedReservationsForOrderLines(orderLines.rows, "consumed", "rental_allocation");
+                    }
                 }
             }
         }

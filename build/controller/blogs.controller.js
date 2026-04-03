@@ -6,7 +6,6 @@ export var blogscontroller;
         try {
             const bannerData = request.body;
             let upsertBlogResult = await blogService.upsertBlogs(bannerData);
-            console.log("Upsert Banner Result:", upsertBlogResult);
             if (upsertBlogResult.command === "UPDATE" || upsertBlogResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -29,7 +28,6 @@ export var blogscontroller;
     blogscontroller.getAllBlogs = async (request, reply) => {
         try {
             let getAllBlogsResult = await blogService.getAllBlogs();
-            console.log("Get All Blogs Result:", getAllBlogsResult);
             reply.status(200).send(getAllBlogsResult);
         }
         catch (error) {
@@ -40,7 +38,6 @@ export var blogscontroller;
     };
     blogscontroller.deleteBlog = async (request, reply) => {
         try {
-            console.log('Inside controller');
             const { id } = request.params;
             let deleteBlogResult = await blogService.deleteBlog(Number(id));
             reply.send(deleteBlogResult);

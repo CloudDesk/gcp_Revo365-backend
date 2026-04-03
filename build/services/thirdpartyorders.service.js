@@ -185,9 +185,9 @@ export var thirdPartyOrdersService;
             }
             // 2. Update all linked orderlines to the same status
             const orderlineUpdateResult = await query(`UPDATE orderline SET orderstatus = $1 WHERE thirdpartyorderid = $2 RETURNING *`, [orderstatus, id]);
-            // 3. For cancellation: trigger JSONB recompute so thirdpartyorderquantity drops
-            // For delivered/shipped: CTE already excludes these statuses — JSONB auto-clears on next recompute
-            if (orderstatus === 'cancelled' && orderlineUpdateResult.rows.length > 0) {
+            // 3. Trigger branch JSONB recompute whenever status changes in a way that
+            // affects third-party reserved or fulfilled quantities.
+            if (['cancelled', 'shipped', 'delivered', 'ordered', 'processing'].includes(orderstatus) && orderlineUpdateResult.rows.length > 0) {
                 const pucSet = new Set();
                 for (const row of orderlineUpdateResult.rows) {
                     if (row.puc)

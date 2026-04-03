@@ -638,6 +638,79 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId: str
   };
 };
 
+const isTruthyFlag = (value: any) =>
+  value === true ||
+  value === "true" ||
+  value === 1 ||
+  value === "1";
+
+const getLatestTransactionByMerchantTransactionId = async (
+  merchantTransactionId: string
+) => {
+  if (!merchantTransactionId) return null;
+
+  const result = await query(
+    `
+    SELECT *
+    FROM transaction
+    WHERE merchanttransactionid = $1
+    ORDER BY createddate DESC
+    LIMIT 1
+    `,
+    [merchantTransactionId]
+  );
+
+  return result.rows[0] || null;
+};
+
+const syncSuccessfulPaymentStateFromTransaction = async (
+  context: any,
+  transactionRow: any
+) => {
+  if (!context || !transactionRow) {
+    return context;
+  }
+
+  const orderHeaders = (context.combinedOrderRows || []).filter((row: any) =>
+    String(row?.orderid || "").startsWith("TEQIT")
+  );
+  const thirdPartyHeaders = (context.combinedOrderRows || []).filter(
+    (row: any) => !String(row?.orderid || "").startsWith("TEQIT")
+  );
+
+  const orderNeedsUpdate = orderHeaders.some(
+    (row: any) => !isTruthyFlag(row?.ispaymentsucceed)
+  );
+  const thirdPartyNeedsUpdate = thirdPartyHeaders.some(
+    (row: any) => !isTruthyFlag(row?.ispaymentsucceed)
+  );
+
+  const transactionSummary = {
+    transactionid: transactionRow?.transactionid,
+    name: transactionRow?.name || context?.user?.useremail || "unknown",
+  };
+
+  if (orderNeedsUpdate && orderHeaders.length > 0) {
+    await ordersService.updateOrder(
+      { order: orderHeaders, transactiondata: transactionSummary },
+      false
+    );
+  }
+
+  if (thirdPartyNeedsUpdate && thirdPartyHeaders.length > 0) {
+    await thirdPartyOrdersService.updateThirdPartyOrder(
+      { order: thirdPartyHeaders, transactiondata: transactionSummary },
+      false
+    );
+  }
+
+  if (!orderNeedsUpdate && !thirdPartyNeedsUpdate) {
+    return context;
+  }
+
+  return await getOrderContextByMerchantTransactionId(context.merchantTransactionId);
+};
+
 const mapShiprocketStatusToOrderStatus = (rawStatus: any): string | null => {
   const normalized = String(rawStatus || "").trim().toLowerCase();
   if (!normalized) return null;
@@ -1040,23 +1113,9 @@ const finalizeCapturedRazorpayPayment = async ({
   }
 
   try {
-    const existingTransaction = await query(
-      `SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`,
-      [razorpayPaymentId, razorpayOrderId, merchantTransactionId]
+    let existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(
+      merchantTransactionId
     );
-    if (existingTransaction.rows.length > 0) {
-      logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
-        merchantTransactionId,
-        status: 200,
-        message: "Payment already processed",
-        reason: "existing-transaction-before-process",
-      });
-      return {
-        status: 200,
-        message: "Payment already processed",
-        data: { redirectUrl: REDIRECT_URL_SUCCESS },
-      };
-    }
 
     if (verifyCheckoutSignature) {
       const generatedSignature = crypto
@@ -1129,7 +1188,7 @@ const finalizeCapturedRazorpayPayment = async ({
       return { status: 400, message: "Payment not captured" };
     }
 
-    const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+    let context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
     if (!context) {
       logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
         merchantTransactionId,
@@ -1145,26 +1204,6 @@ const finalizeCapturedRazorpayPayment = async ({
       transactionFor: context?.transactionFor,
       expectedAmountRupees: context?.expectedAmountRupees,
     });
-
-    const alreadySucceeded = context.combinedOrderRows.some(
-      (row) => row?.ispaymentsucceed === true || row?.ispaymentsucceed === "true"
-    );
-    if (alreadySucceeded) {
-      const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(
-        merchantTransactionId
-      );
-      logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
-        merchantTransactionId,
-        status: 200,
-        message: "Payment already processed",
-        alreadyProcessedSnapshot,
-      });
-      return {
-        status: 200,
-        message: "Payment already processed",
-        data: { redirectUrl: REDIRECT_URL_SUCCESS },
-      };
-    }
 
     const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
     if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
@@ -1194,64 +1233,124 @@ const finalizeCapturedRazorpayPayment = async ({
       order: context.orderLineItems,
     };
 
-    let result: any;
-    try {
-      logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_START", {
+    const heldReservationResult =
+      await inventoryReservationService.getReservationsForMerchantTransactionId(
         merchantTransactionId,
-        orderLineItems: context.orderLineItems.length,
-      });
-      result = await transactionService.insertTransactionData(
-        transactionPayload,
-        context.combinedOrderRows
+        ["held"]
       );
-    } catch (error) {
-      if (error?.code === "23505") {
-        const duplicateSnapshot = await getMerchantTransactionStateSnapshot(
-          merchantTransactionId
-        );
-        logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
-          merchantTransactionId,
-          status: 200,
-          message: "Payment already processed",
-          reason: "unique-constraint",
-          duplicateSnapshot,
-        });
-        return {
-          status: 200,
-          message: "Payment already processed",
-          data: { redirectUrl: REDIRECT_URL_SUCCESS },
-        };
-      }
-      throw error;
-    }
-    logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
-      merchantTransactionId,
-      transactionCount: Array.isArray(result?.transactionData)
-        ? result.transactionData.length
-        : 0,
-      orderDataRows: Array.isArray(result?.orderdata) ? result.orderdata.length : 0,
-    });
+    const hasHeldReservations = (heldReservationResult?.rows || []).length > 0;
 
-    if (
-      !result?.orderdata ||
-      !result?.transactionData ||
-      result.orderdata.length === 0 ||
-      result.transactionData.length === 0
-    ) {
+    const alreadySucceeded = context.combinedOrderRows.some((row) =>
+      isTruthyFlag(row?.ispaymentsucceed)
+    );
+    const headersNeedPaymentStateSync = context.combinedOrderRows.some(
+      (row) => !isTruthyFlag(row?.ispaymentsucceed)
+    );
+
+    if (!existingTransactionRecord) {
+      let result: any;
+      try {
+        logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_START", {
+          merchantTransactionId,
+          orderLineItems: context.orderLineItems.length,
+        });
+        result = await transactionService.insertTransactionData(
+          transactionPayload,
+          context.combinedOrderRows
+        );
+      } catch (error) {
+        if (error?.code === "23505") {
+          existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(
+            merchantTransactionId
+          );
+          logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_SKIPPED", {
+            merchantTransactionId,
+            reason: "unique-constraint-existing-transaction",
+            transactionid: existingTransactionRecord?.transactionid || null,
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      if (result) {
+        logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
+          merchantTransactionId,
+          transactionCount: Array.isArray(result?.transactionData)
+            ? result.transactionData.length
+            : 0,
+          orderDataRows: Array.isArray(result?.orderdata) ? result.orderdata.length : 0,
+        });
+
+        if (
+          !result?.orderdata ||
+          !result?.transactionData ||
+          result.orderdata.length === 0 ||
+          result.transactionData.length === 0
+        ) {
+          const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(
+            merchantTransactionId
+          );
+          logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+            merchantTransactionId,
+            status: 400,
+            message:
+              "Transaction failure. If payment debited, it will be refunded in 5 business days",
+            failedProcessSnapshot,
+          });
+          return {
+            status: 400,
+            message:
+              "Transaction failure. If payment debited, it will be refunded in 5 business days",
+          };
+        }
+
+        existingTransactionRecord =
+          result?.transactionData?.[0] ||
+          (await getLatestTransactionByMerchantTransactionId(merchantTransactionId));
+        context =
+          (await getOrderContextByMerchantTransactionId(merchantTransactionId)) || context;
+      }
+    }
+
+    if (!existingTransactionRecord) {
       const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(
         merchantTransactionId
       );
       logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
         merchantTransactionId,
         status: 400,
-        message:
-          "Transaction failure. If payment debited, it will be refunded in 5 business days",
+        message: "Unable to resolve transaction record for successful payment",
         failedProcessSnapshot,
       });
       return {
         status: 400,
-        message:
-          "Transaction failure. If payment debited, it will be refunded in 5 business days",
+        message: "Unable to resolve transaction record for successful payment",
+      };
+    }
+
+    if (headersNeedPaymentStateSync || !alreadySucceeded) {
+      context =
+        (await syncSuccessfulPaymentStateFromTransaction(
+          context,
+          existingTransactionRecord
+        )) || context;
+    }
+
+    if (!hasHeldReservations && context.combinedOrderRows.every((row) => isTruthyFlag(row?.ispaymentsucceed))) {
+      const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(
+        merchantTransactionId
+      );
+      logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+        merchantTransactionId,
+        status: 200,
+        message: "Payment already processed",
+        alreadyProcessedSnapshot,
+      });
+      return {
+        status: 200,
+        message: "Payment already processed",
+        data: { redirectUrl: REDIRECT_URL_SUCCESS },
       };
     }
 

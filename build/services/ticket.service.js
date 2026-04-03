@@ -1,9 +1,234 @@
 import { PROTOCOL } from "../config/config.js";
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+// ─── Email Helpers (Internal) ───────────────────────────────────────────────
+const replaceTemplateTokens = (input, replacements) => {
+    let output = input || "";
+    for (const [key, value] of Object.entries(replacements)) {
+        const token = new RegExp(`\\{${key}\\}`, "g");
+        output = output.replace(token, value ?? "");
+    }
+    return output;
+};
+const parseEmailList = (raw) => {
+    if (!raw || typeof raw !== "string")
+        return [];
+    return raw
+        .split(",")
+        .map((e) => e.trim())
+        .filter((e) => e.length > 0);
+};
+const getCustomerByUserId = async (userid) => {
+    if (!userid)
+        return null;
+    const result = await query(`SELECT id, firstname, useremail FROM users WHERE id = $1 LIMIT 1`, [userid]);
+    return result.rows[0] ?? null;
+};
+const getInventoryUserById = async (id) => {
+    if (!id)
+        return null;
+    const result = await query(`SELECT id, firstname, useremail FROM inventoryusers WHERE id = $1 LIMIT 1`, [id]);
+    return result.rows[0] ?? null;
+};
+const fireAssignedEmail = async (assignedid, ticketnumber, productname, issuedescription) => {
+    try {
+        const tech = await getInventoryUserById(assignedid);
+        if (tech && tech.useremail) {
+            const t = emailTemplates.tickets.assigned;
+            await sendTransactionalMail({
+                to: tech.useremail,
+                subject: t.subject.replace('{ticketNumber}', ticketnumber),
+                text: t.text
+                    .replace('{technicianName}', tech.firstname || 'Technician')
+                    .replace('{ticketNumber}', ticketnumber)
+                    .replace('{productName}', productname || 'your product')
+                    .replace('{issueDescription}', issuedescription || 'N/A')
+            });
+        }
+    }
+    catch (e) {
+        console.error('[fireAssignedEmail] Error:', e?.message || e);
+    }
+};
+const fireReassignedEmail = async (newAssignedId, ticketnumber, productname, issuedescription, previousTechnicianName) => {
+    try {
+        const tech = await getInventoryUserById(newAssignedId);
+        if (!tech?.useremail)
+            return;
+        const subject = `Service Ticket Reassigned — #${ticketnumber}`;
+        const text = `Hi ${tech.firstname || "Technician"},
+
+This service ticket has been reassigned to you.
+
+Ticket Number        : ${ticketnumber}
+Product              : ${productname || "your product"}
+Issue                : ${issuedescription || "N/A"}
+Previously Assigned  : ${previousTechnicianName || "N/A"}
+
+Please review the ticket and continue updates from the service portal.
+
+Thank You,
+Revo Service Team`;
+        await sendTransactionalMail({
+            to: tech.useremail,
+            subject,
+            text,
+        });
+    }
+    catch (e) {
+        console.error("[fireReassignedEmail] Error:", e?.message || e);
+    }
+};
+const fireCustomerCreatedEmail = async (ticketRow, customer) => {
+    try {
+        if (!customer?.useremail)
+            return;
+        const t = emailTemplates.tickets.new;
+        await sendTransactionalMail({
+            to: customer.useremail,
+            subject: replaceTemplateTokens(t.subject, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+            text: replaceTemplateTokens(t.text, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+        });
+    }
+    catch (e) {
+        console.error("[fireCustomerCreatedEmail] Error:", e?.message || e);
+    }
+};
+const fireAdminNewTicketEmail = async (ticketRow) => {
+    try {
+        const recipients = parseEmailList(ticketRow?.receiversemail);
+        if (recipients.length === 0)
+            return;
+        const t = emailTemplates.tickets.admin_new_ticket;
+        await sendTransactionalMail({
+            to: recipients.join(","),
+            subject: replaceTemplateTokens(t.subject, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+            text: replaceTemplateTokens(t.text, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+                productName: ticketRow.productname || "your product",
+                issueDescription: ticketRow.issuedescription || "N/A",
+                location: ticketRow.location || "N/A",
+            }),
+        });
+    }
+    catch (e) {
+        console.error("[fireAdminNewTicketEmail] Error:", e?.message || e);
+    }
+};
+const fireCustomerStatusEmail = async (ticketRow, customer) => {
+    try {
+        if (!customer?.useremail || !ticketRow?.ticketstatus)
+            return;
+        const t = emailTemplates.tickets[ticketRow.ticketstatus];
+        const replacements = {
+            ticketNumber: ticketRow.ticketnumber || "N/A",
+            productName: ticketRow.productname || "your product",
+            issueDescription: ticketRow.issuedescription || "N/A",
+            totalPayable: ticketRow.totalpayableamount != null
+                ? `\u20B9${ticketRow.totalpayableamount}`
+                : "N/A",
+            estimationUrl: ticketRow.estimationurl || "N/A",
+            amount: ticketRow.amount != null ? `\u20B9${ticketRow.amount}` : "N/A",
+            paymentMethod: ticketRow.paymentmethod || "N/A",
+            invoiceUrl: ticketRow.invoiceurl || "N/A",
+            location: ticketRow.location || "N/A",
+            technicianName: ticketRow.assignedto || "Technician",
+            status: ticketRow.ticketstatus || "N/A",
+        };
+        if (!t) {
+            // Generic fallback for statuses that do not yet have dedicated templates.
+            await sendTransactionalMail({
+                to: customer.useremail,
+                subject: `Service Request #${ticketRow.ticketnumber} Status Updated`,
+                text: `Hi,
+
+Your service request status has been updated.
+
+Ticket Number : ${ticketRow.ticketnumber || "N/A"}
+New Status    : ${ticketRow.ticketstatus || "N/A"}
+Product       : ${ticketRow.productname || "your product"}
+
+Thank You,
+Revo Service Team`,
+            });
+            return;
+        }
+        await sendTransactionalMail({
+            to: customer.useremail,
+            subject: replaceTemplateTokens(t.subject, replacements),
+            text: replaceTemplateTokens(t.text, replacements),
+        });
+    }
+    catch (e) {
+        console.error("[fireCustomerStatusEmail] Error:", e?.message || e);
+    }
+};
+const firePaymentReceivedEmail = async (ticketnumber, amount, paymentmethod) => {
+    try {
+        const result = await query(`
+            SELECT u.useremail 
+            FROM tickets t
+            JOIN users u ON t.userid = u.id
+            WHERE t.ticketnumber = $1
+            LIMIT 1
+        `, [ticketnumber]);
+        if (result.rows.length > 0 && result.rows[0].useremail) {
+            const customer = result.rows[0];
+            const t = emailTemplates.tickets.payment_received;
+            await sendTransactionalMail({
+                to: customer.useremail,
+                subject: t.subject.replace('{ticketNumber}', ticketnumber),
+                text: t.text
+                    .replace('{ticketNumber}', ticketnumber)
+                    .replace('{amount}', amount ? `\u20B9${amount}` : 'N/A')
+                    .replace('{paymentMethod}', paymentmethod || 'N/A')
+            });
+        }
+    }
+    catch (e) {
+        console.error('[firePaymentReceivedEmail] Error:', e?.message || e);
+    }
+};
+const processTicketNotifications = async (previousTicket, currentTicket, isInsert) => {
+    if (!currentTicket)
+        return;
+    const customer = await getCustomerByUserId(currentTicket.userid);
+    if (isInsert) {
+        await fireCustomerCreatedEmail(currentTicket, customer);
+        await fireAdminNewTicketEmail(currentTicket);
+    }
+    const prevAssignedId = previousTicket?.assignedid
+        ? Number(previousTicket.assignedid)
+        : null;
+    const currAssignedId = currentTicket?.assignedid
+        ? Number(currentTicket.assignedid)
+        : null;
+    const assignedChanged = prevAssignedId !== currAssignedId;
+    if (currAssignedId && (isInsert || assignedChanged)) {
+        if (!isInsert && prevAssignedId && prevAssignedId !== currAssignedId) {
+            const prevTech = await getInventoryUserById(prevAssignedId);
+            await fireReassignedEmail(currAssignedId, currentTicket.ticketnumber, currentTicket.productname, currentTicket.issuedescription, prevTech?.firstname || "Technician");
+        }
+        else {
+            await fireAssignedEmail(currAssignedId, currentTicket.ticketnumber, currentTicket.productname, currentTicket.issuedescription);
+        }
+    }
+    const prevStatus = previousTicket?.ticketstatus || null;
+    const currStatus = currentTicket?.ticketstatus || null;
+    const statusChanged = !isInsert && !!currStatus && prevStatus !== currStatus;
+    if (statusChanged) {
+        await fireCustomerStatusEmail(currentTicket, customer);
+    }
+};
 export var ticketService;
 (function (ticketService) {
     ticketService.getTicketDynamic = async (request) => {
@@ -222,6 +447,11 @@ export var ticketService;
             let querydata;
             let params;
             const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
+            let previousTicket = null;
+            if (id) {
+                const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
+                previousTicket = prevResult.rows[0] ?? null;
+            }
             console.log(id, inventoryuserid, product_warranty, "id,inventoryuserid,product_warranty");
             console.log("Upsert Fields", upsertFields);
             if (files && files.length > 0) {
@@ -251,29 +481,7 @@ export var ticketService;
             const result = await query(querydata, params);
             console.log(result, "result in Upsert Normal Tickets");
             if (result && result.rows.length > 0) {
-                let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
-                    result.rows[0].userid,
-                ]);
-                if (userdata && userdata.rows.length > 0) {
-                    const ticketStatus = result.rows[0].ticketstatus;
-                    const ticketNumber = result.rows[0].ticketnumber;
-                    if (emailTemplates.tickets[ticketStatus]) {
-                        const { subject, text } = emailTemplates.tickets[ticketStatus];
-                        let maildata = {
-                            body: {
-                                to: userdata.rows[0].useremail,
-                                subject,
-                                text: text.replace("{ticketNumber}", ticketNumber),
-                            },
-                        };
-                        try {
-                            let sendingmail = await sendMail(maildata, false);
-                        }
-                        catch (error) {
-                            console.log(error.message || error, "error in sending mail");
-                        }
-                    }
-                }
+                await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
@@ -288,6 +496,11 @@ export var ticketService;
             let querydata;
             let params;
             const { id, ...upsertFields } = ticketData;
+            let previousTicket = null;
+            if (id) {
+                const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
+                previousTicket = prevResult.rows[0] ?? null;
+            }
             const fieldNames = Object.keys(upsertFields);
             console.log("upsertFields", upsertFields);
             console.log("fieldNames", fieldNames);
@@ -308,29 +521,7 @@ export var ticketService;
             console.log(querydata, " querydata in Upsert GCP Tickets");
             const result = await query(querydata, params);
             if (result && result.rows.length > 0) {
-                let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
-                    result.rows[0].userid,
-                ]);
-                if (userdata && userdata.rows.length > 0) {
-                    const ticketStatus = result.rows[0].ticketstatus;
-                    const ticketNumber = result.rows[0].ticketnumber;
-                    if (emailTemplates.tickets[ticketStatus]) {
-                        const { subject, text } = emailTemplates.tickets[ticketStatus];
-                        let maildata = {
-                            body: {
-                                to: userdata.rows[0].useremail,
-                                subject,
-                                text: text.replace("{ticketNumber}", ticketNumber),
-                            },
-                        };
-                        try {
-                            let sendingmail = await sendMail(maildata, false);
-                        }
-                        catch (error) {
-                            console.log(error.message || error, "error in sending mail");
-                        }
-                    }
-                }
+                await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
@@ -366,6 +557,9 @@ export var ticketService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            if (result && result.rows.length > 0) {
+                await firePaymentReceivedEmail(result.rows[0].ticketnumber, result.rows[0].amount, result.rows[0].paymentmethod);
+            }
             return result;
         }
         catch (error) {

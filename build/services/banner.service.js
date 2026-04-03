@@ -4,7 +4,6 @@ export var bannerService;
 (function (bannerService) {
     bannerService.upsertBanner = async (bannerData) => {
         try {
-            console.log("Banner Data Received for Upsert:", bannerData);
             let results = [];
             for (const banner of bannerData) {
                 let querydata, params;
@@ -50,7 +49,6 @@ export var bannerService;
         try {
             const querydata = `SELECT * FROM banner`;
             const result = await query(querydata, []);
-            console.log("Get All Banner Result:", result);
             return result.rows;
         }
         catch (error) {
@@ -58,7 +56,6 @@ export var bannerService;
     };
     bannerService.deleteBanner = async (id) => {
         try {
-            console.log("Deleting Banner with ID:", id);
             const result = await query(`DELETE FROM banner WHERE id = $1`, [id]);
             if (result.rowCount != 0) {
                 return `Data Deleted Successfully`;

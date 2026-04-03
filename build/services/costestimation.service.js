@@ -3,6 +3,61 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { ticketService } from "./ticket.service.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
+import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+// ─── Helpers (private to this module) ───────────────────────────────────────
+// Resolves the customer's email + key ticket fields from a ticket number.
+const getTicketUserInfo = async (ticketnumber) => {
+    const result = await query(`SELECT u.useremail, u.firstname, t.productname, t.tickettype
+         FROM tickets t
+         JOIN users u ON t.userid = u.id
+         WHERE t.ticketnumber = $1
+         LIMIT 1`, [ticketnumber]);
+    return result.rows[0] ?? null;
+};
+// Fires the correct customer notification email for each estimationstatus transition.
+// Called from both upsertCostEstimation and upsertGcpCostEstimation to avoid duplication.
+const fireEstimationEmail = async (estimationstatus, ticketnumber, estimationurl, totalpayableamount) => {
+    try {
+        const userInfo = await getTicketUserInfo(ticketnumber);
+        if (!userInfo)
+            return;
+        const t = emailTemplates.tickets;
+        let subject;
+        let text;
+        if (estimationstatus === 'waiting_for_approval') {
+            subject = t.waiting_for_cost_estimation_approval.subject;
+            text = t.waiting_for_cost_estimation_approval.text
+                .replace('{ticketNumber}', ticketnumber)
+                .replace('{productName}', userInfo.productname || 'your product')
+                .replace('{totalPayable}', totalpayableamount != null ? `\u20B9${totalpayableamount}` : 'N/A')
+                .replace('{estimationUrl}', estimationurl || 'N/A');
+        }
+        else if (estimationstatus === 'approved') {
+            subject = t.service_in_progress.subject;
+            text = t.service_in_progress.text
+                .replace('{ticketNumber}', ticketnumber)
+                .replace('{productName}', userInfo.productname || 'your product');
+        }
+        else if (estimationstatus === 'rejected') {
+            subject = t.unresolved_closed.subject;
+            text = t.unresolved_closed.text
+                .replace('{ticketNumber}', ticketnumber);
+        }
+        else if (estimationstatus === 're_quote') {
+            subject = t.re_quote.subject;
+            text = t.re_quote.text
+                .replace('{ticketNumber}', ticketnumber);
+        }
+        else {
+            return; // unknown status — no email
+        }
+        await sendTransactionalMail({ to: userInfo.useremail, subject, text });
+    }
+    catch (mailErr) {
+        console.error(`[costEstimation] Email failed for estimationstatus "${estimationstatus}":`, mailErr?.message || mailErr);
+    }
+};
 export var costEstimationService;
 (function (costEstimationService) {
     costEstimationService.getCostEstimationData = async (request) => {
@@ -135,6 +190,7 @@ export var costEstimationService;
                     };
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue);
+                await fireEstimationEmail(result.rows[0].estimationstatus, ticketnumber, result.rows[0].estimationurl ?? null, result.rows[0].totalpayableamount ?? null);
             }
             return result;
         }
@@ -211,6 +267,7 @@ export var costEstimationService;
                     };
                 }
                 let upsertticket = await ticketService.upsertTicketstatus(datavalue);
+                await fireEstimationEmail(result.rows[0].estimationstatus, ticketnumber, result.rows[0].estimationurl ?? null, result.rows[0].totalpayableamount ?? null);
             }
             return result;
         }

@@ -6,7 +6,6 @@ export var bannerController;
         try {
             const bannerData = request.body;
             let upsertBannerResult = await bannerService.upsertBanner(bannerData);
-            console.log("Upsert Banner Result:", upsertBannerResult);
             if (upsertBannerResult.command === "UPDATE" || upsertBannerResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -29,7 +28,6 @@ export var bannerController;
     bannerController.getAllBanner = async (request, reply) => {
         try {
             let getAllBannerResult = await bannerService.getAllBanner();
-            console.log("Get All Banner Result:", getAllBannerResult);
             reply.status(200).send(getAllBannerResult);
         }
         catch (error) {

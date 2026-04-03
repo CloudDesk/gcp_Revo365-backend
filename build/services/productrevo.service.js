@@ -1499,16 +1499,34 @@ export var productrevoService;
             let updateQuery = '';
             console.log("DEBUG upsertQuantityFields - issold:", issold, "isRental:", isRental, "orderedquantityNumber:", orderedquantityNumber);
             if (issold && !isNaN(orderedquantityNumber)) {
-                // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
+                // When stock has been physically consumed, release the matching committed
+                // reservation in the same statement so sellable counters are not double-subtracted.
                 if (isRental) {
                     console.log("DEBUG: Decrementing rentalorderedquantity");
-                    updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $15`;
+                    updateQueryBase += `, rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $15)`;
+                    updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
                 }
                 else {
                     console.log("DEBUG: Decrementing orderedquantity");
-                    updateQueryBase += `, orderedquantity = orderedquantity - $15`;
+                    updateQuery = `
+          UPDATE product_revo 
+          SET quantity = $1, 
+              ecompublishedquantity = GREATEST(0, $2 - GREATEST(0, COALESCE(orderedquantity, 0) - $15)), 
+              soldquantity = $3, 
+              availablequantity = $4, 
+              productstatus = $5, 
+              overallavailableqty = GREATEST(0, $6 - GREATEST(0, COALESCE(orderedquantity, 0) - $15)), 
+              rentalsoldquantity = $7,
+              oncatalogueqty = $8,
+              offcatalogueqty = $9,
+              rentaltotalquantity = $10,
+              rentalavailablequantity = $11,
+              bin_qty = $12,
+              archive_qty = $13,
+              ewaste_qty = $14,
+              orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $15)
+          WHERE puc = $16 RETURNING *`;
                 }
-                updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
             }
             else {
                 updateQuery = `${updateQueryBase} WHERE puc = $15 RETURNING *`;
@@ -1629,9 +1647,24 @@ export var productrevoService;
                     ]
                 };
             });
-            const updatePromises = updateQueries.map(update => query(update.query, update.params));
-            const updateResults = await Promise.all(updatePromises);
-            return updateResults;
+            // Serialize jsonb_set per PUC: parallel updates on the same product_revo row
+            // clobber each other and drop branch keys under load.
+            const byPuc = new Map();
+            for (const u of updateQueries) {
+                const pucKey = String(u.params[15]);
+                const list = byPuc.get(pucKey) ?? [];
+                list.push(u);
+                byPuc.set(pucKey, list);
+            }
+            // Same PUC: must be sequential. Different PUCs: parallel (separate rows).
+            const groups = await Promise.all([...byPuc.values()].map(async (queries) => {
+                const part = [];
+                for (const u of queries) {
+                    part.push(await query(u.query, u.params));
+                }
+                return part;
+            }));
+            return groups.flat();
         }
         catch (error) {
             console.error("Error in testupsertQuantityFieldsBatch", error);
@@ -1703,7 +1736,6 @@ export var productrevoService;
                     const queryText = `
         UPDATE product_revo
         SET rentalorderedquantity = rentalorderedquantity + $1,
-            lock_qty = lock_qty - $1,
             -- rentalavailablequantity is usually computed, but let's ensure it stays consistent if stored
             rentalavailablequantity = rentalavailablequantity - $1
         WHERE id = $2
@@ -1719,7 +1751,6 @@ export var productrevoService;
                     const queryText = `
         UPDATE product_revo
         SET orderedquantity = COALESCE(orderedquantity, 0) + $1,
-            lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1),
             overallavailableqty = GREATEST(0, COALESCE(overallavailableqty, 0) - $1),
             ecompublishedquantity = GREATEST(0, COALESCE(ecompublishedquantity, 0) - $1)
         WHERE id = $2
@@ -1884,5 +1915,70 @@ export var productrevoService;
         }
     }
     productrevoService.updateCancelledOrderedQuantity = updateCancelledOrderedQuantity;
+    async function releaseCommittedQuantityForOrderLines(lines, restoreAvailability) {
+        try {
+            const normalLines = new Map();
+            const rentalLines = new Map();
+            for (const line of lines || []) {
+                if (line?.ordertype && line.ordertype !== "Orders")
+                    continue;
+                const productId = Number(line?.productid);
+                const quantity = Number(line?.quantity);
+                if (!Number.isFinite(productId) || productId <= 0)
+                    continue;
+                if (!Number.isFinite(quantity) || quantity <= 0)
+                    continue;
+                const orderName = String(line?.ordername || "").trim().toLowerCase();
+                if (orderName === "rental") {
+                    rentalLines.set(productId, (rentalLines.get(productId) || 0) + quantity);
+                }
+                else {
+                    normalLines.set(productId, (normalLines.get(productId) || 0) + quantity);
+                }
+            }
+            const updatedPucs = new Set();
+            for (const [productId, quantity] of normalLines) {
+                const result = restoreAvailability
+                    ? await query(`UPDATE product_revo 
+             SET orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $2),
+                 overallavailableqty = COALESCE(overallavailableqty, 0) + $2,
+                 ecompublishedquantity = COALESCE(ecompublishedquantity, 0) + $2
+             WHERE id = $1
+             RETURNING puc`, [productId, quantity])
+                    : await query(`UPDATE product_revo
+             SET orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $2)
+             WHERE id = $1
+             RETURNING puc`, [productId, quantity]);
+                if (result.rows[0]?.puc) {
+                    updatedPucs.add(result.rows[0].puc);
+                }
+            }
+            for (const [productId, quantity] of rentalLines) {
+                const result = restoreAvailability
+                    ? await query(`UPDATE product_revo
+             SET rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $2),
+                 rentalavailablequantity = COALESCE(rentalavailablequantity, 0) + $2
+             WHERE id = $1
+             RETURNING puc`, [productId, quantity])
+                    : await query(`UPDATE product_revo
+             SET rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $2)
+             WHERE id = $1
+             RETURNING puc`, [productId, quantity]);
+                if (result.rows[0]?.puc) {
+                    updatedPucs.add(result.rows[0].puc);
+                }
+            }
+            if (updatedPucs.size > 0) {
+                const { stockRevoService } = await import('./stockRevo.service.js');
+                await stockRevoService.testinupdateQuantity(Array.from(updatedPucs), false);
+            }
+            return { success: true, updatedPucs: Array.from(updatedPucs) };
+        }
+        catch (error) {
+            console.error('Error in releaseCommittedQuantityForOrderLines:', error);
+            throw error;
+        }
+    }
+    productrevoService.releaseCommittedQuantityForOrderLines = releaseCommittedQuantityForOrderLines;
 })(productrevoService || (productrevoService = {}));
 //# sourceMappingURL=productrevo.service.js.map

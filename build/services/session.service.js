@@ -1,7 +1,6 @@
 import { REDIS_SESSIONEXSEC } from '../config/config.js';
 import { redisClient } from '../database/redis.session.js';
 export const saveSession = async (sessionId, sessionData) => {
-    console.log('Inside saveSessionredis');
     const createdTime = Math.floor(Date.now() / 1000);
     const sessionDataWithCreatedTime = {
         ...sessionData,
@@ -20,7 +19,6 @@ export const saveSession = async (sessionId, sessionData) => {
 };
 export const getSession = async (req, reply) => {
     try {
-        console.log('Inside GetSession');
         const sessionId = req.headers.authorization;
         if (!sessionId) {
             return reply.status(401).send({ error: 'Unauthorized: No valid session' });

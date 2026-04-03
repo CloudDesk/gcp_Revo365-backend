@@ -104,7 +104,6 @@ export var ordersController;
     ordersController.getorderlinedata = async (request) => {
         try {
             let data = await ordersService.getOrderLineData(request);
-            console.log("data", data);
             return data;
         }
         catch (error) {
@@ -138,7 +137,6 @@ export var ordersController;
     };
     ordersController.getInvoiceDataForOrderid = async (request, reply) => {
         try {
-            console.log('Request in Controller getInvoiceDataForOrderid:', request);
             let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request);
             reply.send(getInvoiceDataResult);
         }

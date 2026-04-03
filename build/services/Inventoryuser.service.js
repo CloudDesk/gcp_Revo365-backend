@@ -1,6 +1,6 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from "uuid";
@@ -242,7 +242,16 @@ export var userInventoryService;
                 let otpsave = await saveOtp(request.query.useremail, generatedotp);
                 let finduser = await userInventoryService.getInventoryUsersData(request, reply);
                 if (finduser && finduser.length > 0) {
-                    let emailresult = await sendMail(request, generatedotp);
+                    try {
+                        await sendTransactionalMail({
+                            to: request.body.useremail,
+                            subject: 'OTP Verification Code',
+                            text: `Your OTP to reset your Revo password is: ${generatedotp}. It is valid for 10 minutes.`,
+                        });
+                    }
+                    catch (mailErr) {
+                        console.error('[forgotuser] OTP email failed:', mailErr?.message || mailErr);
+                    }
                     return { status: "success", message: "OTP sent Successfuly" };
                 }
                 else {

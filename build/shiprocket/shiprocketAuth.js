@@ -5,14 +5,11 @@ const EMAIL = SHIPROCKET_EMAIL;
 const PASSWORD = SHIPROCKET_PASSWORD;
 async function loginShiprocket() {
     try {
-        console.log(BASE, EMAIL, PASSWORD, 'cred');
         const response = await axios.post(`${BASE}/auth/login`, {
             email: EMAIL,
             password: PASSWORD,
         });
         const token = response.data.token;
-        console.log("✅ Login successful!");
-        console.log("Token:", token);
         return token;
     }
     catch (error) {
@@ -25,5 +22,4 @@ export default loginShiprocket;
 // if (import.meta.url === `file://${process.argv[1]}`) {
 //   loginShiprocket();
 // }
-loginShiprocket();
 //# sourceMappingURL=shiprocketAuth.js.map

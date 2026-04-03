@@ -124,6 +124,16 @@ export var transactionController;
             reply.status(500).send({ message: "Webhook processing failed" });
         }
     };
+    transactionController.syncShiprocketShipmentStatus = async (request, reply) => {
+        try {
+            const result = await transactionService.syncShiprocketShipmentStatus(request);
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN syncShiprocketShipmentStatus Controller", error);
+            reply.status(500).send({ message: "Shipment sync failed" });
+        }
+    };
     transactionController.paymentInitializationRazorpayTicket = async (request, reply) => {
         try {
             let transactionData = await transactionService.paymentInitializationRazorpayTicket(request);
