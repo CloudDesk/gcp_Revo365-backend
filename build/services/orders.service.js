@@ -80,6 +80,15 @@ export var ordersService;
             .sort((left, right) => right.rank - left.rank);
         return rankedStatuses[0]?.status || "ordered";
     };
+    const qualifyOrderlineFilterColumn = (rawKey) => {
+        const key = String(rawKey || "").trim();
+        if (!key)
+            return key;
+        if (key.includes(".") || key.includes("(") || key.includes(")") || key.includes(" ")) {
+            return key;
+        }
+        return `orderline.${key}`;
+    };
     const getOrderLinesForUniqueOrderId = async (uniqueorderid) => {
         if (!uniqueorderid)
             return [];
@@ -701,10 +710,11 @@ export var ordersService;
             keys.forEach((key, index) => {
                 const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
                 if (key === "delivereddate" || key === "price") {
+                    const qualifiedRangeKey = qualifyOrderlineFilterColumn(key);
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
-                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        return `(${qualifiedRangeKey} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                     });
                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
                     parameterIndex += 2 * paramValues.length;
@@ -716,15 +726,18 @@ export var ordersService;
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
-                    whereClauses.push(`(${key} != $${parameterIndex})`);
+                    const qualifiedKey = qualifyOrderlineFilterColumn(key);
+                    whereClauses.push(`(${qualifiedKey} != $${parameterIndex})`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
                 else if (key !== "page" && key !== "count") {
-                    if (key === "userid") {
-                        key = "orderline.userid";
-                    }
-                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    const qualifiedKey = key === "userid"
+                        ? "orderline.userid"
+                        : key === "id"
+                            ? "orderline.id"
+                            : qualifyOrderlineFilterColumn(key);
+                    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
@@ -840,10 +853,11 @@ export var ordersService;
             keys.forEach((key, index) => {
                 const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
                 if (key === "delivereddate" || key === "price") {
+                    const qualifiedRangeKey = qualifyOrderlineFilterColumn(key);
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
-                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        return `(${qualifiedRangeKey} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                     });
                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
                     parameterIndex += 2 * paramValues.length;
@@ -855,15 +869,18 @@ export var ordersService;
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
-                    whereClauses.push(`(${key} != $${parameterIndex})`);
+                    const qualifiedKey = qualifyOrderlineFilterColumn(key);
+                    whereClauses.push(`(${qualifiedKey} != $${parameterIndex})`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
                 else if (key !== "page" && key !== "count") {
-                    if (key === "userid") {
-                        key = "orderline.userid";
-                    }
-                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                    const qualifiedKey = key === "userid"
+                        ? "orderline.userid"
+                        : key === "id"
+                            ? "orderline.id"
+                            : qualifyOrderlineFilterColumn(key);
+                    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
