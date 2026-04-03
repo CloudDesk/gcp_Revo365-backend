@@ -1982,6 +1982,12 @@ export module productrevoService {
           return part;
         })
       );
+
+      const updatedPucs = Array.from(new Set(batchData.map((row) => row?.puc).filter(Boolean)));
+      if (updatedPucs.length > 0) {
+        await syncGlobalProductOrderedQuantities(updatedPucs);
+      }
+
       return groups.flat();
 
     } catch (error) {
@@ -1989,6 +1995,79 @@ export module productrevoService {
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
     }
+  };
+
+  const syncGlobalProductOrderedQuantities = async (pucs: string[]) => {
+    const uniquePucs = Array.from(new Set((pucs || []).map((p) => String(p || "").trim()).filter(Boolean)));
+    if (uniquePucs.length === 0) return;
+
+    const syncQuery = `
+      WITH target_products AS (
+        SELECT id, puc
+        FROM product_revo
+        WHERE puc = ANY($1::text[])
+      ),
+      ordered_counts AS (
+        SELECT
+          ol.productid,
+          COALESCE(SUM(ol.quantity), 0) AS ordered_qty
+        FROM orderline ol
+        JOIN target_products tp ON tp.id = ol.productid
+        WHERE ol.ordertype = 'Orders'
+          AND ol.orderstatus NOT IN (
+            'payment_failed',
+            'cancelled',
+            'returned',
+            'delivered',
+            'Sold',
+            'ready_to_dispatch',
+            'shipped'
+          )
+        GROUP BY ol.productid
+      ),
+      physical_sellable AS (
+        SELECT
+          s.puc,
+          (
+            COALESCE(SUM(CASE
+              WHEN s.stocktype = 'third_party_product'
+               AND s.ecompublish = true
+               AND (s.isdeleted = false OR s.isdeleted IS NULL)
+               AND (s.isarchive = false OR s.isarchive IS NULL)
+               AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+               AND (s.ewaste = false OR s.ewaste IS NULL)
+              THEN s.thirdpartyquantity
+              ELSE 0
+            END), 0)
+            +
+            COALESCE(SUM(CASE
+              WHEN s.stocktype <> 'third_party_product'
+               AND s.ecompublish = true
+               AND s.stockstatus = 'Available'
+               AND (s.isdeleted = false OR s.isdeleted IS NULL)
+               AND (s.isarchive = false OR s.isarchive IS NULL)
+               AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+               AND (s.ewaste = false OR s.ewaste IS NULL)
+              THEN 1
+              ELSE 0
+            END), 0)
+          ) AS physical_sellable_qty
+        FROM stock_revo s
+        JOIN target_products tp ON tp.puc = s.puc
+        GROUP BY s.puc
+      )
+      UPDATE product_revo pr
+      SET
+        orderedquantity = COALESCE(oc.ordered_qty, 0),
+        overallavailableqty = GREATEST(0, COALESCE(ps.physical_sellable_qty, 0) - COALESCE(oc.ordered_qty, 0)),
+        ecompublishedquantity = GREATEST(0, COALESCE(ps.physical_sellable_qty, 0) - COALESCE(oc.ordered_qty, 0))
+      FROM target_products tp
+      LEFT JOIN ordered_counts oc ON oc.productid = tp.id
+      LEFT JOIN physical_sellable ps ON ps.puc = tp.puc
+      WHERE pr.id = tp.id
+    `;
+
+    await query(syncQuery, [uniquePucs]);
   };
 
 

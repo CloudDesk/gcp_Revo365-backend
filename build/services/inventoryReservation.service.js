@@ -214,11 +214,11 @@ export var inventoryReservationService;
                     if (rowQuantity === transitionQuantity) {
                         await query(`
               UPDATE inventory_reservations
-              SET status = $1,
-                  location = COALESCE($2, location),
-                  released_at = CASE WHEN $1 = 'released' THEN NOW() ELSE released_at END,
-                  consumed_at = CASE WHEN $1 = 'consumed' THEN NOW() ELSE consumed_at END,
-                  release_reason = CASE WHEN $1 = 'released' THEN $3 ELSE release_reason END,
+              SET status = $1::varchar,
+                  location = COALESCE($2::varchar, location),
+                  released_at = CASE WHEN $1::varchar = 'released' THEN NOW() ELSE released_at END,
+                  consumed_at = CASE WHEN $1::varchar = 'consumed' THEN NOW() ELSE consumed_at END,
+                  release_reason = CASE WHEN $1::varchar = 'released' THEN $3::varchar ELSE release_reason END,
                   updated_at = NOW()
               WHERE id = $4
               `, [targetStatus, line.location, reason, reservationRow.id]);
@@ -252,9 +252,9 @@ export var inventoryReservationService;
               VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11,
-                CASE WHEN $6 = 'released' THEN NOW() ELSE NULL END,
-                CASE WHEN $6 = 'consumed' THEN NOW() ELSE NULL END,
-                CASE WHEN $6 = 'released' THEN $12 ELSE NULL END,
+                CASE WHEN $6::varchar = 'released' THEN NOW() ELSE NULL END,
+                CASE WHEN $6::varchar = 'consumed' THEN NOW() ELSE NULL END,
+                CASE WHEN $6::varchar = 'released' THEN $12::varchar ELSE NULL END,
                 NOW(),
                 NOW()
               )
