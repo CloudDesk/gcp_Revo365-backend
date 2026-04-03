@@ -6,6 +6,7 @@ import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import Razorpay from "razorpay";
 import {
+  ENV_SHIPROCKET_WEBHOOK_TOKEN,
   ENV_RAZORPAY_KEY_ID,
   ENV_RAZORPAY_KEY_SECRET,
   ENV_RAZORPAY_WEBHOOK_SECRET,
@@ -320,6 +321,193 @@ const parseHeaderValue = (headerValue: any): string | null => {
     return headerValue[0] || null;
   }
   return String(headerValue);
+};
+
+const normalizeOptionalText = (value: any): string | null => {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+const safeTimingCompare = (expected: string, received: string) => {
+  try {
+    const expectedBuffer = Buffer.from(expected || "", "utf8");
+    const receivedBuffer = Buffer.from(received || "", "utf8");
+    if (expectedBuffer.length === 0 || receivedBuffer.length === 0) return false;
+    if (expectedBuffer.length !== receivedBuffer.length) return false;
+    return crypto.timingSafeEqual(
+      new Uint8Array(expectedBuffer),
+      new Uint8Array(receivedBuffer)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const getMerchantTransactionIdIfExists = async (merchantTransactionId: string) => {
+  const normalizedMerchantTx = normalizeOptionalText(merchantTransactionId);
+  if (!normalizedMerchantTx) return null;
+
+  const result = await query(
+    `
+    SELECT merchanttransactionid
+    FROM orders
+    WHERE merchanttransactionid = $1
+    UNION ALL
+    SELECT merchanttransactionid
+    FROM thirdpartyorders
+    WHERE merchanttransactionid = $1
+    LIMIT 1
+    `,
+    [normalizedMerchantTx]
+  );
+
+  return result.rows[0]?.merchanttransactionid || null;
+};
+
+const resolveMerchantTransactionIdFromShiprocketRefs = async ({
+  directCandidates = [],
+  shipmentIds = [],
+  shiprocketOrderIds = [],
+  channelOrderIds = [],
+}: {
+  directCandidates?: any[];
+  shipmentIds?: any[];
+  shiprocketOrderIds?: any[];
+  channelOrderIds?: any[];
+}) => {
+  const normalizedDirectCandidates = Array.from(
+    new Set(
+      (directCandidates || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)
+    )
+  ) as string[];
+
+  for (const directCandidate of normalizedDirectCandidates) {
+    const merchantTx = await getMerchantTransactionIdIfExists(directCandidate);
+    if (merchantTx) {
+      return merchantTx;
+    }
+  }
+
+  const shipmentRefs = Array.from(
+    new Set(
+      (shipmentIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)
+    )
+  ) as string[];
+  const shiprocketOrderRefs = Array.from(
+    new Set(
+      (shiprocketOrderIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)
+    )
+  ) as string[];
+  const channelOrderRefs = Array.from(
+    new Set(
+      (channelOrderIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)
+    )
+  ) as string[];
+
+  if (
+    shipmentRefs.length === 0 &&
+    shiprocketOrderRefs.length === 0 &&
+    channelOrderRefs.length === 0
+  ) {
+    return null;
+  }
+
+  const lookupResult = await query(
+    `
+    SELECT merchanttransactionid
+    FROM (
+      SELECT merchanttransactionid, 1 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_shipment_id::text, '') = ANY($1::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 1 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_shipment_id::text, '') = ANY($1::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 2 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_order_id::text, '') = ANY($2::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 2 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_order_id::text, '') = ANY($2::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 3 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_channel_order_id::text, '') = ANY($3::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 3 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_channel_order_id::text, '') = ANY($3::text[])
+    ) refs
+    ORDER BY priority
+    LIMIT 1
+    `,
+    [shipmentRefs, shiprocketOrderRefs, channelOrderRefs]
+  );
+
+  return lookupResult.rows[0]?.merchanttransactionid || null;
+};
+
+const extractShiprocketWebhookIdentifiers = (payload: any) => {
+  const data = payload?.data || {};
+  const trackingData = payload?.tracking_data || data?.tracking_data || {};
+  const trackingTrack = trackingData?.shipment_track?.[0] || {};
+
+  return {
+    directMerchantTransactionCandidates: [
+      payload?.merchanttransactionid,
+      payload?.merchantTransactionId,
+      payload?.merchant_transaction_id,
+      payload?.reference_id,
+      data?.merchanttransactionid,
+      data?.merchantTransactionId,
+      data?.merchant_transaction_id,
+      data?.reference_id,
+      payload?.channel_order_id,
+      payload?.channelOrderId,
+      data?.channel_order_id,
+      data?.channelOrderId,
+      payload?.order_id,
+      payload?.orderId,
+      data?.order_id,
+      data?.orderId,
+    ],
+    shipmentIds: [
+      payload?.shipment_id,
+      payload?.shipmentId,
+      data?.shipment_id,
+      data?.shipmentId,
+      trackingData?.shipment_id,
+      trackingData?.shipmentId,
+      trackingTrack?.shipment_id,
+    ],
+    shiprocketOrderIds: [
+      payload?.shiprocket_order_id,
+      payload?.shiprocketOrderId,
+      data?.shiprocket_order_id,
+      data?.shiprocketOrderId,
+      payload?.order_id,
+      payload?.orderId,
+      data?.order_id,
+      data?.orderId,
+    ],
+    channelOrderIds: [
+      payload?.channel_order_id,
+      payload?.channelOrderId,
+      data?.channel_order_id,
+      data?.channelOrderId,
+    ],
+  };
 };
 
 const shortRef = (value: any, prefix = 6, suffix = 4): string | null => {
@@ -2475,34 +2663,115 @@ export module transactionService {
     }
   };
 
+  export const paymentWebhookShiprocket = async (request: any) => {
+    try {
+      const configuredToken = normalizeOptionalText(
+        ENV_SHIPROCKET_WEBHOOK_TOKEN || process.env.SHIPROCKET_WEBHOOK_TOKEN
+      );
+      if (!configuredToken) {
+        return {
+          status: 500,
+          message: "Shiprocket webhook token is not configured",
+        };
+      }
+
+      const receivedToken = normalizeOptionalText(
+        parseHeaderValue(request?.headers?.["x-api-key"])
+      );
+      if (!receivedToken) {
+        return {
+          status: 401,
+          message: "Missing x-api-key header",
+        };
+      }
+
+      if (!safeTimingCompare(configuredToken, receivedToken)) {
+        return {
+          status: 401,
+          message: "Invalid x-api-key",
+        };
+      }
+
+      const payload = request?.body || {};
+      const identifiers = extractShiprocketWebhookIdentifiers(payload);
+      const merchantTransactionId = await resolveMerchantTransactionIdFromShiprocketRefs({
+        directCandidates: identifiers.directMerchantTransactionCandidates,
+        shipmentIds: identifiers.shipmentIds,
+        shiprocketOrderIds: identifiers.shiprocketOrderIds,
+        channelOrderIds: identifiers.channelOrderIds,
+      });
+
+      if (!merchantTransactionId) {
+        return {
+          status: 200,
+          message: "Shiprocket webhook received but no matching order found",
+        };
+      }
+
+      const trackingSummary = extractShiprocketTrackingSummary(payload);
+
+      await query(
+        `UPDATE orders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`,
+        [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]
+      );
+      await query(
+        `UPDATE thirdpartyorders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`,
+        [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]
+      );
+
+      await applyShipmentLifecycleToOrders(
+        merchantTransactionId,
+        trackingSummary.mappedOrderStatus
+      );
+
+      return {
+        status: 200,
+        message: "Shiprocket webhook processed successfully",
+        data: {
+          merchantTransactionId,
+          shiprocketStatus: trackingSummary.rawStatus,
+          mappedOrderStatus: trackingSummary.mappedOrderStatus,
+          shipmentStatusCode: trackingSummary.shipmentStatusCode,
+          awbCode: trackingSummary.awbCode,
+        },
+      };
+    } catch (error: any) {
+      console.error(
+        "Error processing Shiprocket webhook:",
+        error?.response?.data || error?.message || error
+      );
+      return {
+        status: 500,
+        message: "Error processing Shiprocket webhook",
+      };
+    }
+  };
+
   export const syncShiprocketShipmentStatus = async (request: any) => {
     try {
       const merchantTransactionIdFromBody = request?.body?.merchanttransactionId;
-      const shipmentIdFromBody = request?.body?.shipmentId;
-
-      let merchantTransactionId = merchantTransactionIdFromBody;
-
-      if (!merchantTransactionId && shipmentIdFromBody) {
-        const headerLookup = await query(
-          `
-          SELECT merchanttransactionid
-          FROM orders
-          WHERE shiprocket_shipment_id = $1
-          UNION ALL
-          SELECT merchanttransactionid
-          FROM thirdpartyorders
-          WHERE shiprocket_shipment_id = $1
-          LIMIT 1
-          `,
-          [shipmentIdFromBody]
-        );
-        merchantTransactionId = headerLookup.rows[0]?.merchanttransactionid || null;
-      }
+      const payload = request?.body || {};
+      const identifiers = extractShiprocketWebhookIdentifiers(payload);
+      const merchantTransactionId = await resolveMerchantTransactionIdFromShiprocketRefs({
+        directCandidates: [
+          merchantTransactionIdFromBody,
+          ...identifiers.directMerchantTransactionCandidates,
+        ],
+        shipmentIds: identifiers.shipmentIds,
+        shiprocketOrderIds: identifiers.shiprocketOrderIds,
+        channelOrderIds: identifiers.channelOrderIds,
+      });
 
       if (!merchantTransactionId) {
         return {
           status: 400,
-          message: "merchantTransactionId or shipmentId is required",
+          message: "merchantTransactionId or shipment reference is required",
         };
       }
 

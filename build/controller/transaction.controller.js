@@ -124,6 +124,19 @@ export var transactionController;
             reply.status(500).send({ message: "Webhook processing failed" });
         }
     };
+    transactionController.paymentWebhookShiprocket = async (request, reply) => {
+        try {
+            const webhookResult = await transactionService.paymentWebhookShiprocket(request);
+            reply.status(webhookResult?.status || 200).send({
+                message: webhookResult?.message || "Shiprocket webhook processed",
+                data: webhookResult?.data || {},
+            });
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN paymentWebhookShiprocket Controller", error);
+            reply.status(500).send({ message: "Shiprocket webhook processing failed" });
+        }
+    };
     transactionController.syncShiprocketShipmentStatus = async (request, reply) => {
         try {
             const result = await transactionService.syncShiprocketShipmentStatus(request);
