@@ -839,7 +839,7 @@ export module ordersService {
             });
 
             const offset = (pageNumber - 1) * recordCount;
-            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' `;
+            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' AND (orderline.ordertype IS NULL OR orderline.ordertype != 'Third Party Orders' OR orderline.thirdpartyorderid IS NULL) `;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
@@ -1755,7 +1755,21 @@ ${whereClause} ${orderByClause}`;
             console.log('Order data:', orderData);
             console.log('Empty Before processing order data');
 
-            const { merchantTransactionId, userId, cgst, sgst, storelocation } = transactionData;
+            const merchantTransactionId =
+                transactionData?.merchantTransactionId ??
+                transactionData?.merchanttransactionId ??
+                transactionData?.merchanttransactionID ??
+                null;
+            const userId =
+                transactionData?.userId ??
+                transactionData?.userid ??
+                null;
+            const cgst = transactionData?.cgst;
+            const sgst = transactionData?.sgst;
+            const storelocation =
+                transactionData?.storelocation ??
+                transactionData?.storeLocation ??
+                null;
 
             if (orderData[0].addressid === null) {
                 const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
@@ -1778,7 +1792,7 @@ ${whereClause} ${orderByClause}`;
 
             const fulfillmentBuckets = await buildFulfillmentBuckets(
                 orderData,
-                transactionData?.merchantTransactionId || transactionData?.merchanttransactionid || null
+                merchantTransactionId
             );
             const ordersToInsert = fulfillmentBuckets.ordersToInsert;
             const thirdPartyOrdersToInsert = fulfillmentBuckets.thirdPartyOrdersToInsert;
@@ -2155,10 +2169,6 @@ Thank You!`,
     export const deleteFailedOrder = async (merchantid) => {
         try {
             console.log("Deleting failed order for merchantid:", merchantid);
-            await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-                merchantid,
-                "payment_failed_cleanup"
-            );
             const pendingHeaderResult = await query(
                 `
                 SELECT 'orders' AS source, orderid
@@ -2181,6 +2191,11 @@ Thank You!`,
             if (pendingHeaderResult.rows.length === 0) {
                 return { status: 200, message: 'Merchant Id Payment is successful or no pending orders' };
             }
+
+            await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+                merchantid,
+                "payment_failed_cleanup"
+            );
 
             await query(
                 `DELETE FROM orderline WHERE merchanttransactionid = $1`,

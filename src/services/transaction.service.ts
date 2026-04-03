@@ -80,7 +80,10 @@ const groupOrderQuantities = (orderItems: any[] = []) => {
   return grouped;
 };
 
-const validateReservationCapacity = async (orderItems: any[] = []) => {
+const validateReservationCapacity = async (
+  orderItems: any[] = [],
+  merchantTransactionId?: string | null
+) => {
   const requestedByProduct = new Map<
     string,
     { productId: number; reservationType: "product" | "rental"; requestedQuantity: number }
@@ -121,7 +124,10 @@ const validateReservationCapacity = async (orderItems: any[] = []) => {
      WHERE id = ANY($1::int[])`,
     [productIds]
   );
-  const heldRows = await inventoryReservationService.getHeldReservationTotalsByProduct(productIds);
+  const heldRows = await inventoryReservationService.getHeldReservationTotalsByProduct(
+    productIds,
+    merchantTransactionId || null
+  );
 
   const heldByProduct = new Map<string, number>();
   for (const row of heldRows) {
@@ -144,12 +150,13 @@ const validateReservationCapacity = async (orderItems: any[] = []) => {
         ? toSafeNumber(productRow?.rentalavailablequantity, 0)
         : toSafeNumber(productRow?.overallavailableqty, 0);
 
-    if (availableToPromise - totalHeld < 0) {
+    if (availableToPromise - totalHeld - requestSummary.requestedQuantity < 0) {
       violations.push({
         productId: requestSummary.productId,
         reservationType: requestSummary.reservationType,
         availableToPromise,
         heldQuantity: totalHeld,
+        requestedQuantity: requestSummary.requestedQuantity,
       });
     }
   }
@@ -1393,7 +1400,8 @@ export module transactionService {
         fulfillmentBuckets.ordersToInsert
       );
       const capacityCheck = await validateReservationCapacity(
-        fulfillmentBuckets.ordersToInsert
+        fulfillmentBuckets.ordersToInsert,
+        merchanttransactionId
       );
       if (!capacityCheck.ok) {
         await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
@@ -1832,7 +1840,8 @@ export module transactionService {
         );
 
         const capacityCheck = await validateReservationCapacity(
-          fulfillmentBuckets.ordersToInsert
+          fulfillmentBuckets.ordersToInsert,
+          merchanttransactionId
         );
         console.log("Reservation capacity check:", capacityCheck);
         if (!capacityCheck.ok) {
@@ -1938,7 +1947,8 @@ export module transactionService {
         );
 
         const capacityCheck = await validateReservationCapacity(
-          fulfillmentBuckets.ordersToInsert
+          fulfillmentBuckets.ordersToInsert,
+          merchanttransactionId
         );
         console.log("Reservation capacity check:", capacityCheck);
         if (!capacityCheck.ok) {
