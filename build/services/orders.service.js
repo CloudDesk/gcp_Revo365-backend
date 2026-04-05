@@ -109,6 +109,12 @@ export var ordersService;
                 o.modifieddate AS order_modifieddate,
                 o.transactionid AS order_transactionId,
                 o.orderamount,
+                CASE
+                    WHEN LOWER(COALESCE(o.ordername, '')) = 'rental'
+                         AND COALESCE(active_rental.active_billing_line_count, 0) > 0
+                    THEN active_rental.active_rental_orderamount
+                    ELSE o.orderamount
+                END AS displayorderamount,
                 o.orderstatus,
                 o.delivereddate,
                 o.readytodispatchdate,
@@ -135,6 +141,28 @@ export var ordersService;
                 u.modifieddate AS users_modifieddate,
                 u.createddate AS users_createddate
                 FROM orders o
+                LEFT JOIN LATERAL (
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                        ) AS active_billing_line_count,
+                        COALESCE(
+                            SUM(
+                                CASE
+                                    WHEN COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                                    THEN COALESCE(
+                                        NULLIF(TRIM(CAST(ol.orderamount AS TEXT)), ''),
+                                        '0'
+                                    )::numeric
+                                    ELSE 0
+                                END
+                            ),
+                            0
+                        ) AS active_rental_orderamount
+                    FROM orderline ol
+                    WHERE ol.uniqueorderid = o.orderid
+                      AND LOWER(COALESCE(ol.ordername, o.ordername, '')) = 'rental'
+                ) AS active_rental ON TRUE
                 LEFT JOIN address a ON o.addressid = a.id
                 LEFT JOIN users u ON o.userid = u.id
                LEFT JOIN (

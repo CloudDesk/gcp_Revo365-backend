@@ -234,3 +234,175 @@ export const stopRentalSchema = {
     }
 };
 
+export const returnRentalAssetSchema = {
+    type: 'object',
+    properties: {
+        oldassetnumber: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            errorMessage: {
+                type: 'Old Asset Number should be a string',
+                minLength: 'Old Asset Number is required',
+                maxLength: 'Old Asset Number should be at most 255 characters'
+            }
+        },
+        returneddate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Returned Date should be an integer',
+                minimum: 'Returned Date must be >= 0'
+            }
+        },
+        remarks: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Remarks should be a string'
+            }
+        }
+    },
+    required: ['oldassetnumber'],
+    errorMessage: {
+        required: {
+            oldassetnumber: 'Old Asset Number is mandatory.'
+        }
+    }
+};
+
+export const markRentalAssetLostSchema = {
+    type: 'object',
+    properties: {
+        oldassetnumber: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            errorMessage: {
+                type: 'Old Asset Number should be a string',
+                minLength: 'Old Asset Number is required',
+                maxLength: 'Old Asset Number should be at most 255 characters'
+            }
+        },
+        lostdate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Lost Date should be an integer',
+                minimum: 'Lost Date must be >= 0'
+            }
+        },
+        reason: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Reason should be a string'
+            }
+        },
+        remarks: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Remarks should be a string'
+            }
+        }
+    },
+    required: ['oldassetnumber'],
+    errorMessage: {
+        required: {
+            oldassetnumber: 'Old Asset Number is mandatory.'
+        }
+    }
+};
+
+export const assessRentalDamageSchema = {
+    type: 'object',
+    properties: {
+        oldassetnumber: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            errorMessage: {
+                type: 'Old Asset Number should be a string',
+                minLength: 'Old Asset Number is required',
+                maxLength: 'Old Asset Number should be at most 255 characters'
+            }
+        },
+        damageassessment: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            errorMessage: {
+                type: 'Damage Assessment should be a string',
+                minLength: 'Damage Assessment is required',
+                maxLength: 'Damage Assessment should be at most 100 characters'
+            }
+        },
+        damageddate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Damaged Date should be an integer',
+                minimum: 'Damaged Date must be >= 0'
+            }
+        },
+        reason: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Reason should be a string'
+            }
+        },
+        remarks: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Remarks should be a string'
+            }
+        }
+    },
+    required: ['oldassetnumber', 'damageassessment'],
+    errorMessage: {
+        required: {
+            oldassetnumber: 'Old Asset Number is mandatory.',
+            damageassessment: 'Damage Assessment is mandatory.'
+        }
+    }
+};
+
+export const linkPenaltyInvoiceSchema = {
+    type: 'object',
+    properties: {
+        penaltyinvoiceid: {
+            type: 'integer',
+            minimum: 1,
+            errorMessage: {
+                type: 'Penalty Invoice ID should be an integer',
+                minimum: 'Penalty Invoice ID must be a positive integer'
+            }
+        },
+        penaltyamount: {
+            type: ['number', 'integer'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Penalty Amount should be a number',
+                minimum: 'Penalty Amount must be >= 0'
+            }
+        },
+        penaltytype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Penalty Type should be a string'
+            }
+        },
+        remarks: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Remarks should be a string'
+            }
+        }
+    },
+    required: ['penaltyinvoiceid', 'penaltyamount'],
+    errorMessage: {
+        required: {
+            penaltyinvoiceid: 'Penalty Invoice ID is mandatory.',
+            penaltyamount: 'Penalty Amount is mandatory.'
+        }
+    }
+};
+

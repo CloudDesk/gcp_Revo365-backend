@@ -75,6 +75,75 @@ const formatCurrency = (value: any) => {
   })}`;
 };
 
+const normalizeComparableText = (value: any) =>
+  String(value ?? "").trim().toLowerCase();
+
+const formatTitleCase = (value: any) => {
+  const normalizedValue = String(value ?? "").trim();
+  if (!normalizedValue) {
+    return "-";
+  }
+
+  return normalizedValue
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const getAgreementMonthCount = (agreement: any, assets: any[]) => {
+  const pricingItems = Array.isArray(agreement?.pricingtermssnapshot?.items)
+    ? agreement.pricingtermssnapshot.items
+    : [];
+
+  const rentalMonthsFromSnapshot = pricingItems
+    .map((item: any) => Number(item?.rentalfor))
+    .filter((value: number) => Number.isFinite(value) && value > 0);
+
+  if (rentalMonthsFromSnapshot.length > 0) {
+    return Math.max(...rentalMonthsFromSnapshot);
+  }
+
+  const assetMonths = (assets || [])
+    .map((asset: any) => Number(asset?.rentalfor))
+    .filter((value: number) => Number.isFinite(value) && value > 0);
+
+  if (assetMonths.length > 0) {
+    return Math.max(...assetMonths);
+  }
+
+  const startValue = Number(agreement?.agreementstartdate);
+  const endValue = Number(agreement?.agreementenddate);
+  if (!Number.isFinite(startValue) || !Number.isFinite(endValue)) {
+    return null;
+  }
+
+  const startDate = new Date(String(Math.trunc(startValue)).length <= 10 ? startValue * 1000 : startValue);
+  const endDate = new Date(String(Math.trunc(endValue)).length <= 10 ? endValue * 1000 : endValue);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
+    return null;
+  }
+
+  return (
+    (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+    (endDate.getUTCMonth() - startDate.getUTCMonth()) +
+    1
+  );
+};
+
+const isHistoryAgreementAsset = (asset: any) => {
+  if (asset?.iscurrentasset === false) {
+    return true;
+  }
+
+  const normalizedStatus = normalizeComparableText(asset?.assetstatus);
+  return new Set(["replaced", "returned", "lost", "damaged_non_returnable"]).has(
+    normalizedStatus
+  );
+};
+
 const escapePdfText = (value: any) =>
   String(value ?? "")
     .replace(/\\/g, "\\\\")
@@ -253,6 +322,9 @@ const buildPdfDocument = (agreement: any, assets: any[]) => {
   const pages: PdfPage[] = [{ commands: [] }];
   let currentPageIndex = 0;
   let cursorY = PAGE_HEIGHT - PAGE_MARGIN;
+  const agreementMonthCount = getAgreementMonthCount(agreement, assets);
+  const currentAssets = (assets || []).filter((asset) => !isHistoryAgreementAsset(asset));
+  const historyAssets = (assets || []).filter((asset) => isHistoryAgreementAsset(asset));
 
   const currentPage = () => pages[currentPageIndex];
   const addPage = () => {
@@ -419,13 +491,99 @@ const buildPdfDocument = (agreement: any, assets: any[]) => {
     });
   };
 
+  const renderAssetTable = (title: string, tableAssets: any[], tone: "default" | "history" = "default") => {
+    const tableInnerLeft = PAGE_MARGIN + 16;
+    const tableWidth = CONTENT_WIDTH - 32;
+    const columnWidths = [115, 90, 130, 60, 96];
+    const columnStarts = [
+      tableInnerLeft,
+      tableInnerLeft + columnWidths[0],
+      tableInnerLeft + columnWidths[0] + columnWidths[1],
+      tableInnerLeft + columnWidths[0] + columnWidths[1] + columnWidths[2],
+      tableInnerLeft +
+        columnWidths[0] +
+        columnWidths[1] +
+        columnWidths[2] +
+        columnWidths[3],
+    ];
+    const assetRowHeight = 28;
+    const assetCardHeight = 70 + Math.max(tableAssets.length, 1) * assetRowHeight;
+    const fillColor = tone === "history" ? [0.99, 0.97, 0.94] : [1, 1, 1];
+
+    ensureSpace(assetCardHeight + 18);
+    addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, assetCardHeight, {
+      fillColor,
+      strokeColor: BORDER_COLOR,
+      lineWidth: 1,
+    });
+    addText(title, PAGE_MARGIN + 16, cursorY - 22, {
+      font: "F2",
+      size: 12,
+    });
+    addText(
+      `${tableAssets.length} asset${tableAssets.length === 1 ? "" : "s"}`,
+      PAGE_MARGIN + CONTENT_WIDTH - 116,
+      cursorY - 22,
+      {
+        size: 10,
+        color: MUTED_TEXT_COLOR,
+        maxWidth: 100,
+        align: "right",
+      }
+    );
+    addLine(
+      tableInnerLeft,
+      cursorY - 40,
+      tableInnerLeft + tableWidth,
+      cursorY - 40
+    );
+    ["PRODUCT", "ASSET", "ORDER LINE", "STATUS", "MONTHLY AMOUNT"].forEach(
+      (label, index) => {
+        addText(label, columnStarts[index], cursorY - 55, {
+          font: "F2",
+          size: 8,
+          color: MUTED_TEXT_COLOR,
+        });
+      }
+    );
+
+    if (tableAssets.length === 0) {
+      addText("No records.", tableInnerLeft, cursorY - 82, { size: 10 });
+    }
+
+    tableAssets.forEach((asset, index) => {
+      const rowTop = cursorY - 68 - index * assetRowHeight;
+      const rowTextY = rowTop - 15;
+      addText(asset.productname ?? "-", columnStarts[0], rowTextY, { size: 9.5 });
+      addText(asset.assetnumber ?? "-", columnStarts[1], rowTextY, { size: 9.5 });
+      addText(asset.orderlinenumber ?? "-", columnStarts[2], rowTextY, { size: 9.5 });
+      addText(formatTitleCase(asset.assetstatus), columnStarts[3], rowTextY, { size: 9.5 });
+      addText(
+        formatCurrency(asset.productamount ?? 0),
+        columnStarts[4],
+        rowTextY,
+        {
+          size: 9.5,
+          maxWidth: columnWidths[4],
+          align: "right",
+        }
+      );
+      addLine(
+        tableInnerLeft,
+        rowTop - assetRowHeight,
+        tableInnerLeft + tableWidth,
+        rowTop - assetRowHeight,
+        index === tableAssets.length - 1 ? BORDER_COLOR : [0.9, 0.93, 0.96]
+      );
+    });
+
+    cursorY -= assetCardHeight + 18;
+  };
+
   const customerName = [agreement.firstname, agreement.lastname]
     .filter(Boolean)
     .join(" ")
     .trim();
-  const penaltyNotes =
-    agreement.penaltytermssnapshot?.notes ||
-    "Penalty invoice generation is manual and uses the existing product invoice template.";
 
   const headerHeight = 58;
   ensureSpace(headerHeight + 24);
@@ -564,10 +722,19 @@ const buildPdfDocument = (agreement: any, assets: any[]) => {
     size: 10,
     color: MUTED_TEXT_COLOR,
   });
-  addText(agreement.billingfrequency || "-", PAGE_MARGIN + 16, cursorY - 52, {
+  addText(formatTitleCase(agreement.billingfrequency), PAGE_MARGIN + 16, cursorY - 48, {
     font: "F2",
     size: 16,
   });
+  addText(
+    `Month Count: ${agreementMonthCount != null ? `${agreementMonthCount} Month${agreementMonthCount === 1 ? "" : "s"}` : "-"}`,
+    PAGE_MARGIN + 16,
+    cursorY - 68,
+    {
+      size: 10,
+      color: MUTED_TEXT_COLOR,
+    }
+  );
 
   const pricingX = PAGE_MARGIN + cardWidth + cardGap;
   addRectangle(pricingX, cursorY, cardWidth, 82, {
@@ -598,114 +765,15 @@ const buildPdfDocument = (agreement: any, assets: any[]) => {
   );
   cursorY -= 98;
 
-  const penaltyLines = wrapText(penaltyNotes, CONTENT_WIDTH - 32, 11);
-  const penaltyHeight = Math.max(82, 44 + penaltyLines.length * 15);
-  ensureSpace(penaltyHeight + 18);
-  addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, penaltyHeight, {
-    fillColor: [1, 1, 1],
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  addText("PENALTY TERMS", PAGE_MARGIN + 16, cursorY - 22, {
-    font: "F2",
-    size: 10,
-    color: MUTED_TEXT_COLOR,
-  });
-  addWrappedText(penaltyNotes, PAGE_MARGIN + 16, cursorY - 46, CONTENT_WIDTH - 32, {
-    size: 11,
-    lineGap: 4,
-  });
-  cursorY -= penaltyHeight + 18;
-
-  const tableInnerLeft = PAGE_MARGIN + 16;
-  const tableWidth = CONTENT_WIDTH - 32;
-  const columnWidths = [115, 90, 130, 60, 96];
-  const columnStarts = [
-    tableInnerLeft,
-    tableInnerLeft + columnWidths[0],
-    tableInnerLeft + columnWidths[0] + columnWidths[1],
-    tableInnerLeft + columnWidths[0] + columnWidths[1] + columnWidths[2],
-    tableInnerLeft +
-      columnWidths[0] +
-      columnWidths[1] +
-      columnWidths[2] +
-      columnWidths[3],
-  ];
-  const assetRowHeight = 28;
-  const assetCardHeight = 70 + Math.max(assets.length, 1) * assetRowHeight;
-  ensureSpace(assetCardHeight + 18);
-  addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, assetCardHeight, {
-    fillColor: [1, 1, 1],
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  addText("LINKED ASSETS", PAGE_MARGIN + 16, cursorY - 22, {
-    font: "F2",
-    size: 12,
-  });
-  addText(
-    `${assets.length} asset${assets.length === 1 ? "" : "s"}`,
-    PAGE_MARGIN + CONTENT_WIDTH - 116,
-    cursorY - 22,
-    {
-      size: 10,
-      color: MUTED_TEXT_COLOR,
-      maxWidth: 100,
-      align: "right",
-    }
-  );
-  addLine(
-    tableInnerLeft,
-    cursorY - 40,
-    tableInnerLeft + tableWidth,
-    cursorY - 40
-  );
-  ["PRODUCT", "ASSET", "ORDER LINE", "STATUS", "MONTHLY AMOUNT"].forEach(
-    (label, index) => {
-      addText(label, columnStarts[index], cursorY - 55, {
-        font: "F2",
-        size: 8,
-        color: MUTED_TEXT_COLOR,
-      });
-    }
-  );
-
-  if (assets.length === 0) {
-    addText("No linked assets.", tableInnerLeft, cursorY - 82, { size: 10 });
+  renderAssetTable("CURRENT ASSET", currentAssets);
+  if (historyAssets.length > 0) {
+    renderAssetTable("ASSET HISTORY", historyAssets, "history");
   }
-
-  assets.forEach((asset, index) => {
-    const rowTop = cursorY - 68 - index * assetRowHeight;
-    const rowTextY = rowTop - 15;
-    addText(asset.productname ?? "-", columnStarts[0], rowTextY, { size: 9.5 });
-    addText(asset.assetnumber ?? "-", columnStarts[1], rowTextY, { size: 9.5 });
-    addText(asset.orderlinenumber ?? "-", columnStarts[2], rowTextY, { size: 9.5 });
-    addText(asset.assetstatus ?? "-", columnStarts[3], rowTextY, { size: 9.5 });
-    addText(
-      formatCurrency(asset.productamount ?? 0),
-      columnStarts[4],
-      rowTextY,
-      {
-        size: 9.5,
-        maxWidth: columnWidths[4],
-        align: "right",
-      }
-    );
-    addLine(
-      tableInnerLeft,
-      rowTop - assetRowHeight,
-      tableInnerLeft + tableWidth,
-      rowTop - assetRowHeight,
-      index === assets.length - 1 ? BORDER_COLOR : [0.9, 0.93, 0.96]
-    );
-  });
-  cursorY -= assetCardHeight + 18;
 
   const terms = [
     "This agreement governs the rental assets listed above for the stated contract period.",
     "Recurring rental billing follows the configured billing frequency and continues unless stopped by an approved rental workflow.",
     "Replacement, return, lost, damaged, renewal, and stop-rental actions must be processed through the ticket-driven rental service workflow.",
-    penaltyNotes,
   ];
 
   const estimatedTermsHeight =

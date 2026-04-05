@@ -1,4 +1,7 @@
 import pool, { query } from "../database/postgres.js";
+import { processRentalReturn } from "./rentalReturn.service.js";
+import { linkRentalPenaltyInvoice, processRentalDamageAssessment, processRentalLost, } from "./rentalIssue.service.js";
+import { rentalAgreementService } from "./rentalAgreement.service.js";
 const REPAIR_RENTAL_TICKET_TYPE = "repair rental";
 const INITIATED_REPLACEMENT_STATUS = "replacement_requested";
 const OLD_ASSET_RECEIVED_STATUS = "old_asset_received";
@@ -13,13 +16,16 @@ const ALLOWED_REPLACEMENT_TYPES = new Set([
 ]);
 const REJECTED_REPLACEMENT_STATUS = "replacement_rejected";
 const COMPLETED_REPLACEMENT_STATUS = "replacement_completed";
+const RETURNED_ACTION_STATUS = "returned";
 const FINAL_REPLACEMENT_STATUSES = new Set([
     COMPLETED_REPLACEMENT_STATUS,
     REJECTED_REPLACEMENT_STATUS,
 ]);
 const RENTAL_CONTRACT_STATUS_STOPPED = "stopped";
+const RENTAL_CONTRACT_STATUS_COMPLETED = "completed";
 const STOP_RENTAL_CLOSE_REASON = "stop_rental";
 const STOP_RENTAL_HOLD_REASON = "stop_rental";
+const RESOLVED_CLOSED_TICKET_STATUS = "resolved_closed";
 const UNRESOLVED_CLOSED_TICKET_STATUS = "unresolved_closed";
 const REJECTION_ACTIONS = new Set([
     "continue_old_asset",
@@ -77,6 +83,8 @@ const buildReplacementContext = async (ticketId) => {
         ol.productname AS resolved_productname,
         ol.orderstatus AS resolved_orderstatus,
         ol.assetnumber AS resolved_assetnumber,
+        ol.agreementid AS resolved_agreementid,
+        ol.rentalassetstatus AS resolved_rentalassetstatus,
         ol.rentalfor AS resolved_rentalfor,
         ol.generatedmonthscount AS resolved_generatedmonthscount,
         ol.invoicegenerated AS resolved_invoicegenerated,
@@ -117,10 +125,7 @@ const buildReplacementContext = async (ticketId) => {
     const ticketRow = ticketResult.rows[0];
     const normalizedTicketType = normalizeComparableText(ticketRow.tickettype);
     if (normalizedTicketType !== REPAIR_RENTAL_TICKET_TYPE) {
-        throw new Error("Rental replacement flow is available only for Repair Rental tickets.");
-    }
-    if (!ticketRow.replacementrequest) {
-        throw new Error("Rental replacement flow is available only when replacementrequest is true.");
+        throw new Error("Rental action flow is available only for Repair Rental tickets.");
     }
     const linkedOrderline = ticketRow.resolved_orderlineid == null
         ? null
@@ -133,6 +138,8 @@ const buildReplacementContext = async (ticketId) => {
             productname: ticketRow.resolved_productname,
             orderstatus: ticketRow.resolved_orderstatus,
             assetnumber: ticketRow.resolved_assetnumber,
+            agreementid: ticketRow.resolved_agreementid,
+            rentalassetstatus: ticketRow.resolved_rentalassetstatus,
             rentalfor: Number(ticketRow.resolved_rentalfor ?? 0),
             generatedmonthscount: Number(ticketRow.resolved_generatedmonthscount ?? 0),
             invoicegenerated: ticketRow.resolved_invoicegenerated,
@@ -190,6 +197,9 @@ const buildReplacementContext = async (ticketId) => {
         serialnumber,
         rfid,
         assetnumber,
+        orderid,
+        agreementid,
+        rentalassetstatus,
         orderlinenumber,
         stockstatus,
         servicestatus,
@@ -200,19 +210,33 @@ const buildReplacementContext = async (ticketId) => {
       FROM stock_revo
       WHERE
         ($1::text IS NOT NULL AND CAST(assetnumber AS TEXT) = $1)
+        OR ($1::text IS NOT NULL AND CAST(rfid AS TEXT) = $1)
+        OR ($1::text IS NOT NULL AND CAST(serialnumber AS TEXT) = $1)
         OR ($2::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $2)
         OR ($3::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $3)
+        OR ($4::text IS NOT NULL AND CAST(orderid AS TEXT) = $4)
+        OR ($5::int IS NOT NULL AND agreementid = $5)
       ORDER BY
         CASE
           WHEN $1::text IS NOT NULL AND CAST(assetnumber AS TEXT) = $1 THEN 0
-          WHEN $2::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $2 THEN 1
-          WHEN $3::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $3 THEN 2
-          ELSE 3
+          WHEN $1::text IS NOT NULL AND CAST(rfid AS TEXT) = $1 THEN 1
+          WHEN $1::text IS NOT NULL AND CAST(serialnumber AS TEXT) = $1 THEN 2
+          WHEN $2::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $2 THEN 3
+          WHEN $3::text IS NOT NULL AND CAST(orderlinenumber AS TEXT) = $3 THEN 4
+          WHEN $4::text IS NOT NULL AND CAST(orderid AS TEXT) = $4 THEN 5
+          WHEN $5::int IS NOT NULL AND agreementid = $5 THEN 6
+          ELSE 7
         END,
         modifieddate DESC NULLS LAST,
         id DESC
       LIMIT 1
-    `, [resolvedAssetNumber, linkedOrderlineNumber, ticketOrderlineNumber]);
+    `, [
+        resolvedAssetNumber,
+        linkedOrderlineNumber,
+        ticketOrderlineNumber,
+        normalizeText(linkedOrderline?.uniqueorderid),
+        linkedOrderline?.agreementid == null ? null : Number(linkedOrderline.agreementid),
+    ]);
     const historyResult = await query(`
       SELECT *
       FROM rental_replacement_history
@@ -564,10 +588,12 @@ export var ticketReplacementService;
     ticketReplacementService.assignTechnicalReplacement = async (request) => {
         const client = await pool.connect();
         let transactionStarted = false;
+        let agreementSyncResult = null;
         try {
             const ticketId = toPositiveInteger(request.params.id);
             const newassetnumber = normalizeText(request.body?.newassetnumber);
             const remarks = normalizeText(request.body?.remarks);
+            const replacementClosedAt = toEpochSeconds(new Date());
             if (!newassetnumber) {
                 throw new Error("New asset number is required.");
             }
@@ -694,14 +720,57 @@ export var ticketReplacementService;
           UPDATE tickets
           SET
             replacementstatus = $1,
-            assetnumber = $2
-          WHERE id = $3
+            assetnumber = $2,
+            ticketstatus = $3,
+            closeddate = $4
+          WHERE id = $5
           RETURNING *
-        `, [ASSIGNED_REPLACEMENT_STATUS, newassetnumber, ticketId]);
+        `, [
+                ASSIGNED_REPLACEMENT_STATUS,
+                newassetnumber,
+                RESOLVED_CLOSED_TICKET_STATUS,
+                replacementClosedAt,
+                ticketId,
+            ]);
+            agreementSyncResult =
+                context.linkedorderline.agreementid != null
+                    ? await rentalAgreementService.syncTechnicalReplacementAgreement({
+                        executor: client,
+                        agreementId: Number(context.linkedorderline.agreementid),
+                        uniqueOrderId: normalizeText(context.linkedorderline.uniqueorderid),
+                        orderlineId: Number(context.linkedorderline.id),
+                        oldAssetNumber,
+                        newAssetNumber: newassetnumber,
+                        newStockId: candidateStock.id,
+                        ticketId,
+                        modifiedBy: request.session?.id ?? null,
+                    })
+                    : null;
             await client.query("COMMIT");
             transactionStarted = false;
+            let agreementWarning = null;
+            const agreementId = agreementSyncResult?.agreement?.id ??
+                (context.linkedorderline.agreementid != null
+                    ? Number(context.linkedorderline.agreementid)
+                    : null);
+            if (agreementId != null) {
+                try {
+                    await rentalAgreementService.refreshRentalAgreementPdfById(agreementId, {
+                        modifiedBy: request.session?.id ?? null,
+                    });
+                }
+                catch (agreementPdfError) {
+                    console.error("Technical replacement agreement PDF refresh failed", agreementPdfError);
+                    agreementWarning =
+                        agreementPdfError?.message ||
+                            "Replacement was assigned, but the agreement PDF could not be refreshed.";
+                }
+            }
             return {
-                message: "Technical replacement asset assigned successfully.",
+                message: agreementWarning
+                    ? "Technical replacement asset assigned with agreement PDF warning."
+                    : "Technical replacement asset assigned successfully.",
+                warning: agreementWarning,
                 ticket: updatedTicketResult.rows[0],
                 replacement: updatedHistoryResult.rows[0],
                 stock: updatedStockResult.rows[0],
@@ -954,6 +1023,7 @@ export var ticketReplacementService;
     ticketReplacementService.assignCommercialReplacement = async (request) => {
         const client = await pool.connect();
         let transactionStarted = false;
+        let agreementSyncResult = null;
         try {
             const ticketId = toPositiveInteger(request.params.id);
             const newproductid = toPositiveInteger(request.body?.newproductid);
@@ -1068,6 +1138,7 @@ export var ticketReplacementService;
             const commercialCutoverDate = getCommercialCutoverDate(billingmode, effectivefrom, context.linkedorderline.rentstartdate);
             const commercialCutoverEpoch = toEpochSeconds(commercialCutoverDate);
             const newRentEndDate = addMonthsUtc(commercialCutoverDate, revisedremainingmonths);
+            const replacementClosedAt = toEpochSeconds(new Date());
             await client.query("BEGIN");
             transactionStarted = true;
             // 1) Close old billing line from the effective date and deactivate it.
@@ -1160,8 +1231,10 @@ export var ticketReplacementService;
             productcategory = COALESCE($5, productcategory),
             productbrand = COALESCE($6, productbrand),
             productmodel = COALESCE($7, productmodel),
-            orderlinenumber = COALESCE($8, orderlinenumber)
-          WHERE id = $9
+            orderlinenumber = COALESCE($8, orderlinenumber),
+            ticketstatus = $9,
+            closeddate = $10
+          WHERE id = $11
         `, [
                 ASSIGNED_REPLACEMENT_STATUS,
                 newassetnumber,
@@ -1171,6 +1244,8 @@ export var ticketReplacementService;
                 normalizeText(productSummary.brand),
                 normalizeText(productSummary.model),
                 persistedOrderlinenumber,
+                RESOLVED_CLOSED_TICKET_STATUS,
+                replacementClosedAt,
                 ticketId,
             ]);
             // 4) Assign replacement stock to the new billing line.
@@ -1221,10 +1296,47 @@ export var ticketReplacementService;
                 remarks,
                 activeReplacement.id,
             ]);
+            agreementSyncResult =
+                context.linkedorderline.agreementid != null
+                    ? await rentalAgreementService.syncCommercialReplacementAgreement({
+                        executor: client,
+                        agreementId: Number(context.linkedorderline.agreementid),
+                        uniqueOrderId: normalizeText(context.linkedorderline.uniqueorderid),
+                        oldOrderlineId: Number(oldOrderlineId),
+                        newOrderlineId: Number(newOrderlineId),
+                        oldAssetNumber,
+                        newAssetNumber: newassetnumber,
+                        newStockId: candidateStock.id,
+                        actionEpoch: commercialCutoverEpoch,
+                        ticketId,
+                        modifiedBy: request.session?.id ?? null,
+                    })
+                    : null;
             await client.query("COMMIT");
             transactionStarted = false;
+            let agreementWarning = null;
+            const agreementId = agreementSyncResult?.agreement?.id ??
+                (context.linkedorderline.agreementid != null
+                    ? Number(context.linkedorderline.agreementid)
+                    : null);
+            if (agreementId != null) {
+                try {
+                    await rentalAgreementService.refreshRentalAgreementPdfById(agreementId, {
+                        modifiedBy: request.session?.id ?? null,
+                    });
+                }
+                catch (agreementPdfError) {
+                    console.error("Commercial replacement agreement PDF refresh failed", agreementPdfError);
+                    agreementWarning =
+                        agreementPdfError?.message ||
+                            "Replacement was assigned, but the agreement PDF could not be refreshed.";
+                }
+            }
             return {
-                message: "Commercial replacement asset assigned successfully.",
+                message: agreementWarning
+                    ? "Commercial replacement asset assigned with agreement PDF warning."
+                    : "Commercial replacement asset assigned successfully.",
+                warning: agreementWarning,
                 ticket: (await buildReplacementContext(ticketId)).ticket,
                 replacement: updatedHistoryResult.rows[0],
                 stock: updatedStockResult.rows[0],
@@ -1367,6 +1479,280 @@ export var ticketReplacementService;
             client.release();
         }
     };
+    ticketReplacementService.returnRentalAsset = async (request) => {
+        const client = await pool.connect();
+        let transactionStarted = false;
+        try {
+            const ticketId = toPositiveInteger(request.params.id);
+            const oldassetnumber = normalizeText(request.body?.oldassetnumber);
+            const returneddate = toOptionalPositiveBigInt(request.body?.returneddate);
+            const remarks = normalizeText(request.body?.remarks);
+            if (!oldassetnumber) {
+                throw new Error("Old asset number is required.");
+            }
+            const context = await buildReplacementContext(ticketId);
+            if (!context.linkedorderline) {
+                throw new Error("Unable to resolve the active rental contract for this ticket.");
+            }
+            if (context.ticket.stoprental === true) {
+                throw new Error("This ticket already stopped the rental contract. Process post-stop returns in the next lifecycle slice.");
+            }
+            const activeReplacement = await getActiveReplacementRecord(client, context, ticketId);
+            if (activeReplacement &&
+                !FINAL_REPLACEMENT_STATUSES.has(normalizeComparableText(activeReplacement.replacementstatus))) {
+                throw new Error("An active replacement flow exists for this ticket. Finish or reject the replacement before returning the asset.");
+            }
+            const linkedAssetStatus = normalizeComparableText(context.linkedorderline.rentalassetstatus);
+            const ticketRentalActionStatus = normalizeComparableText(context.ticket.rentalactionstatus);
+            if (context.linkedorderline.isactivebillingline === false ||
+                linkedAssetStatus === RETURNED_ACTION_STATUS ||
+                ticketRentalActionStatus === RETURNED_ACTION_STATUS ||
+                normalizeComparableText(context.linkedorderline.rentalcontractstatus) ===
+                    RENTAL_CONTRACT_STATUS_COMPLETED) {
+                throw new Error("This rental asset has already been returned.");
+            }
+            const expectedOldAssetNumber = normalizeText(context.linkedorderline.assetnumber ?? context.ticket.assetnumber);
+            if (expectedOldAssetNumber &&
+                normalizeComparableText(oldassetnumber) !==
+                    normalizeComparableText(expectedOldAssetNumber)) {
+                throw new Error(`Old asset number mismatch. Expected ${expectedOldAssetNumber}.`);
+            }
+            const returnEpoch = returneddate ?? Math.trunc(Date.now() / 1000);
+            await client.query("BEGIN");
+            transactionStarted = true;
+            const returnResult = await processRentalReturn({
+                executor: client,
+                context,
+                ticketId,
+                oldAssetNumber: oldassetnumber,
+                returnedAt: returnEpoch,
+                remarks,
+                createdBy: request.session?.id ?? null,
+            });
+            await client.query("COMMIT");
+            transactionStarted = false;
+            return {
+                message: "Rental asset returned successfully.",
+                ticket: returnResult.ticket,
+                history: returnResult.history,
+                stock: returnResult.stock,
+                orderline: returnResult.orderline,
+                agreement: returnResult.agreement,
+                agreementasset: returnResult.agreementAsset,
+                context: await buildReplacementContext(ticketId),
+            };
+        }
+        catch (error) {
+            if (transactionStarted) {
+                await client.query("ROLLBACK");
+            }
+            console.error("Query Execution Error: IN returnRentalAsset", error);
+            throw new Error(error?.message || "Failed to return the rental asset.");
+        }
+        finally {
+            client.release();
+        }
+    };
+    ticketReplacementService.markRentalAssetLost = async (request) => {
+        const client = await pool.connect();
+        let transactionStarted = false;
+        try {
+            const ticketId = toPositiveInteger(request.params.id);
+            const oldassetnumber = normalizeText(request.body?.oldassetnumber);
+            const lostdate = toOptionalPositiveBigInt(request.body?.lostdate);
+            const reason = normalizeText(request.body?.reason);
+            const remarks = normalizeText(request.body?.remarks);
+            if (!oldassetnumber) {
+                throw new Error("Old asset number is required.");
+            }
+            const context = await buildReplacementContext(ticketId);
+            if (!context.linkedorderline) {
+                throw new Error("Unable to resolve the active rental contract for this ticket.");
+            }
+            if (normalizeComparableText(context.ticket?.rentalactiontype) !== "lost") {
+                throw new Error("This ticket is not marked as a Lost rental request.");
+            }
+            const activeReplacement = await getActiveReplacementRecord(client, context, ticketId);
+            if (activeReplacement &&
+                !FINAL_REPLACEMENT_STATUSES.has(normalizeComparableText(activeReplacement.replacementstatus))) {
+                throw new Error("An active replacement flow exists for this ticket. Finish or reject the replacement before marking the asset as lost.");
+            }
+            const linkedAssetStatus = normalizeComparableText(context.linkedorderline.rentalassetstatus);
+            if (linkedAssetStatus === "lost" ||
+                linkedAssetStatus === "returned" ||
+                linkedAssetStatus === "damaged_non_returnable") {
+                throw new Error("This rental asset already has a terminal lifecycle status and cannot be marked lost again.");
+            }
+            const expectedOldAssetNumber = normalizeText(context.linkedorderline.assetnumber ?? context.ticket.assetnumber);
+            if (expectedOldAssetNumber &&
+                normalizeComparableText(oldassetnumber) !==
+                    normalizeComparableText(expectedOldAssetNumber)) {
+                throw new Error(`Old asset number mismatch. Expected ${expectedOldAssetNumber}.`);
+            }
+            const lossEpoch = lostdate ?? Math.trunc(Date.now() / 1000);
+            await client.query("BEGIN");
+            transactionStarted = true;
+            const lostResult = await processRentalLost({
+                executor: client,
+                context,
+                ticketId,
+                oldAssetNumber: oldassetnumber,
+                lostAt: lossEpoch,
+                reason,
+                remarks,
+                createdBy: request.session?.id ?? null,
+            });
+            await client.query("COMMIT");
+            transactionStarted = false;
+            return {
+                message: "Rental asset marked as lost successfully.",
+                ticket: lostResult.ticket,
+                history: lostResult.history,
+                stock: lostResult.stock,
+                orderline: lostResult.orderline,
+                agreement: lostResult.agreement,
+                agreementasset: lostResult.agreementAsset,
+                context: await buildReplacementContext(ticketId),
+            };
+        }
+        catch (error) {
+            if (transactionStarted) {
+                await client.query("ROLLBACK");
+            }
+            console.error("Query Execution Error: IN markRentalAssetLost", error);
+            throw new Error(error?.message || "Failed to mark the rental asset as lost.");
+        }
+        finally {
+            client.release();
+        }
+    };
+    ticketReplacementService.assessRentalDamage = async (request) => {
+        const client = await pool.connect();
+        let transactionStarted = false;
+        try {
+            const ticketId = toPositiveInteger(request.params.id);
+            const oldassetnumber = normalizeText(request.body?.oldassetnumber);
+            const damageassessment = normalizeComparableText(request.body?.damageassessment);
+            const damageddate = toOptionalPositiveBigInt(request.body?.damageddate);
+            const reason = normalizeText(request.body?.reason);
+            const remarks = normalizeText(request.body?.remarks);
+            if (!oldassetnumber) {
+                throw new Error("Old asset number is required.");
+            }
+            const context = await buildReplacementContext(ticketId);
+            if (!context.linkedorderline) {
+                throw new Error("Unable to resolve the active rental contract for this ticket.");
+            }
+            if (normalizeComparableText(context.ticket?.rentalactiontype) !== "damaged") {
+                throw new Error("This ticket is not marked as a Damaged rental request.");
+            }
+            const activeReplacement = await getActiveReplacementRecord(client, context, ticketId);
+            if (activeReplacement &&
+                !FINAL_REPLACEMENT_STATUSES.has(normalizeComparableText(activeReplacement.replacementstatus))) {
+                throw new Error("An active replacement flow exists for this ticket. Finish or reject the replacement before assessing damage.");
+            }
+            const linkedAssetStatus = normalizeComparableText(context.linkedorderline.rentalassetstatus);
+            if (linkedAssetStatus === "returned" ||
+                linkedAssetStatus === "lost" ||
+                linkedAssetStatus === "damaged_non_returnable") {
+                throw new Error("This rental asset already has a terminal lifecycle status and cannot be assessed again.");
+            }
+            const expectedOldAssetNumber = normalizeText(context.linkedorderline.assetnumber ?? context.ticket.assetnumber);
+            if (expectedOldAssetNumber &&
+                normalizeComparableText(oldassetnumber) !==
+                    normalizeComparableText(expectedOldAssetNumber)) {
+                throw new Error(`Old asset number mismatch. Expected ${expectedOldAssetNumber}.`);
+            }
+            const damageEpoch = damageddate ?? Math.trunc(Date.now() / 1000);
+            await client.query("BEGIN");
+            transactionStarted = true;
+            const damageResult = await processRentalDamageAssessment({
+                executor: client,
+                context,
+                ticketId,
+                oldAssetNumber: oldassetnumber,
+                assessment: damageassessment,
+                damagedAt: damageEpoch,
+                reason,
+                remarks,
+                createdBy: request.session?.id ?? null,
+            });
+            await client.query("COMMIT");
+            transactionStarted = false;
+            return {
+                message: damageassessment === "non_returnable"
+                    ? "Rental asset marked as non-returnable damage successfully."
+                    : "Rental asset damage assessment saved successfully.",
+                ticket: damageResult.ticket,
+                history: damageResult.history,
+                stock: damageResult.stock,
+                orderline: damageResult.orderline,
+                agreement: damageResult.agreement,
+                agreementasset: damageResult.agreementAsset,
+                context: await buildReplacementContext(ticketId),
+            };
+        }
+        catch (error) {
+            if (transactionStarted) {
+                await client.query("ROLLBACK");
+            }
+            console.error("Query Execution Error: IN assessRentalDamage", error);
+            throw new Error(error?.message || "Failed to assess rental asset damage.");
+        }
+        finally {
+            client.release();
+        }
+    };
+    ticketReplacementService.linkPenaltyInvoice = async (request) => {
+        const client = await pool.connect();
+        let transactionStarted = false;
+        try {
+            const ticketId = toPositiveInteger(request.params.id);
+            const penaltyinvoiceid = toPositiveInteger(request.body?.penaltyinvoiceid);
+            const penaltyamount = Number(request.body?.penaltyamount);
+            const penaltytype = normalizeComparableText(request.body?.penaltytype);
+            const remarks = normalizeText(request.body?.remarks);
+            if (!Number.isFinite(penaltyamount) || penaltyamount <= 0) {
+                throw new Error("Penalty amount must be a positive number.");
+            }
+            const context = await buildReplacementContext(ticketId);
+            if (!context.linkedorderline) {
+                throw new Error("Unable to resolve the active rental contract for this ticket.");
+            }
+            await client.query("BEGIN");
+            transactionStarted = true;
+            const penaltyResult = await linkRentalPenaltyInvoice({
+                executor: client,
+                context,
+                ticketId,
+                penaltyInvoiceId: penaltyinvoiceid,
+                penaltyAmount: penaltyamount,
+                remarks,
+                createdBy: request.session?.id ?? null,
+                penaltyType: penaltytype || null,
+            });
+            await client.query("COMMIT");
+            transactionStarted = false;
+            return {
+                message: "Penalty invoice linked successfully.",
+                ticket: penaltyResult.ticket,
+                history: penaltyResult.history,
+                penaltylink: penaltyResult.penaltylink,
+                penaltyinvoice: penaltyResult.penaltyinvoice,
+                context: await buildReplacementContext(ticketId),
+            };
+        }
+        catch (error) {
+            if (transactionStarted) {
+                await client.query("ROLLBACK");
+            }
+            console.error("Query Execution Error: IN linkPenaltyInvoice", error);
+            throw new Error(error?.message || "Failed to link the penalty invoice.");
+        }
+        finally {
+            client.release();
+        }
+    };
     ticketReplacementService.stopRental = async (request) => {
         const client = await pool.connect();
         let transactionStarted = false;
@@ -1434,7 +1820,7 @@ export var ticketReplacementService;
           RETURNING *
         `, [
                 COMPLETED_REPLACEMENT_STATUS,
-                UNRESOLVED_CLOSED_TICKET_STATUS,
+                RESOLVED_CLOSED_TICKET_STATUS,
                 stopEpoch,
                 ticketId,
             ]);

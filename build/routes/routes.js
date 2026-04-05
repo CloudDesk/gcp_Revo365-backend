@@ -52,7 +52,7 @@ import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
-import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, stopRentalSchema } from "../schemas/ticketReplacement.schema.js";
+import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema } from "../schemas/ticketReplacement.schema.js";
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 const Revo365Routes = async function (fastify, opts) {
@@ -305,6 +305,10 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/tickets/:id/rental-replacement/assign-technical', { preHandler: [getSession, validateRequestBody(assignTechnicalReplacementSchema)] }, ticketReplacementController.assignTechnicalReplacement);
     fastify.post('/tickets/:id/rental-replacement/assign-commercial', { preHandler: [getSession, validateRequestBody(assignCommercialReplacementSchema)] }, ticketReplacementController.assignCommercialReplacement);
     fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
+    fastify.post('/tickets/:id/rental-replacement/return', { preHandler: [getSession, validateRequestBody(returnRentalAssetSchema)] }, ticketReplacementController.returnRentalAsset);
+    fastify.post('/tickets/:id/rental-replacement/mark-lost', { preHandler: [getSession, validateRequestBody(markRentalAssetLostSchema)] }, ticketReplacementController.markRentalAssetLost);
+    fastify.post('/tickets/:id/rental-replacement/assess-damage', { preHandler: [getSession, validateRequestBody(assessRentalDamageSchema)] }, ticketReplacementController.assessRentalDamage);
+    fastify.post('/tickets/:id/rental-replacement/link-penalty', { preHandler: [getSession, validateRequestBody(linkPenaltyInvoiceSchema)] }, ticketReplacementController.linkPenaltyInvoice);
     fastify.post('/tickets/:id/rental-replacement/stop-rental', { preHandler: [getSession, validateRequestBody(stopRentalSchema)] }, ticketReplacementController.stopRental);
     fastify.get('/rental-agreements/create-context', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementCreateContext);
     fastify.get('/rental-agreements', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreements);

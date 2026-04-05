@@ -78,6 +78,50 @@ export var ticketReplacementController;
             reply.status(400).send({ message });
         }
     };
+    ticketReplacementController.returnRentalAsset = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.returnRentalAsset(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'returnRentalAsset':", error);
+            const message = error?.message || "Failed to return the rental asset.";
+            reply.status(400).send({ message });
+        }
+    };
+    ticketReplacementController.markRentalAssetLost = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.markRentalAssetLost(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'markRentalAssetLost':", error);
+            const message = error?.message || "Failed to mark the rental asset as lost.";
+            reply.status(400).send({ message });
+        }
+    };
+    ticketReplacementController.assessRentalDamage = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.assessRentalDamage(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'assessRentalDamage':", error);
+            const message = error?.message || "Failed to assess rental asset damage.";
+            reply.status(400).send({ message });
+        }
+    };
+    ticketReplacementController.linkPenaltyInvoice = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.linkPenaltyInvoice(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'linkPenaltyInvoice':", error);
+            const message = error?.message || "Failed to link the penalty invoice.";
+            reply.status(400).send({ message });
+        }
+    };
     ticketReplacementController.stopRental = async (request, reply) => {
         try {
             const result = await ticketReplacementService.stopRental(request);

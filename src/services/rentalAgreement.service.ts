@@ -4,7 +4,7 @@ import { rentalAgreementPdfService } from "./rentalAgreementPdf.service.js";
 const ACTIVE_RENTAL_ORDER_NAME = "rental";
 const DEFAULT_BILLING_FREQUENCY = "monthly";
 const DEFAULT_AGREEMENT_STATUS = "active";
-const AGREEMENT_TEMPLATE_VERSION = "v3_native_pdf_logo_layout";
+const AGREEMENT_TEMPLATE_VERSION = "v4_native_pdf_history_layout";
 const NON_TERMINAL_AGREEMENT_STATUSES = new Set([
   "draft",
   "active",
@@ -374,6 +374,86 @@ const syncAgreementLinks = async (
   }
 };
 
+const refreshAgreementContractSnapshot = async (
+  client: any,
+  agreementId: number,
+  uniqueOrderId: string,
+  modifiedBy: number | null = null
+) => {
+  const existingAgreementResult = await client.query(
+    `
+      SELECT *
+      FROM rental_agreement
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [agreementId]
+  );
+
+  const existingAgreement = existingAgreementResult.rows[0] ?? null;
+  if (!existingAgreement) {
+    return {
+      agreement: null,
+      contractRows: [],
+    };
+  }
+
+  const contractRows = await getAgreementContextRows(client, {
+    customerId: null,
+    uniqueOrderId,
+  });
+
+  if (contractRows.length === 0) {
+    return {
+      agreement: existingAgreement,
+      contractRows: [],
+    };
+  }
+
+  const groupedContract = groupAgreementContextRows(contractRows)[0];
+  const pricingSnapshot = buildPricingSnapshot(contractRows);
+
+  const updatedAgreementResult = await client.query(
+    `
+      UPDATE rental_agreement
+      SET
+        primaryorderlineid = $1,
+        agreementstartdate = COALESCE(agreementstartdate, $2),
+        agreementenddate = COALESCE($3, agreementenddate),
+        billingfrequency = COALESCE($4, billingfrequency),
+        pricingtermssnapshot = $5::jsonb,
+        modifiedby = COALESCE($6, modifiedby)
+      WHERE id = $7
+      RETURNING *
+    `,
+    [
+      groupedContract.primaryorderlineid ?? existingAgreement.primaryorderlineid,
+      groupedContract.agreementstartdate ?? existingAgreement.agreementstartdate,
+      groupedContract.agreementenddate ?? existingAgreement.agreementenddate,
+      normalizeComparableText(existingAgreement.billingfrequency) ||
+        DEFAULT_BILLING_FREQUENCY,
+      JSON.stringify(pricingSnapshot),
+      modifiedBy,
+      agreementId,
+    ]
+  );
+
+  await syncAgreementLinks(
+    client,
+    agreementId,
+    uniqueOrderId,
+    contractRows.map((row) => Number(row.orderlineid)),
+    contractRows
+      .map((row) => normalizeText(row.assetnumber))
+      .filter(Boolean) as string[]
+  );
+
+  return {
+    agreement: updatedAgreementResult.rows[0] ?? existingAgreement,
+    contractRows,
+  };
+};
+
 const attachAgreementPdf = async (
   agreementId: number,
   options: { logoUrl?: string | null; modifiedBy?: number | null } = {}
@@ -679,6 +759,282 @@ export module rentalAgreementService {
       message: "Rental agreement PDF generated successfully.",
       agreement: await getAgreementDetailById(Number(result.agreement.id)),
       pdf: result.pdf,
+    };
+  };
+
+  export const refreshRentalAgreementPdfById = async (
+    agreementId: number,
+    options: { logoUrl?: string | null; modifiedBy?: number | null } = {}
+  ) => attachAgreementPdf(agreementId, options);
+
+  export const syncTechnicalReplacementAgreement = async ({
+    executor,
+    agreementId,
+    uniqueOrderId,
+    orderlineId,
+    oldAssetNumber = null,
+    newAssetNumber,
+    newStockId = null,
+    ticketId,
+    modifiedBy = null,
+  }: {
+    executor: any;
+    agreementId: number | null;
+    uniqueOrderId: string | null;
+    orderlineId: number | null;
+    oldAssetNumber?: string | null;
+    newAssetNumber: string;
+    newStockId?: number | null;
+    ticketId: number;
+    modifiedBy?: number | null;
+  }) => {
+    if (agreementId == null || orderlineId == null || !normalizeText(uniqueOrderId)) {
+      return {
+        agreement: null,
+        agreementAsset: null,
+        contractRows: [],
+      };
+    }
+
+    const normalizedOldAssetNumber = normalizeText(oldAssetNumber);
+    const normalizedNewAssetNumber = normalizeText(newAssetNumber);
+
+    const agreementAssetUpdateResult = await executor.query(
+      `
+        WITH target_asset AS (
+          SELECT id
+          FROM rental_agreement_asset
+          WHERE agreementid = $1
+            AND orderlineid = $2
+            AND COALESCE(iscurrentasset, TRUE) = TRUE
+            AND (
+              $3::text IS NULL
+              OR CAST(assetnumber AS TEXT) = $3
+            )
+          ORDER BY
+            CASE
+              WHEN $3::text IS NOT NULL AND CAST(assetnumber AS TEXT) = $3 THEN 0
+              ELSE 1
+            END,
+            id DESC
+          LIMIT 1
+        )
+        UPDATE rental_agreement_asset
+        SET
+          assetnumber = COALESCE($4, assetnumber),
+          stockid = COALESCE($5, stockid),
+          assetstatus = 'allocated',
+          iscurrentasset = TRUE,
+          linkedticketid = $6
+        WHERE id IN (SELECT id FROM target_asset)
+        RETURNING *
+      `,
+      [
+        agreementId,
+        orderlineId,
+        normalizedOldAssetNumber,
+        normalizedNewAssetNumber,
+        newStockId,
+        ticketId,
+      ]
+    );
+
+    const agreementAsset =
+      agreementAssetUpdateResult.rows[0] ??
+      (
+        await executor.query(
+          `
+            INSERT INTO rental_agreement_asset (
+              agreementid,
+              orderlineid,
+              assetnumber,
+              stockid,
+              assetstatus,
+              iscurrentasset,
+              linkedticketid,
+              createdby
+            )
+            VALUES ($1, $2, $3, $4, 'allocated', TRUE, $5, $6)
+            RETURNING *
+          `,
+          [
+            agreementId,
+            orderlineId,
+            normalizedNewAssetNumber,
+            newStockId,
+            ticketId,
+            modifiedBy,
+          ]
+        )
+      ).rows[0] ?? null;
+
+    const snapshotResult = await refreshAgreementContractSnapshot(
+      executor,
+      agreementId,
+      normalizeText(uniqueOrderId) as string,
+      modifiedBy
+    );
+
+    return {
+      agreement: snapshotResult.agreement,
+      agreementAsset,
+      contractRows: snapshotResult.contractRows,
+    };
+  };
+
+  export const syncCommercialReplacementAgreement = async ({
+    executor,
+    agreementId,
+    uniqueOrderId,
+    oldOrderlineId,
+    newOrderlineId,
+    oldAssetNumber = null,
+    newAssetNumber,
+    newStockId = null,
+    actionEpoch,
+    ticketId,
+    modifiedBy = null,
+  }: {
+    executor: any;
+    agreementId: number | null;
+    uniqueOrderId: string | null;
+    oldOrderlineId: number | null;
+    newOrderlineId: number | null;
+    oldAssetNumber?: string | null;
+    newAssetNumber: string;
+    newStockId?: number | null;
+    actionEpoch: number;
+    ticketId: number;
+    modifiedBy?: number | null;
+  }) => {
+    if (
+      agreementId == null ||
+      oldOrderlineId == null ||
+      newOrderlineId == null ||
+      !normalizeText(uniqueOrderId)
+    ) {
+      return {
+        agreement: null,
+        previousAgreementAsset: null,
+        currentAgreementAsset: null,
+        contractRows: [],
+      };
+    }
+
+    const normalizedOldAssetNumber = normalizeText(oldAssetNumber);
+    const normalizedNewAssetNumber = normalizeText(newAssetNumber);
+
+    const previousAgreementAssetResult = await executor.query(
+      `
+        WITH target_asset AS (
+          SELECT id
+          FROM rental_agreement_asset
+          WHERE agreementid = $1
+            AND orderlineid = $2
+            AND COALESCE(iscurrentasset, TRUE) = TRUE
+            AND (
+              $3::text IS NULL
+              OR CAST(assetnumber AS TEXT) = $3
+            )
+          ORDER BY
+            CASE
+              WHEN $3::text IS NOT NULL AND CAST(assetnumber AS TEXT) = $3 THEN 0
+              ELSE 1
+            END,
+            id DESC
+          LIMIT 1
+        )
+        UPDATE rental_agreement_asset
+        SET
+          assetstatus = 'replaced',
+          iscurrentasset = FALSE,
+          allocatedto = COALESCE($4, allocatedto),
+          linkedticketid = $5
+        WHERE id IN (SELECT id FROM target_asset)
+        RETURNING *
+      `,
+      [
+        agreementId,
+        oldOrderlineId,
+        normalizedOldAssetNumber,
+        actionEpoch,
+        ticketId,
+      ]
+    );
+
+    const existingCurrentAssetResult = await executor.query(
+      `
+        SELECT *
+        FROM rental_agreement_asset
+        WHERE agreementid = $1
+          AND orderlineid = $2
+          AND CAST(assetnumber AS TEXT) = $3
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [agreementId, newOrderlineId, normalizedNewAssetNumber]
+    );
+
+    let currentAgreementAsset = existingCurrentAssetResult.rows[0] ?? null;
+
+    if (currentAgreementAsset) {
+      const updatedCurrentAssetResult = await executor.query(
+        `
+          UPDATE rental_agreement_asset
+          SET
+            stockid = COALESCE($1, stockid),
+            assetstatus = 'allocated',
+            iscurrentasset = TRUE,
+            allocatedfrom = COALESCE($2, allocatedfrom),
+            linkedticketid = $3
+          WHERE id = $4
+          RETURNING *
+        `,
+        [newStockId, actionEpoch, ticketId, currentAgreementAsset.id]
+      );
+      currentAgreementAsset = updatedCurrentAssetResult.rows[0] ?? currentAgreementAsset;
+    } else {
+      const insertedAgreementAssetResult = await executor.query(
+        `
+          INSERT INTO rental_agreement_asset (
+            agreementid,
+            orderlineid,
+            assetnumber,
+            stockid,
+            assetstatus,
+            iscurrentasset,
+            allocatedfrom,
+            linkedticketid,
+            createdby
+          )
+          VALUES ($1, $2, $3, $4, 'allocated', TRUE, $5, $6, $7)
+          RETURNING *
+        `,
+        [
+          agreementId,
+          newOrderlineId,
+          normalizedNewAssetNumber,
+          newStockId,
+          actionEpoch,
+          ticketId,
+          modifiedBy,
+        ]
+      );
+      currentAgreementAsset = insertedAgreementAssetResult.rows[0] ?? null;
+    }
+
+    const snapshotResult = await refreshAgreementContractSnapshot(
+      executor,
+      agreementId,
+      normalizeText(uniqueOrderId) as string,
+      modifiedBy
+    );
+
+    return {
+      agreement: snapshotResult.agreement,
+      previousAgreementAsset: previousAgreementAssetResult.rows[0] ?? null,
+      currentAgreementAsset,
+      contractRows: snapshotResult.contractRows,
     };
   };
 }
