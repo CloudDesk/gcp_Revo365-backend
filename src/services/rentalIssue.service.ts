@@ -1,6 +1,7 @@
 import { updateAgreementAssetLifecycleState } from "./rentalAgreementLifecycle.service.js";
 
 const SERVICE_HOLD_STOCK_STATUS = "Service Hold";
+const DAMAGED_NON_RETURNABLE_STOCK_STATUS = "Damaged";
 const LOST_STOCK_STATUS = "Lost";
 const SERVICE_HOLD_SERVICE_STATUS = "service_hold";
 const TICKET_LOST_ACTION_TYPE = "lost";
@@ -553,31 +554,27 @@ export const processRentalDamageAssessment = async ({
   const orderlineUpdateResult = isNonReturnable
     ? await executor.query(
         `
-          UPDATE orderline
-          SET
-            rentalcontractstatus = $1,
-            contractcloseddate = $2,
-            contractclosereason = $3,
-            isactivebillingline = FALSE,
-            rentalfor = generatedmonthscount,
-            rentalassetstatus = $4,
-            damageddate = $5,
-            damageticketid = $6,
-            lastlifecycleeventid = $7
-          WHERE id = $8
-          RETURNING *
-        `,
-        [
-          RENTAL_CONTRACT_STATUS_TERMINATED,
-          damagedAt,
-          CONTRACT_CLOSE_REASON_DAMAGED_NON_RETURNABLE,
-          DAMAGED_NON_RETURNABLE_ORDERLINE_ASSET_STATUS,
-          damagedAt,
-          ticketId,
-          historyRecord?.id ?? null,
-          linkedOrderline.id,
-        ]
-      )
+      UPDATE orderline
+      SET
+        rentalcontractstatus = $1,
+        contractcloseddate = $2,
+        contractclosereason = $3,
+        isactivebillingline = FALSE,
+        rentalfor = generatedmonthscount,
+        rentalassetstatus = $4,
+        lastlifecycleeventid = $5
+      WHERE id = $6
+      RETURNING *
+    `,
+    [
+      RENTAL_CONTRACT_STATUS_TERMINATED,
+      damagedAt,
+      CONTRACT_CLOSE_REASON_DAMAGED_NON_RETURNABLE,
+      DAMAGED_NON_RETURNABLE_ORDERLINE_ASSET_STATUS,
+      historyRecord?.id ?? null,
+      linkedOrderline.id,
+    ]
+  )
     : {
         rows: [linkedOrderline],
       };
@@ -591,38 +588,37 @@ export const processRentalDamageAssessment = async ({
           ELSE stockstatus
         END,
         servicestatus = CASE
-          WHEN $1::boolean THEN $3
+          WHEN $1::boolean THEN NULL
           ELSE servicestatus
         END,
         holdreason = CASE
-          WHEN $1::boolean THEN $4
+          WHEN $1::boolean THEN $3
           ELSE holdreason
         END,
         holdticketid = CASE
-          WHEN $1::boolean THEN $5
+          WHEN $1::boolean THEN $4
           ELSE holdticketid
         END,
         rentalassetstatus = CASE
-          WHEN $1::boolean THEN $6
+          WHEN $1::boolean THEN $5
           ELSE rentalassetstatus
         END,
-        lastticketid = $5,
-        assetnumber = COALESCE(assetnumber, $7),
-        agreementid = COALESCE(agreementid, $8),
-        orderlinenumber = COALESCE(orderlinenumber, $9),
-        damageassessment = $10,
-        damageddate = $11,
+        lastticketid = $4,
+        assetnumber = COALESCE(assetnumber, $6),
+        agreementid = COALESCE(agreementid, $7),
+        orderlinenumber = COALESCE(orderlinenumber, $8),
+        damageassessment = $9,
+        damageddate = $10,
         nonreturnable = CASE
           WHEN $1::boolean THEN TRUE
           ELSE COALESCE(nonreturnable, FALSE)
         END
-      WHERE id = $12
+      WHERE id = $11
       RETURNING *
     `,
     [
       isNonReturnable,
-      SERVICE_HOLD_STOCK_STATUS,
-      SERVICE_HOLD_SERVICE_STATUS,
+      DAMAGED_NON_RETURNABLE_STOCK_STATUS,
       DAMAGED_NON_RETURNABLE_HOLD_REASON,
       ticketId,
       DAMAGED_NON_RETURNABLE_ORDERLINE_ASSET_STATUS,
