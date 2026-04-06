@@ -1037,4 +1037,97 @@ export module rentalAgreementService {
       contractRows: snapshotResult.contractRows,
     };
   };
+
+  export const syncRenewalAgreement = async ({
+    executor,
+    agreementId,
+    uniqueOrderId,
+    orderlineId,
+    assetNumber = null,
+    renewedThroughEpoch,
+    ticketId,
+    modifiedBy = null,
+  }: {
+    executor: any;
+    agreementId: number | null;
+    uniqueOrderId: string | null;
+    orderlineId: number | null;
+    assetNumber?: string | null;
+    renewedThroughEpoch: number;
+    ticketId: number;
+    modifiedBy?: number | null;
+  }) => {
+    if (agreementId == null || orderlineId == null || !normalizeText(uniqueOrderId)) {
+      return {
+        agreement: null,
+        agreementAsset: null,
+        contractRows: [],
+      };
+    }
+
+    const normalizedAssetNumber = normalizeText(assetNumber);
+
+    const agreementAssetUpdateResult = await executor.query(
+      `
+        WITH target_asset AS (
+          SELECT id
+          FROM rental_agreement_asset
+          WHERE agreementid = $1
+            AND orderlineid = $2
+            AND COALESCE(iscurrentasset, TRUE) = TRUE
+            AND (
+              $3::text IS NULL
+              OR CAST(assetnumber AS TEXT) = $3
+            )
+          ORDER BY
+            CASE
+              WHEN $3::text IS NOT NULL AND CAST(assetnumber AS TEXT) = $3 THEN 0
+              ELSE 1
+            END,
+            id DESC
+          LIMIT 1
+        )
+        UPDATE rental_agreement_asset
+        SET
+          allocatedto = COALESCE($4, allocatedto),
+          linkedticketid = $5
+        WHERE id IN (SELECT id FROM target_asset)
+        RETURNING *
+      `,
+      [
+        agreementId,
+        orderlineId,
+        normalizedAssetNumber,
+        renewedThroughEpoch,
+        ticketId,
+      ]
+    );
+
+    const snapshotResult = await refreshAgreementContractSnapshot(
+      executor,
+      agreementId,
+      normalizeText(uniqueOrderId) as string,
+      modifiedBy
+    );
+
+    const agreementUpdateResult = await executor.query(
+      `
+        UPDATE rental_agreement
+        SET
+          agreementstatus = 'renewed',
+          agreementenddate = COALESCE($1, agreementenddate),
+          renewalcount = COALESCE(renewalcount, 0) + 1,
+          modifiedby = COALESCE($2, modifiedby)
+        WHERE id = $3
+        RETURNING *
+      `,
+      [renewedThroughEpoch, modifiedBy, agreementId]
+    );
+
+    return {
+      agreement: agreementUpdateResult.rows[0] ?? snapshotResult.agreement ?? null,
+      agreementAsset: agreementAssetUpdateResult.rows[0] ?? null,
+      contractRows: snapshotResult.contractRows,
+    };
+  };
 }

@@ -2,6 +2,7 @@ import pool, { query } from "../database/postgres.js";
 import { processRentalReturn } from "./rentalReturn.service.js";
 import { linkRentalPenaltyInvoice, processRentalDamageAssessment, processRentalLost, } from "./rentalIssue.service.js";
 import { rentalAgreementService } from "./rentalAgreement.service.js";
+import { processRentalRenewal } from "./rentalRenewal.service.js";
 const REPAIR_RENTAL_TICKET_TYPE = "repair rental";
 const INITIATED_REPLACEMENT_STATUS = "replacement_requested";
 const OLD_ASSET_RECEIVED_STATUS = "old_asset_received";
@@ -37,6 +38,7 @@ const STOP_RENTAL_FINANCIAL_MODES = new Set([
     "prorated_refund_credit",
     "manual_finance_decision",
 ]);
+const RENEWED_ACTION_STATUS = "renewed";
 const normalizeText = (value) => value == null ? null : String(value).trim();
 const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
 const toPositiveInteger = (value) => {
@@ -1748,6 +1750,86 @@ export var ticketReplacementService;
             }
             console.error("Query Execution Error: IN linkPenaltyInvoice", error);
             throw new Error(error?.message || "Failed to link the penalty invoice.");
+        }
+        finally {
+            client.release();
+        }
+    };
+    ticketReplacementService.renewRentalContract = async (request) => {
+        const client = await pool.connect();
+        let transactionStarted = false;
+        try {
+            const ticketId = toPositiveInteger(request.params.id);
+            const requestedrenewaldate = request.body?.requestedrenewaldate;
+            const approvedrenewaldate = request.body?.approvedrenewaldate ?? requestedrenewaldate;
+            const remarks = normalizeText(request.body?.remarks);
+            const context = await buildReplacementContext(ticketId);
+            if (!context.linkedorderline) {
+                throw new Error("Unable to resolve the active rental contract for this ticket.");
+            }
+            if (normalizeComparableText(context.ticket?.rentalactiontype) !== "renewal") {
+                throw new Error("This ticket is not marked as a Renewal rental request.");
+            }
+            if (context.linkedorderline?.isactivebillingline === false) {
+                throw new Error("Only active rental billing lines can be renewed.");
+            }
+            const linkedAssetStatus = normalizeComparableText(context.linkedorderline.rentalassetstatus);
+            if (linkedAssetStatus === "returned" ||
+                linkedAssetStatus === "lost" ||
+                linkedAssetStatus === "damaged_non_returnable") {
+                throw new Error("This rental asset already has a terminal lifecycle status and cannot be renewed.");
+            }
+            await client.query("BEGIN");
+            transactionStarted = true;
+            const renewalResult = await processRentalRenewal({
+                executor: client,
+                context,
+                ticketId,
+                requestedRenewalDate: requestedrenewaldate,
+                approvedRenewalDate: approvedrenewaldate,
+                remarks,
+                createdBy: request.session?.id ?? null,
+            });
+            await client.query("COMMIT");
+            transactionStarted = false;
+            let agreementWarning = null;
+            const agreementId = renewalResult?.agreement?.id ??
+                (context.linkedorderline.agreementid != null
+                    ? Number(context.linkedorderline.agreementid)
+                    : null);
+            if (agreementId != null) {
+                try {
+                    await rentalAgreementService.refreshRentalAgreementPdfById(agreementId, {
+                        modifiedBy: request.session?.id ?? null,
+                    });
+                }
+                catch (agreementPdfError) {
+                    console.error("Renewal agreement PDF refresh failed", agreementPdfError);
+                    agreementWarning =
+                        agreementPdfError?.message ||
+                            "Renewal was completed, but the agreement PDF could not be refreshed.";
+                }
+            }
+            return {
+                message: agreementWarning
+                    ? "Rental contract renewed with agreement PDF warning."
+                    : "Rental contract renewed successfully.",
+                warning: agreementWarning,
+                ticket: renewalResult.ticket,
+                history: renewalResult.history,
+                orderline: renewalResult.orderline,
+                agreement: renewalResult.agreement,
+                agreementasset: renewalResult.agreementAsset,
+                rentalactionstatus: RENEWED_ACTION_STATUS,
+                context: await buildReplacementContext(ticketId),
+            };
+        }
+        catch (error) {
+            if (transactionStarted) {
+                await client.query("ROLLBACK");
+            }
+            console.error("Query Execution Error: IN renewRentalContract", error);
+            throw new Error(error?.message || "Failed to renew the rental contract.");
         }
         finally {
             client.release();

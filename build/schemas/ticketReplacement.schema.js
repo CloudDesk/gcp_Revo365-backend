@@ -396,4 +396,33 @@ export const linkPenaltyInvoiceSchema = {
         }
     }
 };
+export const renewRentalContractSchema = {
+    type: 'object',
+    properties: {
+        requestedrenewaldate: {
+            type: ['integer', 'string'],
+            errorMessage: {
+                type: 'Requested Renewal Date should be an epoch integer or date string'
+            }
+        },
+        approvedrenewaldate: {
+            type: ['integer', 'string', 'null'],
+            errorMessage: {
+                type: 'Approved Renewal Date should be an epoch integer or date string'
+            }
+        },
+        remarks: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Remarks should be a string'
+            }
+        }
+    },
+    required: ['requestedrenewaldate'],
+    errorMessage: {
+        required: {
+            requestedrenewaldate: 'Renewal Date is mandatory.'
+        }
+    }
+};
 //# sourceMappingURL=ticketReplacement.schema.js.map

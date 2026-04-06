@@ -127,6 +127,17 @@ export module ticketReplacementController {
     }
   };
 
+  export const renewRentalContract = async (request: any, reply: any) => {
+    try {
+      const result = await ticketReplacementService.renewRentalContract(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'renewRentalContract':", error);
+      const message = error?.message || "Failed to renew the rental contract.";
+      reply.status(400).send({ message });
+    }
+  };
+
   export const stopRental = async (request: any, reply: any) => {
     try {
       const result = await ticketReplacementService.stopRental(request);

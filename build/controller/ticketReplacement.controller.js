@@ -122,6 +122,17 @@ export var ticketReplacementController;
             reply.status(400).send({ message });
         }
     };
+    ticketReplacementController.renewRentalContract = async (request, reply) => {
+        try {
+            const result = await ticketReplacementService.renewRentalContract(request);
+            reply.status(200).send(result);
+        }
+        catch (error) {
+            console.error("Error in 'renewRentalContract':", error);
+            const message = error?.message || "Failed to renew the rental contract.";
+            reply.status(400).send({ message });
+        }
+    };
     ticketReplacementController.stopRental = async (request, reply) => {
         try {
             const result = await ticketReplacementService.stopRental(request);
