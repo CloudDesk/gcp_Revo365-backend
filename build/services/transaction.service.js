@@ -1126,6 +1126,25 @@ export var transactionService;
             console.log(">>Tran", request.body.transaction, ">>Tran");
             console.log(">>orde", request.body.order, ">>orde");
             console.log("End");
+            // Ensure rental quantities are up-to-date before reserving inventory.
+            // Rental stock availability should consider both ecompublish=true/false items.
+            if (request.body?.order?.[0]?.invoicefor === "product rental") {
+                try {
+                    const productIds = Array.from(new Set((orderdata || [])
+                        .map((item) => Number(item?.productid))
+                        .filter((id) => Number.isFinite(id) && id > 0)));
+                    if (productIds.length > 0) {
+                        const pucResult = await query(`SELECT DISTINCT puc FROM product_revo WHERE id = ANY($1)`, [productIds]);
+                        const pucs = (pucResult.rows || [])
+                            .map((row) => String(row?.puc || "").trim())
+                            .filter(Boolean);
+                        await Promise.all(pucs.map((puc) => productrevoService.updateCatalogueQuantities(puc)));
+                    }
+                }
+                catch (error) {
+                    console.warn("Failed to refresh rental catalogue quantities before checkout:", error?.message || error);
+                }
+            }
             if (request.body.order[0].paymentmethod === "Cash") {
                 console.log("Inside Cash");
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
@@ -1143,8 +1162,9 @@ export var transactionService;
                     console.log("Request Body:", request.body);
                     console.log("Request Body Order:", request.body.order);
                     if (request.body.order[0].invoicefor === "product rental") {
-                        return (Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                            Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0);
+                        return (toSafeNumber(product.rentalavailablequantity, 0) -
+                            toSafeNumber(product.lock_qty, 0) >=
+                            0);
                     }
                     else {
                         return (Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
@@ -1153,6 +1173,7 @@ export var transactionService;
                 });
                 console.log("All quantities available:", allQuantitiesAvailable);
                 if (!allQuantitiesAvailable) {
+                    await releaseInventoryLocksByOrderItems(orderdata);
                     return {
                         status: 400,
                         message: "One or more products are out of stock. Please try again later.",
@@ -1250,8 +1271,9 @@ export var transactionService;
                         console.log("product.rentalorderedquantity", product.rentalorderedquantity);
                         console.log("rental - lock", Number(product.rentalavailablequantity) - Number(product.lock_qty));
                         console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
-                        return (Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                            Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0);
+                        return (toSafeNumber(product.rentalavailablequantity, 0) -
+                            toSafeNumber(product.lock_qty, 0) >=
+                            0);
                     }
                     else {
                         console.log("eles product.overallavailableqty", product.overallavailableqty);

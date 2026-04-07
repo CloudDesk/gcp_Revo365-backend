@@ -1430,6 +1430,39 @@ export module transactionService {
       console.log(">>orde", request.body.order, ">>orde");
       console.log("End");
 
+      // Ensure rental quantities are up-to-date before reserving inventory.
+      // Rental stock availability should consider both ecompublish=true/false items.
+      if (request.body?.order?.[0]?.invoicefor === "product rental") {
+        try {
+          const productIds = Array.from(
+            new Set(
+              (orderdata || [])
+                .map((item: any) => Number(item?.productid))
+                .filter((id: number) => Number.isFinite(id) && id > 0),
+            ),
+          );
+
+          if (productIds.length > 0) {
+            const pucResult = await query(
+              `SELECT DISTINCT puc FROM product_revo WHERE id = ANY($1)`,
+              [productIds],
+            );
+            const pucs = (pucResult.rows || [])
+              .map((row: any) => String(row?.puc || "").trim())
+              .filter(Boolean);
+
+            await Promise.all(
+              pucs.map((puc: string) => productrevoService.updateCatalogueQuantities(puc)),
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "Failed to refresh rental catalogue quantities before checkout:",
+            error?.message || error,
+          );
+        }
+      }
+
       if (request.body.order[0].paymentmethod === "Cash") {
         console.log("Inside Cash");
         dummyorderdata = orderdata.map((element: any) => ({ ...element }));
@@ -1458,8 +1491,9 @@ export module transactionService {
 
 
               return (
-                Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0
+                toSafeNumber(product.rentalavailablequantity, 0) -
+                  toSafeNumber(product.lock_qty, 0) >=
+                0
               );
             } else {
 
@@ -1474,6 +1508,7 @@ export module transactionService {
         );
         console.log("All quantities available:", allQuantitiesAvailable);
         if (!allQuantitiesAvailable) {
+          await releaseInventoryLocksByOrderItems(orderdata);
           return {
             status: 400,
             message:
@@ -1602,8 +1637,9 @@ export module transactionService {
               console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
 
               return (
-                Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0
+                toSafeNumber(product.rentalavailablequantity, 0) -
+                  toSafeNumber(product.lock_qty, 0) >=
+                0
               );
             } else {
               console.log("eles product.overallavailableqty", product.overallavailableqty);
