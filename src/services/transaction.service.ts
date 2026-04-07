@@ -22,6 +22,7 @@ import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
 import { inventoryReservationService } from "./inventoryReservation.service.js";
 import loginShiprocket from "../shiprocket/shiprocketAuth.js";
 import { redisClient } from "../database/redis.session.js";
+import { resolveFulfillmentLocation } from "../config/fulfillment.config.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -171,9 +172,17 @@ const allocateProductLocationsForOrder = async (orderItems: any[] = []) => {
 
     const chosenKey = `${productId}::${chosenLocation}`;
     demandByProductLocation.set(chosenKey, (demandByProductLocation.get(chosenKey) || 0) + requestedQty);
-    item.location = chosenLocation;
+
+    // Phase 1: stamp head_office as the authoritative fulfillment location on every
+    // order item so reservations, orderlines, and Shiprocket all share one source.
+    // chosenLocation is still used above for demand-tracking (stock validation);
+    // only the location written onto the item is overridden here.
+    // Phase 2: replace resolveFulfillmentLocation() with the assigned warehouse
+    // from fulfillment_assignments once that table is live.
+    const fulfillmentLocation = resolveFulfillmentLocation({ requestedLocation: chosenLocation });
+    item.location = fulfillmentLocation;
     if (!normalizeOptionalLocation(item?.storelocation)) {
-      item.storelocation = chosenLocation;
+      item.storelocation = fulfillmentLocation;
     }
   }
 };
@@ -1133,6 +1142,25 @@ const applyShipmentLifecycleToOrders = async (
 ) => {
   if (!merchantTransactionId || !mappedStatus) return;
 
+  let previousStatuses = new Map<number, string>();
+  if (mappedStatus === "returned") {
+    const previousLineResult = await query(
+      `
+      SELECT id, orderstatus
+      FROM orderline
+      WHERE merchanttransactionid = $1
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')
+      `,
+      [merchantTransactionId]
+    );
+    previousStatuses = new Map(
+      (previousLineResult.rows || []).map((row) => [
+        Number(row.id),
+        String(row.orderstatus || "").trim().toLowerCase(),
+      ])
+    );
+  }
+
   let lineUpdateQuery = "";
   if (mappedStatus === "delivered") {
     lineUpdateQuery = `
@@ -1142,7 +1170,7 @@ const applyShipmentLifecycleToOrders = async (
           delivereddate = COALESCE(delivereddate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered')
-      RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
     `;
   } else if (mappedStatus === "shipped") {
     lineUpdateQuery = `
@@ -1152,7 +1180,7 @@ const applyShipmentLifecycleToOrders = async (
           dispatcheddate = COALESCE(dispatcheddate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped')
-      RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
     `;
   } else if (mappedStatus === "ready_to_dispatch") {
     lineUpdateQuery = `
@@ -1161,13 +1189,25 @@ const applyShipmentLifecycleToOrders = async (
           readytodispatchdate = COALESCE(readytodispatchdate, NOW())
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped', 'ready_to_dispatch')
-      RETURNING uniqueorderid, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+    `;
+  } else if (mappedStatus === "returned") {
+    lineUpdateQuery = `
+      UPDATE orderline
+      SET orderstatus = $1,
+          returneddate = COALESCE(returneddate, NOW())
+      WHERE merchanttransactionid = $2
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
     `;
   } else {
     return;
   }
 
   const lineUpdateResult = await query(lineUpdateQuery, [mappedStatus, merchantTransactionId]);
+  if (mappedStatus === "returned" && lineUpdateResult.rows.length > 0) {
+    await ordersService.handleReturnedOrderLines(lineUpdateResult.rows, previousStatuses);
+  }
   if ((mappedStatus === "shipped" || mappedStatus === "delivered") && lineUpdateResult.rows.length > 0) {
     await inventoryReservationService.transitionCommittedReservationsForOrderLines(
       lineUpdateResult.rows,
@@ -1319,12 +1359,17 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
       } as ShiprocketCreateResult;
     }
 
-    const pickupLocation =
-      context.orderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ||
-      context.combinedOrderRows.find((row: any) => row?.deliveryfrom)?.deliveryfrom ||
-      context.combinedOrderRows.find((row: any) => row?.storelocation)?.storelocation ||
-      context.combinedOrderRows.find((row: any) => row?.location)?.location ||
-      "warehouse";
+    // Phase 1: always use the configured fulfillment pickup location (head_office).
+    // The previous chain (deliveryfrom → storelocation → location → "warehouse") was
+    // fragile — those fields are mutable and "warehouse" is not a valid Shiprocket
+    // pickup name. resolveFulfillmentLocation() returns the single registered name.
+    // Phase 2: pass { assignedLocation: assignmentRow.assigned_location } here.
+    const pickupLocation = resolveFulfillmentLocation({
+      requestedLocation:
+        context.orderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ??
+        context.combinedOrderRows.find((row: any) => row?.location)?.location ??
+        null,
+    });
 
     const shiprocketOrderItems =
       context.orderLineItems.length > 0

@@ -1225,6 +1225,64 @@ ${whereClause} ${orderByClause}`;
         );
     };
 
+    const restoreInventoryForReturnedLines = async (
+        lineRows: any[],
+        previousStatuses: Map<number, string>
+    ) => {
+        const preDispatchLines = (lineRows || []).filter((line) => {
+            if (line?.ordertype !== "Orders") return false;
+            const previousStatus = normalizeOrderStatus(
+                previousStatuses.get(Number(line.id)) ?? line?.orderstatus
+            );
+            return PRE_DISPATCH_RESERVATION_STATUSES.has(previousStatus);
+        });
+
+        if (preDispatchLines.length > 0) {
+            await productrevoService.releaseCommittedQuantityForOrderLines(
+                preDispatchLines.map((line) => ({
+                    merchanttransactionid: line.merchanttransactionid,
+                    productid: line.productid,
+                    quantity: line.quantity,
+                    ordername: line.ordername,
+                    ordertype: line.ordertype,
+                    deliveryfrom: line.deliveryfrom,
+                })),
+                true
+            );
+            await inventoryReservationService.transitionCommittedReservationsForOrderLines(
+                preDispatchLines.map((line) => ({
+                    merchanttransactionid: line.merchanttransactionid,
+                    productid: line.productid,
+                    quantity: line.quantity,
+                    ordername: line.ordername,
+                    ordertype: line.ordertype,
+                    deliveryfrom: line.deliveryfrom,
+                })),
+                "released",
+                "order_returned_pre_dispatch"
+            );
+        }
+
+        const physicallyAllocatedLines = (lineRows || []).filter((line) => {
+            if (line?.ordertype !== "Orders") return false;
+            const previousStatus = normalizeOrderStatus(
+                previousStatuses.get(Number(line.id)) ?? line?.orderstatus
+            );
+            return ["ready_to_dispatch", "dispatched", "shipped", "delivered", "sold"].includes(previousStatus);
+        });
+
+        if (physicallyAllocatedLines.length > 0) {
+            await stockRevoService.restoreReturnedStockForOrderLines(physicallyAllocatedLines);
+        }
+    };
+
+    export const handleReturnedOrderLines = async (
+        lineRows: any[],
+        previousStatuses: Map<number, string>
+    ) => {
+        await restoreInventoryForReturnedLines(lineRows, previousStatuses);
+    };
+
     export const upsertOrder = async (orderData: any) => {
         try {
             let querydata: string;
@@ -1290,6 +1348,25 @@ ${whereClause} ${orderByClause}`;
                     },
                 };
                 await sendTransactionalMail(maildata.body);
+            } else if (newStatus === 'returned') {
+                const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
+                const previousStatuses = new Map<number, string>();
+                lineRows.forEach((line) => {
+                    previousStatuses.set(Number(line.id), normalizeOrderStatus(line.orderstatus));
+                });
+
+                if (lineRows.length > 0) {
+                    await query(
+                        `UPDATE orderline
+                         SET orderstatus = $1
+                         WHERE uniqueorderid = $2
+                           AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')`,
+                        ['returned', updatedRow.orderid]
+                    );
+                }
+
+                await restoreInventoryForReturnedLines(lineRows, previousStatuses);
+                await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
             } else if (['ordered', 'processing', 'ready_to_dispatch', 'dispatched', 'shipped', 'delivered', 'payment_failed'].includes(newStatus)) {
                 const timestampAssignment = getLifecycleTimestampAssignment(newStatus);
                 await query(
@@ -1363,6 +1440,11 @@ ${whereClause} ${orderByClause}`;
                     },
                 };
                 await sendTransactionalMail(maildata.body);
+            } else if (lineStatus === 'returned') {
+                await restoreInventoryForReturnedLines(
+                    [lineRow],
+                    new Map<number, string>([[Number(lineRow.id), previousStatus]])
+                );
             }
 
             if (lineRow?.uniqueorderid) {
@@ -1559,21 +1641,31 @@ ${whereClause} ${orderByClause}`;
                     }
                 }
 
-                // Additional fallback: Check if product is rental by checking ecompublish status
+                // Additional fallback: infer rental from stocktype on stock_revo.
+                // Do not use ecompublish=false as a rental signal because normal stock
+                // can also be hidden from e-commerce.
                 let isRental = false;
                 if (ordername) {
                     isRental = ordername.toLowerCase().trim() === 'rental';
                 } else if (pucArray.length > 0) {
-                    // If still no ordername, check product_revo to see if it's a rental product
-                    console.log("DEBUG: No ordername found, checking product_revo for rental status");
-                    const productQuery = await query(
-                        `SELECT ecompublish FROM product_revo WHERE puc = $1 LIMIT 1`,
+                    // If still no ordername, check whether the product has active rental stock.
+                    console.log("DEBUG: No ordername found, checking stock_revo for rental stock");
+                    const stockTypeQuery = await query(
+                        `SELECT EXISTS (
+                            SELECT 1
+                            FROM stock_revo
+                            WHERE puc = $1
+                              AND stocktype = 'rental_product'
+                              AND (isdeleted = false OR isdeleted IS NULL)
+                              AND (isarchive = false OR isarchive IS NULL)
+                              AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                              AND (ewaste = false OR ewaste IS NULL)
+                        ) AS is_rental`,
                         [pucArray[0]]
                     );
-                    if (productQuery.rows.length > 0) {
-                        // Rental products typically have ecompublish = false
-                        isRental = productQuery.rows[0].ecompublish === false;
-                        console.log("DEBUG: Product ecompublish status:", productQuery.rows[0].ecompublish, "isRental:", isRental);
+                    if (stockTypeQuery.rows.length > 0) {
+                        isRental = stockTypeQuery.rows[0].is_rental === true;
+                        console.log("DEBUG: Rental stock exists:", stockTypeQuery.rows[0].is_rental, "isRental:", isRental);
                     }
                 }
 

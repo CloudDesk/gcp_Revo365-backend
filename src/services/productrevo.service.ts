@@ -2208,8 +2208,8 @@ export module productrevoService {
                     AND stocktype <> 'third_party_product'
                 ) AS available_quantity_count,
 
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND ecompublish = true AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND ecompublish = true AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
 

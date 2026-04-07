@@ -815,6 +815,102 @@ export module stockRevoService {
         }
     };
 
+    export const restoreReturnedStockForOrderLines = async (orderLines: any[] = []) => {
+        try {
+            const normalOrderLineNumbers = Array.from(
+                new Set(
+                    (orderLines || [])
+                        .filter((line) => String(line?.ordername || '').trim().toLowerCase() !== 'rental')
+                        .map((line) => String(line?.orderlinenumber || '').trim())
+                        .filter(Boolean)
+                )
+            );
+
+            const rentalGroups = new Map<string, { orderId: string; productId: number; quantity: number }>();
+            for (const line of orderLines || []) {
+                const orderName = String(line?.ordername || '').trim().toLowerCase();
+                if (orderName !== 'rental') continue;
+
+                const orderId = String(line?.uniqueorderid || '').trim();
+                const productId = Number(line?.productid);
+                const quantity = Number(line?.quantity);
+                if (!orderId || !Number.isFinite(productId) || productId <= 0 || !Number.isFinite(quantity) || quantity <= 0) {
+                    continue;
+                }
+
+                const key = `${orderId}::${productId}`;
+                const existing = rentalGroups.get(key);
+                if (existing) {
+                    existing.quantity += quantity;
+                    continue;
+                }
+
+                rentalGroups.set(key, { orderId, productId, quantity });
+            }
+
+            const updatedPucs = new Set<string>();
+
+            if (normalOrderLineNumbers.length > 0) {
+                const normalRestoreResult = await query(
+                    `
+                    UPDATE stock_revo
+                    SET stockstatus = 'Available',
+                        orderlinenumber = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::bigint
+                    WHERE orderlinenumber = ANY($1::text[])
+                      AND stockstatus = 'Sold'
+                    RETURNING puc
+                    `,
+                    [normalOrderLineNumbers]
+                );
+
+                for (const row of normalRestoreResult.rows || []) {
+                    if (row?.puc) updatedPucs.add(String(row.puc));
+                }
+            }
+
+            for (const rentalGroup of rentalGroups.values()) {
+                const rentalRestoreResult = await query(
+                    `
+                    UPDATE stock_revo
+                    SET stockstatus = 'Available',
+                        orderid = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::bigint
+                    WHERE id IN (
+                        SELECT id
+                        FROM stock_revo
+                        WHERE orderid = $1
+                          AND puc IN (SELECT puc FROM product_revo WHERE id = $2)
+                          AND stocktype = 'rental_product'
+                          AND stockstatus = 'Rental Sold'
+                        LIMIT $3
+                        FOR UPDATE
+                    )
+                    RETURNING puc
+                    `,
+                    [rentalGroup.orderId, rentalGroup.productId, rentalGroup.quantity]
+                );
+
+                for (const row of rentalRestoreResult.rows || []) {
+                    if (row?.puc) updatedPucs.add(String(row.puc));
+                }
+            }
+
+            const updatedPucList = Array.from(updatedPucs);
+            if (updatedPucList.length > 0) {
+                for (const puc of updatedPucList) {
+                    await productrevoService.updateCatalogueQuantities(puc);
+                }
+                await testinupdateQuantity(updatedPucList, false);
+            }
+
+            return { success: true, updatedPucs: updatedPucList };
+        } catch (error) {
+            console.error("Error in restoreReturnedStockForOrderLines:", error);
+            throw error;
+        }
+    };
+
 
 
 
@@ -960,9 +1056,9 @@ export module stockRevoService {
         try {
             console.log('Allocating Rental Stock for orders:', orders);
             for (const order of orders) {
-                // Determine if this is a rental product (ecompublish = false check is ideal, but for now we might rely on the caller or check here)
-                // Assuming the caller only passes rental orders or we check 'ordername' if available on the order object
-                // But safer to check db or rely on caller. Let's rely on logic for any product that has rental stock.
+                // The caller passes rental orders here, and allocation is constrained to
+                // stocktype='rental_product'. Do not infer rental from ecompublish=false,
+                // because non-rental stock can also be hidden from e-commerce.
 
                 // We will attempt to update 'Available' rental stock for this product.
                 const productid = order.productid; // Or orderLine productid
@@ -982,7 +1078,7 @@ export module stockRevoService {
                     SET 
                         stockstatus = 'Rental Sold',
                         orderid = $1,
-                        modifieddate = COALESCE(modifieddate, CURRENT_TIMESTAMP)
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::bigint
                     WHERE id IN (
                         SELECT id
                         FROM stock_revo
