@@ -1166,8 +1166,8 @@ const applyShipmentLifecycleToOrders = async (
     lineUpdateQuery = `
       UPDATE orderline
       SET orderstatus = $1,
-          dispatcheddate = COALESCE(dispatcheddate, NOW()),
-          delivereddate = COALESCE(delivereddate, NOW())
+          dispatcheddate = COALESCE(dispatcheddate, EXTRACT(EPOCH FROM NOW())::bigint),
+          delivereddate = COALESCE(delivereddate, EXTRACT(EPOCH FROM NOW())::bigint)
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered')
       RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -1176,8 +1176,8 @@ const applyShipmentLifecycleToOrders = async (
     lineUpdateQuery = `
       UPDATE orderline
       SET orderstatus = $1,
-          readytodispatchdate = COALESCE(readytodispatchdate, NOW()),
-          dispatcheddate = COALESCE(dispatcheddate, NOW())
+          readytodispatchdate = COALESCE(readytodispatchdate, EXTRACT(EPOCH FROM NOW())::bigint),
+          dispatcheddate = COALESCE(dispatcheddate, EXTRACT(EPOCH FROM NOW())::bigint)
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped')
       RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -1186,7 +1186,7 @@ const applyShipmentLifecycleToOrders = async (
     lineUpdateQuery = `
       UPDATE orderline
       SET orderstatus = $1,
-          readytodispatchdate = COALESCE(readytodispatchdate, NOW())
+          readytodispatchdate = COALESCE(readytodispatchdate, EXTRACT(EPOCH FROM NOW())::bigint)
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped', 'ready_to_dispatch')
       RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
@@ -1195,7 +1195,7 @@ const applyShipmentLifecycleToOrders = async (
     lineUpdateQuery = `
       UPDATE orderline
       SET orderstatus = $1,
-          returneddate = COALESCE(returneddate, NOW())
+          returneddate = COALESCE(returneddate, EXTRACT(EPOCH FROM NOW())::bigint)
       WHERE merchanttransactionid = $2
         AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')
       RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom

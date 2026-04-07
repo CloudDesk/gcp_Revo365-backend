@@ -72,19 +72,21 @@ export module ordersService {
     const normalizeOrderStatus = (status: any): string =>
         String(status || "").trim().toLowerCase();
 
+    const BIGINT_NOW_SQL = `EXTRACT(EPOCH FROM NOW())::bigint`;
+
     const getLifecycleTimestampAssignment = (status: string) => {
         switch (normalizeOrderStatus(status)) {
             case "ready_to_dispatch":
-                return `readytodispatchdate = COALESCE(readytodispatchdate, NOW())`;
+                return `readytodispatchdate = COALESCE(readytodispatchdate, ${BIGINT_NOW_SQL})`;
             case "dispatched":
             case "shipped":
-                return `dispatcheddate = COALESCE(dispatcheddate, NOW())`;
+                return `dispatcheddate = COALESCE(dispatcheddate, ${BIGINT_NOW_SQL})`;
             case "delivered":
-                return `delivereddate = COALESCE(delivereddate, NOW())`;
+                return `delivereddate = COALESCE(delivereddate, ${BIGINT_NOW_SQL})`;
             case "cancelled":
-                return `cancelleddate = COALESCE(cancelleddate, NOW())`;
+                return `cancelleddate = COALESCE(cancelleddate, ${BIGINT_NOW_SQL})`;
             case "returned":
-                return `returneddate = COALESCE(returneddate, NOW())`;
+                return `returneddate = COALESCE(returneddate, ${BIGINT_NOW_SQL})`;
             default:
                 return "";
         }

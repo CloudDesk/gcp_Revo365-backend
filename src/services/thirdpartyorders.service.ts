@@ -183,9 +183,9 @@ export module thirdPartyOrdersService {
             }
 
             // 1. Update thirdpartyorders row
-            const dateField = orderstatus === 'delivered' ? ', delivereddate = NOW()'
-                : orderstatus === 'dispatched' ? ', dispatcheddate = NOW()'
-                : orderstatus === 'cancelled' ? ', cancelleddate = NOW()'
+            const dateField = orderstatus === 'delivered' ? ', delivereddate = EXTRACT(EPOCH FROM NOW())::bigint'
+                : orderstatus === 'dispatched' ? ', dispatcheddate = EXTRACT(EPOCH FROM NOW())::bigint'
+                : orderstatus === 'cancelled' ? ', cancelleddate = EXTRACT(EPOCH FROM NOW())::bigint'
                 : '';
             const orderUpdateResult = await query(
                 `UPDATE thirdpartyorders SET orderstatus = $1 ${dateField} WHERE id = $2 RETURNING *`,
