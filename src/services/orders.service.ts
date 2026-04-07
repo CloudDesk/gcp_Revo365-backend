@@ -10,11 +10,34 @@ import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 
 
 export module ordersService {
+    let orderlineColumnCache: Set<string> | null = null;
+
     const executeQuery = async (runner: any, stmt: string, params: any[] = []) => {
         if (runner?.query) {
             return await runner.query(stmt, params);
         }
         return await query(stmt, params);
+    };
+
+    const getOrderlineInsertableColumns = async (runner?: any) => {
+        if (orderlineColumnCache) {
+            return orderlineColumnCache;
+        }
+
+        const result = await executeQuery(
+            runner,
+            `
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'orderline'
+            `,
+            []
+        );
+
+        orderlineColumnCache = new Set(
+            (result.rows || []).map((row: any) => String(row.column_name))
+        );
+        return orderlineColumnCache;
     };
 
     const ORDER_STATUS_RANK: Record<string, number> = {
@@ -2096,17 +2119,31 @@ ${whereClause} ${orderByClause}`;
     export const bulkInsertOrderlines = async (orderData: any[], runner?: any) => {
         try {
             console.log('Inside update bulkInsertOrderlines with orderData:', JSON.stringify(orderData, null, 2));
-            const fields = Object.keys(orderData[0]);
+            const allowedColumns = await getOrderlineInsertableColumns(runner);
+            const sanitizedOrderData = (orderData || []).map((order) =>
+                Object.fromEntries(
+                    Object.entries(order || {}).filter(([field]) => allowedColumns.has(field))
+                )
+            );
+
+            if (sanitizedOrderData.length === 0) {
+                throw new Error("No order line data available for insertion");
+            }
+
+            const fields = Object.keys(sanitizedOrderData[0]);
+            if (fields.length === 0) {
+                throw new Error("Order line payload does not contain any valid orderline columns");
+            }
             const fieldNames = fields.join(", ");
             const baseQuery = `INSERT INTO orderline (${fieldNames}) VALUES `;
-            const valuesClause = orderData.map((order, index) => {
+            const valuesClause = sanitizedOrderData.map((order, index) => {
                 const valuePlaceholders = fields.map((_, fieldIndex) => `$${index * fields.length + fieldIndex + 1}`);
                 return `(${valuePlaceholders.join(", ")})`;
             }).join(", ");
 
             const querydata = `${baseQuery}${valuesClause} RETURNING *`;
 
-            const values = orderData.flatMap(order =>
+            const values = sanitizedOrderData.flatMap(order =>
                 fields.map(field => order[field])
             );
             const result = await executeQuery(runner, querydata, values);

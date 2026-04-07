@@ -2647,6 +2647,21 @@ export module transactionService {
             request.body.transaction,
             request.body.order
           );
+          if (
+            !insertorderdata ||
+            insertorderdata?.errorMessage ||
+            insertorderdata?.error ||
+            insertorderdata?.statusCode >= 400 ||
+            !Array.isArray(insertorderdata?.rows) ||
+            insertorderdata.rows.length === 0
+          ) {
+            throw new Error(
+              insertorderdata?.errorMessage ||
+              insertorderdata?.error ||
+              insertorderdata?.message ||
+              "Failed to initialize provisional order rows"
+            );
+          }
           console.log("Insert Order Data Result:", insertorderdata.rows);
         } catch (error) {
           console.log(
