@@ -1,4 +1,4 @@
-import { query } from "../database/postgres.js";
+import pool, { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { QueryResult } from "pg";
@@ -10,6 +10,13 @@ import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 
 
 export module ordersService {
+    const executeQuery = async (runner: any, stmt: string, params: any[] = []) => {
+        if (runner?.query) {
+            return await runner.query(stmt, params);
+        }
+        return await query(stmt, params);
+    };
+
     const ORDER_STATUS_RANK: Record<string, number> = {
         payment_failed: 0,
         ordered: 10,
@@ -1939,64 +1946,66 @@ ${whereClause} ${orderByClause}`;
             console.log('Empty After splitting orders and third-party orders');
 
             let combinedResult: any = { rows: [], command: 'INSERT' };
+            const client = await pool.connect();
 
-            // Process orders for orders table
-            if (ordersToInsert.length > 0) {
-                // Calculate specific order amount, quantity, and product IDs for orders table
-                let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
-                    return acc + e.quantity;
-                }, 0);
-                let orderAmount = ordersToInsert.reduce((acc: number, e: any) => {
-                    return acc + (e.productamount * e.quantity);
-                }, 0);
-                let orderProductIds = ordersToInsert.map((e: any) => e.productid);
-                const normalizedStoreLocation = typeof storelocation === 'string'
-                    ? storelocation.trim()
-                    : storelocation;
-                const normalizedOrderLocation = typeof ordersToInsert[0]?.location === 'string'
-                    ? ordersToInsert[0].location.trim()
-                    : ordersToInsert[0]?.location;
-                const resolvedStoreLocation = normalizedStoreLocation || normalizedOrderLocation || null;
+            try {
+                await client.query('BEGIN');
 
-                console.log('Order quantity for orders:', orderQuantity);
-                console.log('Order amount for orders:', orderAmount);
-                console.log('Order product IDs:', orderProductIds);
-                console.log('Mid checkpoint: Before inserting orders');
-                const finalMerchantTransactionId =
-                    merchantTransactionId != null && merchantTransactionId !== ''
-                        ? merchantTransactionId
-                        : ordersToInsert[0]?.merchanttransactionid;
-                console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
-                console.log('Empty');
+                // Process orders for orders table
+                if (ordersToInsert.length > 0) {
+                    let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
+                        return acc + e.quantity;
+                    }, 0);
+                    let orderAmount = ordersToInsert.reduce((acc: number, e: any) => {
+                        return acc + (e.productamount * e.quantity);
+                    }, 0);
+                    let orderProductIds = ordersToInsert.map((e: any) => e.productid);
+                    const normalizedStoreLocation = typeof storelocation === 'string'
+                        ? storelocation.trim()
+                        : storelocation;
+                    const normalizedOrderLocation = typeof ordersToInsert[0]?.location === 'string'
+                        ? ordersToInsert[0].location.trim()
+                        : ordersToInsert[0]?.location;
+                    const resolvedStoreLocation = normalizedStoreLocation || normalizedOrderLocation || null;
 
-                const insertOrderQuery = `
-                INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation, assetnumber, location, vendorname, empid, deliverydate, brand, invoicefor)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                RETURNING *`;
-                const insertOrderValues = [
-                    orderAmount,
-                    ordersToInsert[0].userid,
-                    ordersToInsert[0].addressid,
-                    finalMerchantTransactionId,
-                    orderQuantity,
-                    orderProductIds,
-                    ordersToInsert[0].ordername,
-                    ordersToInsert[0].paymentmethod,
-                    ordersToInsert[0].totalrentalamount,
-                    sgst,
-                    cgst,
-                    resolvedStoreLocation,
-                    ordersToInsert[0].assetnumber,
-                    ordersToInsert[0].location,
-                    ordersToInsert[0].vendorname,
-                    ordersToInsert[0].empid,
-                    ordersToInsert[0].deliverydate,
-                    ordersToInsert[0].brand,
-                    ordersToInsert[0].invoicefor
-                ];
+                    console.log('Order quantity for orders:', orderQuantity);
+                    console.log('Order amount for orders:', orderAmount);
+                    console.log('Order product IDs:', orderProductIds);
+                    console.log('Mid checkpoint: Before inserting orders');
+                    const finalMerchantTransactionId =
+                        merchantTransactionId != null && merchantTransactionId !== ''
+                            ? merchantTransactionId
+                            : ordersToInsert[0]?.merchanttransactionid;
+                    console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
+                    console.log('Empty');
 
-                try {
-                    const orderResult = await query(insertOrderQuery, insertOrderValues);
+                    const insertOrderQuery = `
+                    INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation, assetnumber, location, vendorname, empid, deliverydate, brand, invoicefor)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                    RETURNING *`;
+                    const insertOrderValues = [
+                        orderAmount,
+                        ordersToInsert[0].userid,
+                        ordersToInsert[0].addressid,
+                        finalMerchantTransactionId,
+                        orderQuantity,
+                        orderProductIds,
+                        ordersToInsert[0].ordername,
+                        ordersToInsert[0].paymentmethod,
+                        ordersToInsert[0].totalrentalamount,
+                        sgst,
+                        cgst,
+                        resolvedStoreLocation,
+                        ordersToInsert[0].assetnumber,
+                        ordersToInsert[0].location,
+                        ordersToInsert[0].vendorname,
+                        ordersToInsert[0].empid,
+                        ordersToInsert[0].deliverydate,
+                        ordersToInsert[0].brand,
+                        ordersToInsert[0].invoicefor
+                    ];
+
+                    const orderResult = await client.query(insertOrderQuery, insertOrderValues);
                     if (orderResult.command === 'INSERT') {
                         const orderid = orderResult.rows[0].id;
                         const orderidunique = orderResult.rows[0].orderid;
@@ -2007,51 +2016,46 @@ ${whereClause} ${orderByClause}`;
                             e.orderstatus = orderstatus;
                             e.ordertype = 'Orders';
                         });
-                        const orderlineResult = await bulkInsertOrderlines(ordersToInsert);
+                        const orderlineResult = await bulkInsertOrderlines(ordersToInsert, client);
+                        if (orderlineResult.command !== 'INSERT' || orderlineResult.rowCount !== ordersToInsert.length) {
+                            throw new Error(`Order line insert mismatch for merchant transaction ${finalMerchantTransactionId}`);
+                        }
                         console.log('Order lines inserted from orders:', orderlineResult.rows);
                         console.log('Empty After inserting order lines');
-                        // Add orders rows to combined result
                         combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
                     }
-                } catch (error) {
-                    console.error("Query Execution Error: BulkinsertOrder result", error);
-                    let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                    return ErrorMessage;
                 }
-            }
 
-            // Process orders for thirdpartyorders table
-            if (thirdPartyOrdersToInsert.length > 0) {
-                console.log('Inside third-party orders');
-                // Calculate specific order amount, quantity, and product IDs for thirdpartyorders table
-                let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                    return acc + e.quantity;
-                }, 0);
-                let thirdPartyOrderAmount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                    return acc + (e.productamount * e.quantity);
-                }, 0);
-                let thirdPartyProductIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
+                // Process orders for thirdpartyorders table
+                if (thirdPartyOrdersToInsert.length > 0) {
+                    console.log('Inside third-party orders');
+                    let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+                        return acc + e.quantity;
+                    }, 0);
+                    let thirdPartyOrderAmount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+                        return acc + (e.productamount * e.quantity);
+                    }, 0);
+                    let thirdPartyProductIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
 
-                console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
-                console.log('Order amount for thirdpartyorders:', thirdPartyOrderAmount);
-                console.log('Third-party product IDs:', thirdPartyProductIds);
-                console.log('Empty');
+                    console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
+                    console.log('Order amount for thirdpartyorders:', thirdPartyOrderAmount);
+                    console.log('Third-party product IDs:', thirdPartyProductIds);
+                    console.log('Empty');
 
-                const insertThirdPartyQuery = `
-                INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING *`;
-                const insertThirdPartyValues = [
-                    thirdPartyOrderAmount,
-                    thirdPartyOrdersToInsert[0].userid,
-                    thirdPartyOrdersToInsert[0].addressid,
-                    thirdPartyOrdersToInsert[0].merchanttransactionid,
-                    thirdPartyOrderQuantity,
-                    thirdPartyProductIds
-                ];
+                    const insertThirdPartyQuery = `
+                    INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING *`;
+                    const insertThirdPartyValues = [
+                        thirdPartyOrderAmount,
+                        thirdPartyOrdersToInsert[0].userid,
+                        thirdPartyOrdersToInsert[0].addressid,
+                        thirdPartyOrdersToInsert[0].merchanttransactionid,
+                        thirdPartyOrderQuantity,
+                        thirdPartyProductIds
+                    ];
 
-                try {
-                    const thirdPartyResult = await query(insertThirdPartyQuery, insertThirdPartyValues);
+                    const thirdPartyResult = await client.query(insertThirdPartyQuery, insertThirdPartyValues);
                     console.log('Third-party order result:', thirdPartyResult.rows);
                     if (thirdPartyResult.command === 'INSERT') {
                         const orderid = thirdPartyResult.rows[0].id;
@@ -2063,29 +2067,33 @@ ${whereClause} ${orderByClause}`;
                             e.orderstatus = orderstatus;
                             e.ordertype = 'Third Party Orders';
                         });
-                        const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert);
+                        const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert, client);
+                        if (orderlineResult.command !== 'INSERT' || orderlineResult.rowCount !== thirdPartyOrdersToInsert.length) {
+                            throw new Error(`Third-party order line insert mismatch for merchant transaction ${thirdPartyOrdersToInsert[0]?.merchanttransactionid}`);
+                        }
                         console.log('Order lines inserted from third party:', orderlineResult.rows);
                         console.log('Empty After inserting third-party order lines');
-                        // Add thirdpartyorders rows to combined result
                         combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
                     }
-                } catch (error) {
-                    console.error("Query Execution Error: BulkinsertThirdPartyOrder result", error);
-                    let ErrorMessage = await ErrorHandler.handleQueryError(error);
-                    return ErrorMessage;
                 }
-            }
 
-            return combinedResult.rows.length > 0
-                ? combinedResult
-                : { rows: [], command: 'NOOP', message: 'No orders processed' };
+                await client.query('COMMIT');
+                return combinedResult.rows.length > 0
+                    ? combinedResult
+                    : { rows: [], command: 'NOOP', message: 'No orders processed' };
+            } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            } finally {
+                client.release();
+            }
         } catch (error) {
             console.error("Query Execution Error: IN BulkinsertOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
     };
-    export const bulkInsertOrderlines = async (orderData: any[]) => {
+    export const bulkInsertOrderlines = async (orderData: any[], runner?: any) => {
         try {
             console.log('Inside update bulkInsertOrderlines with orderData:', JSON.stringify(orderData, null, 2));
             const fields = Object.keys(orderData[0]);
@@ -2101,14 +2109,13 @@ ${whereClause} ${orderByClause}`;
             const values = orderData.flatMap(order =>
                 fields.map(field => order[field])
             );
-            const result = await query(querydata, values);
+            const result = await executeQuery(runner, querydata, values);
 
             return result;
 
         } catch (error) {
             console.error("Query Execution Error: IN bulkInsertOrderlines", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+            throw await ErrorHandler.handleQueryError(error);
         }
     };
 
