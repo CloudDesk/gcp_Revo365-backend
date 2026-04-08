@@ -23,6 +23,12 @@ import { inventoryReservationService } from "./inventoryReservation.service.js";
 import loginShiprocket from "../shiprocket/shiprocketAuth.js";
 import { redisClient } from "../database/redis.session.js";
 import { resolveFulfillmentLocation } from "../config/fulfillment.config.js";
+import {
+  cancelShiprocketOrderForMerchant,
+  getShiprocketSettings as getPersistedShiprocketSettings,
+  listShiprocketPickupLocations,
+  upsertShiprocketSettings,
+} from "./shiprocket.service.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -1078,6 +1084,25 @@ const mapShiprocketStatusToOrderStatus = (rawStatus: any): string | null => {
   return "ordered";
 };
 
+const mapShiprocketStatusCodeToOrderStatus = (statusCode: number | null): string | null => {
+  if (statusCode === null || statusCode === undefined) return null;
+  if (statusCode === 8) return "cancelled";
+  if (statusCode === 1) return "ordered";
+  return null;
+};
+
+const deriveShiprocketRawStatusFromCode = (
+  statusCode: number | null,
+  errorText: any
+): string | null => {
+  const normalizedError = String(errorText || "").trim().toLowerCase();
+  if (normalizedError.includes("cancel")) return "CANCELED";
+
+  if (statusCode === 8) return "CANCELED";
+  if (statusCode === 1) return "NEW";
+  return null;
+};
+
 const toNullableInteger = (value: any): number | null => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
@@ -1085,10 +1110,33 @@ const toNullableInteger = (value: any): number | null => {
 };
 
 const extractShiprocketTrackingSummary = (payload: any) => {
-  const trackingData = payload?.tracking_data || payload?.data?.tracking_data || payload?.data || {};
+  let normalizedPayload = payload;
+  if (Array.isArray(normalizedPayload) && normalizedPayload.length > 0) {
+    normalizedPayload = normalizedPayload[0];
+  }
+
+  if (
+    normalizedPayload &&
+    typeof normalizedPayload === "object" &&
+    !normalizedPayload?.tracking_data &&
+    !normalizedPayload?.data?.tracking_data
+  ) {
+    const nestedEntries = Object.values(normalizedPayload).filter(
+      (value: any) => value && typeof value === "object"
+    );
+    if (nestedEntries.length === 1) {
+      normalizedPayload = nestedEntries[0];
+    }
+  }
+
+  const trackingData =
+    normalizedPayload?.tracking_data ||
+    normalizedPayload?.data?.tracking_data ||
+    normalizedPayload?.data ||
+    {};
   const scans =
-    payload?.scans ||
-    payload?.data?.scans ||
+    normalizedPayload?.scans ||
+    normalizedPayload?.data?.scans ||
     trackingData?.shipment_track_activities ||
     [];
   const primaryTrack =
@@ -1098,39 +1146,53 @@ const extractShiprocketTrackingSummary = (payload: any) => {
     {};
   const firstScan = Array.isArray(scans) && scans.length > 0 ? scans[0] : {};
 
+  const shipmentStatusCode =
+    toNullableInteger(normalizedPayload?.shipment_status_id) ??
+    toNullableInteger(normalizedPayload?.current_status_id) ??
+    toNullableInteger(normalizedPayload?.data?.shipment_status_id) ??
+    toNullableInteger(normalizedPayload?.data?.current_status_id) ??
+    toNullableInteger(trackingData?.shipment_status) ??
+    toNullableInteger(trackingData?.track_status) ??
+    toNullableInteger(normalizedPayload?.status_code);
+
+  const explicitRawStatus =
+    normalizeOptionalText(normalizedPayload?.current_status) ||
+    normalizeOptionalText(normalizedPayload?.shipment_status) ||
+    normalizeOptionalText(normalizedPayload?.data?.current_status) ||
+    normalizeOptionalText(normalizedPayload?.data?.shipment_status) ||
+    normalizeOptionalText(trackingData?.shipment_status_label) ||
+    normalizeOptionalText(trackingData?.current_status) ||
+    normalizeOptionalText(primaryTrack?.current_status) ||
+    normalizeOptionalText(primaryTrack?.activity) ||
+    normalizeOptionalText(firstScan?.activity) ||
+    normalizeOptionalText(normalizedPayload?.status);
+
   const rawStatus =
-    payload?.current_status ||
-    payload?.shipment_status ||
-    payload?.data?.current_status ||
-    payload?.data?.shipment_status ||
-    trackingData?.shipment_status_label ||
-    trackingData?.current_status ||
-    primaryTrack?.current_status ||
-    primaryTrack?.activity ||
-    firstScan?.activity ||
-    payload?.status ||
-    null;
+    explicitRawStatus ||
+    deriveShiprocketRawStatusFromCode(
+      shipmentStatusCode,
+      trackingData?.error ||
+      normalizedPayload?.error ||
+      normalizedPayload?.message
+    );
+
+  const mappedOrderStatus =
+    mapShiprocketStatusToOrderStatus(rawStatus) ??
+    mapShiprocketStatusCodeToOrderStatus(shipmentStatusCode);
 
   return {
     rawStatus,
-    mappedOrderStatus: mapShiprocketStatusToOrderStatus(rawStatus),
+    mappedOrderStatus,
     awbCode:
-      payload?.awb ||
-      payload?.awb_code ||
-      payload?.data?.awb ||
-      payload?.data?.awb_code ||
+      normalizedPayload?.awb ||
+      normalizedPayload?.awb_code ||
+      normalizedPayload?.data?.awb ||
+      normalizedPayload?.data?.awb_code ||
       trackingData?.awb_code ||
       trackingData?.awb ||
       primaryTrack?.awb_code ||
       null,
-    shipmentStatusCode:
-      toNullableInteger(payload?.shipment_status_id) ??
-      toNullableInteger(payload?.current_status_id) ??
-      toNullableInteger(payload?.data?.shipment_status_id) ??
-      toNullableInteger(payload?.data?.current_status_id) ??
-      toNullableInteger(trackingData?.shipment_status) ??
-      toNullableInteger(trackingData?.track_status) ??
-      toNullableInteger(payload?.status_code),
+    shipmentStatusCode,
     trackingData,
     scans,
   };
@@ -1359,17 +1421,23 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
       } as ShiprocketCreateResult;
     }
 
-    // Phase 1: always use the configured fulfillment pickup location (head_office).
-    // The previous chain (deliveryfrom → storelocation → location → "warehouse") was
-    // fragile — those fields are mutable and "warehouse" is not a valid Shiprocket
-    // pickup name. resolveFulfillmentLocation() returns the single registered name.
-    // Phase 2: pass { assignedLocation: assignmentRow.assigned_location } here.
-    const pickupLocation = resolveFulfillmentLocation({
-      requestedLocation:
-        context.orderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ??
-        context.combinedOrderRows.find((row: any) => row?.location)?.location ??
-        null,
-    });
+    const shiprocketSettings = await getPersistedShiprocketSettings();
+    if (!shiprocketSettings.autoCreateEnabled) {
+      return {
+        ok: true,
+        reason: "auto_create_disabled",
+        merchantTransactionId: merchantTx,
+      } as ShiprocketCreateResult;
+    }
+
+    const pickupLocation =
+      shiprocketSettings.pickupLocation ||
+      resolveFulfillmentLocation({
+        requestedLocation:
+          context.orderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ??
+          context.combinedOrderRows.find((row: any) => row?.location)?.location ??
+          null,
+      });
 
     const shiprocketOrderItems =
       context.orderLineItems.length > 0
@@ -1423,10 +1491,10 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
       order_items: shiprocketOrderItems,
       payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
       sub_total: computedSubtotal,
-      length: 10,
-      breadth: 10,
-      height: 10,
-      weight: 0.5,
+      length: shiprocketSettings.defaultLength,
+      breadth: shiprocketSettings.defaultBreadth,
+      height: shiprocketSettings.defaultHeight,
+      weight: shiprocketSettings.defaultWeight,
     };
 
     const baseUrl = process.env.SHIPROCKET_BASE_URL;
@@ -3177,15 +3245,15 @@ export module transactionService {
 
       await query(
         `UPDATE orders
-         SET shiprocket_status = $1,
-             shiprocket_status_code = $2
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
          WHERE merchanttransactionid = $3`,
         [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]
       );
       await query(
         `UPDATE thirdpartyorders
-         SET shiprocket_status = $1,
-             shiprocket_status_code = $2
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
          WHERE merchanttransactionid = $3`,
         [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]
       );
@@ -3211,6 +3279,133 @@ export module transactionService {
       return {
         status: 500,
         message: "Unable to sync Shiprocket shipment status",
+      };
+    }
+  };
+
+  export const getShiprocketSettings = async () => {
+    try {
+      const settings = await getPersistedShiprocketSettings();
+      return {
+        status: 200,
+        message: "Shiprocket settings fetched successfully",
+        data: settings,
+      };
+    } catch (error: any) {
+      return {
+        status: 500,
+        message: "Unable to fetch Shiprocket settings",
+        error: error?.message || error,
+      };
+    }
+  };
+
+  export const updateShiprocketSettings = async (request: any) => {
+    try {
+      const settings = await upsertShiprocketSettings(request?.body || {});
+      return {
+        status: 200,
+        message: "Shiprocket settings updated successfully",
+        data: settings,
+      };
+    } catch (error: any) {
+      return {
+        status: 500,
+        message: "Unable to update Shiprocket settings",
+        error: error?.message || error,
+      };
+    }
+  };
+
+  export const getShiprocketPickupLocations = async () => {
+    try {
+      const result = await listShiprocketPickupLocations();
+      return {
+        status: result.ok ? 200 : 500,
+        message: result.message,
+        data: result.data || [],
+      };
+    } catch (error: any) {
+      return {
+        status: 500,
+        message: "Unable to fetch Shiprocket pickup locations",
+        error: error?.response?.data || error?.message || error,
+      };
+    }
+  };
+
+  export const createShiprocketShipment = async (request: any) => {
+    try {
+      const merchantTransactionId = normalizeOptionalText(
+        request?.body?.merchantTransactionId || request?.body?.merchanttransactionid
+      );
+      if (!merchantTransactionId) {
+        return {
+          status: 400,
+          message: "merchantTransactionId is required",
+        };
+      }
+
+      const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+      if (!context) {
+        return {
+          status: 404,
+          message: "No order found for the provided merchantTransactionId",
+        };
+      }
+
+      const transactionRow = await getLatestTransactionByMerchantTransactionId(
+        merchantTransactionId
+      );
+      if (!transactionRow) {
+        return {
+          status: 400,
+          message: "No successful payment transaction found for this order",
+        };
+      }
+
+      const createResult = await createShiprocketOrderForTransaction(context, transactionRow);
+      return {
+        status: createResult?.ok ? 200 : 500,
+        message: createResult?.ok
+          ? "Shiprocket shipment created successfully"
+          : "Unable to create Shiprocket shipment",
+        data: createResult,
+      };
+    } catch (error: any) {
+      return {
+        status: 500,
+        message: "Unable to create Shiprocket shipment",
+        error: error?.response?.data || error?.message || error,
+      };
+    }
+  };
+
+  export const cancelShiprocketShipment = async (request: any) => {
+    try {
+      const merchantTransactionId = normalizeOptionalText(
+        request?.body?.merchantTransactionId || request?.body?.merchanttransactionid
+      );
+      if (!merchantTransactionId) {
+        return {
+          status: 400,
+          message: "merchantTransactionId is required",
+        };
+      }
+
+      const result = await cancelShiprocketOrderForMerchant(merchantTransactionId);
+      return {
+        status: result?.ok ? 200 : 500,
+        message: result?.ok
+          ? "Shiprocket cancellation processed"
+          : "Unable to cancel Shiprocket shipment",
+        data: result,
+      };
+    } catch (error: any) {
+      return {
+        status: 500,
+        message: "Unable to cancel Shiprocket shipment",
+        error: error?.response?.data || error?.message || error,
       };
     }
   };

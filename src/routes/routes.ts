@@ -59,6 +59,8 @@ import { googlereviewController } from "../controller/googlereview.controller.js
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { orderReturnsController } from "../controller/orderReturns.controller.js";
+import { refundsController } from "../controller/refunds.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
@@ -238,6 +240,18 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/orderline/Inventory', { preHandler: [getSession] }, ordersController.getInvorderlinedata);
     fastify.get('/customer/orderline', { preHandler: [getSession] }, ordersController.getOrderlineDynamicData);
     fastify.post('/orderline', { preHandler: [getSession] }, ordersController.updateorderlineitem);
+    fastify.get('/orderline/return-request', { preHandler: [getSession] }, orderReturnsController.getReturnRequests);
+    fastify.post('/orderline/return-request', { preHandler: [getSession] }, orderReturnsController.createReturnRequest);
+    fastify.post('/orderline/return-request/approve', { preHandler: [getSession] }, orderReturnsController.approveReturnRequest);
+    fastify.post('/orderline/return-request/reject', { preHandler: [getSession] }, orderReturnsController.rejectReturnRequest);
+    fastify.post('/orderline/return-request/receive', { preHandler: [getSession] }, orderReturnsController.receiveReturnRequest);
+    fastify.post('/orderline/return-request/finalize', { preHandler: [getSession] }, orderReturnsController.finalizeReturnRequest);
+    fastify.get('/orderline/return-reasons', { preHandler: [getSession] }, orderReturnsController.getReturnReasons);
+    fastify.post('/orderline/return-reasons', { preHandler: [getSession] }, orderReturnsController.upsertReturnReason);
+    fastify.get('/orderline/refund-eligibility', { preHandler: [getSession] }, refundsController.getRefundEligibility);
+    fastify.get('/orderline/refund', { preHandler: [getSession] }, refundsController.getRefunds);
+    fastify.post('/orderline/refund', { preHandler: [getSession] }, refundsController.initiateRefund);
+    fastify.post('/orderline/refund/sync', { preHandler: [getSession] }, refundsController.syncRefund);
     fastify.get('/v2/orders', { preHandler: [getSession] }, ordersController.getUserOrderData1);
     fastify.post('/orders', { preHandler: [getSession] }, ordersController.upsertOrder);
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
@@ -310,6 +324,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // Alias path without provider keywords for Shiprocket URL validator restrictions.
     fastify.post('/payment/shipment/webhook', transactionController.paymentWebhookShiprocket);
     fastify.post('/payment/shiprocket/sync', { preHandler: [getSession] }, transactionController.syncShiprocketShipmentStatus);
+    fastify.get('/payment/shiprocket/settings', { preHandler: [getSession] }, transactionController.getShiprocketSettings);
+    fastify.post('/payment/shiprocket/settings', { preHandler: [getSession] }, transactionController.updateShiprocketSettings);
+    fastify.get('/payment/shiprocket/pickups', { preHandler: [getSession] }, transactionController.getShiprocketPickupLocations);
+    fastify.post('/payment/shiprocket/create', { preHandler: [getSession] }, transactionController.createShiprocketShipment);
+    fastify.post('/payment/shiprocket/cancel', { preHandler: [getSession] }, transactionController.cancelShiprocketShipment);
     fastify.post('/payment/confirmation-razorpay/tickets', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpayTicket);
 
     fastify.post('/payment/status', transactionController.paymentConfirmation);

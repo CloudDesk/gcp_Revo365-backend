@@ -5,6 +5,7 @@ import { QueryResult } from "pg";
 import { stockRevoService } from "./stockRevo.service.js";
 import { productrevoService } from "./productrevo.service.js";
 import { inventoryReservationService } from "./inventoryReservation.service.js";
+import { cancelShiprocketOrderForMerchant } from "./shiprocket.service.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 
@@ -73,6 +74,94 @@ export module ordersService {
         String(status || "").trim().toLowerCase();
 
     const BIGINT_NOW_SQL = `EXTRACT(EPOCH FROM NOW())::bigint`;
+    const LATEST_RETURN_REQUEST_SELECT_SQL = `
+            lrr.return_request_id,
+            lrr.return_request_status,
+            lrr.return_request_source,
+            lrr.return_reason_id,
+            lrr.return_reason_code,
+            lrr.return_reason_label,
+            lrr.return_reason_text,
+            lrr.return_customer_comment,
+            lrr.return_admin_comment,
+            lrr.return_requested_at,
+            lrr.return_approved_at,
+            lrr.return_rejected_at,
+            lrr.return_received_at,
+            lrr.return_finalized_at,
+            lrr.return_refund_status,
+            lrr.return_refund_reference,
+            lrr.return_restock_disposition
+    `;
+    const LATEST_RETURN_REQUEST_JOIN_SQL = `
+        LEFT JOIN LATERAL (
+            SELECT
+                rr.id AS return_request_id,
+                rr.status AS return_request_status,
+                rr.request_source AS return_request_source,
+                rr.reason_id AS return_reason_id,
+                rr.reason_code AS return_reason_code,
+                rr.reason_label AS return_reason_label,
+                rr.reason_text AS return_reason_text,
+                rr.customer_comment AS return_customer_comment,
+                rr.admin_comment AS return_admin_comment,
+                rr.requested_at AS return_requested_at,
+                rr.approved_at AS return_approved_at,
+                rr.rejected_at AS return_rejected_at,
+                rr.received_at AS return_received_at,
+                rr.finalized_at AS return_finalized_at,
+                rr.refund_status AS return_refund_status,
+                rr.refund_reference AS return_refund_reference,
+                rr.restock_disposition AS return_restock_disposition
+            FROM orderline_returns rr
+            WHERE rr.orderlineid = orderline.id
+            ORDER BY rr.created_at DESC, rr.id DESC
+            LIMIT 1
+        ) AS lrr ON TRUE
+    `;
+    const LATEST_REFUND_SELECT_SQL = `
+            lrf.refund_id,
+            lrf.refund_status,
+            lrf.refund_gateway_status,
+            lrf.refund_amount_paise,
+            lrf.refund_currency,
+            lrf.refund_reason_code,
+            lrf.refund_reason_text,
+            lrf.refund_admin_note,
+            lrf.razorpay_refund_id,
+            lrf.refund_created_at,
+            lrf.refund_synced_at,
+            rfs.refund_count,
+            rfs.total_refund_amount_paise
+    `;
+    const LATEST_REFUND_JOIN_SQL = `
+        LEFT JOIN LATERAL (
+            SELECT
+                pr.id AS refund_id,
+                pr.status AS refund_status,
+                pr.gateway_status AS refund_gateway_status,
+                pr.amount_paise AS refund_amount_paise,
+                pr.currency AS refund_currency,
+                pr.reason_code AS refund_reason_code,
+                pr.reason_text AS refund_reason_text,
+                pr.admin_note AS refund_admin_note,
+                pr.razorpay_refund_id,
+                pr.created_at AS refund_created_at,
+                pr.synced_at AS refund_synced_at
+            FROM payment_refunds pr
+            WHERE pr.orderlineid = orderline.id
+            ORDER BY pr.created_at DESC, pr.id DESC
+            LIMIT 1
+        ) AS lrf ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT
+                COUNT(*)::int AS refund_count,
+                COALESCE(SUM(pr.amount_paise), 0)::bigint AS total_refund_amount_paise
+            FROM payment_refunds pr
+            WHERE pr.orderlineid = orderline.id
+              AND pr.status = ANY(ARRAY['initiated', 'pending', 'processed', 'manual_done']::text[])
+        ) AS rfs ON TRUE
+    `;
 
     const getLifecycleTimestampAssignment = (status: string) => {
         switch (normalizeOrderStatus(status)) {
@@ -440,7 +529,12 @@ export module ordersService {
                 u.useremail, 
                 u.usermobilenumber,
                 u.modifieddate AS users_modifieddate,
-                u.createddate AS users_createddate
+                u.createddate AS users_createddate,
+                rr.return_request_id,
+                rr.return_request_status,
+                rr.return_request_reason_label,
+                rr.return_request_requested_at,
+                rr.return_request_count
                 FROM orders o
                 LEFT JOIN address a ON o.addressid = a.id
                 LEFT JOIN users u ON o.userid = u.id
@@ -453,6 +547,25 @@ export module ordersService {
     ) AS ranked
     WHERE rn = 1
 ) AS invoice ON o.orderid = invoice.orderid
+                LEFT JOIN LATERAL (
+                    SELECT
+                        rr.id AS return_request_id,
+                        rr.status AS return_request_status,
+                        rr.reason_label AS return_request_reason_label,
+                        rr.requested_at AS return_request_requested_at,
+                        counts.return_request_count
+                    FROM orderline_returns rr
+                    JOIN orderline ol ON ol.id = rr.orderlineid
+                    CROSS JOIN (
+                        SELECT COUNT(*)::integer AS return_request_count
+                        FROM orderline_returns rr_count
+                        JOIN orderline ol_count ON ol_count.id = rr_count.orderlineid
+                        WHERE ol_count.uniqueorderid = o.orderid
+                    ) AS counts
+                    WHERE ol.uniqueorderid = o.orderid
+                    ORDER BY rr.created_at DESC, rr.id DESC
+                    LIMIT 1
+                ) AS rr ON TRUE
                 ${whereClause}
                 ${orderByClause}`;
 
@@ -891,11 +1004,14 @@ export module ordersService {
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
             p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.ispaymentsucceed, th.ispaymentsucceed) AS ispaymentsucceed,
             COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
             COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
             COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
             COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id,
+            ${LATEST_RETURN_REQUEST_SELECT_SQL},
+            ${LATEST_REFUND_SELECT_SQL}
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
@@ -914,6 +1030,8 @@ export module ordersService {
             SELECT starrating, productid, id, orderlineid, comments, url
             FROM rating
         ) AS revorating ON revorating.orderlineid = orderline.id
+        ${LATEST_RETURN_REQUEST_JOIN_SQL}
+        ${LATEST_REFUND_JOIN_SQL}
         ${whereClause} ${orderByClause}`;
 
             if (pageNumber && recordCount) {
@@ -928,11 +1046,14 @@ export module ordersService {
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
             p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.ispaymentsucceed, th.ispaymentsucceed) AS ispaymentsucceed,
             COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
             COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
             COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
             COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id,
+            ${LATEST_RETURN_REQUEST_SELECT_SQL},
+            ${LATEST_REFUND_SELECT_SQL}
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
@@ -942,6 +1063,8 @@ export module ordersService {
             SELECT starrating, productid, id, orderlineid, comments, url
             FROM rating
         ) AS revorating ON revorating.orderlineid = orderline.id
+        ${LATEST_RETURN_REQUEST_JOIN_SQL}
+        ${LATEST_REFUND_JOIN_SQL}
         WHERE orderline.ordertype = 'Third Party Orders' AND orderline.thirdpartyorderid IS NOT NULL`;
 
             const thirdPartyQueryParams: any[] = [];
@@ -1045,11 +1168,14 @@ export module ordersService {
             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city,
             p."large" AS products_large, p.warranty AS products_warranty,
+            COALESCE(oh.ispaymentsucceed, th.ispaymentsucceed) AS ispaymentsucceed,
             COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
             COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
             COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
             COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id,
+            ${LATEST_RETURN_REQUEST_SELECT_SQL},
+            ${LATEST_REFUND_SELECT_SQL}
 FROM orderline
 JOIN  address a on orderline.addressid = a.id
 LEFT JOIN product_revo p ON p.id = orderline.productid
@@ -1068,6 +1194,8 @@ LEFT JOIN (
     SELECT starrating, productid,id,orderlineid,comments,url
     FROM rating
 ) AS revorating ON revorating.orderlineid = orderline.id
+${LATEST_RETURN_REQUEST_JOIN_SQL}
+${LATEST_REFUND_JOIN_SQL}
 ${whereClause} ${orderByClause}`;
 
 
@@ -1088,127 +1216,105 @@ ${whereClause} ${orderByClause}`;
 
     export const getUserOrderData1 = async (request: any) => {
         try {
-            console.log("Request Query:", request.query);
-            const userId = request.query.userid;
-            const pageNumber = request.query.page;
-            const recordCount = request.query.count;
-            const queryParams = [];
-            let whereClauses = [];
-            let offset: any;
+            const pageNumber = parseInt(request.query.page) || 1;
+            const recordCount = parseInt(request.query.count) || 10;
+            const keys = Object.keys(request.query);
+            const values = Object.values(request.query);
+
+            let whereClauses: string[] = [];
             let parameterIndex = 1;
+            const queryParams: any[] = [];
+            let orderByField = "orderline.modifieddate";
+            let orderByDirection = "DESC";
 
-            // Construct WHERE clauses and query parameters
-            Object.entries(request.query).forEach(([key, value], index) => {
-                if (key !== "page" && key !== "count") {
-                    const paramValues = Array.isArray(value) ? value : [value];
-
-                    if (key === "createddate" || key === "delivereddate") {
-                        if (key === "createddate") {
-                            key = "o.createddate";
-
-                        }
-                        else if (key === "delivereddate") {
-                            key = "o.delivereddate";
-                        }
-                        let rangeWhereClause = paramValues
-                            .map((range) => {
-                                const [lowerBound, upperBound] = range.split("-");
-                                queryParams.push(lowerBound, upperBound);
-                                const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
-                                    })`;
-                                parameterIndex += 2;
-                                return clause;
-                            })
-                            .join(" OR ");
-                        whereClauses.push(`(${rangeWhereClause})`);
-                    } else {
-                        const formattedKey =
-                            key.toLowerCase() === "userid" ? "o.userid" :
-                                key.toLowerCase() === "id" ? "o.id" :
-                                    key;
-                        whereClauses.push(
-                            `(${paramValues
-                                .map((_, idx) => `${formattedKey} = $${parameterIndex + idx}`)
-                                .join(" OR ")})`
-                        );
-                        queryParams.push(...paramValues);
-                        parameterIndex += paramValues.length; // Increment parameter index
-                    }
+            keys.forEach((key, index) => {
+                const paramValues: any = Array.isArray(values[index]) ? values[index] : [values[index]];
+                if (key === "createddate" || key === "delivereddate") {
+                    const qualifiedRangeKey = key === "createddate" ? "orderline.createddate" : "orderline.delivereddate";
+                    const rangeClauses = paramValues.map((range: string) => {
+                        const [lowerBound, upperBound] = range.split("-");
+                        queryParams.push(lowerBound, upperBound);
+                        const clause = `(${qualifiedRangeKey} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        parameterIndex += 2;
+                        return clause;
+                    });
+                    whereClauses.push(`(${rangeClauses.join(" OR ")})`);
+                } else if (key === "sortby") {
+                    const [fieldName, direction] = String(paramValues[0]).split("-");
+                    orderByField = qualifyOrderlineFilterColumn(fieldName) || "orderline.modifieddate";
+                    orderByDirection = direction?.toUpperCase() === "ASC" ? "ASC" : "DESC";
+                } else if (key !== "page" && key !== "count") {
+                    const qualifiedKey = key === "userid"
+                        ? "orderline.userid"
+                        : key === "id"
+                            ? "orderline.id"
+                            : qualifyOrderlineFilterColumn(key);
+                    const clauses = paramValues.map((_: any, idx: number) => `${qualifiedKey} = $${parameterIndex + idx}`);
+                    whereClauses.push(`(${clauses.join(" OR ")})`);
+                    queryParams.push(...paramValues);
+                    parameterIndex += paramValues.length;
                 }
             });
-            if (pageNumber && recordCount) {
-                offset = (pageNumber - 1) * recordCount;
-            }
 
-            // Construct the main query text
-            let queryText = `
-            SELECT 
-                o.id AS id,
-                o.productid AS order_productid,
-                o.userid AS order_userid,
-                o.addressid AS order_addressid,
-                o.createddate AS order_createddate,
-                o.modifieddate AS order_modifieddate,
-                o.transactionid AS order_transactionId,
-                o.orderamount,
-                o.orderstatus,
-                o.delivereddate,
-                o.readytodispatchdate,
-                o.dispatcheddate,
-                o.cancelleddate,
-                o.returneddate,
-                o.quantity,
-                o.productamount,
-                o.discountamount,
-                o.orderid,
-                ri.invoiceurl AS invoiceurl,
-                a.id AS address_id,
-                a.userid AS address_userid,
-                a."name" AS address_name,
+            const offset = (pageNumber - 1) * recordCount;
+            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' AND (orderline.ordertype IS NULL OR orderline.ordertype != 'Third Party Orders' OR orderline.thirdpartyorderid IS NULL)`;
+            const whereClause = whereClauses.length > 0
+                ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}`
+                : `WHERE ${baseConditions}`;
+            const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
+
+            let queryText = `SELECT
+                orderline.*,
+                invoice.invoiceurl,
+                revorating.starrating,
+                revorating.comments AS rating_comments,
+                revorating.url AS rating_images,
+                revorating.id AS ratingids,
+                a.name AS address_name,
                 a.mobilenumber AS address_mobilenumber,
                 a.pincode AS address_pincode,
                 a.doornumber AS address_doornumber,
+                a.address AS address_address,
                 a.landmark AS address_landmark,
                 a.state AS address_state,
                 a.city AS address_city,
-                a.createddate AS address_createddate,
-                a.modifieddate AS address_modifieddate,
-                p.id AS products_id,
-                p.productname AS products_productname,
                 p."large" AS products_large,
-                p.medium AS products_medium,
-                p.small AS products_small,
-                p.price AS products_price,
-                p.colour AS products_colour,
-                p.category AS products_category,
-                p.averagerating AS products_averagerating,
-                p.brand AS products_brand,
-                p.model AS products_model,
-                p.orderedquantity AS products_orderedquantity,
-                p.warranty AS products_warranty
-            FROM 
-                orders o
-            JOIN 
-            product_revo p ON p.id = ANY(o.productid)
-            JOIN 
-                address a ON o.addressid = a.id
-            Left JOIN 
-                revoinvoice ri ON o.orderid = ri.orderid
-                `;
+                p.warranty AS products_warranty,
+                COALESCE(oh.ispaymentsucceed, th.ispaymentsucceed) AS ispaymentsucceed,
+                COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
+                COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
+                COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
+                COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
+                COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id,
+                ${LATEST_RETURN_REQUEST_SELECT_SQL},
+                ${LATEST_REFUND_SELECT_SQL}
+            FROM orderline
+            JOIN address a ON orderline.addressid = a.id
+            LEFT JOIN product_revo p ON p.id = orderline.productid
+            LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
+            LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
+            LEFT JOIN (
+                SELECT orderid, invoiceurl, createddate AS invoicecreateddate
+                FROM (
+                    SELECT orderid, invoiceurl, createddate,
+                           ROW_NUMBER() OVER (PARTITION BY orderid ORDER BY createddate DESC) AS rn
+                    FROM revoinvoice
+                ) AS ranked
+                WHERE rn = 1
+            ) AS invoice ON orderline.uniqueorderid = invoice.orderid
+            LEFT JOIN (
+                SELECT starrating, productid, id, orderlineid, comments, url
+                FROM rating
+            ) AS revorating ON revorating.orderlineid = orderline.id
+            ${LATEST_RETURN_REQUEST_JOIN_SQL}
+            ${LATEST_REFUND_JOIN_SQL}
+            ${whereClause} ${orderByClause}`;
 
-            if (whereClauses.length > 0) {
-                queryText += ` WHERE ${whereClauses.join(" AND ")}`;
-            }
-            queryText += " ORDER BY o.modifieddate DESC";
+            queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
+            queryParams.push(offset, recordCount);
 
-            if (offset != null && recordCount != null) {
-                queryText += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2
-                    }`;
-                queryParams.push(offset, recordCount);
-            }
             const result = await query(queryText, queryParams);
-            const dataTypeCheckResult = await dataTypeCheck(result);
-            return dataTypeCheckResult;
+            return await dataTypeCheck(result);
         } catch (error) {
             console.error("Query Execution Error: IN getUserOrderData1", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
@@ -1364,6 +1470,7 @@ ${whereClause} ${orderByClause}`;
 
                 await releaseCommittedInventoryForCancellation(lineRows, previousStatuses);
                 await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
+                await cancelShiprocketOrderForMerchant(updatedRow.merchanttransactionid);
 
                 const userid = updatedRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
@@ -1456,6 +1563,7 @@ ${whereClause} ${orderByClause}`;
                     [lineRow],
                     new Map<number, string>([[Number(lineRow.id), previousStatus]])
                 );
+                await cancelShiprocketOrderForMerchant(lineRow.merchanttransactionid);
 
                 const userid = lineRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
