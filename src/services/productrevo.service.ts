@@ -28,6 +28,7 @@ export module productrevoService {
   ]);
   const MIGRATION_TABLE_MISSING_CODE = "42P01";
   const MIGRATION_COLUMN_MISSING_CODE = "42703";
+  const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
 
   export type BulkInsertMode = "strict" | "skip_duplicates";
 
@@ -1559,11 +1560,37 @@ export module productrevoService {
   export const getEachProductsRevo = async function (request: any, id: Number, visibilityMode?: "visible" | "hidden") {
     try {
       const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
-      const queryText = `SELECT * FROM product_revo
-           WHERE id = $1
-             AND (isarchive = FALSE OR isarchive IS NULL)
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
+      const queryText = `
+          SELECT 
+            p.*,
+            COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
+            COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity
+          FROM product_revo p
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Service Hold'
+              ) AS serviceholdquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Damaged'
+              ) AS damagedquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Lost'
+              ) AS lostquantity
+            FROM stock_revo
+            WHERE puc = p.puc
+          ) stock_counts ON TRUE
+          WHERE p.id = $1
+            AND (p.isarchive = FALSE OR p.isarchive IS NULL)
+            AND (p.isdeleted = FALSE OR p.isdeleted IS NULL)
+            AND (p.removefromrecyclebin = FALSE OR p.removefromrecyclebin IS NULL)${visibilityClause}`;
       const result: QueryResult = await query(
         queryText,
         [id]

@@ -4,6 +4,40 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { productrevoService } from "./productrevo.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export module stockRevoService {
+    const AVAILABLE_STOCK_STATUS = "Available";
+    const SERVICE_HOLD_STOCK_STATUS = "Service Hold";
+    const DAMAGED_STOCK_STATUS = "Damaged";
+    const LOST_STOCK_STATUS = "Lost";
+    const AVAILABLE_STOCK_ASSET_STATUS = "available";
+
+    const normalizeComparableText = (value: any) =>
+        String(value ?? "").trim().toLowerCase();
+
+    const getManualStockStatusTransitionError = (
+        currentStatus: any,
+        requestedStatus: any
+    ) => {
+        const current = normalizeComparableText(currentStatus);
+        const next = normalizeComparableText(requestedStatus);
+
+        if (!current || !next || current === next) {
+            return null;
+        }
+
+        if (current === normalizeComparableText(SERVICE_HOLD_STOCK_STATUS) && next === normalizeComparableText(AVAILABLE_STOCK_STATUS)) {
+            return "Use the repair release action to move a Service Hold asset back to Available.";
+        }
+
+        if (next === normalizeComparableText(AVAILABLE_STOCK_STATUS) && (
+            current === normalizeComparableText(DAMAGED_STOCK_STATUS)
+            || current === normalizeComparableText(LOST_STOCK_STATUS)
+        )) {
+            return "Damaged or Lost stocks cannot be directly moved to Available.";
+        }
+
+        return null;
+    };
+
     const getVisibilityCondition = (mode: "visible" | "hidden") => {
         if (mode === "hidden") {
             return `(p.ecomvisible = FALSE)`;
@@ -123,7 +157,7 @@ export module stockRevoService {
 
             if (id) {
                 // Fetch current stocktype to check for third_party_product restrictions
-                const oldStockResult = await query(`SELECT puc, stocktype FROM stock_revo WHERE id = $1`, [id]);
+                const oldStockResult = await query(`SELECT puc, stocktype, stockstatus FROM stock_revo WHERE id = $1`, [id]);
                 if (oldStockResult.rows.length > 0) {
                     const currentRow = oldStockResult.rows[0];
                     affectedPucs.add(currentRow.puc);
@@ -137,6 +171,15 @@ export module stockRevoService {
                                 delete upsertFields[key];
                             }
                         });
+                    }
+
+                    const statusTransitionError = getManualStockStatusTransitionError(
+                        currentRow.stockstatus,
+                        upsertFields.stockstatus
+                    );
+
+                    if (statusTransitionError) {
+                        return { message: statusTransitionError, status: 400 };
                     }
                 }
 
@@ -194,6 +237,85 @@ export module stockRevoService {
 
         } catch (error) {
             console.error("Query Execution Error: IN upsertStockRevoData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
+    export const releaseServiceHoldStockToAvailable = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to release the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(SERVICE_HOLD_STOCK_STATUS)) {
+                return {
+                    message: "Only Service Hold stocks can be marked repaired.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = $2,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN releaseServiceHoldStockToAvailable", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }

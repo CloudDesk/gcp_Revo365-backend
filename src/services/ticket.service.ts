@@ -5,6 +5,126 @@ import { sendMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 
+const TICKET_INTEGER_FIELDS = new Set([
+  "id",
+  "assignedto",
+  "userid",
+  "assignedid",
+  "approvedcostestimationid",
+  "addressid",
+  "queuenumber",
+  "createdbyid",
+  "productid",
+  "linkedorderlineid",
+  "activereplacementid",
+  "agreementid",
+  "penaltyinvoiceid",
+]);
+
+const TICKET_BIGINT_FIELDS = new Set([
+  "createddate",
+  "modifieddate",
+  "transactiondate",
+  "purchasedate",
+  "closeddate",
+  "assigneddate",
+  "productdelivereddate",
+  "requestedrenewaldate",
+  "approvedrenewaldate",
+  "receivedassetdate",
+  "resolvedassetdate",
+]);
+
+const TICKET_NUMERIC_FIELDS = new Set(["amount"]);
+
+const TICKET_BOOLEAN_FIELDS = new Set([
+  "proceedwithvalueservice",
+  "underwarranty",
+  "istransferred",
+  "isreopend",
+  "typemanual",
+  "replacementrequest",
+  "stoprental",
+]);
+
+const isNullishStringLiteral = (value: any) =>
+  typeof value === "string" &&
+  ["null", "undefined"].includes(value.trim().toLowerCase());
+
+const toNullableInteger = (value: any, fieldName: string) => {
+  if (value == null || isNullishStringLiteral(value)) return null;
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^-?\d+$/.test(trimmed)) return Number(trimmed);
+  }
+
+  throw new Error(
+    `Invalid value for ticket field "${fieldName}". Expected an integer-compatible value or null.`
+  );
+};
+
+const toNullableNumber = (value: any, fieldName: string) => {
+  if (value == null || isNullishStringLiteral(value)) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  }
+
+  throw new Error(
+    `Invalid value for ticket field "${fieldName}". Expected a numeric value or null.`
+  );
+};
+
+const toNullableBoolean = (value: any, fieldName: string) => {
+  if (value == null || isNullishStringLiteral(value)) return null;
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (["true", "1", "yes"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+
+  throw new Error(
+    `Invalid value for ticket field "${fieldName}". Expected a boolean value or null.`
+  );
+};
+
+const normalizeTicketFieldValue = (fieldName: string, value: any) => {
+  if (TICKET_INTEGER_FIELDS.has(fieldName) || TICKET_BIGINT_FIELDS.has(fieldName)) {
+    return toNullableInteger(value, fieldName);
+  }
+
+  if (TICKET_NUMERIC_FIELDS.has(fieldName)) {
+    return toNullableNumber(value, fieldName);
+  }
+
+  if (TICKET_BOOLEAN_FIELDS.has(fieldName)) {
+    return toNullableBoolean(value, fieldName);
+  }
+
+  if (isNullishStringLiteral(value)) {
+    return null;
+  }
+
+  return value;
+};
+
+const normalizeTicketPayload = (ticketData: Record<string, any>) =>
+  Object.fromEntries(
+    Object.entries(ticketData).map(([fieldName, value]) => [
+      fieldName,
+      normalizeTicketFieldValue(fieldName, value),
+    ])
+  );
+
 export module ticketService {
   export const getTicketDynamic = async (request) => {
     try {
@@ -236,7 +356,8 @@ export module ticketService {
     try {
       let querydata: string;
       let params: any[];
-      const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
+      const normalizedTicketData = normalizeTicketPayload(ticketData);
+      const { id, inventoryuserid, product_warranty, ...upsertFields } = normalizedTicketData;
       console.log(id, inventoryuserid, product_warranty, "id,inventoryuserid,product_warranty");
       console.log("Upsert Fields", upsertFields);
       if (files && files.length > 0) {
@@ -304,7 +425,8 @@ export module ticketService {
     try {
       let querydata: string;
       let params: any[];
-      const { id, ...upsertFields } = ticketData;
+      const normalizedTicketData = normalizeTicketPayload(ticketData);
+      const { id, ...upsertFields } = normalizedTicketData;
       const fieldNames = Object.keys(upsertFields);
       console.log("upsertFields", upsertFields);
       console.log("fieldNames", fieldNames);
@@ -365,7 +487,8 @@ export module ticketService {
     try {
       let querydata: string;
       let params: any[];
-      const { id, ...upsertFields } = ticketData;
+      const normalizedTicketData = normalizeTicketPayload(ticketData);
+      const { id, ...upsertFields } = normalizedTicketData;
       if (files && files.length > 0) {
         for (const file of files) {
           upsertFields.recipturl =
