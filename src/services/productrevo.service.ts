@@ -2126,8 +2126,9 @@ export module productrevoService {
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
                 -- Rental quantities should include both ecompublish=true and ecompublish=false stocks.
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold' OR stockstatus = 'Reserved for Rental') THEN 1 ELSE 0 END), 0) AS rental_total_count,
                 COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND stockstatus = 'Reserved for Rental' THEN 1 ELSE 0 END), 0) AS reserved_rental_count,
 
                 -- overallavailableqty = physical ecom=true Available count
                 --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
@@ -2187,7 +2188,7 @@ export module productrevoService {
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count,
             overallavailableqty = counts.overall_available_qty - COALESCE(orderedquantity, 0),
             ecompublishedquantity = counts.ecom_published_qty - COALESCE(orderedquantity, 0),
             bin_qty = counts.bin_count,
@@ -2196,7 +2197,7 @@ export module productrevoService {
         FROM counts
         WHERE product_revo.puc = $1
         RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
-                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  (counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count) as rental_available_count,
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
     console.log('queryText:', queryText);

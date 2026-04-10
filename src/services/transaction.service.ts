@@ -14,6 +14,7 @@ import {
   REDIRECT_URL_SUCCESS,
 } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
+import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
@@ -1575,6 +1576,12 @@ export module transactionService {
           [merchanttransactionId, insertorderdata.rows[0].orderid]
         );
         console.log("Update Orderline Status:", updateOrderlineStatus.rows);
+        const rentalOrders = insertorderdata.rows.filter(
+          (row: any) => String(row?.ordername ?? "").trim().toLowerCase() === "rental"
+        );
+        if (rentalOrders.length > 0) {
+          await stockRevoService.allocateRentalStock(rentalOrders);
+        }
         if (productupdateorderqty.length > 0) {
           console.log("Come's inside if productupdateorderqty");
           const updateproductorderquantiydata = productupdateorderqty.map(

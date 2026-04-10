@@ -957,8 +957,7 @@ export module ticketReplacementService {
             holdreason = NULL,
             holdticketid = NULL,
             orderlinenumber = $2,
-            assetnumber = $3,
-            rfid = NULL
+            assetnumber = $3
           WHERE id = $4
           RETURNING *
         `,
@@ -1729,8 +1728,7 @@ export module ticketReplacementService {
             holdreason = NULL,
             holdticketid = NULL,
             orderlinenumber = $2,
-            assetnumber = $3,
-            rfid = NULL
+            assetnumber = $3
           WHERE id = $4
           RETURNING *
         `,

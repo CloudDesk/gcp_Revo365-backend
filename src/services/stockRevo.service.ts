@@ -5,6 +5,8 @@ import { productrevoService } from "./productrevo.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export module stockRevoService {
     const AVAILABLE_STOCK_STATUS = "Available";
+    const RESERVED_RENTAL_STOCK_STATUS = "Reserved for Rental";
+    const RENTAL_SOLD_STOCK_STATUS = "Rental Sold";
     const SERVICE_HOLD_STOCK_STATUS = "Service Hold";
     const DAMAGED_STOCK_STATUS = "Damaged";
     const LOST_STOCK_STATUS = "Lost";
@@ -22,6 +24,10 @@ export module stockRevoService {
 
         if (!current || !next || current === next) {
             return null;
+        }
+
+        if (current === normalizeComparableText(RESERVED_RENTAL_STOCK_STATUS) && next !== current) {
+            return "Use the rental order workflow to manage Reserved for Rental assets.";
         }
 
         if (current === normalizeComparableText(SERVICE_HOLD_STOCK_STATUS) && next === normalizeComparableText(AVAILABLE_STOCK_STATUS)) {
@@ -669,7 +675,11 @@ export module stockRevoService {
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
                         AND ecompublish = false
-                        AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold')
+                        AND (
+                            stockstatus = 'Available'
+                            OR stockstatus = 'Rental Sold'
+                            OR stockstatus = 'Reserved for Rental'
+                        )
                         AND stocktype = 'rental_product'
                     ) AS rentaltotalquantity,
 
@@ -878,7 +888,11 @@ export module stockRevoService {
 
                     COUNT(s.id) FILTER (
                         WHERE s.ecompublish = false
-                        AND (s.stockstatus = 'Available' OR s.stockstatus = 'Rental Sold')
+                        AND (
+                            s.stockstatus = 'Available'
+                            OR s.stockstatus = 'Rental Sold'
+                            OR s.stockstatus = 'Reserved for Rental'
+                        )
                         AND s.stocktype = 'rental_product'
                     ) AS rentaltotalquantity,
 
@@ -1005,41 +1019,57 @@ export module stockRevoService {
     export const upsertStockRevoDatarfid = async (rfidDataArray: any) => {
         try {
             console.log("RFID Data Array:", rfidDataArray);
-            let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
-            let arraylength = rfidDataArray.length;
-            let ordername = rfidDataArray[0].ordername;
+            const arraylength = rfidDataArray.length;
+            let ordername = rfidDataArray[0]?.ordername;
 
+            if (!ordername && rfidDataArray[0]?.orderlinenumber) {
+                const orderlineQuery = await query(
+                    `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
+                    [rfidDataArray[0].orderlinenumber]
+                );
+                ordername = orderlineQuery.rows[0]?.ordername ?? "";
+            }
 
-            const isRental = ordername === 'rental';
+            const isRental = normalizeComparableText(ordername) === "rental";
+            const stockStatusValue = isRental ? RENTAL_SOLD_STOCK_STATUS : "Sold";
 
-            let stockStatusValue = isRental ? 'Rental Sold' : 'Sold';
+            const queryParams: any[] = [productid];
+            const mappedConditions = rfidDataArray.map((item) => {
+                queryParams.push(item.rfid);
+                const rfidParamIndex = queryParams.length;
+                queryParams.push(item.orderlinenumber ?? null);
+                const orderlineParamIndex = queryParams.length;
 
-            let caseStatementsOrderId = rfidDataArray.map((item) => {
-                return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;
-            }).join(' ');
+                return {
+                    caseClause: `WHEN rfid = $${rfidParamIndex} THEN $${orderlineParamIndex}`,
+                    whereClause: isRental
+                        ? `(rfid = $${rfidParamIndex} AND (stockstatus = '${AVAILABLE_STOCK_STATUS}' OR (stockstatus = '${RESERVED_RENTAL_STOCK_STATUS}' AND orderlinenumber = $${orderlineParamIndex})))`
+                        : `(rfid = $${rfidParamIndex} AND stockstatus = '${AVAILABLE_STOCK_STATUS}')`,
+                };
+            });
 
             let updateQuery = `
                 UPDATE stock_revo 
                 SET 
-                    orderlinenumber = CASE ${caseStatementsOrderId} END,
+                    orderlinenumber = CASE ${mappedConditions
+                        .map((item) => item.caseClause)
+                        .join(" ")} ELSE orderlinenumber END,
                     stockstatus = '${stockStatusValue}',
-                    stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END,
-                    rfid = NULL
+                    stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END
                 WHERE 
-                    rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
+                    (${mappedConditions.map((item) => item.whereClause).join(" OR ")})
                     AND puc IN (SELECT puc FROM product_revo WHERE id = $1)
-                    AND stockstatus = 'Available'
                 RETURNING *;
             `;
 
-            let result = await query(updateQuery, [productid]);
+            let result = await query(updateQuery, queryParams);
 
-            if (result.rows.length !== rfidValues.length) {
+            if (result.rows.length !== arraylength) {
                 return {
                     error: 'Error in RFID scan. Ensure all RFIDs are valid.',
                     updatedCount: result.rows.length,
-                    expectedCount: rfidValues.length
+                    expectedCount: arraylength
                 };
             }
 
@@ -1078,59 +1108,185 @@ export module stockRevoService {
         try {
             console.log('Allocating Rental Stock for orders:', orders);
             for (const order of orders) {
-                // Determine if this is a rental product (ecompublish = false check is ideal, but for now we might rely on the caller or check here)
-                // Assuming the caller only passes rental orders or we check 'ordername' if available on the order object
-                // But safer to check db or rely on caller. Let's rely on logic for any product that has rental stock.
-
-                // We will attempt to update 'Available' rental stock for this product.
-                const productid = order.productid; // Or orderLine productid
-                const quantity = order.quantity;
-                const orderid = order.orderid; // The unique string order ID (e.g. TEQIT...)
-                const orderlineid = order.id; // orderline PK if linking to orderline, but stock links to orderid usually
-
-                if (!productid || !quantity || !orderid) {
-                    console.warn('Missing details for rental allocation:', order);
+                const uniqueOrderId = String(order?.orderid ?? "").trim();
+                if (!uniqueOrderId) {
+                    console.warn('Missing unique order id for rental allocation:', order);
                     continue;
                 }
 
-                // Update 'quantity' number of rows from 'Available' to 'Rental Sold'
-                // Targeting stocktype='rental_product' and ecompublish=false
-                const updateQuery = `
-                    UPDATE stock_revo
-                    SET 
-                        stockstatus = 'Rental Sold',
-                        orderid = $1,
-                        modifieddate = COALESCE(modifieddate, CURRENT_TIMESTAMP)
-                    WHERE id IN (
-                        SELECT id
-                        FROM stock_revo
-                        WHERE 
-                            puc IN (SELECT puc FROM product_revo WHERE id = $2)
-                            AND stocktype = 'rental_product'
-                            AND ecompublish = false
-                            AND stockstatus = 'Available'
-                            AND isdeleted = false
-                            AND isarchive = false
-                            AND removefromrecyclebin = false
-                            AND ewaste = false
-                        LIMIT $3
-                        FOR UPDATE
-                    )
-                    RETURNING puc;
-                `;
+                const orderlinesResult = await query(
+                    `
+                        SELECT
+                            orderlinenumber,
+                            productid,
+                            assetnumber,
+                            quantity
+                        FROM orderline
+                        WHERE uniqueorderid = $1
+                          AND LOWER(COALESCE(ordername, '')) = 'rental'
+                    `,
+                    [uniqueOrderId]
+                );
 
-                const result = await query(updateQuery, [orderid, productid, quantity]);
-                console.log(`Allocated ${result.rowCount} rental items for Product ID ${productid}`);
+                for (const line of orderlinesResult.rows) {
+                    const assetIdentifier = String(line.assetnumber ?? "").trim();
+                    let result;
 
-                if (result.rowCount > 0) {
-                    const puc = result.rows[0].puc;
-                    await productrevoService.updateCatalogueQuantities(puc);
+                    if (assetIdentifier) {
+                        result = await query(
+                            `
+                                UPDATE stock_revo
+                                SET
+                                    stockstatus = $1,
+                                    orderid = $2,
+                                    orderlinenumber = $3,
+                                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                                WHERE id = (
+                                    SELECT id
+                                    FROM stock_revo
+                                    WHERE
+                                        (CAST(assetnumber AS TEXT) = $4 OR CAST(rfid AS TEXT) = $4)
+                                        AND puc IN (SELECT puc FROM product_revo WHERE id = $5)
+                                        AND stocktype = 'rental_product'
+                                        AND ecompublish = false
+                                        AND stockstatus = 'Available'
+                                        AND isdeleted = false
+                                        AND isarchive = false
+                                        AND removefromrecyclebin = false
+                                        AND ewaste = false
+                                    ORDER BY
+                                        CASE WHEN CAST(assetnumber AS TEXT) = $4 THEN 0 ELSE 1 END,
+                                        modifieddate DESC NULLS LAST,
+                                        id DESC
+                                    LIMIT 1
+                                    FOR UPDATE
+                                )
+                                RETURNING puc
+                            `,
+                            [
+                                RESERVED_RENTAL_STOCK_STATUS,
+                                uniqueOrderId,
+                                line.orderlinenumber,
+                                assetIdentifier,
+                                line.productid,
+                            ]
+                        );
+                    } else {
+                        const quantity = Math.max(Number(line.quantity) || 1, 1);
+                        result = await query(
+                            `
+                                UPDATE stock_revo
+                                SET
+                                    stockstatus = $1,
+                                    orderid = $2,
+                                    orderlinenumber = $3,
+                                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                                WHERE id IN (
+                                    SELECT id
+                                    FROM stock_revo
+                                    WHERE
+                                        puc IN (SELECT puc FROM product_revo WHERE id = $4)
+                                        AND stocktype = 'rental_product'
+                                        AND ecompublish = false
+                                        AND stockstatus = 'Available'
+                                        AND isdeleted = false
+                                        AND isarchive = false
+                                        AND removefromrecyclebin = false
+                                        AND ewaste = false
+                                    LIMIT $5
+                                    FOR UPDATE
+                                )
+                                RETURNING puc
+                            `,
+                            [
+                                RESERVED_RENTAL_STOCK_STATUS,
+                                uniqueOrderId,
+                                line.orderlinenumber,
+                                line.productid,
+                                quantity,
+                            ]
+                        );
+                    }
+
+                    console.log(`Reserved ${result.rowCount} rental items for orderline ${line.orderlinenumber}`);
+
+                    if (!result.rowCount) {
+                        console.warn(`Unable to reserve rental stock for orderline ${line.orderlinenumber}`);
+                        continue;
+                    }
+
+                    const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+                    for (const puc of pucs) {
+                        await productrevoService.updateCatalogueQuantities(puc);
+                    }
                 }
             }
         } catch (error) {
             console.error("Error in allocateRentalStock:", error);
             // Don't block the order flow if stock allocation fails, but log it critical
             // throw error; 
+        }
+    };
+
+    export const releaseReservedRentalStockForOrder = async (uniqueOrderId: string) => {
+        try {
+            const normalizedOrderId = String(uniqueOrderId ?? "").trim();
+            if (!normalizedOrderId) {
+                return;
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        orderid = NULL,
+                        orderlinenumber = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                    WHERE orderid = $2
+                      AND stockstatus = $3
+                    RETURNING puc
+                `,
+                [AVAILABLE_STOCK_STATUS, normalizedOrderId, RESERVED_RENTAL_STOCK_STATUS]
+            );
+
+            const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+            for (const puc of pucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrder:", error);
+        }
+    };
+
+    export const releaseReservedRentalStockForOrderline = async (orderlinenumber: string) => {
+        try {
+            const normalizedOrderline = String(orderlinenumber ?? "").trim();
+            if (!normalizedOrderline) {
+                return;
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        orderid = NULL,
+                        orderlinenumber = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                    WHERE orderlinenumber = $2
+                      AND stockstatus = $3
+                    RETURNING puc
+                `,
+                [AVAILABLE_STOCK_STATUS, normalizedOrderline, RESERVED_RENTAL_STOCK_STATUS]
+            );
+
+            const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+            for (const puc of pucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrderline:", error);
         }
     };
 }
