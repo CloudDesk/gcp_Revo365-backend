@@ -1566,7 +1566,16 @@ export module productrevoService {
             COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
             COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
             COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
-            COALESCE(stock_counts.lostquantity, 0) AS lostquantity
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity,
+            -- Live overrides: these aliases shadow the stale stored columns from p.*
+            -- (node-postgres uses the last column alias when names collide in the row object)
+            COALESCE(stock_counts.live_rentaltotalquantity, 0) AS rentaltotalquantity,
+            COALESCE(stock_counts.live_rentalsoldquantity, 0) AS rentalsoldquantity,
+            GREATEST(0,
+              COALESCE(stock_counts.live_rentaltotalquantity, 0)
+              - COALESCE(stock_counts.live_rentalsoldquantity, 0)
+              - COALESCE(stock_counts.reservedforrentalquantity, 0)
+            ) AS rentalavailablequantity
           FROM product_revo p
           LEFT JOIN LATERAL (
             SELECT
@@ -1575,21 +1584,38 @@ export module productrevoService {
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Reserved for Rental'
               ) AS reservedforrentalquantity,
+              -- Service Hold, Damaged, Lost: use a looser filter that does NOT exclude
+              -- isdeleted/ewaste rows — these terminal-state items may have those flags
+              -- set on them but should still be counted for accurate reporting.
+              -- We only exclude permanently purged records (removefromrecyclebin=true).
               COUNT(*) FILTER (
-                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Service Hold'
               ) AS serviceholdquantity,
               COUNT(*) FILTER (
-                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Damaged'
               ) AS damagedquantity,
               COUNT(*) FILTER (
-                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Lost'
-              ) AS lostquantity
+              ) AS lostquantity,
+              -- Live rental total: Available + Rental Sold + Reserved for Rental
+              -- (uses PRODUCT_ACTIVE_STOCK_FILTERS — active/live stocks only)
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+              ) AS live_rentaltotalquantity,
+              -- Live rental sold count
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Rental Sold'
+              ) AS live_rentalsoldquantity
             FROM stock_revo
             WHERE puc = p.puc
           ) stock_counts ON TRUE

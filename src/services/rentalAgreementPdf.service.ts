@@ -1,36 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
 import { admin } from "../firebase/firebaseAdmin.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { getRentalAgreementTemplate } from "../utils/rentalAgreementHandlebars.js";
 
 const RENTAL_AGREEMENT_BUCKET = "rental-agreeements";
 const RENTAL_AGREEMENT_FOLDER = "rental-agreements";
-const PAGE_WIDTH = 595;
-const PAGE_HEIGHT = 842;
-const PAGE_MARGIN = 36;
-const CONTENT_WIDTH = PAGE_WIDTH - PAGE_MARGIN * 2;
-const DEFAULT_TEXT_COLOR = [0.11, 0.14, 0.2];
-const MUTED_TEXT_COLOR = [0.36, 0.45, 0.59];
-const BORDER_COLOR = [0.82, 0.86, 0.91];
-const LIGHT_FILL_COLOR = [0.97, 0.98, 1];
-const TITLE_FILL_COLOR = [0.92, 0.95, 1];
 
-type PdfFontName = "F1" | "F2";
-
-type PdfPage = {
-  commands: string[];
-};
-
-type EmbeddedJpeg = {
-  buffer: Buffer;
-  width: number;
-  height: number;
-};
-
+// ── Sanitise filename ────────────────────────────────────────────────────────
 const sanitizeFileName = (value: any) =>
   String(value ?? "rental-agreement")
     .trim()
@@ -38,861 +12,287 @@ const sanitizeFileName = (value: any) =>
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "rental-agreement";
 
-const formatDate = (value: any) => {
-  if (value == null || value === "") {
-    return "-";
-  }
-
-  const numericValue = Number(value);
-  const normalizedValue =
-    Number.isFinite(numericValue) && numericValue > 0
-      ? String(Math.trunc(numericValue)).length <= 10
-        ? numericValue * 1000
-        : numericValue
-      : value;
-
-  const date = new Date(normalizedValue);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+// ── Epoch normaliser ─────────────────────────────────────────────────────────
+const normaliseEpoch = (value: any): number | null => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return String(Math.trunc(n)).length <= 10 ? n : Math.trunc(n / 1000);
 };
 
-const formatCurrency = (value: any) => {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return "INR 0.00";
-  }
-
-  return `INR ${numericValue.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+// ── Currency formatter ───────────────────────────────────────────────────────
+const toNum = (v: any): number => {
+  const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
 };
 
-const normalizeComparableText = (value: any) =>
-  String(value ?? "").trim().toLowerCase();
-
-const formatTitleCase = (value: any) => {
-  const normalizedValue = String(value ?? "").trim();
-  if (!normalizedValue) {
-    return "-";
-  }
-
-  return normalizedValue
-    .replace(/[_-]+/g, " ")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-};
-
-const getAgreementMonthCount = (agreement: any, assets: any[]) => {
-  const pricingItems = Array.isArray(agreement?.pricingtermssnapshot?.items)
-    ? agreement.pricingtermssnapshot.items
-    : [];
-
-  const rentalMonthsFromSnapshot = pricingItems
-    .map((item: any) => Number(item?.rentalfor))
-    .filter((value: number) => Number.isFinite(value) && value > 0);
-
-  if (rentalMonthsFromSnapshot.length > 0) {
-    return Math.max(...rentalMonthsFromSnapshot);
-  }
-
-  const assetMonths = (assets || [])
-    .map((asset: any) => Number(asset?.rentalfor))
-    .filter((value: number) => Number.isFinite(value) && value > 0);
-
-  if (assetMonths.length > 0) {
-    return Math.max(...assetMonths);
-  }
-
-  const startValue = Number(agreement?.agreementstartdate);
-  const endValue = Number(agreement?.agreementenddate);
-  if (!Number.isFinite(startValue) || !Number.isFinite(endValue)) {
-    return null;
-  }
-
-  const startDate = new Date(String(Math.trunc(startValue)).length <= 10 ? startValue * 1000 : startValue);
-  const endDate = new Date(String(Math.trunc(endValue)).length <= 10 ? endValue * 1000 : endValue);
-
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
-    return null;
-  }
-
-  return (
-    (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
-    (endDate.getUTCMonth() - startDate.getUTCMonth()) +
-    1
-  );
-};
-
-const isHistoryAgreementAsset = (asset: any) => {
-  if (asset?.iscurrentasset === false) {
-    return true;
-  }
-
-  const normalizedStatus = normalizeComparableText(asset?.assetstatus);
-  return new Set(["replaced", "returned", "lost", "damaged_non_returnable"]).has(
-    normalizedStatus
-  );
-};
-
-const escapePdfText = (value: any) =>
-  String(value ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)")
-    .replace(/\r/g, " ")
-    .replace(/\n/g, " ");
-
-const colorToPdf = (rgb: number[]) =>
-  rgb.map((value) => value.toFixed(3)).join(" ");
-
-const measureTextWidth = (text: string, fontSize: number, bold = false) => {
-  const safeText = String(text ?? "");
-  const averageCharacterWidth = bold ? 0.56 : 0.51;
-  return safeText.length * fontSize * averageCharacterWidth;
-};
-
-const wrapText = (
-  text: string,
-  maxWidth: number,
-  fontSize: number,
-  bold = false
+// ── Build the template data object ───────────────────────────────────────────
+const buildAgreementData = (
+  agreement: any,
+  assets: any[],
+  options: Record<string, any> = {}
 ) => {
-  const normalizedText = String(text ?? "").replace(/\s+/g, " ").trim();
-  if (!normalizedText) {
-    return [""];
-  }
-
-  const words = normalizedText.split(" ");
-  const lines: string[] = [];
-  let currentLine = "";
-
-  words.forEach((word) => {
-    const candidate = currentLine ? `${currentLine} ${word}` : word;
-    if (measureTextWidth(candidate, fontSize, bold) <= maxWidth) {
-      currentLine = candidate;
-      return;
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-
-    if (measureTextWidth(word, fontSize, bold) <= maxWidth) {
-      currentLine = word;
-      return;
-    }
-
-    let remainingWord = word;
-    while (remainingWord.length > 0) {
-      let splitIndex = remainingWord.length;
-      while (
-        splitIndex > 1 &&
-        measureTextWidth(
-          `${remainingWord.slice(0, splitIndex)}-`,
-          fontSize,
-          bold
-        ) > maxWidth
-      ) {
-        splitIndex -= 1;
-      }
-
-      if (splitIndex <= 1) {
-        break;
-      }
-
-      const chunk = remainingWord.slice(0, splitIndex);
-      remainingWord = remainingWord.slice(splitIndex);
-      lines.push(remainingWord ? `${chunk}-` : chunk);
-    }
-
-    currentLine = remainingWord;
-  });
-
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-
-  return lines.length > 0 ? lines : [""];
-};
-
-const parseJpegDimensions = (buffer: Buffer) => {
-  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
-    throw new Error("Unsupported logo format. Expected JPEG data.");
-  }
-
-  let offset = 2;
-  while (offset < buffer.length) {
-    while (offset < buffer.length && buffer[offset] === 0xff) {
-      offset += 1;
-    }
-
-    const marker = buffer[offset];
-    offset += 1;
-
-    if (marker === 0xd9 || marker === 0xda) {
-      break;
-    }
-
-    if (offset + 1 >= buffer.length) {
-      break;
-    }
-
-    const blockLength = buffer.readUInt16BE(offset);
-    offset += 2;
-
-    if (
-      marker === 0xc0 ||
-      marker === 0xc1 ||
-      marker === 0xc2 ||
-      marker === 0xc3 ||
-      marker === 0xc5 ||
-      marker === 0xc6 ||
-      marker === 0xc7 ||
-      marker === 0xc9 ||
-      marker === 0xca ||
-      marker === 0xcb ||
-      marker === 0xcd ||
-      marker === 0xce ||
-      marker === 0xcf
-    ) {
-      const height = buffer.readUInt16BE(offset + 1);
-      const width = buffer.readUInt16BE(offset + 3);
-      return { width, height };
-    }
-
-    offset += blockLength - 2;
-  }
-
-  throw new Error("Unable to read JPEG dimensions for rental agreement logo.");
-};
-
-const loadTeqitLogo = (): EmbeddedJpeg | null => {
-  const candidatePaths = [
-    path.resolve(__dirname, "../../assets/teqit_logo.jpeg"),
-    path.resolve(process.cwd(), "assets/teqit_logo.jpeg"),
-  ];
-
-  for (const candidatePath of candidatePaths) {
-    if (!fs.existsSync(candidatePath)) {
-      continue;
-    }
-
-    try {
-      const buffer = fs.readFileSync(candidatePath);
-      const { width, height } = parseJpegDimensions(buffer);
-      return { buffer, width, height };
-    } catch (error) {
-      console.error(
-        `Failed to load rental agreement logo from ${candidatePath}.`,
-        error
-      );
-    }
-  }
-
-  return null;
-};
-
-const drawLogoFit = (
-  logo: EmbeddedJpeg,
-  maxWidth: number,
-  maxHeight: number
-) => {
-  const widthRatio = maxWidth / logo.width;
-  const heightRatio = maxHeight / logo.height;
-  const scale = Math.min(widthRatio, heightRatio);
-
-  return {
-    width: logo.width * scale,
-    height: logo.height * scale,
-  };
-};
-
-const buildPdfDocument = (agreement: any, assets: any[]) => {
-  const logo = loadTeqitLogo();
-  const pages: PdfPage[] = [{ commands: [] }];
-  let currentPageIndex = 0;
-  let cursorY = PAGE_HEIGHT - PAGE_MARGIN;
-  const agreementMonthCount = getAgreementMonthCount(agreement, assets);
-  const currentAssets = (assets || []).filter((asset) => !isHistoryAgreementAsset(asset));
-  const historyAssets = (assets || []).filter((asset) => isHistoryAgreementAsset(asset));
-
-  const currentPage = () => pages[currentPageIndex];
-  const addPage = () => {
-    pages.push({ commands: [] });
-    currentPageIndex = pages.length - 1;
-    cursorY = PAGE_HEIGHT - PAGE_MARGIN;
-  };
-
-  const ensureSpace = (requiredHeight: number) => {
-    if (cursorY - requiredHeight < PAGE_MARGIN) {
-      addPage();
-    }
-  };
-
-  const addRectangle = (
-    x: number,
-    yTop: number,
-    width: number,
-    height: number,
-    options?: {
-      fillColor?: number[];
-      strokeColor?: number[];
-      lineWidth?: number;
-    }
-  ) => {
-    const bottomY = yTop - height;
-    const commands: string[] = [];
-
-    if (options?.fillColor) {
-      commands.push(`${colorToPdf(options.fillColor)} rg`);
-    }
-    if (options?.strokeColor) {
-      commands.push(`${colorToPdf(options.strokeColor)} RG`);
-    }
-    if (options?.lineWidth != null) {
-      commands.push(`${options.lineWidth.toFixed(2)} w`);
-    }
-
-    commands.push(
-      `${x.toFixed(2)} ${bottomY.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(
-        2
-      )} re`
-    );
-
-    if (options?.fillColor && options?.strokeColor) {
-      commands.push("B");
-    } else if (options?.fillColor) {
-      commands.push("f");
-    } else {
-      commands.push("S");
-    }
-
-    currentPage().commands.push(commands.join("\n"));
-  };
-
-  const addLine = (
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number,
-    strokeColor = BORDER_COLOR,
-    lineWidth = 1
-  ) => {
-    currentPage().commands.push(
-      `${colorToPdf(strokeColor)} RG\n${lineWidth.toFixed(2)} w\n${x1.toFixed(
-        2
-      )} ${y1.toFixed(2)} m\n${x2.toFixed(2)} ${y2.toFixed(2)} l\nS`
-    );
-  };
-
-  const addText = (
-    text: string,
-    x: number,
-    y: number,
-    options?: {
-      font?: PdfFontName;
-      size?: number;
-      color?: number[];
-      maxWidth?: number;
-      align?: "left" | "right";
-    }
-  ) => {
-    const font = options?.font ?? "F1";
-    const size = options?.size ?? 11;
-    const color = options?.color ?? DEFAULT_TEXT_COLOR;
-    const safeText = String(text ?? "");
-    let targetX = x;
-
-    if (options?.maxWidth && options?.align === "right") {
-      const textWidth = measureTextWidth(safeText, size, font === "F2");
-      targetX = x + options.maxWidth - textWidth;
-    }
-
-    currentPage().commands.push(
-      `BT\n/${font} ${size.toFixed(2)} Tf\n${colorToPdf(color)} rg\n1 0 0 1 ${targetX.toFixed(
-        2
-      )} ${y.toFixed(2)} Tm\n(${escapePdfText(safeText)}) Tj\nET`
-    );
-  };
-
-  const addWrappedText = (
-    text: string,
-    x: number,
-    yTop: number,
-    width: number,
-    options?: {
-      font?: PdfFontName;
-      size?: number;
-      color?: number[];
-      lineGap?: number;
-    }
-  ) => {
-    const font = options?.font ?? "F1";
-    const size = options?.size ?? 11;
-    const lineGap = options?.lineGap ?? 4;
-    const lines = wrapText(text, width, size, font === "F2");
-    let lineY = yTop;
-
-    lines.forEach((line) => {
-      addText(line, x, lineY, { font, size, color: options?.color });
-      lineY -= size + lineGap;
-    });
-
-    return {
-      lines,
-      bottomY: lineY,
-      height: lines.length * size + Math.max(lines.length - 1, 0) * lineGap,
-    };
-  };
-
-  const addImage = (
-    x: number,
-    yTop: number,
-    width: number,
-    height: number
-  ) => {
-    const bottomY = yTop - height;
-    currentPage().commands.push(
-      `q\n${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${x.toFixed(
-        2
-      )} ${bottomY.toFixed(2)} cm\n/Im1 Do\nQ`
-    );
-  };
-
-  const addMetaPair = (
-    label: string,
-    value: string,
-    x: number,
-    yTop: number,
-    maxWidth: number,
-    valueSize = 14
-  ) => {
-    addText(label, x, yTop, {
-      font: "F2",
-      size: 10,
-      color: MUTED_TEXT_COLOR,
-    });
-    const wrappedValue = wrapText(value, maxWidth, valueSize, true);
-    wrappedValue.forEach((line, index) => {
-      addText(line, x, yTop - 22 - index * (valueSize + 2), {
-        font: "F2",
-        size: valueSize,
-      });
-    });
-  };
-
-  const renderAssetTable = (title: string, tableAssets: any[], tone: "default" | "history" = "default") => {
-    const tableInnerLeft = PAGE_MARGIN + 16;
-    const tableWidth = CONTENT_WIDTH - 32;
-    const columnWidths = [115, 90, 130, 60, 96];
-    const columnStarts = [
-      tableInnerLeft,
-      tableInnerLeft + columnWidths[0],
-      tableInnerLeft + columnWidths[0] + columnWidths[1],
-      tableInnerLeft + columnWidths[0] + columnWidths[1] + columnWidths[2],
-      tableInnerLeft +
-        columnWidths[0] +
-        columnWidths[1] +
-        columnWidths[2] +
-        columnWidths[3],
-    ];
-    const assetRowHeight = 28;
-    const assetCardHeight = 70 + Math.max(tableAssets.length, 1) * assetRowHeight;
-    const fillColor = tone === "history" ? [0.99, 0.97, 0.94] : [1, 1, 1];
-
-    ensureSpace(assetCardHeight + 18);
-    addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, assetCardHeight, {
-      fillColor,
-      strokeColor: BORDER_COLOR,
-      lineWidth: 1,
-    });
-    addText(title, PAGE_MARGIN + 16, cursorY - 22, {
-      font: "F2",
-      size: 12,
-    });
-    addText(
-      `${tableAssets.length} asset${tableAssets.length === 1 ? "" : "s"}`,
-      PAGE_MARGIN + CONTENT_WIDTH - 116,
-      cursorY - 22,
-      {
-        size: 10,
-        color: MUTED_TEXT_COLOR,
-        maxWidth: 100,
-        align: "right",
-      }
-    );
-    addLine(
-      tableInnerLeft,
-      cursorY - 40,
-      tableInnerLeft + tableWidth,
-      cursorY - 40
-    );
-    ["PRODUCT", "ASSET", "ORDER LINE", "STATUS", "MONTHLY AMOUNT"].forEach(
-      (label, index) => {
-        addText(label, columnStarts[index], cursorY - 55, {
-          font: "F2",
-          size: 8,
-          color: MUTED_TEXT_COLOR,
-        });
-      }
-    );
-
-    if (tableAssets.length === 0) {
-      addText("No records.", tableInnerLeft, cursorY - 82, { size: 10 });
-    }
-
-    tableAssets.forEach((asset, index) => {
-      const rowTop = cursorY - 68 - index * assetRowHeight;
-      const rowTextY = rowTop - 15;
-      addText(asset.productname ?? "-", columnStarts[0], rowTextY, { size: 9.5 });
-      addText(asset.assetnumber ?? "-", columnStarts[1], rowTextY, { size: 9.5 });
-      addText(asset.orderlinenumber ?? "-", columnStarts[2], rowTextY, { size: 9.5 });
-      addText(formatTitleCase(asset.assetstatus), columnStarts[3], rowTextY, { size: 9.5 });
-      addText(
-        formatCurrency(asset.productamount ?? 0),
-        columnStarts[4],
-        rowTextY,
-        {
-          size: 9.5,
-          maxWidth: columnWidths[4],
-          align: "right",
-        }
-      );
-      addLine(
-        tableInnerLeft,
-        rowTop - assetRowHeight,
-        tableInnerLeft + tableWidth,
-        rowTop - assetRowHeight,
-        index === tableAssets.length - 1 ? BORDER_COLOR : [0.9, 0.93, 0.96]
-      );
-    });
-
-    cursorY -= assetCardHeight + 18;
-  };
-
   const customerName = [agreement.firstname, agreement.lastname]
     .filter(Boolean)
     .join(" ")
     .trim();
 
-  const headerHeight = 58;
-  ensureSpace(headerHeight + 24);
-  addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, headerHeight, {
-    fillColor: TITLE_FILL_COLOR,
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  addText("Rental Agreement", PAGE_MARGIN + 18, cursorY - 22, {
-    font: "F2",
-    size: 21,
-  });
-  addText(
-    `Agreement No: ${agreement.agreementnumber ?? "-"}`,
-    PAGE_MARGIN + 18,
-    cursorY - 40,
-    {
-      size: 10,
-      color: MUTED_TEXT_COLOR,
-    }
+  const equipmentItems = assets.map((asset: any, idx: number) => ({
+    sNo: idx + 1,
+    assetNumber: asset.assetnumber ?? asset.orderlinenumber ?? "-",
+    deliveryDate:
+      normaliseEpoch(asset.rentstartdate) ??
+      normaliseEpoch(agreement.agreementstartdate),
+    makeModel: asset.productname ?? "-",
+    serialNumber: asset.serialnumber ?? asset.assetnumber ?? "-",
+    accessories: asset.accessories ?? "Laptop Bag, Power Adapter",
+    monthlyRentalExclGST: toNum(asset.productamount),
+    remarks: asset.remarks ?? "",
+  }));
+
+  const totalMonthly = equipmentItems.reduce(
+    (sum, item) => sum + item.monthlyRentalExclGST,
+    0
   );
 
-  if (logo) {
-    const logoBox = drawLogoFit(logo, 104, 32);
-    const logoX = PAGE_MARGIN + CONTENT_WIDTH - logoBox.width - 18;
-    const logoTop = cursorY - (headerHeight - logoBox.height) / 2;
-    addImage(
-      logoX,
-      logoTop,
-      logoBox.width,
-      logoBox.height
-    );
-  }
-  cursorY -= headerHeight + 18;
+  const conditionReport = assets.map((asset: any) => ({
+    assetNumber: asset.assetnumber ?? "-",
+    model: asset.productname ?? "-",
+    serialNumber: asset.serialnumber ?? asset.assetnumber ?? "-",
+    conditionOnDelivery: asset.conditionOnDelivery ?? "Good",
+    preExistingDamageNotes: asset.preExistingDamageNotes ?? "",
+  }));
 
-  const infoCardHeight = 128;
-  const infoInnerX = PAGE_MARGIN + 18;
-  const infoGap = 18;
-  const leftSectionWidth = 220;
-  const middleSectionWidth = 95;
-  const rightSectionWidth = 140;
+  return {
+    agreementDate:
+      normaliseEpoch(agreement.agreementstartdate) ??
+      Math.floor(Date.now() / 1000),
+    agreementNumber: agreement.agreementnumber ?? `TEQIT/RA/-`,
 
-  ensureSpace(infoCardHeight + 20);
-  addRectangle(PAGE_MARGIN, cursorY, CONTENT_WIDTH, infoCardHeight, {
-    fillColor: LIGHT_FILL_COLOR,
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  const middleX = infoInnerX + leftSectionWidth + infoGap;
-  const rightX = middleX + middleSectionWidth + infoGap;
+    lessor: {
+      name: "TEQIT",
+      address:
+        "1/54, Old Mahabalipuram Road, Seevaram, Perungudi Rajiv Gandhi Salai, Chennai - 600096",
+      gstin: "33AAMCR5393J1ZV",
+      email: options.lessorEmail ?? "rentals@teqit.in",
+      logoUrl: options.logoUrl ?? null,
+    },
 
-  addMetaPair(
-    "CUSTOMER",
-    customerName || "-",
-    infoInnerX,
-    cursorY - 18,
-    leftSectionWidth,
-    15
-  );
-  addWrappedText(
-    agreement.useremail || "-",
-    infoInnerX,
-    cursorY - 62,
-    leftSectionWidth,
-    { size: 10, lineGap: 2 }
-  );
-  addWrappedText(
-    agreement.usermobilenumber || "-",
-    infoInnerX,
-    cursorY - 80,
-    leftSectionWidth,
-    { size: 10, lineGap: 2 }
-  );
+    lessee: {
+      companyName:
+        (options.lesseeCompanyName ?? customerName) || "Customer",
+      address: options.lesseeAddress ?? assets[0]?.location ?? "",
+      gstin: options.lesseeGstin ?? null,
+      contactPersonName: customerName || null,
+      contactPhone: agreement.usermobilenumber ?? null,
+      contactEmail: agreement.useremail ?? null,
+      authorizedSignatoryName:
+        options.lesseeSignatoryName ?? customerName ?? null,
+      authorizedSignatoryDesignation:
+        options.lesseeSignatoryDesignation ?? null,
+    },
 
-  addMetaPair(
-    "STATUS",
-    agreement.agreementstatus || "-",
-    middleX,
-    cursorY - 18,
-    middleSectionWidth,
-    15
-  );
-  addMetaPair(
-    "START DATE",
-    formatDate(agreement.agreementstartdate),
-    middleX,
-    cursorY - 72,
-    middleSectionWidth,
-    13
-  );
+    rentalTerms: {
+      minimumLockInMonths:
+        options.minimumLockInMonths ??
+        Math.max(...assets.map((a: any) => Number(a.rentalfor ?? 0)), 12),
+      deliveryDate:
+        normaliseEpoch(assets[0]?.rentstartdate) ??
+        normaliseEpoch(agreement.agreementstartdate),
+      rentalEndDate: normaliseEpoch(agreement.agreementenddate),
+      autoRenewalEnabled: options.autoRenewalEnabled ?? true,
+      earlyTerminationNoticeDays: options.earlyTerminationNoticeDays ?? 30,
+      maintenanceSLADays: options.maintenanceSLADays ?? 3,
+      arbitrationCity: options.arbitrationCity ?? "Chennai",
+      jurisdictionCity: options.jurisdictionCity ?? "Chennai",
+      customTermsClause: options.customTermsClause ?? null,
+    },
 
-  addMetaPair(
-    "CONTRACT",
-    agreement.uniqueorderid || "-",
-    rightX,
-    cursorY - 18,
-    rightSectionWidth,
-    12
-  );
-  addMetaPair(
-    "END DATE",
-    formatDate(agreement.agreementenddate),
-    rightX,
-    cursorY - 72,
-    rightSectionWidth,
-    13
-  );
-  addLine(
-    middleX - infoGap / 2,
-    cursorY - 16,
-    middleX - infoGap / 2,
-    cursorY - infoCardHeight + 16,
-    [0.9, 0.93, 0.96],
-    0.8
-  );
-  addLine(
-    rightX - infoGap / 2,
-    cursorY - 16,
-    rightX - infoGap / 2,
-    cursorY - infoCardHeight + 16,
-    [0.9, 0.93, 0.96],
-    0.8
-  );
-  cursorY -= infoCardHeight + 20;
+    paymentTerms: {
+      monthlyRentalExclGST:
+        toNum(agreement.pricingtermssnapshot?.monthlyamount) || totalMonthly,
+      gstType: options.gstType ?? "CGST+SGST",
+      cgstPercentage: options.cgstPercentage ?? 9,
+      sgstPercentage: options.sgstPercentage ?? 9,
+      igstPercentage: options.igstPercentage ?? 18,
+      paymentDueDay: options.paymentDueDay ?? 5,
+      latePaymentPenaltyPct: options.latePaymentPenaltyPct ?? 2,
+      latePaymentGraceDays: options.latePaymentGraceDays ?? 15,
+      firstMonthProRata: options.firstMonthProRata ?? true,
+      acceptedPaymentModes: options.acceptedPaymentModes ?? [
+        "NEFT",
+        "RTGS",
+        "UPI",
+        "Cheque",
+      ],
+      paymentFavourOf: "TEQIT",
+    },
 
-  const cardGap = 18;
-  const cardWidth = (CONTENT_WIDTH - cardGap) / 2;
-  ensureSpace(98);
-  addRectangle(PAGE_MARGIN, cursorY, cardWidth, 82, {
-    fillColor: [1, 1, 1],
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  addText("BILLING FREQUENCY", PAGE_MARGIN + 16, cursorY - 22, {
-    font: "F2",
-    size: 10,
-    color: MUTED_TEXT_COLOR,
-  });
-  addText(formatTitleCase(agreement.billingfrequency), PAGE_MARGIN + 16, cursorY - 48, {
-    font: "F2",
-    size: 16,
-  });
-  addText(
-    `Month Count: ${agreementMonthCount != null ? `${agreementMonthCount} Month${agreementMonthCount === 1 ? "" : "s"}` : "-"}`,
-    PAGE_MARGIN + 16,
-    cursorY - 68,
-    {
-      size: 10,
-      color: MUTED_TEXT_COLOR,
-    }
-  );
+    securityDeposit: {
+      amount: toNum(options.securityDepositAmount),
+      chequeTransferRef: options.securityDepositRef ?? null,
+      refundTimingDays: options.refundTimingDays ?? 15,
+      adjustableAgainstRent: false,
+    },
 
-  const pricingX = PAGE_MARGIN + cardWidth + cardGap;
-  addRectangle(pricingX, cursorY, cardWidth, 82, {
-    fillColor: [1, 1, 1],
-    strokeColor: BORDER_COLOR,
-    lineWidth: 1,
-  });
-  addText("PRICING SNAPSHOT", pricingX + 16, cursorY - 22, {
-    font: "F2",
-    size: 10,
-    color: MUTED_TEXT_COLOR,
-  });
-  addText(
-    `Monthly: ${formatCurrency(
-      agreement.pricingtermssnapshot?.monthlyamount ?? 0
-    )}`,
-    pricingX + 16,
-    cursorY - 48,
-    { size: 12 }
-  );
-  addText(
-    `Total: ${formatCurrency(
-      agreement.pricingtermssnapshot?.totalcontractvalue ?? 0
-    )}`,
-    pricingX + 16,
-    cursorY - 68,
-    { size: 12 }
-  );
-  cursorY -= 98;
+    logistics: {
+      deliveryAddress:
+        options.deliveryAddress ??
+        assets[0]?.location ??
+        "",
+      logisticsChargesBorneBy: options.logisticsChargesBorneBy ?? "Lessee",
+      relocationConsentRequired: true,
+    },
 
-  renderAssetTable("CURRENT ASSET", currentAssets);
-  if (historyAssets.length > 0) {
-    renderAssetTable("ASSET HISTORY", historyAssets, "history");
-  }
+    equipment: {
+      items: equipmentItems,
+      totalMonthlyRentalExclGST: totalMonthly,
+    },
 
-  const terms = [
-    "This agreement governs the rental assets listed above for the stated contract period.",
-    "Recurring rental billing follows the configured billing frequency and continues unless stopped by an approved rental workflow.",
-    "Replacement, return, lost, damaged, renewal, and stop-rental actions must be processed through the ticket-driven rental service workflow.",
-  ];
+    deliveryAcknowledgement: {
+      customerName: customerName,
+      deliveryDate:
+        normaliseEpoch(assets[0]?.rentstartdate) ??
+        normaliseEpoch(agreement.agreementstartdate),
+      deliveryAddress:
+        options.deliveryAddress ?? assets[0]?.location ?? "",
+      conditionReport,
+      lessorDeliveryRepName: options.lessorDeliveryRepName ?? "",
+      lesseeRecipientName:
+        options.lesseeRecipientName ?? customerName ?? "",
+      lesseeRecipientDate:
+        normaliseEpoch(assets[0]?.rentstartdate) ??
+        normaliseEpoch(agreement.agreementstartdate),
+    },
 
-  const estimatedTermsHeight =
-    30 +
-    terms.reduce((total, term) => {
-      return total + wrapText(term, CONTENT_WIDTH - 42, 10).length * 16;
-    }, 0);
-  ensureSpace(estimatedTermsHeight + 60);
-  addText("TERMS AND CONDITIONS", PAGE_MARGIN, cursorY, {
-    font: "F2",
-    size: 12,
-  });
-  cursorY -= 22;
+    theftLossDeclaration: {
+      declarationDate: null,
+      incidentDate: null,
+      incidentTime: null,
+      incidentLocation: null,
+      affectedAssetNumbers: assets.map((a: any) => a.assetnumber ?? "-"),
+      affectedSerialNumbers: assets.map((a: any) => a.assetnumber ?? "-"),
+      circumstancesOfLoss: null,
+      incidentType: "stolen / lost",
+      firNcNumber: null,
+      policeStation: null,
+      firFilingDate: null,
+      signatoryName: options.lesseeSignatoryName ?? customerName ?? "",
+      signatoryDesignation: options.lesseeSignatoryDesignation ?? "",
+    },
 
-  terms.forEach((term, index) => {
-    const wrapped = wrapText(term, CONTENT_WIDTH - 42, 10);
-    addText(`${index + 1}.`, PAGE_MARGIN, cursorY, {
-      font: "F2",
-      size: 10,
-    });
-    addWrappedText(term, PAGE_MARGIN + 18, cursorY, CONTENT_WIDTH - 42, {
-      size: 10,
-      lineGap: 4,
-    });
-    cursorY -= wrapped.length * 14 + 10;
-  });
-
-  cursorY -= 18;
-  ensureSpace(50);
-  addLine(PAGE_MARGIN, cursorY, PAGE_MARGIN + 220, cursorY);
-  addText("Authorized Signatory", PAGE_MARGIN, cursorY - 16, {
-    size: 10,
-    color: MUTED_TEXT_COLOR,
-  });
-  addLine(
-    PAGE_MARGIN + CONTENT_WIDTH - 220,
-    cursorY,
-    PAGE_MARGIN + CONTENT_WIDTH,
-    cursorY
-  );
-  addText(
-    "Customer Acknowledgement",
-    PAGE_MARGIN + CONTENT_WIDTH - 220,
-    cursorY - 16,
-    {
-      size: 10,
-      color: MUTED_TEXT_COLOR,
-    }
-  );
-
-  const objects: string[] = [];
-  objects[1] = `<< /Type /Catalog /Pages 2 0 R >>`;
-  objects[2] = "";
-  objects[3] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>`;
-  objects[4] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>`;
-
-  const logoObjectId = logo ? 5 : null;
-  if (logoObjectId) {
-    objects[logoObjectId] =
-      `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} ` +
-      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.buffer.length} >>\nstream\n` +
-      logo.buffer.toString("binary") +
-      `\nendstream`;
-  }
-
-  const firstPageObjectId = logoObjectId ? 6 : 5;
-  const firstContentObjectId = firstPageObjectId + pages.length;
-  const pageRefs = pages
-    .map((_, index) => `${firstPageObjectId + index} 0 R`)
-    .join(" ");
-  objects[2] = `<< /Type /Pages /Kids [${pageRefs}] /Count ${pages.length} >>`;
-
-  pages.forEach((page, index) => {
-    const pageObjectId = firstPageObjectId + index;
-    const contentObjectId = firstContentObjectId + index;
-    const xObjectSection = logoObjectId
-      ? `/XObject << /Im1 ${logoObjectId} 0 R >> `
-      : "";
-    objects[pageObjectId] =
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] ` +
-      `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> ${xObjectSection}>> ` +
-      `/Contents ${contentObjectId} 0 R >>`;
-
-    const stream = page.commands.join("\n");
-    const streamLength = Buffer.byteLength(stream, "binary");
-    objects[contentObjectId] =
-      `<< /Length ${streamLength} >>\nstream\n${stream}\nendstream`;
-  });
-
-  let pdfContent = "%PDF-1.4\n";
-  const offsets: number[] = [0];
-
-  for (let objectId = 1; objectId < objects.length; objectId += 1) {
-    offsets[objectId] = Buffer.byteLength(pdfContent, "binary");
-    pdfContent += `${objectId} 0 obj\n${objects[objectId]}\nendobj\n`;
-  }
-
-  const xrefOffset = Buffer.byteLength(pdfContent, "binary");
-  pdfContent += `xref\n0 ${objects.length}\n`;
-  pdfContent += "0000000000 65535 f \n";
-
-  for (let objectId = 1; objectId < objects.length; objectId += 1) {
-    pdfContent += `${String(offsets[objectId]).padStart(10, "0")} 00000 n \n`;
-  }
-
-  pdfContent += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdfContent, "binary");
+    signatures: {
+      lessorSignatoryName:
+        options.lessorSignatoryName ?? "Authorized Representative",
+      lessorSignatoryDesignation: options.lessorSignatoryDesignation ?? "Director",
+      lessorSignatureDate: Math.floor(Date.now() / 1000),
+      lesseeSignatoryName:
+        options.lesseeSignatoryName ?? customerName ?? "",
+      lesseeSignatoryDesignation: options.lesseeSignatoryDesignation ?? "",
+      lesseeSignatureDate: null,
+      witness1Name: options.witness1Name ?? null,
+      witness1SignatureDate: null,
+      witness2Name: options.witness2Name ?? null,
+      witness2SignatureDate: null,
+    },
+  };
 };
 
+// ── Puppeteer PDF generator ──────────────────────────────────────────────────
+const generatePdfBuffer = async (html: string): Promise<Buffer> => {
+  // Dynamic import so the service still loads even if puppeteer isn't installed yet
+  let browser: any;
+  try {
+    const puppeteer = await import("puppeteer-core");
+    let executablePath: string;
+
+    // Try @sparticuz/chromium first (GCP/Cloud Run compatible)
+    try {
+      const chromium = await import("@sparticuz/chromium");
+      executablePath = await chromium.default.executablePath();
+      browser = await puppeteer.default.launch({
+        args: chromium.default.args,
+        defaultViewport: { width: 1280, height: 800 },
+        executablePath,
+        headless: true,
+      });
+    } catch {
+      // Fallback: try local Chrome/Chromium
+      const possiblePaths = [
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+      ];
+      const fs = await import("fs");
+      executablePath =
+        possiblePaths.find((p) => fs.default.existsSync(p)) ?? "";
+      if (!executablePath) {
+        throw new Error(
+          "No Chrome/Chromium executable found. Install @sparticuz/chromium or Google Chrome."
+        );
+      }
+      browser = await puppeteer.default.launch({
+        executablePath,
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+    }
+
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
+
+    const pdf = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "0mm", bottom: "0mm", left: "0mm", right: "0mm" },
+    });
+
+    await browser.close();
+    return Buffer.from(pdf);
+  } catch (err) {
+    if (browser) {
+      try { await browser.close(); } catch { /* ignore */ }
+    }
+    throw err;
+  }
+};
+
+// ── Public service ───────────────────────────────────────────────────────────
 export module rentalAgreementPdfService {
   export const generateAgreementPdf = async (
     agreement: any,
     assets: any[],
-    _options?: { logoUrl?: string | null }
+    options: {
+      logoUrl?: string | null;
+      lesseeCompanyName?: string | null;
+      lesseeAddress?: string | null;
+      lesseeGstin?: string | null;
+      lesseeSignatoryName?: string | null;
+      lesseeSignatoryDesignation?: string | null;
+      securityDepositAmount?: number | null;
+      securityDepositRef?: string | null;
+      minimumLockInMonths?: number | null;
+      customTermsClause?: string | null;
+      arbitrationCity?: string | null;
+      jurisdictionCity?: string | null;
+      lessorDeliveryRepName?: string | null;
+      [key: string]: any;
+    } = {}
   ) => {
+    // 1. Build data
+    const data = buildAgreementData(agreement, assets, options);
+
+    // 2. Render HTML via Handlebars
+    const template = getRentalAgreementTemplate();
+    const html = template(data);
+
+    // 3. Generate PDF via Puppeteer
+    const pdfBuffer = await generatePdfBuffer(html);
+
+    // 4. Upload to GCP Cloud Storage
     const safeAgreementNumber = sanitizeFileName(
       agreement.agreementnumber ?? agreement.id
     );
-    const pdfBuffer = buildPdfDocument(agreement, assets);
     const generatedAt = Date.now();
     const destination = `${RENTAL_AGREEMENT_FOLDER}/${safeAgreementNumber}.pdf`;
     const bucket = admin.storage().bucket(RENTAL_AGREEMENT_BUCKET);
@@ -908,17 +308,12 @@ export module rentalAgreementPdfService {
         },
       });
     } catch (error: any) {
-      const errorMessage = String(error?.message || "");
-
-      if (
-        errorMessage.includes("invalid_grant") ||
-        errorMessage.includes("Invalid JWT Signature")
-      ) {
+      const msg = String(error?.message ?? "");
+      if (msg.includes("invalid_grant") || msg.includes("Invalid JWT Signature")) {
         throw new Error(
-          "GCP authentication failed for bucket upload. Use Application Default Credentials locally or the assigned Cloud Run identity for revo-dev-and-test."
+          "GCP authentication failed for bucket upload. Use Application Default Credentials locally or the assigned Cloud Run identity."
         );
       }
-
       throw error;
     }
 

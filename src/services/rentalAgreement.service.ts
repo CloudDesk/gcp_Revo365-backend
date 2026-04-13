@@ -4,7 +4,7 @@ import { rentalAgreementPdfService } from "./rentalAgreementPdf.service.js";
 const ACTIVE_RENTAL_ORDER_NAME = "rental";
 const DEFAULT_BILLING_FREQUENCY = "monthly";
 const DEFAULT_AGREEMENT_STATUS = "active";
-const AGREEMENT_TEMPLATE_VERSION = "v4_native_pdf_history_layout";
+const AGREEMENT_TEMPLATE_VERSION = "v1_html_teqit_14page";
 const NON_TERMINAL_AGREEMENT_STATUSES = new Set([
   "draft",
   "active",
@@ -456,13 +456,34 @@ const refreshAgreementContractSnapshot = async (
 
 const attachAgreementPdf = async (
   agreementId: number,
-  options: { logoUrl?: string | null; modifiedBy?: number | null } = {}
+  options: {
+    logoUrl?: string | null;
+    modifiedBy?: number | null;
+    // Lessee details
+    lesseeCompanyName?: string | null;
+    lesseeAddress?: string | null;
+    lesseeGstin?: string | null;
+    lesseeSignatoryName?: string | null;
+    lesseeSignatoryDesignation?: string | null;
+    // Financial
+    securityDepositAmount?: number | null;
+    securityDepositRef?: string | null;
+    minimumLockInMonths?: number | null;
+    // Legal
+    arbitrationCity?: string | null;
+    jurisdictionCity?: string | null;
+    customTermsClause?: string | null;
+    // Delivery
+    lessorDeliveryRepName?: string | null;
+    lesseeRecipientName?: string | null;
+    deliveryAddress?: string | null;
+  } = {}
 ) => {
   const agreementDetail = await getAgreementDetailById(agreementId);
   const pdfResult = await rentalAgreementPdfService.generateAgreementPdf(
     agreementDetail,
     agreementDetail.assets ?? [],
-    { logoUrl: options.logoUrl }
+    options
   );
 
   const updateResult = await query(
@@ -720,8 +741,22 @@ export module rentalAgreementService {
       let pdfWarning: string | null = null;
       try {
         await attachAgreementPdf(persistedAgreement.id, {
-          logoUrl: normalizeText(request.body?.logoUrl),
           modifiedBy: creatorId,
+          logoUrl: normalizeText(request.body?.logoUrl),
+          lesseeCompanyName: normalizeText(request.body?.lesseeCompanyName),
+          lesseeAddress: normalizeText(request.body?.lesseeAddress),
+          lesseeGstin: normalizeText(request.body?.lesseeGstin),
+          lesseeSignatoryName: normalizeText(request.body?.lesseeSignatoryName),
+          lesseeSignatoryDesignation: normalizeText(request.body?.lesseeSignatoryDesignation),
+          securityDepositAmount: request.body?.securityDepositAmount != null
+            ? Number(request.body.securityDepositAmount) : null,
+          securityDepositRef: normalizeText(request.body?.securityDepositRef),
+          minimumLockInMonths: request.body?.minimumLockInMonths != null
+            ? Number(request.body.minimumLockInMonths) : null,
+          arbitrationCity: normalizeText(request.body?.arbitrationCity),
+          jurisdictionCity: normalizeText(request.body?.jurisdictionCity),
+          customTermsClause: normalizeText(request.body?.customTermsClause),
+          deliveryAddress: normalizeText(request.body?.deliveryAddress),
         });
       } catch (pdfError: any) {
         console.error("Agreement PDF generation failed", pdfError);
@@ -751,8 +786,22 @@ export module rentalAgreementService {
   export const regenerateRentalAgreementPdf = async (request: any) => {
     const agreementId = toPositiveInteger(request.params?.id, "agreement id");
     const result = await attachAgreementPdf(agreementId, {
-      logoUrl: normalizeText(request.body?.logoUrl),
       modifiedBy: request.session?.id ?? null,
+      logoUrl: normalizeText(request.body?.logoUrl),
+      lesseeCompanyName: normalizeText(request.body?.lesseeCompanyName),
+      lesseeAddress: normalizeText(request.body?.lesseeAddress),
+      lesseeGstin: normalizeText(request.body?.lesseeGstin),
+      lesseeSignatoryName: normalizeText(request.body?.lesseeSignatoryName),
+      lesseeSignatoryDesignation: normalizeText(request.body?.lesseeSignatoryDesignation),
+      securityDepositAmount: request.body?.securityDepositAmount != null
+        ? Number(request.body.securityDepositAmount) : null,
+      securityDepositRef: normalizeText(request.body?.securityDepositRef),
+      minimumLockInMonths: request.body?.minimumLockInMonths != null
+        ? Number(request.body.minimumLockInMonths) : null,
+      arbitrationCity: normalizeText(request.body?.arbitrationCity),
+      jurisdictionCity: normalizeText(request.body?.jurisdictionCity),
+      customTermsClause: normalizeText(request.body?.customTermsClause),
+      deliveryAddress: normalizeText(request.body?.deliveryAddress),
     });
 
     return {
