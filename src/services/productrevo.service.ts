@@ -1563,12 +1563,18 @@ export module productrevoService {
       const queryText = `
           SELECT 
             p.*,
+            COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
             COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
             COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
             COALESCE(stock_counts.lostquantity, 0) AS lostquantity
           FROM product_revo p
           LEFT JOIN LATERAL (
             SELECT
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Reserved for Rental'
+              ) AS reservedforrentalquantity,
               COUNT(*) FILTER (
                 WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
                   AND stocktype = 'rental_product'
