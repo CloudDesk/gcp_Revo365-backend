@@ -1341,7 +1341,7 @@ export const allocateRentalStock = async (orders: any[]) => {
             if (orderLines.rows.length > 0) {
                 await inventoryReservationService.transitionCommittedReservationsForOrderLines(
                     orderLines.rows,
-                    "reserved",   // 🔥 important state
+                    "consumed",   // commit reservation on rental allocation
                     "rental_allocation"
                 );
             }
@@ -1351,3 +1351,64 @@ export const allocateRentalStock = async (orders: any[]) => {
         console.error("Error in allocateRentalStock:", error);
     }
 };
+
+    export const releaseReservedRentalStockForOrder = async (orderId: string) => {
+        try {
+            if (!orderId) return;
+            const result = await query(
+                `
+                UPDATE stock_revo
+                SET stockstatus = 'Available',
+                    orderid = NULL,
+                    orderlinenumber = NULL,
+                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                WHERE orderid = $1
+                  AND stockstatus = 'Reserved for Rental'
+                  AND stocktype = 'rental_product'
+                RETURNING puc
+                `,
+                [orderId]
+            );
+            const updatedPucs = Array.from(new Set((result.rows || []).map((r: any) => r.puc).filter(Boolean)));
+            for (const puc of updatedPucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+            if (updatedPucs.length > 0) {
+                await testinupdateQuantity(updatedPucs as string[], false);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrder:", error);
+            throw error;
+        }
+    };
+
+    export const releaseReservedRentalStockForOrderline = async (orderlinenumber: string) => {
+        try {
+            if (!orderlinenumber) return;
+            const result = await query(
+                `
+                UPDATE stock_revo
+                SET stockstatus = 'Available',
+                    orderid = NULL,
+                    orderlinenumber = NULL,
+                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                WHERE orderlinenumber = $1
+                  AND stockstatus = 'Reserved for Rental'
+                  AND stocktype = 'rental_product'
+                RETURNING puc
+                `,
+                [orderlinenumber]
+            );
+            const updatedPucs = Array.from(new Set((result.rows || []).map((r: any) => r.puc).filter(Boolean)));
+            for (const puc of updatedPucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+            if (updatedPucs.length > 0) {
+                await testinupdateQuantity(updatedPucs as string[], false);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrderline:", error);
+            throw error;
+        }
+    };
+}

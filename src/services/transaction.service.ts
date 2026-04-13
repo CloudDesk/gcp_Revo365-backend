@@ -948,7 +948,6 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId: str
     productamount: row.productamount,
     productname: row.productname,
     deliveryfrom: row.deliveryfrom,
-    uniqueorderid: row.uniqueorderid,
     merchanttransactionid: row.merchanttransactionid,
   }));
 
@@ -1730,7 +1729,7 @@ const finalizeCapturedRazorpayPayment = async ({
     let existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(
       merchantTransactionId
     );
-    if (existingTransaction.rows.length > 0) {
+    if (existingTransactionRecord) {
       const existingContext = await getOrderContextByMerchantTransactionId(
         merchantTransactionId
       );
@@ -1992,19 +1991,19 @@ const finalizeCapturedRazorpayPayment = async ({
       };
     }
 
-    const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
-    if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+    const expectedAmountPaiseFromContext = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
+    if (expectedAmountPaiseFromContext > 0 && Number(payment.amount) !== expectedAmountPaiseFromContext) {
       logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
         merchantTransactionId,
         status: 400,
         message: "Amount mismatch between order and payment",
-        expectedAmountPaise,
+        expectedAmountPaise: expectedAmountPaiseFromContext,
         receivedAmountPaise: Number(payment.amount),
       });
       return { status: 400, message: "Amount mismatch between order and payment" };
     }
 
-    const transactionPayload = {
+    const transactionPayloadForWebhook = {
       transaction: {
         merchanttransactionId: merchantTransactionId,
         name: context.user?.useremail || "unknown",
@@ -2027,7 +2026,7 @@ const finalizeCapturedRazorpayPayment = async ({
         orderLineItems: context.orderLineItems.length,
       });
       result = await transactionService.insertTransactionData(
-        transactionPayload,
+        transactionPayloadForWebhook,
         context.combinedOrderRows
       );
     } catch (error) {
