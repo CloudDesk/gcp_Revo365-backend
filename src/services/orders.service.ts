@@ -398,6 +398,8 @@ export module ordersService {
             validationErrors,
         };
     };
+    const normalizeComparableText = (value: any) =>
+        String(value ?? "").trim().toLowerCase();
 
     export const getlatestOrderData = async (request: any) => {
         try {
@@ -505,6 +507,12 @@ export module ordersService {
                 o.modifieddate AS order_modifieddate,
                 o.transactionid AS order_transactionId,
                 o.orderamount,
+                CASE
+                    WHEN LOWER(COALESCE(o.ordername, '')) = 'rental'
+                         AND COALESCE(active_rental.active_billing_line_count, 0) > 0
+                    THEN active_rental.active_rental_orderamount
+                    ELSE o.orderamount
+                END AS displayorderamount,
                 o.orderstatus,
                 o.delivereddate,
                 o.readytodispatchdate,
@@ -536,6 +544,28 @@ export module ordersService {
                 rr.return_request_requested_at,
                 rr.return_request_count
                 FROM orders o
+                LEFT JOIN LATERAL (
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                        ) AS active_billing_line_count,
+                        COALESCE(
+                            SUM(
+                                CASE
+                                    WHEN COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                                    THEN COALESCE(
+                                        NULLIF(TRIM(CAST(ol.orderamount AS TEXT)), ''),
+                                        '0'
+                                    )::numeric
+                                    ELSE 0
+                                END
+                            ),
+                            0
+                        ) AS active_rental_orderamount
+                    FROM orderline ol
+                    WHERE ol.uniqueorderid = o.orderid
+                      AND LOWER(COALESCE(ol.ordername, o.ordername, '')) = 'rental'
+                ) AS active_rental ON TRUE
                 LEFT JOIN address a ON o.addressid = a.id
                 LEFT JOIN users u ON o.userid = u.id
                LEFT JOIN (
@@ -983,17 +1013,20 @@ export module ordersService {
                     whereClauses.push(`(${qualifiedKey} != $${parameterIndex})`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
-                } else if (key !== "page" && key !== "count") {
-                    const qualifiedKey = key === "userid"
-                        ? "orderline.userid"
-                        : key === "id"
-                            ? "orderline.id"
-                            : qualifyOrderlineFilterColumn(key);
-                    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
-                    whereClauses.push(`(${clauses.join(" OR ")})`);
-                    queryParams.push(...paramValues);
-                    parameterIndex += paramValues.length;
-                }
+                } 
+                else if (key !== "page" && key !== "count") {
+    const qualifiedKey =
+        key === "userid"
+            ? "orderline.userid"
+            : key === "id"
+                ? "orderline.id"
+                : qualifyOrderlineFilterColumn(key);
+
+    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
+    whereClauses.push(`(${clauses.join(" OR ")})`);
+    queryParams.push(...paramValues);
+    parameterIndex += paramValues.length;
+}
             });
 
             const offset = (pageNumber - 1) * recordCount;
@@ -1098,6 +1131,7 @@ export module ordersService {
                 rows: [...result.rows, ...thirdPartyResult.rows]
                 // rowCount: result.rowCount + thirdPartyResult.rowCount
             };
+         // console.log("Combined Result:", combinedResult);
             // let datatypeCheckResult = await dataTypeCheck(combinedResult);
             // const messageData = {
             //     title: "Hello User",
@@ -1421,210 +1455,238 @@ ${whereClause} ${orderByClause}`;
         await restoreInventoryForReturnedLines(lineRows, previousStatuses);
     };
 
-    export const upsertOrder = async (orderData: any) => {
-        try {
-            let querydata: string;
-            let params: any[];
-            const { id, ...upsertFields } = orderData;
-            const fieldNames = Object.keys(upsertFields);
-            const fieldValues = Object.values(upsertFields);
-            const previousOrderResult = id
-                ? await query(`SELECT * FROM orders WHERE id = $1 LIMIT 1`, [id])
-                : { rows: [] };
-            const previousOrderRow = previousOrderResult.rows[0] || null;
+  export const upsertOrder = async (orderData: any) => {
+    try {
+        let querydata: string;
+        let params: any[];
 
-            if (id) {
-                querydata = `UPDATE orders SET ${fieldNames
-                    .map((field, index) => `${field} = $${index + 1}`)
-                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-                params = [...fieldValues, id];
-            } else {
-                querydata = `INSERT INTO orders (${fieldNames.join(
-                    ", "
-                )}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
-                params = fieldValues;
+        const { id, ...upsertFields } = orderData;
+        const fieldNames = Object.keys(upsertFields);
+        const fieldValues = Object.values(upsertFields);
+
+        const previousOrderResult = id
+            ? await query(`SELECT * FROM orders WHERE id = $1 LIMIT 1`, [id])
+            : { rows: [] };
+
+        const previousOrderRow = previousOrderResult.rows[0] || null;
+
+        if (id) {
+            querydata = `UPDATE orders SET ${fieldNames.map((f, i) => `${f} = $${i + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+            params = [...fieldValues, id];
+        } else {
+            querydata = `INSERT INTO orders (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`;
+            params = fieldValues;
+        }
+
+        const result = await query(querydata, params);
+        const updatedRow = result.rows[0];
+
+        const newStatus = normalizeOrderStatus(updatedRow?.orderstatus);
+        const orderType = normalizeComparableText(updatedRow?.ordername);
+
+        if (newStatus === 'cancelled') {
+            const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
+
+            const previousStatuses = new Map<number, string>();
+            lineRows.forEach(line => {
+                previousStatuses.set(Number(line.id), normalizeOrderStatus(line.orderstatus));
+            });
+
+            await query(
+                `UPDATE orderline
+                 SET orderstatus = 'cancelled'
+                 WHERE uniqueorderid = $1
+                 AND COALESCE(orderstatus, '') NOT IN ('cancelled','delivered','returned','payment_failed')`,
+                [updatedRow.orderid]
+            );
+
+            await releaseCommittedInventoryForCancellation(lineRows, previousStatuses);
+
+            const productIds = Array.isArray(updatedRow.productid)
+                ? updatedRow.productid
+                : [updatedRow.productid];
+
+            await productrevoService.updateCancelledOrderedQuantity(productIds, Number(updatedRow.quantity));
+
+            if (orderType === "rental") {
+                await stockRevoService.releaseReservedRentalStockForOrder(updatedRow.orderid);
             }
 
-            const result = await query(querydata, params);
-            const updatedRow = result.rows[0];
-            const newStatus = normalizeOrderStatus(updatedRow?.orderstatus);
+            await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
+            await cancelShiprocketOrderForMerchant(updatedRow.merchanttransactionid);
+        }
 
-            if (newStatus === 'cancelled') {
-                const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
-                const previousStatuses = new Map<number, string>();
-                lineRows.forEach((line) => {
-                    previousStatuses.set(Number(line.id), normalizeOrderStatus(line.orderstatus));
-                });
+        return result;
 
-                if (lineRows.length > 0) {
-                    await query(
-                        `UPDATE orderline
-                         SET orderstatus = $1
-                         WHERE uniqueorderid = $2
-                           AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'delivered', 'returned', 'payment_failed')`,
-                        ['cancelled', updatedRow.orderid]
-                    );
-                }
+    } catch (error) {
+        console.error("Query Execution Error: IN upsertOrder", error);
+        return await ErrorHandler.handleQueryError(error);
+    }
+};
 
-                await releaseCommittedInventoryForCancellation(lineRows, previousStatuses);
-                await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
-                await cancelShiprocketOrderForMerchant(updatedRow.merchanttransactionid);
+ export const updateorderlineitem = async (orderlineData: any) => {
+    try {
+        const { id, ...upsertFields } = orderlineData.body;
 
-                const userid = updatedRow.userid;
-                const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
-                const template = emailTemplates.orders.cancelled;
-                const orderId = updatedRow.orderid;
-                const orderAmount = updatedRow.orderamount;
-                let maildata = {
-                    body: {
-                        to: getuser.rows[0].useremail,
-                        subject: template.subject,
-                        text: template.text
-                            .replace('{orderId}', orderId)
-                            .replace('{orderAmount}', orderAmount),
-                    },
-                };
-                await sendTransactionalMail(maildata.body);
-            } else if (newStatus === 'returned') {
-                const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
-                const previousStatuses = new Map<number, string>();
-                lineRows.forEach((line) => {
-                    previousStatuses.set(Number(line.id), normalizeOrderStatus(line.orderstatus));
-                });
+        const fieldNames = Object.keys(upsertFields);
+        const fieldValues = Object.values(upsertFields);
 
-                if (lineRows.length > 0) {
-                    await query(
-                        `UPDATE orderline
-                         SET orderstatus = $1
-                         WHERE uniqueorderid = $2
-                           AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')`,
-                        ['returned', updatedRow.orderid]
-                    );
-                }
+        const previousLineResult = id
+            ? await query(`SELECT * FROM orderline WHERE id = $1 LIMIT 1`, [id])
+            : { rows: [] };
 
-                await restoreInventoryForReturnedLines(lineRows, previousStatuses);
-                await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
-            } else if (['ordered', 'processing', 'ready_to_dispatch', 'dispatched', 'shipped', 'delivered', 'payment_failed'].includes(newStatus)) {
-                const timestampAssignment = getLifecycleTimestampAssignment(newStatus);
-                await query(
-                    `UPDATE orderline
-                     SET orderstatus = $1
-                     WHERE uniqueorderid = $2
-                       AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'delivered', 'payment_failed')`,
-                    [newStatus, updatedRow.orderid]
+        const previousLineRow = previousLineResult.rows[0] || null;
+
+        let querydata: string;
+        let params: any[];
+
+        if (id) {
+            querydata = `UPDATE orderline SET ${fieldNames.map((f, i) => `${f} = $${i + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+            params = [...fieldValues, id];
+        } else {
+            querydata = `INSERT INTO orderline (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`;
+            params = fieldValues;
+        }
+
+        const result = await query(querydata, params);
+        const lineRow = result.rows[0];
+
+        const lineStatus = normalizeOrderStatus(lineRow?.orderstatus);
+        const previousStatus = normalizeOrderStatus(previousLineRow?.orderstatus);
+        const orderType = normalizeComparableText(lineRow?.ordername);
+
+        if (lineStatus === 'cancelled') {
+            await releaseCommittedInventoryForCancellation(
+                [lineRow],
+                new Map([[Number(lineRow.id), previousStatus]])
+            );
+
+            if (lineRow?.ordertype === 'Orders') {
+                await productrevoService.updateCancelledOrderedQuantity(
+                    [lineRow.productid],
+                    Number(lineRow.quantity)
                 );
-                await syncSingleHeaderStatusFromLines(updatedRow.orderid, previousOrderRow?.ordertype || 'Orders');
             }
-            return result;
+
+            if (orderType === "rental") {
+                await stockRevoService.releaseReservedRentalStockForOrderline(lineRow.orderlinenumber);
+            }
+
+            await cancelShiprocketOrderForMerchant(lineRow.merchanttransactionid);
         }
-        catch (error) {
-            console.error("Query Execution Error: IN upsertOrder", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+
+        if (lineRow?.uniqueorderid) {
+            await syncSingleHeaderStatusFromLines(lineRow.uniqueorderid, lineRow?.ordertype);
         }
+
+        return result;
+
+    } catch (error) {
+        console.error("Query Execution Error: IN updateorderlineitem", error);
+        return await ErrorHandler.handleQueryError(error);
+    }
+};
+
+    const parseOrderlineIds = (value: any) => {
+        if (value == null || value === "") {
+            return [] as number[];
+        }
+
+        const rawValues = Array.isArray(value)
+            ? value
+            : String(value)
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+
+        const parsedValues = rawValues
+            .map((entry: any) => Number(entry))
+            .filter((entry: number) => Number.isFinite(entry) && entry > 0)
+            .map((entry: number) => Math.trunc(entry));
+
+        return Array.from(new Set(parsedValues));
     };
 
-    export const updateorderlineitem = async (orderlineData: any) => {
-        try {
-            console.log('Inside updateorderlineitem function with data:', orderlineData);
-            let querydata: string;
-            let params: any[];
-            const { id, ...upsertFields } = orderlineData.body;
-            const fieldNames = Object.keys(upsertFields);
-            const fieldValues = Object.values(upsertFields);
-            const previousLineResult = id
-                ? await query(`SELECT * FROM orderline WHERE id = $1 LIMIT 1`, [id])
-                : { rows: [] };
-            const previousLineRow = previousLineResult.rows[0] || null;
-
-            if (id) {
-                querydata = `UPDATE orderline SET ${fieldNames
-                    .map((field, index) => `${field} = $${index + 1}`)
-                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-                params = [...fieldValues, id];
-            } else {
-                querydata = `INSERT INTO orderline (${fieldNames.join(
-                    ", "
-                )}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
-                params = fieldValues;
-            }
-            const result = await query(querydata, params);
-            const lineRow = result.rows[0];
-            const lineStatus = normalizeOrderStatus(lineRow?.orderstatus);
-            const lineType = lineRow?.ordertype;
-            const previousStatus = normalizeOrderStatus(previousLineRow?.orderstatus);
-
-            if (lineStatus === 'cancelled') {
-                await releaseCommittedInventoryForCancellation(
-                    [lineRow],
-                    new Map<number, string>([[Number(lineRow.id), previousStatus]])
-                );
-                await cancelShiprocketOrderForMerchant(lineRow.merchanttransactionid);
-
-                const userid = lineRow.userid;
-                const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
-                const template = emailTemplates.orders.cancelled;
-                const orderId = lineRow.orderid;
-                const orderAmount = lineRow.orderamount;
-                let maildata = {
-                    body: {
-                        to: getuser.rows[0].useremail,
-                        subject: template.subject,
-                        text: template.text
-                            .replace('{orderId}', orderId)
-                            .replace('{orderAmount}', orderAmount),
-                    },
-                };
-                await sendTransactionalMail(maildata.body);
-            } else if (lineStatus === 'returned') {
-                await restoreInventoryForReturnedLines(
-                    [lineRow],
-                    new Map<number, string>([[Number(lineRow.id), previousStatus]])
-                );
-            }
-
-            if (lineRow?.uniqueorderid) {
-                await syncSingleHeaderStatusFromLines(lineRow.uniqueorderid, lineType);
-            }
-            return result;
-        }
-        catch (error) {
-            console.error("Query Execution Error: IN updateorderlineitem", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
-        }
-    };
+    const getBillingChainKey = (row: any) => Number(row.parentorderlineid ?? row.id);
 
     export const getInvoiceGeneratedData = async (request: any) => {
         try {
-            console.log('Inside getInvoiceGeneratedData function with request:', request.params);
+            console.log('Inside getInvoiceGeneratedData function with request:', request.params, request.query);
             const orderId = request.params.uniqueorderid;
-            console.log('Order ID:', orderId);
-            const result = await query(`SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
-            console.log('Query Result:', result.rows);
-            if (result.rows.length === 0) {
-                return { error: "No order found for the given order ID." };
+            const requestedOrderlineIds = parseOrderlineIds(request.query?.orderlineids);
+
+            let result;
+            if (requestedOrderlineIds.length > 0) {
+                result = await query(
+                    `
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [requestedOrderlineIds]
+                );
             } else {
-                const rows = result.rows;
-
-                const aggregated = {
-                    // If all invoicegenerated true, then true, else false
-                    invoicegenerated: rows.every(r => r.invoicegenerated === true),
-
-                    // Maximum generatedmonthscount among orderlines
-                    generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
-
-                    // Maximum rentalfor (longest rental period)
-                    rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
-                };
-
-                return aggregated;
-
+                result = await query(
+                    `
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [orderId]
+                );
             }
+
+            if (result.rows.length === 0) {
+                return {
+                    invoicegenerated: false,
+                    generatedmonthscount: 0,
+                    rentalfor: 0,
+                    activebillinglineids: [],
+                    hasbillingconflict: false,
+                    billingconflictchains: []
+                };
+            }
+
+            const rows = result.rows;
+            const chainCounts = rows.reduce((acc: Record<string, number>, row: any) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+
+            return {
+                invoicegenerated: rows.every((r: any) => r.invoicegenerated === true),
+                generatedmonthscount: Math.max(...rows.map((r: any) => r.generatedmonthscount ?? 0)),
+                rentalfor: Math.max(...rows.map((r: any) => r.rentalfor ?? 0)),
+                activebillinglineids: rows.map((row: any) => row.id),
+                hasbillingconflict: billingconflictchains.length > 0,
+                billingconflictchains
+            };
         } catch (error) {
             console.error("Query Execution Error: IN getInvoiceGeneratedData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
@@ -1637,29 +1699,78 @@ ${whereClause} ${orderByClause}`;
         try {
             console.log("Inside update", request.body);
             const { uniqueorderid } = request.body;
-            console.log("Unique Order ID:", uniqueorderid);
+            const requestedOrderlineIds = parseOrderlineIds(request.body?.orderlineids);
+            console.log("Unique Order ID:", uniqueorderid, 'Requested orderline ids:', requestedOrderlineIds);
 
-            // 1️⃣ Get all orderlines for this uniqueorderid
-            const { rows } = await query(
-                `SELECT id, rentalfor, generatedmonthscount 
-       FROM orderline 
-       WHERE uniqueorderid = $1`,
-                [uniqueorderid]
-            );
-            console.log("Orderlines fetched:", rows);
-            if (!rows.length) {
-                return { success: false, message: "No orderlines found" };
+            let rows: any[] = [];
+            if (requestedOrderlineIds.length > 0) {
+                const result = await query(
+                    `
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [requestedOrderlineIds]
+                );
+                rows = result.rows;
+            } else {
+                const result = await query(
+                    `
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `,
+                    [uniqueorderid]
+                );
+                rows = result.rows;
             }
 
-            // 2️⃣ Filter the orderlines that still have months left
-            const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
+            console.log("Orderlines fetched:", rows);
+            if (!rows.length) {
+                return { success: false, message: "No active billing orderlines found" };
+            }
+
+            const chainCounts = rows.reduce((acc: Record<string, number>, row: any) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+
+            if (billingconflictchains.length > 0) {
+                return {
+                    success: false,
+                    message: "Multiple active billing lines exist in the same contract chain. Reconcile the billing chain before generating rental invoices.",
+                    billingconflictchains
+                };
+            }
+
+            const stillActive = rows.filter(
+                (row: any) =>
+                    Number(row.generatedmonthscount ?? 0) < Number(row.rentalfor ?? 0)
+            );
             console.log("Active rentals to update:", stillActive);
 
             if (!stillActive.length) {
                 return { success: false, message: "No active rental products to update" };
             }
 
-            // 3️⃣ Update only active rentals
             const idsToUpdate = stillActive.map(r => r.id);
             console.log("IDs to update:", idsToUpdate);
 
@@ -1685,9 +1796,6 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
-
-
-
     export const upsertOrderrfid = async (orderData: any) => {
         try {
             return await upsertOrderlinerfid(orderData);
@@ -1697,167 +1805,181 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
-    export const upsertOrderlinerfid = async (orderData: any) => {
-        try {
-            console.log("Order Data in upsertOrderlinerfid:", orderData);
-            const rfidMap = new Map();
-            for (const item of orderData) {
-                if (rfidMap.has(item.rfid)) {
-                    return {
-                        error: "Duplicate RFID detected: Same RFID has been scanned multiple times. Please scan a different RFID to proceed.",
-                        errorDetails: [],
-                        statusCode: 401
-                    };
-                }
-                rfidMap.set(item.rfid, true);
-            }
-            const rfids = orderData.map(item => item.rfid);
-            const validationValues = orderData.flatMap((item) => [item.rfid, item.productid]);
-            const validationTuples = orderData
-                .map((_, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::int)`)
-                .join(", ");
+ export const upsertOrderlinerfid = async (orderData: any) => {
+    try {
+        console.log("Order Data in upsertOrderlinerfid:", orderData);
 
-            const validationQuery = `
-                WITH requested(rfid, productid) AS (
-                    VALUES ${validationTuples}
-                )
-                SELECT requested.rfid, requested.productid, pr.puc
-                FROM requested
-                JOIN stock_revo sr
-                  ON sr.rfid = requested.rfid
-                 AND sr.stockstatus = 'Available'
-                JOIN product_revo pr
-                  ON pr.puc = sr.puc
-                 AND pr.id = requested.productid
-            `;
-            const validationResult = await query(validationQuery, validationValues);
-
-            // Check if all RFIDs were found
-            if (validationResult.rows.length !== orderData.length) {
-                const foundPairs = new Set(
-                    validationResult.rows.map((row) => `${row.rfid}::${row.productid}`)
-                );
-                const invalidRfids = orderData.filter(
-                    (item) => !foundPairs.has(`${item.rfid}::${item.productid}`)
-                );
+        // ✅ Prevent duplicate RFID scan
+        const rfidMap = new Map();
+        for (const item of orderData) {
+            if (rfidMap.has(item.rfid)) {
                 return {
-                    error: `Invalid RFIDs detected: ${invalidRfids.map(item => `${item.rfid} (product ${item.productid})`).join(', ')}`,
+                    error: "Duplicate RFID detected: Same RFID has been scanned multiple times.",
                     errorDetails: [],
-                    statusCode: 400
+                    statusCode: 401
                 };
             }
-
-            console.log('Before upsertStockRevoDatarfid:', orderData);
-            let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
-            if (updateStock.error) {
-                return { error: updateStock.error };
-            }
-            else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
-                const pucArray: string[] = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
-
-                // Determine if this is a rental order
-                // Try to get ordername from orderData first
-                let ordername = '';
-                for (const item of orderData) {
-                    if (item.ordername) {
-                        ordername = item.ordername;
-                        break;
-                    }
-                }
-
-                // If ordername not in request, fetch from database using orderlinenumber from updateStock result
-                if (!ordername && updateStock.result.rows.length > 0) {
-                    const orderlinenumber = updateStock.result.rows[0]?.orderlinenumber;
-                    if (orderlinenumber) {
-                        console.log("DEBUG: ordername not in request, querying database with orderlinenumber:", orderlinenumber);
-                        const orderlineQuery = await query(
-                            `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
-                            [orderlinenumber]
-                        );
-                        if (orderlineQuery.rows.length > 0) {
-                            ordername = orderlineQuery.rows[0].ordername || '';
-                            console.log("DEBUG: Fetched ordername from database:", ordername);
-                        }
-                    }
-                }
-
-                // Additional fallback: infer rental from stocktype on stock_revo.
-                // Do not use ecompublish=false as a rental signal because normal stock
-                // can also be hidden from e-commerce.
-                let isRental = false;
-                if (ordername) {
-                    isRental = ordername.toLowerCase().trim() === 'rental';
-                } else if (pucArray.length > 0) {
-                    // If still no ordername, check whether the product has active rental stock.
-                    console.log("DEBUG: No ordername found, checking stock_revo for rental stock");
-                    const stockTypeQuery = await query(
-                        `SELECT EXISTS (
-                            SELECT 1
-                            FROM stock_revo
-                            WHERE puc = $1
-                              AND stocktype = 'rental_product'
-                              AND (isdeleted = false OR isdeleted IS NULL)
-                              AND (isarchive = false OR isarchive IS NULL)
-                              AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
-                              AND (ewaste = false OR ewaste IS NULL)
-                        ) AS is_rental`,
-                        [pucArray[0]]
-                    );
-                    if (stockTypeQuery.rows.length > 0) {
-                        isRental = stockTypeQuery.rows[0].is_rental === true;
-                        console.log("DEBUG: Rental stock exists:", stockTypeQuery.rows[0].is_rental, "isRental:", isRental);
-                    }
-                }
-
-                console.log("DEBUG: Final ordername:", ordername, "isRental:", isRental);
-
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true, isRental);
-                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);
-                if (ordersToUpdate.length > 0) {
-                    let querydata = `
-                        UPDATE orderline 
-                        SET 
-                            orderstatus = 'ready_to_dispatch',
-                            deliveryfrom = CASE 
-                                ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
-                            END
-                        WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
-                        RETURNING *`;
-
-                    const params = ordersToUpdate.map(e => e.orderlinenumber);
-                    const result = await query(querydata, params);
-                    // Recompute branch-level JSONB after orderline status transition.
-                    // ordered_qty excludes ready_to_dispatch, so this clears stale
-                    // quantityforlocation[branch].orderedquantity after RFID scan.
-                    await stockRevoService.testinupdateQuantity(pucArray, false);
-                    await inventoryReservationService.transitionCommittedReservationsForOrderLines(
-                        result.rows.map((row: any) => ({
-                            merchanttransactionid: row.merchanttransactionid,
-                            productid: row.productid,
-                            quantity: row.quantity,
-                            ordername: row.ordername,
-                            ordertype: row.ordertype,
-                            deliveryfrom: row.deliveryfrom,
-                        })),
-                        "consumed",
-                        "rfid_dispatch"
-                    );
-                    await syncOrderHeadersFromOrderLines(
-                        Array.from(new Set(result.rows.map((row: any) => row.uniqueorderid).filter(Boolean)))
-                    );
-                    return result;
-                }
-            }
-            else {
-                return { error: updateStock };
-            }
-
-        } catch (error) {
-            console.error("Query Execution Error: IN upsertOrderlinerfid", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+            rfidMap.set(item.rfid, true);
         }
-    };
+
+        // ✅ Detect order type (rental or not)
+        let ordername = '';
+        for (const item of orderData) {
+            if (item.ordername) {
+                ordername = item.ordername;
+                break;
+            }
+        }
+
+        // fallback: fetch from DB
+        if (!ordername && orderData[0]?.orderlinenumber) {
+            const orderlineQuery = await query(
+                `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
+                [orderData[0].orderlinenumber]
+            );
+            ordername = orderlineQuery.rows[0]?.ordername || '';
+        }
+
+        const isRental = normalizeComparableText(ordername) === "rental";
+
+        // ✅ VALIDATION (MERGED LOGIC)
+        const validationValues = orderData.flatMap((item) => [item.rfid, item.productid]);
+        const validationTuples = orderData
+            .map((_, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::int)`)
+            .join(", ");
+
+        const validationQuery = `
+            WITH requested(rfid, productid) AS (
+                VALUES ${validationTuples}
+            )
+            SELECT requested.rfid, requested.productid
+            FROM requested
+            JOIN stock_revo sr
+              ON sr.rfid = requested.rfid
+             AND (
+                sr.stockstatus = 'Available'
+                OR (${isRental} = true AND sr.stockstatus = 'Reserved for Rental')
+             )
+            JOIN product_revo pr
+              ON pr.puc = sr.puc
+             AND pr.id = requested.productid
+        `;
+
+        const validationResult = await query(validationQuery, validationValues);
+
+        // ❌ Validate all RFIDs matched
+        if (validationResult.rows.length !== orderData.length) {
+            const foundPairs = new Set(
+                validationResult.rows.map((row) => `${row.rfid}::${row.productid}`)
+            );
+
+            const invalidRfids = orderData.filter(
+                (item) => !foundPairs.has(`${item.rfid}::${item.productid}`)
+            );
+
+            return {
+                error: `Invalid RFIDs: ${invalidRfids.map(i => `${i.rfid} (product ${i.productid})`).join(', ')}`,
+                errorDetails: [],
+                statusCode: 400
+            };
+        }
+
+        // ✅ Update stock
+        let updateStock: any = await stockRevoService.upsertStockRevoDatarfid(orderData);
+
+        if (updateStock.error) {
+            return { error: updateStock.error };
+        }
+
+        if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
+
+            const pucArray: string[] = Array.from(
+                new Set(updateStock.result.rows.map(row => row.puc))
+            );
+
+            // ✅ Fallback rental detection (stock-based)
+            let finalIsRental = isRental;
+
+            if (!ordername && pucArray.length > 0) {
+                const stockTypeQuery = await query(
+                    `SELECT EXISTS (
+                        SELECT 1 FROM stock_revo
+                        WHERE puc = $1 AND stocktype = 'rental_product'
+                        AND (isdeleted = false OR isdeleted IS NULL)
+                        AND (isarchive = false OR isarchive IS NULL)
+                        AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND (ewaste = false OR ewaste IS NULL)
+                    ) AS is_rental`,
+                    [pucArray[0]]
+                );
+
+                if (stockTypeQuery.rows.length > 0) {
+                    finalIsRental = stockTypeQuery.rows[0].is_rental === true;
+                }
+            }
+
+            console.log("DEBUG: ordername:", ordername, "isRental:", finalIsRental);
+
+            // ✅ Update quantity
+            await stockRevoService.updateQuantity(
+                pucArray,
+                updateStock.result.rowCount,
+                true,
+                finalIsRental
+            );
+
+            const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);
+
+            if (ordersToUpdate.length > 0) {
+                let querydata = `
+                    UPDATE orderline 
+                    SET 
+                        orderstatus = 'ready_to_dispatch',
+                        deliveryfrom = CASE 
+                            ${ordersToUpdate.map((e, idx) =>
+                                `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`
+                            ).join(' ')}
+                        END
+                    WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
+                    RETURNING *
+                `;
+
+                const params = ordersToUpdate.map(e => e.orderlinenumber);
+                const result = await query(querydata, params);
+
+                // ✅ Fix quantity JSON (important)
+                await stockRevoService.testinupdateQuantity(pucArray, false);
+
+                // ✅ Reservation → consumed
+                await inventoryReservationService.transitionCommittedReservationsForOrderLines(
+                    result.rows.map((row: any) => ({
+                        merchanttransactionid: row.merchanttransactionid,
+                        productid: row.productid,
+                        quantity: row.quantity,
+                        ordername: row.ordername,
+                        ordertype: row.ordertype,
+                        deliveryfrom: row.deliveryfrom,
+                    })),
+                    "consumed",
+                    "rfid_dispatch"
+                );
+
+                // ✅ Sync order headers
+                await syncOrderHeadersFromOrderLines(
+                    Array.from(new Set(result.rows.map((r: any) => r.uniqueorderid).filter(Boolean)))
+                );
+
+                return result;
+            }
+        }
+
+        return { error: updateStock };
+
+    } catch (error) {
+        console.error("Query Execution Error: IN upsertOrderlinerfid", error);
+        return await ErrorHandler.handleQueryError(error);
+    }
+};
     //     export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
     //     try {
     //         console.log('Transaction data:', transactionData);
@@ -2018,214 +2140,239 @@ ${whereClause} ${orderByClause}`;
     //     }
     // };
 
-    export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
-        try {
-            console.log('Transaction data:', transactionData);
-            console.log('Order data:', orderData);
-            console.log('Empty Before processing order data');
+ export const bulkInsertOrder = async (transactionData: any, orderData: any) => {
+    try {
+        console.log('Transaction data:', transactionData);
+        console.log('Order data:', orderData);
 
-            const merchantTransactionId =
-                transactionData?.merchantTransactionId ??
-                transactionData?.merchanttransactionId ??
-                transactionData?.merchanttransactionID ??
-                null;
-            const userId =
-                transactionData?.userId ??
-                transactionData?.userid ??
-                null;
-            const cgst = transactionData?.cgst;
-            const sgst = transactionData?.sgst;
-            const storelocation =
-                transactionData?.storelocation ??
-                transactionData?.storeLocation ??
-                null;
+        const merchantTransactionId =
+            transactionData?.merchantTransactionId ??
+            transactionData?.merchanttransactionId ??
+            transactionData?.merchanttransactionID ??
+            null;
 
-            if (orderData[0].addressid === null) {
-                const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
-                console.log('getAddress:', getAddress.rows);
-                const addressId = getAddress.rows[0]?.id;
-                orderData.forEach(order => {
-                    if (order.addressid === null) {
-                        order.addressid = addressId;
-                    }
-                })
-            }
-            console.log('Order Data after setting addressid:', orderData);
-            console.log('Empty After processing order data');
-            let cartId: number[] = [];
-            orderData.forEach((e: any) => {
-                cartId.push(e.cartId);
-                delete e.cartId;
-            });
-            console.log('Cart IDs:', cartId);
+        const userId =
+            transactionData?.userId ??
+            transactionData?.userid ??
+            null;
 
-            const fulfillmentBuckets = await buildFulfillmentBuckets(
-                orderData,
-                merchantTransactionId
+        const cgst = transactionData?.cgst;
+        const sgst = transactionData?.sgst;
+
+        const storelocation =
+            transactionData?.storelocation ??
+            transactionData?.storeLocation ??
+            null;
+
+        // ✅ Address fallback
+        if (orderData[0].addressid === null) {
+            const getAddress = await query(
+                `SELECT id FROM address WHERE userid = $1 LIMIT 1`,
+                [userId]
             );
-            const ordersToInsert = fulfillmentBuckets.ordersToInsert;
-            const thirdPartyOrdersToInsert = fulfillmentBuckets.thirdPartyOrdersToInsert;
 
-            if (fulfillmentBuckets.validationErrors.length > 0) {
-                return {
-                    error: 'Unable to fulfill one or more items with available rental inventory',
-                    errorDetails: fulfillmentBuckets.validationErrors,
-                    statusCode: 400,
-                };
-            }
+            const addressId = getAddress.rows[0]?.id;
 
-            console.log('Orders to insert:', ordersToInsert);
-            console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
-            console.log('Empty After splitting orders and third-party orders');
+            orderData.forEach(order => {
+                if (order.addressid === null) {
+                    order.addressid = addressId;
+                }
+            });
+        }
 
-            let combinedResult: any = { rows: [], command: 'INSERT' };
-            const client = await pool.connect();
+        // ✅ Extract cart IDs
+        let cartId: number[] = [];
+        orderData.forEach((e: any) => {
+            cartId.push(e.cartId);
+            delete e.cartId;
+        });
 
-            try {
-                await client.query('BEGIN');
+        // ✅ 🔥 USE CENTRALIZED LOGIC (IMPORTANT)
+        const fulfillmentBuckets = await buildFulfillmentBuckets(
+            orderData,
+            merchantTransactionId
+        );
 
-                // Process orders for orders table
-                if (ordersToInsert.length > 0) {
-                    let orderQuantity = ordersToInsert.reduce((acc: number, e: any) => {
-                        return acc + e.quantity;
-                    }, 0);
-                    let orderAmount = ordersToInsert.reduce((acc: number, e: any) => {
-                        return acc + (e.productamount * e.quantity);
-                    }, 0);
-                    let orderProductIds = ordersToInsert.map((e: any) => e.productid);
-                    const normalizedStoreLocation = typeof storelocation === 'string'
-                        ? storelocation.trim()
-                        : storelocation;
-                    const normalizedOrderLocation = typeof ordersToInsert[0]?.location === 'string'
+        const ordersToInsert = fulfillmentBuckets.ordersToInsert;
+        const thirdPartyOrdersToInsert = fulfillmentBuckets.thirdPartyOrdersToInsert;
+
+        // ❌ Stop if rental inventory insufficient
+        if (fulfillmentBuckets.validationErrors.length > 0) {
+            return {
+                error: 'Unable to fulfill one or more items with available rental inventory',
+                errorDetails: fulfillmentBuckets.validationErrors,
+                statusCode: 400,
+            };
+        }
+
+        console.log('Orders to insert:', ordersToInsert);
+        console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
+
+        let combinedResult: any = { rows: [], command: 'INSERT' };
+        const client = await pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // ============================
+            // ✅ ORDERS TABLE
+            // ============================
+            if (ordersToInsert.length > 0) {
+
+                const orderQuantity = ordersToInsert.reduce((acc: number, e: any) => acc + e.quantity, 0);
+                const orderAmount = ordersToInsert.reduce((acc: number, e: any) => acc + (e.productamount * e.quantity), 0);
+                const orderProductIds = ordersToInsert.map((e: any) => e.productid);
+
+                const normalizedStoreLocation =
+                    typeof storelocation === 'string' ? storelocation.trim() : storelocation;
+
+                const normalizedOrderLocation =
+                    typeof ordersToInsert[0]?.location === 'string'
                         ? ordersToInsert[0].location.trim()
                         : ordersToInsert[0]?.location;
-                    const resolvedStoreLocation = normalizedStoreLocation || normalizedOrderLocation || null;
 
-                    console.log('Order quantity for orders:', orderQuantity);
-                    console.log('Order amount for orders:', orderAmount);
-                    console.log('Order product IDs:', orderProductIds);
-                    console.log('Mid checkpoint: Before inserting orders');
-                    const finalMerchantTransactionId =
-                        merchantTransactionId != null && merchantTransactionId !== ''
-                            ? merchantTransactionId
-                            : ordersToInsert[0]?.merchanttransactionid;
-                    console.log('Final Merchant Transaction ID:', finalMerchantTransactionId);
-                    console.log('Empty');
+                const resolvedStoreLocation =
+                    normalizedStoreLocation || normalizedOrderLocation || null;
 
-                    const insertOrderQuery = `
-                    INSERT INTO orders (orderamount, userid, addressid, merchanttransactionid, quantity, productid,ordername,paymentmethod,totalrentalamount,sgst, cgst,storelocation, assetnumber, location, vendorname, empid, deliverydate, brand, invoicefor)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                    RETURNING *`;
-                    const insertOrderValues = [
-                        orderAmount,
-                        ordersToInsert[0].userid,
-                        ordersToInsert[0].addressid,
-                        finalMerchantTransactionId,
-                        orderQuantity,
-                        orderProductIds,
-                        ordersToInsert[0].ordername,
-                        ordersToInsert[0].paymentmethod,
-                        ordersToInsert[0].totalrentalamount,
-                        sgst,
-                        cgst,
-                        resolvedStoreLocation,
-                        ordersToInsert[0].assetnumber,
-                        ordersToInsert[0].location,
-                        ordersToInsert[0].vendorname,
-                        ordersToInsert[0].empid,
-                        ordersToInsert[0].deliverydate,
-                        ordersToInsert[0].brand,
-                        ordersToInsert[0].invoicefor
-                    ];
+                const finalMerchantTransactionId =
+                    merchantTransactionId != null && merchantTransactionId !== ''
+                        ? merchantTransactionId
+                        : ordersToInsert[0]?.merchanttransactionid;
 
-                    const orderResult = await client.query(insertOrderQuery, insertOrderValues);
-                    if (orderResult.command === 'INSERT') {
-                        const orderid = orderResult.rows[0].id;
-                        const orderidunique = orderResult.rows[0].orderid;
-                        const orderstatus = orderResult.rows[0].orderstatus;
-                        ordersToInsert.forEach((e: any) => {
-                            e.orderid = orderid;
-                            e.uniqueorderid = orderidunique;
-                            e.orderstatus = orderstatus;
-                            e.ordertype = 'Orders';
-                        });
-                        const orderlineResult = await bulkInsertOrderlines(ordersToInsert, client);
-                        if (orderlineResult.command !== 'INSERT' || orderlineResult.rowCount !== ordersToInsert.length) {
-                            throw new Error(`Order line insert mismatch for merchant transaction ${finalMerchantTransactionId}`);
-                        }
-                        console.log('Order lines inserted from orders:', orderlineResult.rows);
-                        console.log('Empty After inserting order lines');
-                        combinedResult.rows = [...combinedResult.rows, ...orderResult.rows];
+                const insertOrderQuery = `
+                    INSERT INTO orders (
+                        orderamount, userid, addressid, merchanttransactionid,
+                        quantity, productid, ordername, paymentmethod,
+                        totalrentalamount, sgst, cgst, storelocation,
+                        assetnumber, location, vendorname, empid,
+                        deliverydate, brand, invoicefor
+                    )
+                    VALUES (
+                        $1,$2,$3,$4,$5,$6,$7,$8,$9,
+                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+                    )
+                    RETURNING *
+                `;
+
+                const insertOrderValues = [
+                    orderAmount,
+                    ordersToInsert[0].userid,
+                    ordersToInsert[0].addressid,
+                    finalMerchantTransactionId,
+                    orderQuantity,
+                    orderProductIds,
+                    ordersToInsert[0].ordername,
+                    ordersToInsert[0].paymentmethod,
+                    ordersToInsert[0].totalrentalamount,
+                    sgst,
+                    cgst,
+                    resolvedStoreLocation,
+                    ordersToInsert[0].assetnumber,
+                    ordersToInsert[0].location,
+                    ordersToInsert[0].vendorname,
+                    ordersToInsert[0].empid,
+                    ordersToInsert[0].deliverydate,
+                    ordersToInsert[0].brand,
+                    ordersToInsert[0].invoicefor
+                ];
+
+                const orderResult = await client.query(insertOrderQuery, insertOrderValues);
+
+                if (orderResult.command === 'INSERT') {
+                    const orderid = orderResult.rows[0].id;
+                    const orderidunique = orderResult.rows[0].orderid;
+                    const orderstatus = orderResult.rows[0].orderstatus;
+
+                    ordersToInsert.forEach((e: any) => {
+                        e.orderid = orderid;
+                        e.uniqueorderid = orderidunique;
+                        e.orderstatus = orderstatus;
+                        e.ordertype = 'Orders';
+                    });
+
+                    const orderlineResult = await bulkInsertOrderlines(ordersToInsert, client);
+
+                    if (orderlineResult.command !== 'INSERT' ||
+                        orderlineResult.rowCount !== ordersToInsert.length) {
+                        throw new Error(`Order line insert mismatch`);
                     }
+
+                    combinedResult.rows.push(...orderResult.rows);
                 }
-
-                // Process orders for thirdpartyorders table
-                if (thirdPartyOrdersToInsert.length > 0) {
-                    console.log('Inside third-party orders');
-                    let thirdPartyOrderQuantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                        return acc + e.quantity;
-                    }, 0);
-                    let thirdPartyOrderAmount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
-                        return acc + (e.productamount * e.quantity);
-                    }, 0);
-                    let thirdPartyProductIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
-
-                    console.log('Order quantity for thirdpartyorders:', thirdPartyOrderQuantity);
-                    console.log('Order amount for thirdpartyorders:', thirdPartyOrderAmount);
-                    console.log('Third-party product IDs:', thirdPartyProductIds);
-                    console.log('Empty');
-
-                    const insertThirdPartyQuery = `
-                    INSERT INTO thirdpartyorders (orderamount, userid, addressid, merchanttransactionid, quantity, productid)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    RETURNING *`;
-                    const insertThirdPartyValues = [
-                        thirdPartyOrderAmount,
-                        thirdPartyOrdersToInsert[0].userid,
-                        thirdPartyOrdersToInsert[0].addressid,
-                        thirdPartyOrdersToInsert[0].merchanttransactionid,
-                        thirdPartyOrderQuantity,
-                        thirdPartyProductIds
-                    ];
-
-                    const thirdPartyResult = await client.query(insertThirdPartyQuery, insertThirdPartyValues);
-                    console.log('Third-party order result:', thirdPartyResult.rows);
-                    if (thirdPartyResult.command === 'INSERT') {
-                        const orderid = thirdPartyResult.rows[0].id;
-                        const orderidunique = thirdPartyResult.rows[0].orderid;
-                        const orderstatus = thirdPartyResult.rows[0].orderstatus;
-                        thirdPartyOrdersToInsert.forEach((e: any) => {
-                            e.thirdpartyorderid = orderid;
-                            e.uniqueorderid = orderidunique;
-                            e.orderstatus = orderstatus;
-                            e.ordertype = 'Third Party Orders';
-                        });
-                        const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert, client);
-                        if (orderlineResult.command !== 'INSERT' || orderlineResult.rowCount !== thirdPartyOrdersToInsert.length) {
-                            throw new Error(`Third-party order line insert mismatch for merchant transaction ${thirdPartyOrdersToInsert[0]?.merchanttransactionid}`);
-                        }
-                        console.log('Order lines inserted from third party:', orderlineResult.rows);
-                        console.log('Empty After inserting third-party order lines');
-                        combinedResult.rows = [...combinedResult.rows, ...thirdPartyResult.rows];
-                    }
-                }
-
-                await client.query('COMMIT');
-                return combinedResult.rows.length > 0
-                    ? combinedResult
-                    : { rows: [], command: 'NOOP', message: 'No orders processed' };
-            } catch (error) {
-                await client.query('ROLLBACK');
-                throw error;
-            } finally {
-                client.release();
             }
+
+            // ============================
+            // ✅ THIRD PARTY ORDERS
+            // ============================
+            if (thirdPartyOrdersToInsert.length > 0) {
+
+                const quantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => acc + e.quantity, 0);
+                const amount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => acc + (e.productamount * e.quantity), 0);
+                const productIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
+
+                const insertThirdPartyQuery = `
+                    INSERT INTO thirdpartyorders (
+                        orderamount, userid, addressid,
+                        merchanttransactionid, quantity, productid
+                    )
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                    RETURNING *
+                `;
+
+                const insertValues = [
+                    amount,
+                    thirdPartyOrdersToInsert[0].userid,
+                    thirdPartyOrdersToInsert[0].addressid,
+                    thirdPartyOrdersToInsert[0].merchanttransactionid,
+                    quantity,
+                    productIds
+                ];
+
+                const thirdPartyResult = await client.query(insertThirdPartyQuery, insertValues);
+
+                if (thirdPartyResult.command === 'INSERT') {
+                    const orderid = thirdPartyResult.rows[0].id;
+                    const orderidunique = thirdPartyResult.rows[0].orderid;
+                    const orderstatus = thirdPartyResult.rows[0].orderstatus;
+
+                    thirdPartyOrdersToInsert.forEach((e: any) => {
+                        e.thirdpartyorderid = orderid;
+                        e.uniqueorderid = orderidunique;
+                        e.orderstatus = orderstatus;
+                        e.ordertype = 'Third Party Orders';
+                    });
+
+                    const orderlineResult = await bulkInsertOrderlines(thirdPartyOrdersToInsert, client);
+
+                    if (orderlineResult.command !== 'INSERT' ||
+                        orderlineResult.rowCount !== thirdPartyOrdersToInsert.length) {
+                        throw new Error(`Third-party order line insert mismatch`);
+                    }
+
+                    combinedResult.rows.push(...thirdPartyResult.rows);
+                }
+            }
+
+            await client.query('COMMIT');
+
+            return combinedResult.rows.length > 0
+                ? combinedResult
+                : { rows: [], command: 'NOOP' };
+
         } catch (error) {
-            console.error("Query Execution Error: IN BulkinsertOrder", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
         }
-    };
+
+    } catch (error) {
+        console.error("Query Execution Error: IN bulkInsertOrder", error);
+        return await ErrorHandler.handleQueryError(error);
+    }
+};
+
+
     export const bulkInsertOrderlines = async (orderData: any[], runner?: any) => {
         try {
             console.log('Inside update bulkInsertOrderlines with orderData:', JSON.stringify(orderData, null, 2));
@@ -2508,3 +2655,5 @@ Thank You!`,
     };
 
 }
+
+

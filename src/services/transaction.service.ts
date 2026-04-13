@@ -15,6 +15,7 @@ import {
   REDIRECT_URL_SUCCESS,
 } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
+import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
@@ -934,6 +935,7 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId: str
 
   const orderLineItems = orderLineResult.rows.map((row) => ({
     id: row.id,
+    uniqueorderid: row.uniqueorderid,
     productid: row.productid,
     quantity: row.quantity,
     ordername: row.ordername,
@@ -1392,6 +1394,23 @@ const syncShiprocketAfterSuccessfulPayment = async (
   }
 };
 
+const resolveUniqueOrderIdFromContext = (context: any) => {
+  const candidates = [
+    context?.primaryOrderRow?.uniqueorderid,
+    context?.orderLineItems?.[0]?.uniqueorderid,
+    context?.combinedOrderRows?.[0]?.orderid,
+    context?.combinedOrderRows?.[0]?.uniqueorderid,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate != null && String(candidate).trim() !== "") {
+      return String(candidate).trim();
+    }
+  }
+
+  return null;
+};
+
 const createShiprocketOrderForTransaction = async (context: any, transactionData: any) => {
   try {
     const merchantTx = transactionData?.merchanttransactionId;
@@ -1680,6 +1699,9 @@ const finalizeCapturedRazorpayPayment = async ({
       [razorpayPaymentId, razorpayOrderId, merchantTransactionId]
     );
     if (existingTransaction.rows.length > 0) {
+      const existingContext = await getOrderContextByMerchantTransactionId(
+        merchantTransactionId
+      );
       logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
         merchantTransactionId,
         status: 200,
@@ -1689,7 +1711,10 @@ const finalizeCapturedRazorpayPayment = async ({
       return {
         status: 200,
         message: "Payment already processed",
-        data: { redirectUrl: REDIRECT_URL_SUCCESS },
+        data: {
+          redirectUrl: REDIRECT_URL_SUCCESS,
+          uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+        },
       };
     }
     logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
@@ -1705,6 +1730,25 @@ const finalizeCapturedRazorpayPayment = async ({
     let existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(
       merchantTransactionId
     );
+    if (existingTransaction.rows.length > 0) {
+      const existingContext = await getOrderContextByMerchantTransactionId(
+        merchantTransactionId
+      );
+      logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+        merchantTransactionId,
+        status: 200,
+        message: "Payment already processed",
+        reason: "existing-transaction-before-process",
+      });
+      return {
+        status: 200,
+        message: "Payment already processed",
+        data: {
+          redirectUrl: REDIRECT_URL_SUCCESS,
+          uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+        },
+      };
+    }
 
     if (verifyCheckoutSignature) {
       const generatedSignature = crypto
@@ -1941,11 +1985,77 @@ const finalizeCapturedRazorpayPayment = async ({
       return {
         status: 200,
         message: "Payment already processed",
-        data: { redirectUrl: REDIRECT_URL_SUCCESS },
+        data: {
+          redirectUrl: REDIRECT_URL_SUCCESS,
+          uniqueorderid: resolveUniqueOrderIdFromContext(context),
+        },
       };
     }
 
-    logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_START", {
+    const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
+    if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+      logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+        merchantTransactionId,
+        status: 400,
+        message: "Amount mismatch between order and payment",
+        expectedAmountPaise,
+        receivedAmountPaise: Number(payment.amount),
+      });
+      return { status: 400, message: "Amount mismatch between order and payment" };
+    }
+
+    const transactionPayload = {
+      transaction: {
+        merchanttransactionId: merchantTransactionId,
+        name: context.user?.useremail || "unknown",
+        amount: toSafeNumber(context.expectedAmountRupees, 0),
+        mobilenumber:
+          context.user?.usermobilenumber || context.address?.mobilenumber || null,
+        productid: context.productIds,
+        transactionfor: context.transactionFor,
+        userId: context.userId,
+        transactiondata: payment,
+        razorpay_signature: razorpaySignature || "",
+      },
+      order: context.orderLineItems,
+    };
+
+    let result: any;
+    try {
+      logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_START", {
+        merchantTransactionId,
+        orderLineItems: context.orderLineItems.length,
+      });
+      result = await transactionService.insertTransactionData(
+        transactionPayload,
+        context.combinedOrderRows
+      );
+    } catch (error) {
+      if (error?.code === "23505") {
+        const duplicateSnapshot = await getMerchantTransactionStateSnapshot(
+          merchantTransactionId
+        );
+        logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+          merchantTransactionId,
+          status: 200,
+          message: "Payment already processed",
+          reason: "unique-constraint",
+          duplicateSnapshot,
+        });
+        return {
+          status: 200,
+          message: "Payment already processed",
+          data: {
+            redirectUrl: REDIRECT_URL_SUCCESS,
+            uniqueorderid: resolveUniqueOrderIdFromContext(
+              await getOrderContextByMerchantTransactionId(merchantTransactionId)
+            ),
+          },
+        };
+      }
+      throw error;
+    }
+    logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
       merchantTransactionId,
       source: "reservation_ledger_with_orderline_fallback",
     });
@@ -2002,7 +2112,11 @@ const finalizeCapturedRazorpayPayment = async ({
     return {
       status: 200,
       message: "Payment verified and processed successfully",
-      data: { redirectUrl: REDIRECT_URL_SUCCESS },
+      uniqueorderid: resolveUniqueOrderIdFromContext(context),
+      data: {
+        redirectUrl: REDIRECT_URL_SUCCESS,
+        uniqueorderid: resolveUniqueOrderIdFromContext(context),
+      },
     };
   } finally {
     logWebhookStep(resolvedTraceId, "LOCK_RELEASE", {
@@ -2513,365 +2627,284 @@ export module transactionService {
     }
   };
 
-  export const paymentInitializationRazorpay = async (request: any) => {
-    try {
-      console.log("Inside paymentInitializationRazorpay service");
-      let {
+export const paymentInitializationRazorpay = async (request: any) => {
+  try {
+    console.log("Inside paymentInitializationRazorpay service");
+
+    let {
+      merchanttransactionId,
+      name,
+      amount,
+      mobilenumber,
+      userid,
+      productid,
+      transactionfor,
+    } = request.body.transaction;
+
+    let orderdata = request.body.order;
+
+    // ✅ Assign locations
+    await allocateProductLocationsForOrder(orderdata);
+    request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
+
+    // ✅ Build fulfillment
+    const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(
+      orderdata,
+      merchanttransactionId
+    );
+
+    if (fulfillmentBuckets.validationErrors.length > 0) {
+      return {
+        status: 400,
+        message: "One or more products are out of stock. Please try again later.",
+        errorDetails: fulfillmentBuckets.validationErrors,
+      };
+    }
+
+    // ✅ Refresh rental quantities
+    if (request.body?.order?.[0]?.invoicefor === "product rental") {
+      try {
+        const productIds = Array.from(
+          new Set(
+            (orderdata || [])
+              .map((item: any) => Number(item?.productid))
+              .filter((id: number) => Number.isFinite(id) && id > 0)
+          )
+        );
+
+        if (productIds.length > 0) {
+          const pucResult = await query(
+            `SELECT DISTINCT puc FROM product_revo WHERE id = ANY($1)`,
+            [productIds]
+          );
+
+          const pucs = (pucResult.rows || [])
+            .map((row: any) => String(row?.puc || "").trim())
+            .filter(Boolean);
+
+          await Promise.all(
+            pucs.map((puc: string) =>
+              productrevoService.updateCatalogueQuantities(puc)
+            )
+          );
+        }
+      } catch (error) {
+        console.warn("Rental quantity refresh failed:", error?.message || error);
+      }
+    }
+
+    // ======================================================
+    // ✅ CASH PAYMENT FLOW
+    // ======================================================
+    if (request.body.order[0].paymentmethod === "Cash") {
+
+      await inventoryReservationService.replaceHeldReservations(
         merchanttransactionId,
+        fulfillmentBuckets.ordersToInsert
+      );
+
+      const capacityCheck = await validateReservationCapacity(
+        fulfillmentBuckets.ordersToInsert,
+        merchanttransactionId
+      );
+
+      if (!capacityCheck.ok) {
+        await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+          merchanttransactionId,
+          "insufficient_inventory"
+        );
+
+        return {
+          status: 400,
+          message: "One or more products are out of stock. Please try again later.",
+        };
+      }
+
+      // ✅ Create order
+      const insertorderdata = await ordersService.bulkInsertOrder(
+        request.body.transaction,
+        request.body.order
+      );
+
+      const context = await getOrderContextByMerchantTransactionId(merchanttransactionId);
+
+      if (!context) {
+        await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+          merchanttransactionId,
+          "missing_order_context"
+        );
+        await safeCleanupPendingOrder(merchanttransactionId);
+
+        return {
+          status: 500,
+          message: "Unable to finalize cash order.",
+        };
+      }
+
+      // ✅ Insert transaction
+      const transactionPayload = {
+        transaction: {
+          merchanttransactionId,
+          name,
+          amount: toSafeNumber(amount, 0),
+          mobilenumber: mobilenumber === "" ? null : mobilenumber,
+          productid,
+          transactionfor,
+          userId: context.userId,
+          transactiondata: {
+            status: "Cash Paid",
+            provider: "offline_cash",
+            amount: toSafeNumber(amount, 0),
+          },
+          razorpay_signature: "",
+        },
+        order: context.orderLineItems,
+      };
+
+      const transactionResult = await insertTransactionData(
+        transactionPayload,
+        context.combinedOrderRows
+      );
+
+      if (
+        !transactionResult?.orderdata ||
+        !transactionResult?.transactionData
+      ) {
+        await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+          merchanttransactionId,
+          "cash_finalize_failed"
+        );
+        await safeCleanupPendingOrder(merchanttransactionId);
+
+        return {
+          status: 500,
+          message: "Unable to finalize cash order.",
+        };
+      }
+
+      // ✅ Commit inventory
+      await commitMerchantTransactionInventory(
+        merchanttransactionId,
+        context.orderLineItems
+      );
+
+      await deletePurchasedCartEntries(context.userId, orderdata);
+
+      await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
         name,
         amount,
         mobilenumber,
-        userid,
-        productid,
-        transactionfor,
-      } = request.body.transaction;
-      let orderdata = request.body.order;
-      await allocateProductLocationsForOrder(orderdata);
-      request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
-      console.log(">>body", request.body, ">>body");
-      console.log(">>Tran", request.body.transaction, ">>Tran");
-      console.log(">>orde", request.body.order, ">>orde");
-      console.log("End");
-      const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(
-        orderdata,
-        merchanttransactionId
-      );
-      if (fulfillmentBuckets.validationErrors.length > 0) {
-        return {
-          status: 400,
-          message:
-            "One or more products are out of stock. Please try again later.",
-          errorDetails: fulfillmentBuckets.validationErrors,
-        };
-      }
+      });
 
-      if (request.body.order[0].paymentmethod === "Cash") {
-        console.log("Inside Cash");
-        await inventoryReservationService.replaceHeldReservations(
-          merchanttransactionId,
-          fulfillmentBuckets.ordersToInsert
-        );
-
-        const capacityCheck = await validateReservationCapacity(
-          fulfillmentBuckets.ordersToInsert,
-          merchanttransactionId
-        );
-        console.log("Reservation capacity check:", capacityCheck);
-        if (!capacityCheck.ok) {
-          await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-            merchanttransactionId,
-            "insufficient_inventory"
-          );
-          return {
-            status: 400,
-            message:
-              "One or more products are out of stock. Please try again later.",
-          };
-        }
-
-        console.log("Merc Id:", merchanttransactionId);
-
-        const insertorderdata = await ordersService.bulkInsertOrder(
-          request.body.transaction,
-          request.body.order
-        );
-        const context = await getOrderContextByMerchantTransactionId(merchanttransactionId);
-        if (!context) {
-          await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-            merchanttransactionId,
-            "missing_order_context"
-          );
-          await safeCleanupPendingOrder(merchanttransactionId);
-          return {
-            status: 500,
-            message: "Unable to finalize cash order after order creation.",
-          };
-        }
-
-        const transactionPayload = {
-          transaction: {
-            merchanttransactionId,
-            name,
-            amount: toSafeNumber(amount, 0),
-            mobilenumber: mobilenumber === "" ? null : mobilenumber,
-            productid,
-            transactionfor,
-            userId: context.userId,
-            transactiondata: {
-              status: "Cash Paid",
-              provider: "offline_cash",
-              amount: toSafeNumber(amount, 0),
-            },
-            razorpay_signature: "",
-          },
-          order: context.orderLineItems,
-        };
-
-        const transactionResult = await insertTransactionData(
-          transactionPayload,
-          context.combinedOrderRows
-        );
-
-        if (
-          !transactionResult?.orderdata ||
-          !transactionResult?.transactionData ||
-          transactionResult.orderdata.length === 0
-        ) {
-          await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-            merchanttransactionId,
-            "cash_finalize_failed"
-          );
-          await safeCleanupPendingOrder(merchanttransactionId);
-          return {
-            status: 500,
-            message: "Unable to finalize cash order.",
-          };
-        }
-
-        await commitMerchantTransactionInventory(
-          merchanttransactionId,
-          context.orderLineItems
-        );
-        await deletePurchasedCartEntries(context.userId, orderdata);
-        await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
-          name,
-          amount,
-          mobilenumber,
-        });
-        console.log("end");
-        return {
-          status: 200,
-          data: {
-            status: "success",
-            message: "Order placed successfully",
-            // orderId: order.id,
-            // amount: order.amount,
-            // currency: order.currency,
-            // key: RAZORPAY_KEY_ID,
-            // redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-          },
-        };
-      } else {
-        console.log("online pay");
-        // Step 1: Reserve inventory for this checkout attempt
-        await inventoryReservationService.replaceHeldReservations(
-          merchanttransactionId,
-          fulfillmentBuckets.ordersToInsert
-        );
-
-        const capacityCheck = await validateReservationCapacity(
-          fulfillmentBuckets.ordersToInsert,
-          merchanttransactionId
-        );
-        console.log("Reservation capacity check:", capacityCheck);
-        if (!capacityCheck.ok) {
-          await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-            merchanttransactionId,
-            "insufficient_inventory"
-          );
-          return {
-            status: 400,
-            message:
-              "One or more products are out of stock. Please try again later.",
-          };
-        }
-
-        console.log("Merc Id:", merchanttransactionId);
-        const authoritativeAmount = computePayableAmountFromOrderInput(
-          orderdata,
-          amount
-        );
-
-        // Step 2: Create Razorpay order
-        const order = await razorpay.orders.create({
-          amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
-          currency: "INR",
-          receipt: merchanttransactionId,
-          notes: {
-            name,
-            mobilenumber,
-            userid,
-            transactionfor,
-          },
-        });
-
-        // Step 3: Persist provisional order rows tied to merchant transaction id
-        request.body.order.forEach((e) => {
-          e.merchanttransactionid = merchanttransactionId;
-        });
-
-        // Step 4: Create HTTP task and insert order data
-        try {
-          let createHttpTaskResult = await createHttpTask(merchanttransactionId);
-          console.log("Create Http Task Result:", createHttpTaskResult);
-          if (createHttpTaskResult?.success === false) {
-            console.warn(
-              "Cloud Task could not be created for transaction cleanup. Proceeding with order placement anyway. Error:",
-              createHttpTaskResult.error
-            );
-          }
-          console.log("Insert Order Data Result:", request.body.order);
-          let insertorderdata = await ordersService.bulkInsertOrder(
-            request.body.transaction,
-            request.body.order
-          );
-          if (
-            !insertorderdata ||
-            insertorderdata?.errorMessage ||
-            insertorderdata?.error ||
-            insertorderdata?.statusCode >= 400 ||
-            !Array.isArray(insertorderdata?.rows) ||
-            insertorderdata.rows.length === 0
-          ) {
-            throw new Error(
-              insertorderdata?.errorMessage ||
-              insertorderdata?.error ||
-              insertorderdata?.message ||
-              "Failed to initialize provisional order rows"
-            );
-          }
-          console.log("Insert Order Data Result:", insertorderdata.rows);
-        } catch (error) {
-          console.log(
-            error.message,
-            "Error in Task paymentInitializationRazorpay"
-          );
-          await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-            merchanttransactionId,
-            "order_initialization_error"
-          );
-          await safeCleanupPendingOrder(merchanttransactionId);
-          return {
-            status: 500,
-            message: "Error processing order. Inventory reservation has been released.",
-          };
-        }
-
-        // Step 5: Return Razorpay order details for frontend
-        return {
-          status: 200,
-          data: {
-            orderId: order.id,
-            amount: order.amount,
-            currency: order.currency,
-            key: RAZORPAY_KEY_ID,
-            redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-          },
-        };
-      }
-
-      // Step 1: Inventory check (same as PhonePe)
-      // dummyorderdata = orderdata.map((element: any) => ({ ...element }));
-      // productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
-      // let insertdata = await productrevoService.bulkupsertProducttosetZero(
-      //   orderdata,
-      //   false
-      // );
-
-      // const productId =
-      //   productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-      // const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
-      // const result = await query(queryText, productid);
-      // console.log("Result from product_revo:", result);
-      // console.log("Result from product_revo:", result.rows);
-      // const allQuantitiesAvailable = result.rows.every(
-      //   (product) =>
-      //     Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-      //     Number(
-      //       product.overallavailableqty - Number(product.orderedquantity)
-      //     ) >= 0
-      // );
-      // console.log("All quantities available:", allQuantitiesAvailable);
-      // if (!allQuantitiesAvailable) {
-      //   return {
-      //     status: 400,
-      //     message:
-      //       "One or more products are out of stock. Please try again later.",
-      //   };
-      // }
-
-      // transactionDataset = request.body;
-      // console.log("Transaction Data from inital:", transactionDataset);
-      // console.log('Merc Id:', merchanttransactionId);
-      // // Step 2: Create Razorpay order
-      // const order = await razorpay.orders.create({
-      //   amount: Number(transactionDataset.transaction.amount)*100,
-      //   currency: "INR",
-      //   receipt: merchanttransactionId,
-      //   notes: {
-      //     name,
-      //     mobilenumber,
-      //     userid,
-      //     transactionfor,
-      //   },
-      // });
-
-      // console.log("order is : " + JSON.stringify(order));
-      // console.log("Razorpay Order ID:", order);
-      // // Step 3: Update order data with Razorpay order ID
-      // request.body.order.forEach((e) => {
-      //   e.merchanttransactionid = merchanttransactionId; // Use Razorpay order ID
-      // });
-      // request.body.order.forEach((e) => {
-      //   cartIddata.push(e.cartId);
-      // });
-
-      // // Step 4: Create HTTP task and insert order data
-      // try {
-      //   let createHttpTaskResult = await createHttpTask(order.id);
-      //   if (createHttpTaskResult?.success === false) {
-      //     return {
-      //       status: 400,
-      //       message: "Task Not Created For Making Order. Please contact Admin",
-      //     };
-      //   }
-
-      //   let insertorderdata = await ordersService.bulkInsertOrder(
-      //     request.body.transaction,
-      //     request.body.order
-      //   );
-      //   console.log("Insert Order Data Result:", insertorderdata.rows);
-      //   insersertdordderdatawithprocessing = insertorderdata.rows;
-      // } catch (error) {
-      //   console.log(
-      //     error.message,
-      //     "Error in Task paymentInitializationRazorpay"
-      //   );
-      //   await productrevoService.bulkupsertProducttosetZero(
-      //     dummyorderdata,
-      //     true
-      //   );
-      //   return {
-      //     status: 500,
-      //     message: "Error processing order. Inventory has been reset.",
-      //   };
-      // }
-
-      // // Step 5: Return Razorpay order details for frontend
-      // return {
-      //   status: 200,
-      //   data: {
-      //     orderId: order.id,
-      //     amount: order.amount,
-      //     currency: order.currency,
-      //     key: RAZORPAY_KEY_ID,
-      //     redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-      //   },
-      // };
-    } catch (error) {
-      console.error(
-        "Query Execution Error: IN test",
-        error
-      );
-      let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
-        request?.body?.transaction?.merchanttransactionId,
-        "razorpay_initialization_error"
-      );
-      await safeCleanupPendingOrder(request?.body?.transaction?.merchanttransactionId);
-      return ErrorMessage;
+      return {
+        status: 200,
+        uniqueorderid: insertorderdata.rows[0].orderid,
+        data: {
+          status: "success",
+          message: "Order placed successfully",
+          uniqueorderid: insertorderdata.rows[0].orderid,
+        },
+      };
     }
-  };
+
+    // ======================================================
+    // ✅ ONLINE PAYMENT FLOW
+    // ======================================================
+
+    await inventoryReservationService.replaceHeldReservations(
+      merchanttransactionId,
+      fulfillmentBuckets.ordersToInsert
+    );
+
+    const capacityCheck = await validateReservationCapacity(
+      fulfillmentBuckets.ordersToInsert,
+      merchanttransactionId
+    );
+
+    if (!capacityCheck.ok) {
+      await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+        merchanttransactionId,
+        "insufficient_inventory"
+      );
+
+      return {
+        status: 400,
+        message: "One or more products are out of stock. Please try again later.",
+      };
+    }
+
+    const authoritativeAmount = computePayableAmountFromOrderInput(
+      orderdata,
+      amount
+    );
+
+    const order = await razorpay.orders.create({
+      amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
+      currency: "INR",
+      receipt: merchanttransactionId,
+      notes: {
+        name,
+        mobilenumber,
+        userid,
+        transactionfor,
+      },
+    });
+
+    request.body.order.forEach((e) => {
+      e.merchanttransactionid = merchanttransactionId;
+    });
+
+    try {
+      await createHttpTask(merchanttransactionId);
+
+      const insertorderdata = await ordersService.bulkInsertOrder(
+        request.body.transaction,
+        request.body.order
+      );
+
+      if (!insertorderdata?.rows?.length) {
+        throw new Error("Failed to initialize order");
+      }
+
+    } catch (error) {
+      await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+        merchanttransactionId,
+        "order_initialization_error"
+      );
+      await safeCleanupPendingOrder(merchanttransactionId);
+
+      return {
+        status: 500,
+        message: "Error processing order. Inventory reservation released.",
+      };
+    }
+
+    return {
+      status: 200,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        key: RAZORPAY_KEY_ID,
+        redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+      },
+    };
+
+  } catch (error) {
+    console.error("Query Execution Error: IN paymentInitializationRazorpay", error);
+
+    await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(
+      request?.body?.transaction?.merchanttransactionId,
+      "razorpay_initialization_error"
+    );
+
+    await safeCleanupPendingOrder(
+      request?.body?.transaction?.merchanttransactionId
+    );
+
+    return await ErrorHandler.handleQueryError(error);
+  }
+};
 
   export const paymentConfirmationRazorpay = async (request) => {
     try {

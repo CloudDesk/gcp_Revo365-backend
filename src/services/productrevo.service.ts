@@ -28,6 +28,7 @@ export module productrevoService {
   ]);
   const MIGRATION_TABLE_MISSING_CODE = "42P01";
   const MIGRATION_COLUMN_MISSING_CODE = "42703";
+  const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
 
   export type BulkInsertMode = "strict" | "skip_duplicates";
 
@@ -1559,11 +1560,43 @@ export module productrevoService {
   export const getEachProductsRevo = async function (request: any, id: Number, visibilityMode?: "visible" | "hidden") {
     try {
       const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
-      const queryText = `SELECT * FROM product_revo
-           WHERE id = $1
-             AND (isarchive = FALSE OR isarchive IS NULL)
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
+      const queryText = `
+          SELECT 
+            p.*,
+            COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
+            COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
+            COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity
+          FROM product_revo p
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Reserved for Rental'
+              ) AS reservedforrentalquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Service Hold'
+              ) AS serviceholdquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Damaged'
+              ) AS damagedquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Lost'
+              ) AS lostquantity
+            FROM stock_revo
+            WHERE puc = p.puc
+          ) stock_counts ON TRUE
+          WHERE p.id = $1
+            AND (p.isarchive = FALSE OR p.isarchive IS NULL)
+            AND (p.isdeleted = FALSE OR p.isdeleted IS NULL)
+            AND (p.removefromrecyclebin = FALSE OR p.removefromrecyclebin IS NULL)${visibilityClause}`;
       const result: QueryResult = await query(
         queryText,
         [id]
@@ -2208,10 +2241,52 @@ export module productrevoService {
                     AND stocktype <> 'third_party_product'
                 ) AS available_quantity_count,
 
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND ecompublish = true AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND ecompublish = true AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'on_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS on_catalogue_count,
+
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'off_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS off_catalogue_count,
+
+-- ✅ Rental should NOT depend on ecompublish
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_total_count,
+
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Rental Sold'
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_sold_count,
+
+-- ✅ New metric (keep this)
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Reserved for Rental'
+        THEN 1 ELSE 0 
+    END
+), 0) AS reserved_rental_count
 
                 -- overallavailableqty = physical ecom=true Available count
                 --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
@@ -2271,7 +2346,7 @@ export module productrevoService {
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count,
             overallavailableqty = counts.overall_available_qty - COALESCE(orderedquantity, 0),
             ecompublishedquantity = counts.ecom_published_qty - COALESCE(orderedquantity, 0),
             bin_qty = counts.bin_count,
@@ -2280,7 +2355,7 @@ export module productrevoService {
         FROM counts
         WHERE product_revo.puc = $1
         RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
-                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  (counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count) as rental_available_count,
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
     console.log('queryText:', queryText);

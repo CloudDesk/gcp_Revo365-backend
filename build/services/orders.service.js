@@ -3,214 +3,10 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { stockRevoService } from "./stockRevo.service.js";
 import { productrevoService } from "./productrevo.service.js";
-import { inventoryReservationService } from "./inventoryReservation.service.js";
-import { sendTransactionalMail } from "../Gmail/gmail.js";
+import { sendMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 export var ordersService;
 (function (ordersService) {
-    const ORDER_STATUS_RANK = {
-        payment_failed: 0,
-        ordered: 10,
-        processing: 20,
-        ready_to_dispatch: 30,
-        dispatched: 40,
-        shipped: 50,
-        delivered: 60,
-        returned: 70,
-        cancelled: 80,
-        sold: 90,
-    };
-    const PRE_DISPATCH_RESERVATION_STATUSES = new Set([
-        "ordered",
-        "processing",
-        "payment_pending",
-        "pending",
-        "pending_payment",
-    ]);
-    const TERMINAL_ORDER_STATUSES = new Set([
-        "cancelled",
-        "delivered",
-        "payment_failed",
-        "returned",
-        "sold",
-    ]);
-    const normalizeOrderStatus = (status) => String(status || "").trim().toLowerCase();
-    const getLifecycleTimestampAssignment = (status) => {
-        switch (normalizeOrderStatus(status)) {
-            case "ready_to_dispatch":
-                return `readytodispatchdate = COALESCE(readytodispatchdate, NOW())`;
-            case "dispatched":
-            case "shipped":
-                return `dispatcheddate = COALESCE(dispatcheddate, NOW())`;
-            case "delivered":
-                return `delivereddate = COALESCE(delivereddate, NOW())`;
-            case "cancelled":
-                return `cancelleddate = COALESCE(cancelleddate, NOW())`;
-            case "returned":
-                return `returneddate = COALESCE(returneddate, NOW())`;
-            default:
-                return "";
-        }
-    };
-    const deriveHeaderStatusFromLineRows = (lineRows) => {
-        const normalizedStatuses = lineRows
-            .map((row) => normalizeOrderStatus(row?.orderstatus))
-            .filter(Boolean);
-        if (normalizedStatuses.length === 0) {
-            return "ordered";
-        }
-        const activeStatuses = normalizedStatuses.filter((status) => !["cancelled", "payment_failed", "returned"].includes(status));
-        if (activeStatuses.length === 0) {
-            if (normalizedStatuses.every((status) => status === "payment_failed")) {
-                return "payment_failed";
-            }
-            if (normalizedStatuses.every((status) => status === "cancelled")) {
-                return "cancelled";
-            }
-            if (normalizedStatuses.every((status) => status === "returned")) {
-                return "returned";
-            }
-            return normalizedStatuses[0];
-        }
-        const rankedStatuses = activeStatuses
-            .map((status) => ({
-            status,
-            rank: ORDER_STATUS_RANK[status] ?? ORDER_STATUS_RANK.ordered,
-        }))
-            .sort((left, right) => right.rank - left.rank);
-        return rankedStatuses[0]?.status || "ordered";
-    };
-    const qualifyOrderlineFilterColumn = (rawKey) => {
-        const key = String(rawKey || "").trim();
-        if (!key)
-            return key;
-        if (key.includes(".") || key.includes("(") || key.includes(")") || key.includes(" ")) {
-            return key;
-        }
-        return `orderline.${key}`;
-    };
-    const getOrderLinesForUniqueOrderId = async (uniqueorderid) => {
-        if (!uniqueorderid)
-            return [];
-        const lineResult = await query(`SELECT id, uniqueorderid, orderlinenumber, orderid, thirdpartyorderid, merchanttransactionid, ordertype, orderstatus, productid, quantity, ordername, userid, orderamount, deliveryfrom
-             FROM orderline
-             WHERE uniqueorderid = $1`, [uniqueorderid]);
-        return lineResult.rows;
-    };
-    const syncSingleHeaderStatusFromLines = async (uniqueorderid, orderTypeHint) => {
-        if (!uniqueorderid)
-            return null;
-        const lineRows = await getOrderLinesForUniqueOrderId(uniqueorderid);
-        if (lineRows.length === 0)
-            return null;
-        const normalizedOrderType = String(orderTypeHint || lineRows[0]?.ordertype || "Orders").trim().toLowerCase();
-        const tableName = normalizedOrderType === "third party orders" ? "thirdpartyorders" : "orders";
-        const derivedStatus = deriveHeaderStatusFromLineRows(lineRows);
-        const timestampAssignment = getLifecycleTimestampAssignment(derivedStatus);
-        const deliveryFromCandidates = Array.from(new Set(lineRows
-            .map((row) => (typeof row?.deliveryfrom === "string" ? row.deliveryfrom.trim() : row?.deliveryfrom))
-            .filter(Boolean)));
-        const resolvedDeliveryFrom = deliveryFromCandidates.length === 1 ? deliveryFromCandidates[0] : null;
-        const updateClauses = [`orderstatus = $1`];
-        const params = [derivedStatus, uniqueorderid];
-        if (timestampAssignment) {
-            updateClauses.push(timestampAssignment);
-        }
-        if (resolvedDeliveryFrom && tableName === "orders") {
-            updateClauses.push(`deliveryfrom = COALESCE(NULLIF(deliveryfrom, ''), $3)`);
-            params.push(resolvedDeliveryFrom);
-        }
-        const updateQuery = `
-            UPDATE ${tableName}
-            SET ${updateClauses.join(", ")}
-            WHERE orderid = $2
-            RETURNING *
-        `;
-        const result = await query(updateQuery, params);
-        return result.rows[0] || null;
-    };
-    ordersService.syncOrderHeadersFromOrderLines = async (uniqueOrderIds) => {
-        const dedupedOrderIds = Array.from(new Set((uniqueOrderIds || []).filter(Boolean)));
-        const updatedHeaders = [];
-        for (const uniqueorderid of dedupedOrderIds) {
-            const header = await syncSingleHeaderStatusFromLines(uniqueorderid);
-            if (header) {
-                updatedHeaders.push(header);
-            }
-        }
-        return updatedHeaders;
-    };
-    ordersService.buildFulfillmentBuckets = async (orderData, merchantTransactionId) => {
-        const productIds = Array.from(new Set((orderData || []).map((item) => Number(item?.productid)).filter((id) => Number.isFinite(id) && id > 0)));
-        if (productIds.length === 0) {
-            return {
-                ordersToInsert: [],
-                thirdPartyOrdersToInsert: [],
-                validationErrors: [],
-            };
-        }
-        const quantityResult = await query(`
-            SELECT id AS productid, overallavailableqty, rentalavailablequantity
-            FROM product_revo
-            WHERE id = ANY($1::int[])
-            `, [productIds]);
-        const heldRows = await inventoryReservationService.getHeldReservationTotalsByProduct(productIds, merchantTransactionId || null);
-        const heldByKey = new Map();
-        heldRows.forEach((row) => {
-            heldByKey.set(`${row.productid}::${row.reservation_type}`, Number(row.held_quantity) || 0);
-        });
-        const remainingByKey = new Map();
-        quantityResult.rows.forEach((row) => {
-            const productId = Number(row.productid);
-            const normalRemaining = Math.max(0, (Number(row.overallavailableqty) || 0) - (heldByKey.get(`${productId}::product`) || 0));
-            const rentalRemaining = Math.max(0, (Number(row.rentalavailablequantity) || 0) - (heldByKey.get(`${productId}::rental`) || 0));
-            remainingByKey.set(`${productId}::product`, normalRemaining);
-            remainingByKey.set(`${productId}::rental`, rentalRemaining);
-        });
-        const ordersToInsert = [];
-        const thirdPartyOrdersToInsert = [];
-        const validationErrors = [];
-        for (const item of orderData || []) {
-            const productId = Number(item?.productid);
-            const quantity = Number(item?.quantity);
-            if (!Number.isFinite(productId) || productId <= 0)
-                continue;
-            if (!Number.isFinite(quantity) || quantity <= 0)
-                continue;
-            const isRental = String(item?.invoicefor || '').toLowerCase().trim() === 'product rental' ||
-                String(item?.ordername || '').toLowerCase().trim() === 'rental';
-            const reservationKey = `${productId}::${isRental ? 'rental' : 'product'}`;
-            const remainingCapacity = remainingByKey.get(reservationKey) || 0;
-            if (isRental) {
-                if (quantity > remainingCapacity) {
-                    validationErrors.push({
-                        productid: productId,
-                        requestedQuantity: quantity,
-                        availableQuantity: remainingCapacity,
-                        reason: 'Insufficient rental inventory',
-                    });
-                    continue;
-                }
-                ordersToInsert.push({ ...item, quantity });
-                remainingByKey.set(reservationKey, Math.max(0, remainingCapacity - quantity));
-                continue;
-            }
-            const internalQuantity = Math.min(quantity, remainingCapacity);
-            if (internalQuantity > 0) {
-                ordersToInsert.push({ ...item, quantity: internalQuantity });
-            }
-            const thirdPartyQuantity = quantity - internalQuantity;
-            if (thirdPartyQuantity > 0) {
-                thirdPartyOrdersToInsert.push({ ...item, quantity: thirdPartyQuantity });
-            }
-            remainingByKey.set(reservationKey, Math.max(0, remainingCapacity - internalQuantity));
-        }
-        return {
-            ordersToInsert,
-            thirdPartyOrdersToInsert,
-            validationErrors,
-        };
-    };
     ordersService.getlatestOrderData = async (request) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
@@ -266,7 +62,9 @@ export var ordersService;
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
+            console.log("keys", keys);
             const values = Object.values(request.query);
+            console.log("values", values);
             let whereClauses = [];
             let parameterIndex = 1;
             const queryParams = [];
@@ -311,6 +109,12 @@ export var ordersService;
                 o.modifieddate AS order_modifieddate,
                 o.transactionid AS order_transactionId,
                 o.orderamount,
+                CASE
+                    WHEN LOWER(COALESCE(o.ordername, '')) = 'rental'
+                         AND COALESCE(active_rental.active_billing_line_count, 0) > 0
+                    THEN active_rental.active_rental_orderamount
+                    ELSE o.orderamount
+                END AS displayorderamount,
                 o.orderstatus,
                 o.delivereddate,
                 o.readytodispatchdate,
@@ -337,6 +141,28 @@ export var ordersService;
                 u.modifieddate AS users_modifieddate,
                 u.createddate AS users_createddate
                 FROM orders o
+                LEFT JOIN LATERAL (
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                        ) AS active_billing_line_count,
+                        COALESCE(
+                            SUM(
+                                CASE
+                                    WHEN COALESCE(ol.isactivebillingline, TRUE) = TRUE
+                                    THEN COALESCE(
+                                        NULLIF(TRIM(CAST(ol.orderamount AS TEXT)), ''),
+                                        '0'
+                                    )::numeric
+                                    ELSE 0
+                                END
+                            ),
+                            0
+                        ) AS active_rental_orderamount
+                    FROM orderline ol
+                    WHERE ol.uniqueorderid = o.orderid
+                      AND LOWER(COALESCE(ol.ordername, o.ordername, '')) = 'rental'
+                ) AS active_rental ON TRUE
                 LEFT JOIN address a ON o.addressid = a.id
                 LEFT JOIN users u ON o.userid = u.id
                LEFT JOIN (
@@ -355,6 +181,7 @@ export var ordersService;
                 queryParams.push(offset, recordCount);
             }
             const result = await query(queryText, queryParams);
+            console.log("result", result);
             let datatypeCheckResult = await dataTypeCheck(result);
             datatypeCheckResult.forEach((element) => {
                 if (element.invoiceurl) {
@@ -701,7 +528,9 @@ export var ordersService;
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
+            console.log("keys", keys);
             const values = Object.values(request.query);
+            console.log("values", values);
             let whereClauses = [];
             let parameterIndex = 1;
             const queryParams = [];
@@ -710,11 +539,10 @@ export var ordersService;
             keys.forEach((key, index) => {
                 const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
                 if (key === "delivereddate" || key === "price") {
-                    const qualifiedRangeKey = qualifyOrderlineFilterColumn(key);
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
-                        return `(${qualifiedRangeKey} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                     });
                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
                     parameterIndex += 2 * paramValues.length;
@@ -726,41 +554,34 @@ export var ordersService;
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
-                    const qualifiedKey = qualifyOrderlineFilterColumn(key);
-                    whereClauses.push(`(${qualifiedKey} != $${parameterIndex})`);
+                    whereClauses.push(`(${key} != $${parameterIndex})`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
                 else if (key !== "page" && key !== "count") {
-                    const qualifiedKey = key === "userid"
-                        ? "orderline.userid"
-                        : key === "id"
-                            ? "orderline.id"
-                            : qualifyOrderlineFilterColumn(key);
-                    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
+                    if (key === "userid") {
+                        key = "orderline.userid";
+                    }
+                    else if (key === "id") {
+                        key = "orderline.id";
+                    }
+                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
                 }
             });
             const offset = (pageNumber - 1) * recordCount;
-            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' AND (orderline.ordertype IS NULL OR orderline.ordertype != 'Third Party Orders' OR orderline.thirdpartyorderid IS NULL) `;
+            const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' `;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty,
-            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
-            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
-            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
-            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            p."large" AS products_large, p.warranty AS products_warranty
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
-        LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
-        LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
         LEFT JOIN (
             SELECT orderid, invoiceurl, createddate AS invoicecreateddate
             FROM (
@@ -784,17 +605,10 @@ export var ordersService;
             let thirdPartyQueryText = `SELECT orderline.*, NULL AS invoiceurl, revorating.starrating, revorating.comments AS rating_comments, revorating.url AS rating_images,
             revorating.id AS ratingids, a.name AS address_name, a.mobilenumber AS address_mobilenumber, a.pincode AS address_pincode, a.doornumber AS address_doornumber,
             a.address AS address_address, a.landmark AS address_landmark, a.state AS address_state, a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty,
-            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
-            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
-            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
-            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            p."large" AS products_large, p.warranty AS products_warranty
         FROM orderline
         JOIN address a ON orderline.addressid = a.id
         LEFT JOIN product_revo p ON p.id = orderline.productid
-        LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
-        LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
         LEFT JOIN (
             SELECT starrating, productid, id, orderlineid, comments, url
             FROM rating
@@ -825,6 +639,7 @@ export var ordersService;
                 rows: [...result.rows, ...thirdPartyResult.rows]
                 // rowCount: result.rowCount + thirdPartyResult.rowCount
             };
+            // console.log("Combined Result:", combinedResult);
             // let datatypeCheckResult = await dataTypeCheck(combinedResult);
             // const messageData = {
             //     title: "Hello User",
@@ -841,10 +656,13 @@ export var ordersService;
     };
     ordersService.getInvOrderLineData = async (request) => {
         try {
+            console.log('Inside getInvOrderLineData');
+            console.log("Request Query:", request.query);
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
             const values = Object.values(request.query);
+            console.log("--keys", keys, "--values", values);
             let whereClauses = [];
             let parameterIndex = 1;
             const queryParams = [];
@@ -853,11 +671,10 @@ export var ordersService;
             keys.forEach((key, index) => {
                 const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
                 if (key === "delivereddate" || key === "price") {
-                    const qualifiedRangeKey = qualifyOrderlineFilterColumn(key);
                     const rangeClauses = paramValues.map(range => {
                         const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
-                        return `(${qualifiedRangeKey} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
+                        return `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                     });
                     whereClauses.push(`(${rangeClauses.join(" OR ")})`);
                     parameterIndex += 2 * paramValues.length;
@@ -869,18 +686,15 @@ export var ordersService;
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
-                    const qualifiedKey = qualifyOrderlineFilterColumn(key);
-                    whereClauses.push(`(${qualifiedKey} != $${parameterIndex})`);
+                    whereClauses.push(`(${key} != $${parameterIndex})`);
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
                 else if (key !== "page" && key !== "count") {
-                    const qualifiedKey = key === "userid"
-                        ? "orderline.userid"
-                        : key === "id"
-                            ? "orderline.id"
-                            : qualifyOrderlineFilterColumn(key);
-                    const clauses = paramValues.map((_, idx) => `${qualifiedKey} = $${parameterIndex + idx}`);
+                    if (key === "userid") {
+                        key = "orderline.userid";
+                    }
+                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
@@ -893,17 +707,10 @@ export var ordersService;
             let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city,
-            p."large" AS products_large, p.warranty AS products_warranty,
-            COALESCE(oh.shiprocket_status, th.shiprocket_status) AS shiprocket_status,
-            COALESCE(oh.shiprocket_status_code, th.shiprocket_status_code) AS shiprocket_status_code,
-            COALESCE(oh.shiprocket_order_id, th.shiprocket_order_id) AS shiprocket_order_id,
-            COALESCE(oh.shiprocket_shipment_id, th.shiprocket_shipment_id) AS shiprocket_shipment_id,
-            COALESCE(oh.shiprocket_channel_order_id, th.shiprocket_channel_order_id) AS shiprocket_channel_order_id
+            p."large" AS products_large, p.warranty AS products_warranty
 FROM orderline
 JOIN  address a on orderline.addressid = a.id
 LEFT JOIN product_revo p ON p.id = orderline.productid
-LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
-LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
 LEFT JOIN (
     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
     FROM (
@@ -1052,44 +859,14 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
-    const releaseCommittedInventoryForCancellation = async (lineRows, previousStatuses) => {
-        const releasableLines = (lineRows || []).filter((line) => {
-            if (line?.ordertype !== "Orders")
-                return false;
-            const previousStatus = normalizeOrderStatus(previousStatuses.get(Number(line.id)) ?? line?.orderstatus);
-            return PRE_DISPATCH_RESERVATION_STATUSES.has(previousStatus);
-        });
-        if (releasableLines.length === 0) {
-            return;
-        }
-        await productrevoService.releaseCommittedQuantityForOrderLines(releasableLines.map((line) => ({
-            merchanttransactionid: line.merchanttransactionid,
-            productid: line.productid,
-            quantity: line.quantity,
-            ordername: line.ordername,
-            ordertype: line.ordertype,
-            deliveryfrom: line.deliveryfrom,
-        })), true);
-        await inventoryReservationService.transitionCommittedReservationsForOrderLines(releasableLines.map((line) => ({
-            merchanttransactionid: line.merchanttransactionid,
-            productid: line.productid,
-            quantity: line.quantity,
-            ordername: line.ordername,
-            ordertype: line.ordertype,
-            deliveryfrom: line.deliveryfrom,
-        })), "released", "order_cancelled");
-    };
     ordersService.upsertOrder = async (orderData) => {
         try {
             let querydata;
             let params;
             const { id, ...upsertFields } = orderData;
+            let productid = orderData.productid;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
-            const previousOrderResult = id
-                ? await query(`SELECT * FROM orders WHERE id = $1 LIMIT 1`, [id])
-                : { rows: [] };
-            const previousOrderRow = previousOrderResult.rows[0] || null;
             if (id) {
                 querydata = `UPDATE orders SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
@@ -1104,21 +881,15 @@ ${whereClause} ${orderByClause}`;
             }
             const result = await query(querydata, params);
             const updatedRow = result.rows[0];
-            const newStatus = normalizeOrderStatus(updatedRow?.orderstatus);
+            const newStatus = updatedRow?.orderstatus;
             if (newStatus === 'cancelled') {
-                const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
-                const previousStatuses = new Map();
-                lineRows.forEach((line) => {
-                    previousStatuses.set(Number(line.id), normalizeOrderStatus(line.orderstatus));
-                });
-                if (lineRows.length > 0) {
-                    await query(`UPDATE orderline
-                         SET orderstatus = $1
-                         WHERE uniqueorderid = $2
-                           AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'delivered', 'returned', 'payment_failed')`, ['cancelled', updatedRow.orderid]);
-                }
-                await releaseCommittedInventoryForCancellation(lineRows, previousStatuses);
-                await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
+                // productid on orders is already an int[] — do NOT double-wrap it
+                const productIds = Array.isArray(updatedRow.productid)
+                    ? updatedRow.productid
+                    : [updatedRow.productid];
+                const quantitydata = Number(updatedRow.quantity);
+                // Decrement orderedquantity and refresh quantityforlocation JSONB
+                await productrevoService.updateCancelledOrderedQuantity(productIds, quantitydata);
                 const userid = updatedRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
                 const template = emailTemplates.orders.cancelled;
@@ -1133,15 +904,19 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                await sendTransactionalMail(maildata.body);
+                await sendMail(maildata, false);
             }
-            else if (['ordered', 'processing', 'ready_to_dispatch', 'dispatched', 'shipped', 'delivered', 'payment_failed'].includes(newStatus)) {
-                const timestampAssignment = getLifecycleTimestampAssignment(newStatus);
-                await query(`UPDATE orderline
-                     SET orderstatus = $1
-                     WHERE uniqueorderid = $2
-                       AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'delivered', 'payment_failed')`, [newStatus, updatedRow.orderid]);
-                await syncSingleHeaderStatusFromLines(updatedRow.orderid, previousOrderRow?.ordertype || 'Orders');
+            else if (newStatus === 'delivered' || newStatus === 'Sold') {
+                // Order is fully fulfilled — release the reserved orderedquantity
+                // so quantityforlocation stops subtracting it from available qty.
+                // updateCancelledOrderedQuantity handles both orderedquantity decrement
+                // and the testinupdateQuantity JSONB refresh.
+                const productIds = Array.isArray(updatedRow.productid)
+                    ? updatedRow.productid
+                    : [updatedRow.productid];
+                const quantitydata = Number(updatedRow.quantity);
+                await productrevoService.updateCancelledOrderedQuantity(productIds, quantitydata);
+                console.log(`[upsertOrder] Released orderedquantity for ${newStatus} order ${updatedRow.orderid}`);
             }
             return result;
         }
@@ -1157,12 +932,9 @@ ${whereClause} ${orderByClause}`;
             let querydata;
             let params;
             const { id, ...upsertFields } = orderlineData.body;
+            let productid = orderlineData.productid;
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
-            const previousLineResult = id
-                ? await query(`SELECT * FROM orderline WHERE id = $1 LIMIT 1`, [id])
-                : { rows: [] };
-            const previousLineRow = previousLineResult.rows[0] || null;
             if (id) {
                 querydata = `UPDATE orderline SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
@@ -1177,11 +949,15 @@ ${whereClause} ${orderByClause}`;
             }
             const result = await query(querydata, params);
             const lineRow = result.rows[0];
-            const lineStatus = normalizeOrderStatus(lineRow?.orderstatus);
+            const lineStatus = lineRow?.orderstatus;
             const lineType = lineRow?.ordertype;
-            const previousStatus = normalizeOrderStatus(previousLineRow?.orderstatus);
             if (lineStatus === 'cancelled') {
-                await releaseCommittedInventoryForCancellation([lineRow], new Map([[Number(lineRow.id), previousStatus]]));
+                // Only normal orders track orderedquantity — 3rd-party orders do not
+                if (lineType === 'Orders') {
+                    const productid = lineRow.productid; // single int on orderline
+                    const quantitydata = Number(lineRow.quantity);
+                    await productrevoService.updateCancelledOrderedQuantity([productid], quantitydata);
+                }
                 const userid = lineRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
                 const template = emailTemplates.orders.cancelled;
@@ -1196,10 +972,16 @@ ${whereClause} ${orderByClause}`;
                             .replace('{orderAmount}', orderAmount),
                     },
                 };
-                await sendTransactionalMail(maildata.body);
+                await sendMail(maildata, false);
             }
-            if (lineRow?.uniqueorderid) {
-                await syncSingleHeaderStatusFromLines(lineRow.uniqueorderid, lineType);
+            else if (lineStatus === 'delivered' || lineStatus === 'Sold') {
+                // Orderline fulfilled — release reserved orderedquantity (normal orders only)
+                if (lineType === 'Orders') {
+                    const productid = lineRow.productid;
+                    const quantitydata = Number(lineRow.quantity);
+                    await productrevoService.updateCancelledOrderedQuantity([productid], quantitydata);
+                    console.log(`[updateorderlineitem] Released orderedquantity for ${lineStatus} orderline ${lineRow.orderlinenumber}`);
+                }
             }
             return result;
         }
@@ -1209,28 +991,92 @@ ${whereClause} ${orderByClause}`;
             return ErrorMessage;
         }
     };
+    const parseOrderlineIds = (value) => {
+        if (value == null || value === "") {
+            return [];
+        }
+        const rawValues = Array.isArray(value)
+            ? value
+            : String(value)
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+        const parsedValues = rawValues
+            .map((entry) => Number(entry))
+            .filter((entry) => Number.isFinite(entry) && entry > 0)
+            .map((entry) => Math.trunc(entry));
+        return Array.from(new Set(parsedValues));
+    };
+    const getBillingChainKey = (row) => Number(row.parentorderlineid ?? row.id);
     ordersService.getInvoiceGeneratedData = async (request) => {
         try {
-            console.log('Inside getInvoiceGeneratedData function with request:', request.params);
+            console.log('Inside getInvoiceGeneratedData function with request:', request.params, request.query);
             const orderId = request.params.uniqueorderid;
-            console.log('Order ID:', orderId);
-            const result = await query(`SELECT id,uniqueorderid,orderlinenumber,invoicegenerated,lastgeneratedinvoicedate, generatedmonthscount FROM orderline WHERE uniqueorderid = $1`, [orderId]);
-            console.log('Query Result:', result.rows);
-            if (result.rows.length === 0) {
-                return { error: "No order found for the given order ID." };
+            const requestedOrderlineIds = parseOrderlineIds(request.query?.orderlineids);
+            let result;
+            if (requestedOrderlineIds.length > 0) {
+                result = await query(`
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `, [requestedOrderlineIds]);
             }
             else {
-                const rows = result.rows;
-                const aggregated = {
-                    // If all invoicegenerated true, then true, else false
-                    invoicegenerated: rows.every(r => r.invoicegenerated === true),
-                    // Maximum generatedmonthscount among orderlines
-                    generatedmonthscount: Math.max(...rows.map(r => r.generatedmonthscount)),
-                    // Maximum rentalfor (longest rental period)
-                    rentalfor: Math.max(...rows.map(r => r.rentalfor || 0))
-                };
-                return aggregated;
+                result = await query(`
+                    SELECT
+                      id,
+                      uniqueorderid,
+                      orderlinenumber,
+                      invoicegenerated,
+                      lastgeneratedinvoicedate,
+                      generatedmonthscount,
+                      rentalfor,
+                      parentorderlineid,
+                      isactivebillingline,
+                      rentalcontractstatus
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `, [orderId]);
             }
+            if (result.rows.length === 0) {
+                return {
+                    invoicegenerated: false,
+                    generatedmonthscount: 0,
+                    rentalfor: 0,
+                    activebillinglineids: [],
+                    hasbillingconflict: false,
+                    billingconflictchains: []
+                };
+            }
+            const rows = result.rows;
+            const chainCounts = rows.reduce((acc, row) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+            return {
+                invoicegenerated: rows.every((r) => r.invoicegenerated === true),
+                generatedmonthscount: Math.max(...rows.map((r) => r.generatedmonthscount ?? 0)),
+                rentalfor: Math.max(...rows.map((r) => r.rentalfor ?? 0)),
+                activebillinglineids: rows.map((row) => row.id),
+                hasbillingconflict: billingconflictchains.length > 0,
+                billingconflictchains
+            };
         }
         catch (error) {
             console.error("Query Execution Error: IN getInvoiceGeneratedData", error);
@@ -1242,22 +1088,63 @@ ${whereClause} ${orderByClause}`;
         try {
             console.log("Inside update", request.body);
             const { uniqueorderid } = request.body;
-            console.log("Unique Order ID:", uniqueorderid);
-            // 1️⃣ Get all orderlines for this uniqueorderid
-            const { rows } = await query(`SELECT id, rentalfor, generatedmonthscount 
-       FROM orderline 
-       WHERE uniqueorderid = $1`, [uniqueorderid]);
+            const requestedOrderlineIds = parseOrderlineIds(request.body?.orderlineids);
+            console.log("Unique Order ID:", uniqueorderid, 'Requested orderline ids:', requestedOrderlineIds);
+            let rows = [];
+            if (requestedOrderlineIds.length > 0) {
+                const result = await query(`
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE id = ANY($1::int[])
+                      AND COALESCE(isactivebillingline, true) = true
+                    `, [requestedOrderlineIds]);
+                rows = result.rows;
+            }
+            else {
+                const result = await query(`
+                    SELECT
+                      id,
+                      rentalfor,
+                      generatedmonthscount,
+                      parentorderlineid,
+                      uniqueorderid,
+                      isactivebillingline
+                    FROM orderline
+                    WHERE uniqueorderid = $1
+                      AND COALESCE(isactivebillingline, true) = true
+                    `, [uniqueorderid]);
+                rows = result.rows;
+            }
             console.log("Orderlines fetched:", rows);
             if (!rows.length) {
-                return { success: false, message: "No orderlines found" };
+                return { success: false, message: "No active billing orderlines found" };
             }
-            // 2️⃣ Filter the orderlines that still have months left
-            const stillActive = rows.filter(row => row.generatedmonthscount < row.rentalfor);
+            const chainCounts = rows.reduce((acc, row) => {
+                const chainKey = String(getBillingChainKey(row));
+                acc[chainKey] = (acc[chainKey] ?? 0) + 1;
+                return acc;
+            }, {});
+            const billingconflictchains = Object.entries(chainCounts)
+                .filter(([, count]) => Number(count) > 1)
+                .map(([chainId]) => Number(chainId));
+            if (billingconflictchains.length > 0) {
+                return {
+                    success: false,
+                    message: "Multiple active billing lines exist in the same contract chain. Reconcile the billing chain before generating rental invoices.",
+                    billingconflictchains
+                };
+            }
+            const stillActive = rows.filter((row) => Number(row.generatedmonthscount ?? 0) < Number(row.rentalfor ?? 0));
             console.log("Active rentals to update:", stillActive);
             if (!stillActive.length) {
                 return { success: false, message: "No active rental products to update" };
             }
-            // 3️⃣ Update only active rentals
             const idsToUpdate = stillActive.map(r => r.id);
             console.log("IDs to update:", idsToUpdate);
             const updateResult = await query(`UPDATE orderline
@@ -1281,7 +1168,57 @@ ${whereClause} ${orderByClause}`;
     };
     ordersService.upsertOrderrfid = async (orderData) => {
         try {
-            return await ordersService.upsertOrderlinerfid(orderData);
+            let querydata;
+            let params;
+            const { rfid, orderlinenumber, productid } = orderData;
+            let updateStock = await stockRevoService.upsertStockRevoDatarfid(orderData);
+            if (updateStock.command === "UPDATE" || updateStock.command === "INSERT") {
+                const puc = updateStock.result.puc; // Get the puc from the result
+                const pucArray = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
+                // Determine if this is a rental order
+                // Try to get ordername from request first, then fall back to database
+                console.log("DEBUG: orderData[0]:", JSON.stringify(orderData[0]));
+                let ordername = orderData[0]?.ordername || '';
+                // If ordername not in request, fetch from database
+                if (!ordername && orderData[0]?.orderlinenumber) {
+                    console.log("DEBUG: ordername not in request, querying database with orderlinenumber:", orderData[0].orderlinenumber);
+                    const orderlineQuery = await query(`SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`, [orderData[0].orderlinenumber]);
+                    if (orderlineQuery.rows.length > 0) {
+                        ordername = orderlineQuery.rows[0].ordername || '';
+                        console.log("DEBUG: Fetched ordername from database:", ordername);
+                    }
+                }
+                const isRental = ordername.toLowerCase().trim() === 'rental';
+                console.log("DEBUG: Final ordername:", ordername, "isRental:", isRental);
+                let updateQuantity = await stockRevoService.updateQuantity(pucArray, updateStock.result.rowCount, true, isRental);
+                // if (orderData[0].orderid) {
+                //     querydata = `UPDATE orders SET orderstatus=$${1} where orderid=$${2} RETURNING *`;
+                //     params = ['ready_to_dispatch', orderData[0].orderid];
+                // }
+                // else {
+                //     return { error: `Stock Status Updated but Order Status Not Updated.Please Contact Support Team` }
+                // }
+                // const result = await query(querydata, params);
+                // return result;
+                const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber); // Only consider rows with an orderid
+                if (ordersToUpdate.length > 0) {
+                    let querydata = `
+        UPDATE orders 
+        SET 
+            orderstatus = 'ready_to_dispatch',
+            deliveryfrom = CASE 
+                ${ordersToUpdate.map((e, idx) => `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`).join(' ')}
+            END
+        WHERE orderlinenumber IN (${ordersToUpdate.map((_, idx) => `$${idx + 1}`).join(', ')})
+        RETURNING *`;
+                    const params = ordersToUpdate.map(e => e.orderlinenumber);
+                    const result = await query(querydata, params);
+                    return result;
+                }
+            }
+            else {
+                return updateStock.error;
+            }
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertOrderrfid", error);
@@ -1303,31 +1240,22 @@ ${whereClause} ${orderByClause}`;
                 }
                 rfidMap.set(item.rfid, true);
             }
-            const rfids = orderData.map(item => item.rfid);
-            const validationValues = orderData.flatMap((item) => [item.rfid, item.productid]);
-            const validationTuples = orderData
-                .map((_, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::int)`)
-                .join(", ");
             const validationQuery = `
-                WITH requested(rfid, productid) AS (
-                    VALUES ${validationTuples}
-                )
-                SELECT requested.rfid, requested.productid, pr.puc
-                FROM requested
-                JOIN stock_revo sr
-                  ON sr.rfid = requested.rfid
-                 AND sr.stockstatus = 'Available'
-                JOIN product_revo pr
-                  ON pr.puc = sr.puc
-                 AND pr.id = requested.productid
+                SELECT rfid, puc 
+                FROM stock_revo 
+                WHERE rfid = ANY($1)
+                AND puc IN (SELECT puc FROM product_revo WHERE id = ANY($2))
+                AND stockstatus = 'Available'
             `;
-            const validationResult = await query(validationQuery, validationValues);
+            const rfids = orderData.map(item => item.rfid);
+            const productIds = orderData.map(item => item.productid);
+            const validationResult = await query(validationQuery, [rfids, productIds]);
             // Check if all RFIDs were found
             if (validationResult.rows.length !== orderData.length) {
-                const foundPairs = new Set(validationResult.rows.map((row) => `${row.rfid}::${row.productid}`));
-                const invalidRfids = orderData.filter((item) => !foundPairs.has(`${item.rfid}::${item.productid}`));
+                const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
+                const invalidRfids = orderData.filter(item => !foundRfids.has(item.rfid));
                 return {
-                    error: `Invalid RFIDs detected: ${invalidRfids.map(item => `${item.rfid} (product ${item.productid})`).join(', ')}`,
+                    error: `Invalid RFIDs detected: ${invalidRfids.map(item => item.rfid).join(', ')}`,
                     errorDetails: [],
                     statusCode: 400
                 };
@@ -1394,15 +1322,6 @@ ${whereClause} ${orderByClause}`;
                     // ordered_qty excludes ready_to_dispatch, so this clears stale
                     // quantityforlocation[branch].orderedquantity after RFID scan.
                     await stockRevoService.testinupdateQuantity(pucArray, false);
-                    await inventoryReservationService.transitionCommittedReservationsForOrderLines(result.rows.map((row) => ({
-                        merchanttransactionid: row.merchanttransactionid,
-                        productid: row.productid,
-                        quantity: row.quantity,
-                        ordername: row.ordername,
-                        ordertype: row.ordertype,
-                        deliveryfrom: row.deliveryfrom,
-                    })), "consumed", "rfid_dispatch");
-                    await ordersService.syncOrderHeadersFromOrderLines(Array.from(new Set(result.rows.map((row) => row.uniqueorderid).filter(Boolean))));
                     return result;
                 }
             }
@@ -1569,18 +1488,7 @@ ${whereClause} ${orderByClause}`;
             console.log('Transaction data:', transactionData);
             console.log('Order data:', orderData);
             console.log('Empty Before processing order data');
-            const merchantTransactionId = transactionData?.merchantTransactionId ??
-                transactionData?.merchanttransactionId ??
-                transactionData?.merchanttransactionID ??
-                null;
-            const userId = transactionData?.userId ??
-                transactionData?.userid ??
-                null;
-            const cgst = transactionData?.cgst;
-            const sgst = transactionData?.sgst;
-            const storelocation = transactionData?.storelocation ??
-                transactionData?.storeLocation ??
-                null;
+            const { merchantTransactionId, userId, cgst, sgst, storelocation } = transactionData;
             if (orderData[0].addressid === null) {
                 const getAddress = await query(`SELECT id from address where userid = $1 LIMIT 1`, [userId]);
                 console.log('getAddress:', getAddress.rows);
@@ -1594,21 +1502,60 @@ ${whereClause} ${orderByClause}`;
             console.log('Order Data after setting addressid:', orderData);
             console.log('Empty After processing order data');
             let cartId = [];
+            let productid = [];
             orderData.forEach((e) => {
+                productid.push(e.productid);
                 cartId.push(e.cartId);
                 delete e.cartId;
             });
+            console.log('Product IDs:', productid);
             console.log('Cart IDs:', cartId);
-            const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(orderData, merchantTransactionId);
-            const ordersToInsert = fulfillmentBuckets.ordersToInsert;
-            const thirdPartyOrdersToInsert = fulfillmentBuckets.thirdPartyOrdersToInsert;
-            if (fulfillmentBuckets.validationErrors.length > 0) {
-                return {
-                    error: 'Unable to fulfill one or more items with available rental inventory',
-                    errorDetails: fulfillmentBuckets.validationErrors,
-                    statusCode: 400,
-                };
-            }
+            // Query product_revo table to get availablequantity for each productid
+            const quantityQuery = `
+            SELECT id AS productid, availablequantity
+            FROM product_revo
+            WHERE id = ANY($1)
+        `;
+            const quantityResult = await query(quantityQuery, [productid]);
+            console.log('Available quantities:', quantityResult.rows);
+            const availableQuantities = quantityResult.rows.reduce((acc, row) => {
+                acc[row.productid] = row.availablequantity;
+                return acc;
+            }, {});
+            // Split orderData into orders and thirdpartyorders based on quantity check
+            const ordersToInsert = [];
+            const thirdPartyOrdersToInsert = [];
+            orderData.forEach((item) => {
+                const available = availableQuantities[item.productid] || 0;
+                if (item.quantity <= available) {
+                    // Entire quantity can be fulfilled from available stock
+                    ordersToInsert.push({ ...item });
+                }
+                else {
+                    // Split the order
+                    console.log("available", available);
+                    console.log("item.invoicefor", item.invoicefor);
+                    if (available > 0) {
+                        // Add available quantity to orders
+                        let orderItem = { ...item, quantity: available };
+                        ordersToInsert.push(orderItem);
+                    }
+                    else if (available <= 0 && item.invoicefor == "product rental") {
+                        console.log("comes inside else if");
+                        let orderItem = { ...item, quantity: available };
+                        ordersToInsert.push(orderItem);
+                        console.log("orderItem", orderItem);
+                    }
+                    // Add remaining quantity to thirdpartyorders
+                    if (item.invoicefor != "product rental") {
+                        const thirdPartyQuantity = item.quantity - available;
+                        if (thirdPartyQuantity > 0) {
+                            const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
+                            thirdPartyOrdersToInsert.push(thirdPartyItem);
+                        }
+                    }
+                }
+            });
             console.log('Orders to insert:', ordersToInsert);
             console.log('Third-party orders to insert:', thirdPartyOrdersToInsert);
             console.log('Empty After splitting orders and third-party orders');
@@ -1623,13 +1570,6 @@ ${whereClause} ${orderByClause}`;
                     return acc + (e.productamount * e.quantity);
                 }, 0);
                 let orderProductIds = ordersToInsert.map((e) => e.productid);
-                const normalizedStoreLocation = typeof storelocation === 'string'
-                    ? storelocation.trim()
-                    : storelocation;
-                const normalizedOrderLocation = typeof ordersToInsert[0]?.location === 'string'
-                    ? ordersToInsert[0].location.trim()
-                    : ordersToInsert[0]?.location;
-                const resolvedStoreLocation = normalizedStoreLocation || normalizedOrderLocation || null;
                 console.log('Order quantity for orders:', orderQuantity);
                 console.log('Order amount for orders:', orderAmount);
                 console.log('Order product IDs:', orderProductIds);
@@ -1655,7 +1595,7 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].totalrentalamount,
                     sgst,
                     cgst,
-                    resolvedStoreLocation,
+                    storelocation,
                     ordersToInsert[0].assetnumber,
                     ordersToInsert[0].location,
                     ordersToInsert[0].vendorname,
@@ -1902,7 +1842,7 @@ Thank You!`,
                     },
                 };
             }
-            let sendemail = await sendTransactionalMail(maildata.body);
+            let sendemail = await sendMail(maildata, false);
             return result.rows;
         }
         catch (error) {
@@ -1914,7 +1854,23 @@ Thank You!`,
     ordersService.getOrderDataForMerchantid = async (merchantiddata) => {
         try {
             const { merchantid } = merchantiddata;
-            return await ordersService.deleteFailedOrder(merchantid);
+            const orderIdQuery = `SELECT orderid FROM orders WHERE merchanttransactionid = $1 AND ispaymentsucceed = FALSE;`;
+            const orderIdResult = await query(orderIdQuery, [merchantid]);
+            if (orderIdResult.rows.length === 0) {
+                return;
+            }
+            const uniqueorderid = orderIdResult.rows[0].orderid;
+            const productIdOrderlineQuery = `SELECT productid FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
+            if (productIdOrderlineResult.rows.length > 0) {
+                const productIds = productIdOrderlineResult.rows.map(row => row.productid);
+                const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
+                await query(updateLockQtyQuery, [productIds]);
+            }
+            const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1;`;
+            await query(deleteOrderlineQuery, [uniqueorderid]);
+            const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1;`;
+            await query(deleteOrdersQuery, [uniqueorderid]);
         }
         catch (error) {
             console.error("Error in getOrderDataForMerchantid:", error);
@@ -1939,33 +1895,46 @@ Thank You!`,
     ordersService.deleteFailedOrder = async (merchantid) => {
         try {
             console.log("Deleting failed order for merchantid:", merchantid);
-            const pendingHeaderResult = await query(`
-                SELECT 'orders' AS source, orderid
-                FROM orders
-                WHERE merchanttransactionid = $1
-                  AND ispaymentsucceed = FALSE
-                  AND transactionid IS NULL
-                UNION ALL
-                SELECT 'thirdpartyorders' AS source, orderid
-                FROM thirdpartyorders
-                WHERE merchanttransactionid = $1
-                  AND ispaymentsucceed = FALSE
-                  AND transactionid IS NULL
-                `, [merchantid]);
-            console.log("Pending headers fetched:", pendingHeaderResult.rows);
-            if (pendingHeaderResult.rows.length === 0) {
+            // Step 1: Fetch orders with merchanttransactionid (unpaid & no transactionid)
+            const orderIdQuery = `
+      SELECT orderid, transactionid  FROM orders 
+      WHERE merchanttransactionid = $1 
+      AND ispaymentsucceed = FALSE 
+      AND transactionid IS NULL;
+    `;
+            const orderIdResult = await query(orderIdQuery, [merchantid]);
+            console.log("Order IDs fetched:", orderIdResult.rows);
+            if (orderIdResult.rows.length === 0) {
                 return { status: 200, message: 'Merchant Id Payment is successful or no pending orders' };
             }
-            await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchantid, "payment_failed_cleanup");
-            await query(`DELETE FROM orderline WHERE merchanttransactionid = $1`, [merchantid]);
-            await query(`DELETE FROM orders
-                 WHERE merchanttransactionid = $1
-                   AND ispaymentsucceed = FALSE
-                   AND transactionid IS NULL`, [merchantid]);
-            await query(`DELETE FROM thirdpartyorders
-                 WHERE merchanttransactionid = $1
-                   AND ispaymentsucceed = FALSE
-                   AND transactionid IS NULL`, [merchantid]);
+            const uniqueorderid = orderIdResult.rows[0].orderid;
+            console.log("Unique Order ID to delete:", uniqueorderid);
+            // Step 2: Get all product ids associated with order lines
+            const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
+            console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
+            if (productIdOrderlineResult.rows.length > 0) {
+                console.log("Updating lock_qty for products associated with the order");
+                const products = productIdOrderlineResult.rows;
+                console.log("Products to update:", products);
+                // Iterate through each product and update individually
+                for (const product of products) {
+                    console.log(`Updating lock_qty for product ID: ${product}`);
+                    const updateLockQtyQuery = `
+      UPDATE product_revo
+      SET lock_qty = lock_qty - $1
+      WHERE id = $2
+    `;
+                    const res = await query(updateLockQtyQuery, [product.quantity, product.productid]);
+                    console.log(`lock_qty updated for product ID:`, res);
+                }
+            }
+            // Step 4: Delete orderline entries for this order
+            const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1`;
+            await query(deleteOrderlineQuery, [uniqueorderid]);
+            // Step 5: Delete the order record
+            const deleteOrdersQuery = `DELETE FROM orders WHERE orderid = $1`;
+            await query(deleteOrdersQuery, [uniqueorderid]);
             return { status: 200, message: 'Data Deleted Successfully' };
         }
         catch (error) {

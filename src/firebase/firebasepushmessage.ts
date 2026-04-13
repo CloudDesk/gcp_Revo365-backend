@@ -1,11 +1,4 @@
-
-import admin from "firebase-admin"
-import serviceData from './service.json' with { type: "json" };
-
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceData as admin.ServiceAccount)
-});
+import { admin } from "./firebaseAdmin.js";
 
 
 export const messageinitialization = async (userid, messageData) => {
