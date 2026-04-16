@@ -356,6 +356,81 @@ export const assessRentalDamageSchema = {
         }
     }
 };
+export const generateRentalLossDeclarationSchema = {
+    type: 'object',
+    properties: {
+        declarationdate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Declaration Date should be an integer',
+                minimum: 'Declaration Date must be >= 0'
+            }
+        },
+        incidentdate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'Incident Date should be an integer',
+                minimum: 'Incident Date must be >= 0'
+            }
+        },
+        incidenttime: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Incident Time should be a string'
+            }
+        },
+        incidentlocation: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Incident Location should be a string'
+            }
+        },
+        circumstances: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Circumstances should be a string'
+            }
+        },
+        firncnumber: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'FIR / NC Number should be a string'
+            }
+        },
+        policestation: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Police Station should be a string'
+            }
+        },
+        firncfilingdate: {
+            type: ['integer', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: 'FIR / NC Filing Date should be an integer',
+                minimum: 'FIR / NC Filing Date must be >= 0'
+            }
+        },
+        lesseesignatoryname: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Lessee Signatory Name should be a string'
+            }
+        },
+        lesseesignatorydesignation: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Lessee Signatory Designation should be a string'
+            }
+        }
+    }
+};
+export const finalizeRentalLossDeclarationSchema = {
+    type: 'object',
+    properties: {}
+};
 export const linkPenaltyInvoiceSchema = {
     type: 'object',
     properties: {

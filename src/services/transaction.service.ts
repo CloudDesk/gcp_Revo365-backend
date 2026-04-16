@@ -232,6 +232,19 @@ const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: a
 const groupOrderQuantities = (orderItems: any[] = []) => {
   const grouped = new Map<number, number>();
   for (const item of orderItems) {
+    if (isRentalOrderItem(item)) continue;
+    const productId = toSafeNumber(item?.productid, 0);
+    const qty = toSafeNumber(item?.quantity, 0);
+    if (!productId || qty <= 0) continue;
+    grouped.set(productId, (grouped.get(productId) || 0) + qty);
+  }
+  return grouped;
+};
+
+const groupRentalOrderQuantities = (orderItems: any[] = []) => {
+  const grouped = new Map<number, number>();
+  for (const item of orderItems) {
+    if (!isRentalOrderItem(item)) continue;
     const productId = toSafeNumber(item?.productid, 0);
     const qty = toSafeNumber(item?.quantity, 0);
     if (!productId || qty <= 0) continue;

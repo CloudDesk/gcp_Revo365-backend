@@ -328,6 +328,172 @@ export module stockRevoService {
         }
     };
 
+    export const markLostStockAsFound = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to restore the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(LOST_STOCK_STATUS)) {
+                return {
+                    message: "Only Lost stocks can be marked as found.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = CASE
+                            WHEN stocktype = 'rental_product' THEN $2
+                            ELSE rentalassetstatus
+                        END,
+                        lostdate = NULL,
+                        lostreason = NULL,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN markLostStockAsFound", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
+    export const markDamagedStockAsRepaired = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to restore the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(DAMAGED_STOCK_STATUS)) {
+                return {
+                    message: "Only Damaged stocks can be marked as repaired/available.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = CASE
+                            WHEN stocktype = 'rental_product' THEN $2
+                            ELSE rentalassetstatus
+                        END,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN markDamagedStockAsRepaired", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
     export const getDeletedStocksrevo = async (request: any) => {
         try {
             const pageNumber = request.query.page || 1
@@ -634,6 +800,30 @@ export module stockRevoService {
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Reserved for Rental'
+                    ) AS reservedforrentalquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Service Hold'
+                    ) AS serviceholdquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Damaged'
+                    ) AS damagedquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Lost'
+                    ) AS lostquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE ${activeFilters}
                         AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype <> 'third_party_product'
@@ -703,6 +893,10 @@ export module stockRevoService {
                 const oncatalogueqty = parseInt(quantityResult.rows[0].oncatalogueqty, 10);
                 const offcatalogueqty = parseInt(quantityResult.rows[0].offcatalogueqty, 10);
                 const rentaltotalquantity = parseInt(quantityResult.rows[0].rentaltotalquantity, 10);
+                const reservedforrentalquantity = parseInt(quantityResult.rows[0].reservedforrentalquantity, 10);
+                const serviceholdquantity = parseInt(quantityResult.rows[0].serviceholdquantity, 10);
+                const damagedquantity = parseInt(quantityResult.rows[0].damagedquantity, 10);
+                const lostquantity = parseInt(quantityResult.rows[0].lostquantity, 10);
                 const bin_qty = parseInt(quantityResult.rows[0].bin_qty, 10);
                 const archive_qty = parseInt(quantityResult.rows[0].archive_qty, 10);
                 const ewaste_qty = parseInt(quantityResult.rows[0].ewaste_qty, 10);
@@ -720,6 +914,10 @@ export module stockRevoService {
                     offcatalogueqty: offcatalogueqty,
                     rentaltotalquantity: rentaltotalquantity,
                     rentalavailablequantity: rentalavailablequantity,
+                    reservedforrentalquantity,
+                    serviceholdquantity,
+                    damagedquantity,
+                    lostquantity,
                     bin_qty,
                     archive_qty,
                     ewaste_qty
@@ -906,6 +1104,26 @@ export module stockRevoService {
                         AND s.stocktype = 'rental_product'
                     ) AS rentalsoldquantity,
 
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Reserved for Rental'
+                    ) AS reservedforrentalquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Service Hold'
+                    ) AS serviceholdquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Damaged'
+                    ) AS damagedquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Lost'
+                    ) AS lostquantity,
+
                     COALESCE(om.ordered_qty, 0) AS ordered_qty,
                     COALESCE(om.thirdpartyorder_qty, 0) AS thirdpartyorder_qty,
                     COALESCE(om.thirdpartysold_qty, 0) AS thirdpartysold_qty
@@ -935,6 +1153,10 @@ export module stockRevoService {
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
                 rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
                 rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10),
+                reservedforrentalquantity: parseInt(row.reservedforrentalquantity, 10),
+                serviceholdquantity: parseInt(row.serviceholdquantity, 10),
+                damagedquantity: parseInt(row.damagedquantity, 10),
+                lostquantity: parseInt(row.lostquantity, 10),
                 ordered_qty: parseInt(row.ordered_qty, 10),
                 thirdpartyorder_qty: parseInt(row.thirdpartyorder_qty, 10),
                 thirdpartysold_qty: parseInt(row.thirdpartysold_qty, 10)

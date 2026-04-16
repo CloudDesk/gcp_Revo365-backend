@@ -229,6 +229,109 @@ const processTicketNotifications = async (previousTicket, currentTicket, isInser
         await fireCustomerStatusEmail(currentTicket, customer);
     }
 };
+const TICKET_INTEGER_FIELDS = new Set([
+    "id",
+    "assignedto",
+    "userid",
+    "assignedid",
+    "approvedcostestimationid",
+    "addressid",
+    "queuenumber",
+    "createdbyid",
+    "productid",
+    "linkedorderlineid",
+    "activereplacementid",
+    "agreementid",
+    "penaltyinvoiceid",
+]);
+const TICKET_BIGINT_FIELDS = new Set([
+    "createddate",
+    "modifieddate",
+    "transactiondate",
+    "purchasedate",
+    "closeddate",
+    "assigneddate",
+    "productdelivereddate",
+    "requestedrenewaldate",
+    "approvedrenewaldate",
+    "receivedassetdate",
+    "resolvedassetdate",
+]);
+const TICKET_NUMERIC_FIELDS = new Set(["amount"]);
+const TICKET_BOOLEAN_FIELDS = new Set([
+    "proceedwithvalueservice",
+    "underwarranty",
+    "istransferred",
+    "isreopend",
+    "typemanual",
+    "replacementrequest",
+    "stoprental",
+]);
+const isNullishStringLiteral = (value) => typeof value === "string" &&
+    ["null", "undefined"].includes(value.trim().toLowerCase());
+const toNullableInteger = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "number" && Number.isInteger(value))
+        return value;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed)
+            return null;
+        if (/^-?\d+$/.test(trimmed))
+            return Number(trimmed);
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected an integer-compatible value or null.`);
+};
+const toNullableNumber = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "number" && Number.isFinite(value))
+        return value;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed)
+            return null;
+        if (/^-?\d+(\.\d+)?$/.test(trimmed))
+            return Number(trimmed);
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected a numeric value or null.`);
+};
+const toNullableBoolean = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "boolean")
+        return value;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized)
+            return null;
+        if (["true", "1", "yes"].includes(normalized))
+            return true;
+        if (["false", "0", "no"].includes(normalized))
+            return false;
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected a boolean value or null.`);
+};
+const normalizeTicketFieldValue = (fieldName, value) => {
+    if (TICKET_INTEGER_FIELDS.has(fieldName) || TICKET_BIGINT_FIELDS.has(fieldName)) {
+        return toNullableInteger(value, fieldName);
+    }
+    if (TICKET_NUMERIC_FIELDS.has(fieldName)) {
+        return toNullableNumber(value, fieldName);
+    }
+    if (TICKET_BOOLEAN_FIELDS.has(fieldName)) {
+        return toNullableBoolean(value, fieldName);
+    }
+    if (isNullishStringLiteral(value)) {
+        return null;
+    }
+    return value;
+};
+const normalizeTicketPayload = (ticketData) => Object.fromEntries(Object.entries(ticketData).map(([fieldName, value]) => [
+    fieldName,
+    normalizeTicketFieldValue(fieldName, value),
+]));
 export var ticketService;
 (function (ticketService) {
     ticketService.getTicketDynamic = async (request) => {
@@ -446,14 +549,15 @@ export var ticketService;
         try {
             let querydata;
             let params;
-            const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
+            // ✅ KEEP normalization
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            // ✅ KEEP notification tracking
+            const { id, inventoryuserid, product_warranty, ...upsertFields } = normalizedTicketData;
             let previousTicket = null;
             if (id) {
                 const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
                 previousTicket = prevResult.rows[0] ?? null;
             }
-            console.log(id, inventoryuserid, product_warranty, "id,inventoryuserid,product_warranty");
-            console.log("Upsert Fields", upsertFields);
             if (files && files.length > 0) {
                 for (const file of files) {
                     upsertFields.recipturl =
@@ -461,81 +565,73 @@ export var ticketService;
                 }
             }
             const fieldNames = Object.keys(upsertFields);
-            console.log("Field Names", fieldNames);
             const fieldValues = Object.values(upsertFields);
-            console.log("Field Values", fieldValues);
             if (id) {
                 querydata = `UPDATE tickets SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
-                console.log("Query Data", querydata);
             }
             else {
-                querydata = `INSERT INTO tickets (${fieldNames.join(", ")}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
+                querydata = `INSERT INTO tickets (${fieldNames.join(", ")})
+                   VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")})
+                   RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata, "querydata in Upsert Normal Tickets");
             const result = await query(querydata, params);
-            console.log(result, "result in Upsert Normal Tickets");
-            if (result && result.rows.length > 0) {
+            // ✅ KEEP notifications
+            if (result?.rows?.length > 0) {
                 await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertTickets", error);
-            let ErrorData = ErrorHandler.handleQueryError(error);
-            return ErrorData;
+            return await ErrorHandler.handleQueryError(error);
         }
     };
     ticketService.upsertGcpTickets = async (ticketData) => {
         try {
             let querydata;
             let params;
-            const { id, ...upsertFields } = ticketData;
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            const { id, ...upsertFields } = normalizedTicketData;
             let previousTicket = null;
             if (id) {
                 const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
                 previousTicket = prevResult.rows[0] ?? null;
             }
             const fieldNames = Object.keys(upsertFields);
-            console.log("upsertFields", upsertFields);
-            console.log("fieldNames", fieldNames);
             const fieldValues = Object.values(upsertFields);
-            console.log("fieldValues", fieldValues);
             if (id) {
                 querydata = `UPDATE tickets SET ${fieldNames
-                    .map((field, index) => `${field} = $${index + 1}`)
+                    .map((f, i) => `${f} = $${i + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO tickets (${fieldNames.join(", ")}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
+                querydata = `INSERT INTO tickets (${fieldNames.join(", ")})
+                   VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")})
+                   RETURNING *`;
                 params = fieldValues;
             }
-            console.log(querydata, " querydata in Upsert GCP Tickets");
             const result = await query(querydata, params);
-            if (result && result.rows.length > 0) {
+            if (result?.rows?.length > 0) {
                 await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertGcpTickets", error);
-            let ErrorData = ErrorHandler.handleQueryError(error);
-            return ErrorData;
+            return await ErrorHandler.handleQueryError(error);
         }
     };
     ticketService.upsertTicketspayment = async (ticketData, files, host) => {
         try {
             let querydata;
             let params;
-            const { id, ...upsertFields } = ticketData;
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            const { id, ...upsertFields } = normalizedTicketData;
             if (files && files.length > 0) {
                 for (const file of files) {
                     upsertFields.recipturl =

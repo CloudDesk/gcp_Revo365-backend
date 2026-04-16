@@ -105,6 +105,32 @@ export module ticketReplacementController {
     }
   };
 
+  export const generateRentalLossDeclaration = async (request: any, reply: any) => {
+    try {
+      const result =
+        await ticketReplacementService.generateRentalLossDeclaration(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'generateRentalLossDeclaration':", error);
+      const message =
+        error?.message || "Failed to generate the rental loss declaration.";
+      reply.status(400).send({ message });
+    }
+  };
+
+  export const finalizeRentalLossDeclaration = async (request: any, reply: any) => {
+    try {
+      const result =
+        await ticketReplacementService.finalizeRentalLossDeclaration(request);
+      reply.status(200).send(result);
+    } catch (error: any) {
+      console.error("Error in 'finalizeRentalLossDeclaration':", error);
+      const message =
+        error?.message || "Failed to finalize the rental loss declaration.";
+      reply.status(400).send({ message });
+    }
+  };
+
   export const assessRentalDamage = async (request: any, reply: any) => {
     try {
       const result = await ticketReplacementService.assessRentalDamage(request);
@@ -149,4 +175,3 @@ export module ticketReplacementController {
     }
   };
 }
-

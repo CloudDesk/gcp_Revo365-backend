@@ -55,8 +55,111 @@ export const createRentalAgreementSchema = {
         type: "Logo URL should be a string",
       },
     },
+    lesseeCompanyName: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee company name should be a string",
+      },
+    },
+    lesseeAddress: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee address should be a string",
+      },
+    },
+    lesseeGstin: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee GSTIN should be a string",
+      },
+    },
+    lesseeSignatoryName: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee signatory name should be a string",
+      },
+    },
+    lesseeSignatoryDesignation: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee signatory designation should be a string",
+      },
+    },
+    securityDepositAmount: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Security deposit amount should be a number",
+        minimum: "Security deposit amount cannot be negative",
+      },
+    },
+    securityDepositRef: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Security deposit reference should be a string",
+      },
+    },
+    securityDepositMonths: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Security deposit months should be a number",
+        minimum: "Security deposit months cannot be negative",
+      },
+    },
+    minimumLockInMonths: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Minimum lock-in months should be a number",
+        minimum: "Minimum lock-in months cannot be negative",
+      },
+    },
+    witness1Name: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Witness 1 name should be a string",
+      },
+    },
+    witness2Name: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Witness 2 name should be a string",
+      },
+    },
+    deliveryAddress: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Delivery address should be a string",
+      },
+    },
+    annexure1EquipmentRows: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          assetNo: { type: ["string", "null"] },
+          accessories: { type: ["string", "null"] },
+          remarks: { type: ["string", "null"] },
+        },
+        additionalProperties: false,
+      },
+    },
+    annexure2DeliveryRows: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          assetNo: { type: ["string", "null"] },
+          conditionOnDelivery: { type: ["string", "null"] },
+          preExistingDamageNotes: { type: ["string", "null"] },
+        },
+        additionalProperties: false,
+      },
+    },
   },
   required: ["uniqueorderid"],
+  additionalProperties: false,
   errorMessage: {
     required: {
       uniqueorderid: "Unique Order ID is mandatory.",
@@ -73,5 +176,108 @@ export const regenerateRentalAgreementPdfSchema = {
         type: "Logo URL should be a string",
       },
     },
+    lesseeCompanyName: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee company name should be a string",
+      },
+    },
+    lesseeAddress: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee address should be a string",
+      },
+    },
+    lesseeGstin: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee GSTIN should be a string",
+      },
+    },
+    lesseeSignatoryName: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee signatory name should be a string",
+      },
+    },
+    lesseeSignatoryDesignation: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Lessee signatory designation should be a string",
+      },
+    },
+    securityDepositAmount: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Security deposit amount should be a number",
+        minimum: "Security deposit amount cannot be negative",
+      },
+    },
+    securityDepositRef: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Security deposit reference should be a string",
+      },
+    },
+    securityDepositMonths: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Security deposit months should be a number",
+        minimum: "Security deposit months cannot be negative",
+      },
+    },
+    minimumLockInMonths: {
+      type: ["number", "integer", "null"],
+      minimum: 0,
+      errorMessage: {
+        type: "Minimum lock-in months should be a number",
+        minimum: "Minimum lock-in months cannot be negative",
+      },
+    },
+    witness1Name: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Witness 1 name should be a string",
+      },
+    },
+    witness2Name: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Witness 2 name should be a string",
+      },
+    },
+    deliveryAddress: {
+      type: ["string", "null"],
+      errorMessage: {
+        type: "Delivery address should be a string",
+      },
+    },
+    annexure1EquipmentRows: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          assetNo: { type: ["string", "null"] },
+          accessories: { type: ["string", "null"] },
+          remarks: { type: ["string", "null"] },
+        },
+        additionalProperties: false,
+      },
+    },
+    annexure2DeliveryRows: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        properties: {
+          assetNo: { type: ["string", "null"] },
+          conditionOnDelivery: { type: ["string", "null"] },
+          preExistingDamageNotes: { type: ["string", "null"] },
+        },
+        additionalProperties: false,
+      },
+    },
   },
+  additionalProperties: false,
 };

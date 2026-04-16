@@ -401,6 +401,23 @@ export module ordersService {
     const normalizeComparableText = (value: any) =>
         String(value ?? "").trim().toLowerCase();
 
+    const sendOrderCancellationEmail = async (userid: any, orderId: any, orderAmount: any) => {
+        if (!userid) return;
+
+        const getuser = await query(`SELECT useremail FROM users WHERE id = $1 LIMIT 1`, [userid]);
+        const useremail = getuser.rows[0]?.useremail;
+        if (!useremail) return;
+
+        const template = emailTemplates.orders.cancelled;
+        await sendTransactionalMail({
+            to: useremail,
+            subject: template.subject,
+            text: template.text
+                .replace("{orderId}", String(orderId ?? ""))
+                .replace("{orderAmount}", String(orderAmount ?? "")),
+        });
+    };
+
     export const getlatestOrderData = async (request: any) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
@@ -1482,9 +1499,10 @@ ${whereClause} ${orderByClause}`;
         const updatedRow = result.rows[0];
 
         const newStatus = normalizeOrderStatus(updatedRow?.orderstatus);
+        const previousStatus = normalizeOrderStatus(previousOrderRow?.orderstatus);
         const orderType = normalizeComparableText(updatedRow?.ordername);
 
-        if (newStatus === 'cancelled') {
+        if (newStatus === 'cancelled' && previousStatus !== 'cancelled') {
             const lineRows = await getOrderLinesForUniqueOrderId(updatedRow?.orderid);
 
             const previousStatuses = new Map<number, string>();
@@ -1514,6 +1532,13 @@ ${whereClause} ${orderByClause}`;
 
             await syncSingleHeaderStatusFromLines(updatedRow.orderid, 'Orders');
             await cancelShiprocketOrderForMerchant(updatedRow.merchanttransactionid);
+            await sendOrderCancellationEmail(updatedRow.userid, updatedRow.orderid, updatedRow.orderamount);
+        } else if (["delivered", "sold"].includes(newStatus) && !["delivered", "sold"].includes(previousStatus)) {
+            const productIds = Array.isArray(updatedRow.productid)
+                ? updatedRow.productid
+                : [updatedRow.productid];
+
+            await productrevoService.updateCancelledOrderedQuantity(productIds, Number(updatedRow.quantity));
         }
 
         return result;
@@ -1555,7 +1580,7 @@ ${whereClause} ${orderByClause}`;
         const previousStatus = normalizeOrderStatus(previousLineRow?.orderstatus);
         const orderType = normalizeComparableText(lineRow?.ordername);
 
-        if (lineStatus === 'cancelled') {
+        if (lineStatus === 'cancelled' && previousStatus !== 'cancelled') {
             await releaseCommittedInventoryForCancellation(
                 [lineRow],
                 new Map([[Number(lineRow.id), previousStatus]])
@@ -1573,6 +1598,16 @@ ${whereClause} ${orderByClause}`;
             }
 
             await cancelShiprocketOrderForMerchant(lineRow.merchanttransactionid);
+            await sendOrderCancellationEmail(lineRow.userid, lineRow.orderid, lineRow.orderamount);
+        } else if (
+            ["delivered", "sold"].includes(lineStatus) &&
+            !["delivered", "sold"].includes(previousStatus) &&
+            lineRow?.ordertype === 'Orders'
+        ) {
+            await productrevoService.updateCancelledOrderedQuantity(
+                [lineRow.productid],
+                Number(lineRow.quantity)
+            );
         }
 
         if (lineRow?.uniqueorderid) {
@@ -2627,6 +2662,26 @@ Thank You!`,
                 "payment_failed_cleanup"
             );
 
+            const lockedProductRows = await query(
+                `
+                SELECT productid, COALESCE(SUM(quantity), 0)::int AS quantity
+                FROM orderline
+                WHERE merchanttransactionid = $1
+                  AND LOWER(COALESCE(ordername, '')) != 'rental'
+                GROUP BY productid
+                `,
+                [merchantid]
+            );
+
+            for (const row of lockedProductRows.rows) {
+                await query(
+                    `UPDATE product_revo
+                     SET lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1)
+                     WHERE id = $2`,
+                    [Number(row.quantity) || 0, row.productid]
+                );
+            }
+
             await query(
                 `DELETE FROM orderline WHERE merchanttransactionid = $1`,
                 [merchantid]
@@ -2655,5 +2710,4 @@ Thank You!`,
     };
 
 }
-
 

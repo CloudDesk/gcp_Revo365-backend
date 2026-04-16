@@ -25,6 +25,12 @@ export var productrevoService;
     ]);
     const MIGRATION_TABLE_MISSING_CODE = "42P01";
     const MIGRATION_COLUMN_MISSING_CODE = "42703";
+    const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
+    const isRentalOrderItem = (item) => {
+        const orderName = String(item?.ordername ?? "").trim().toLowerCase();
+        const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
+        return orderName === "rental" || invoiceFor === "product rental";
+    };
     const normalizeValue = (value) => {
         if (value === null || value === undefined)
             return "";
@@ -1276,11 +1282,43 @@ export var productrevoService;
     productrevoService.getEachProductsRevo = async function (request, id, visibilityMode) {
         try {
             const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
-            const queryText = `SELECT * FROM product_revo
-           WHERE id = $1
-             AND (isarchive = FALSE OR isarchive IS NULL)
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
+            const queryText = `
+          SELECT 
+            p.*,
+            COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
+            COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
+            COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity
+          FROM product_revo p
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Reserved for Rental'
+              ) AS reservedforrentalquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Service Hold'
+              ) AS serviceholdquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Damaged'
+              ) AS damagedquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Lost'
+              ) AS lostquantity
+            FROM stock_revo
+            WHERE puc = p.puc
+          ) stock_counts ON TRUE
+          WHERE p.id = $1
+            AND (p.isarchive = FALSE OR p.isarchive IS NULL)
+            AND (p.isdeleted = FALSE OR p.isdeleted IS NULL)
+            AND (p.removefromrecyclebin = FALSE OR p.removefromrecyclebin IS NULL)${visibilityClause}`;
             const result = await query(queryText, [id]);
             console.log(result, "result");
             let getvalues = { objectName: "null" };
@@ -1464,7 +1502,7 @@ export var productrevoService;
     };
     productrevoService.upsertQuantityFields = async (upsertData, orderedquantitydata, issold, isRental = false) => {
         console.log('--upsertQuantityFields', upsertData);
-        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity, bin_qty, archive_qty, ewaste_qty } = upsertData;
+        const { quantity, ecompublishedquantity, soldquantity, availablequantity, puc, overallavailableqty, rentalsoldquantity, oncatalogueqty, offcatalogueqty, rentaltotalquantity, rentalavailablequantity, reservedforrentalquantity, serviceholdquantity, damagedquantity, lostquantity, bin_qty, archive_qty, ewaste_qty } = upsertData;
         try {
             let productquery = await query(`SELECT orderedquantity FROM product_revo WHERE puc = $1`, [puc]);
             let orderedquantityvalue = productquery.rows[0]?.orderedquantity;
@@ -1492,9 +1530,13 @@ export var productrevoService;
           offcatalogueqty = $9,
           rentaltotalquantity = $10,
           rentalavailablequantity = $11,
-          bin_qty = $12,
-          archive_qty = $13,
-          ewaste_qty = $14
+          reservedforrentalquantity = $12,
+          serviceholdquantity = $13,
+          damagedquantity = $14,
+          lostquantity = $15,
+          bin_qty = $16,
+          archive_qty = $17,
+          ewaste_qty = $18
     `;
             let updateQuery = '';
             console.log("DEBUG upsertQuantityFields - issold:", issold, "isRental:", isRental, "orderedquantityNumber:", orderedquantityNumber);
@@ -1503,33 +1545,37 @@ export var productrevoService;
                 // reservation in the same statement so sellable counters are not double-subtracted.
                 if (isRental) {
                     console.log("DEBUG: Decrementing rentalorderedquantity");
-                    updateQueryBase += `, rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $15)`;
-                    updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
+                    updateQueryBase += `, rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $19)`;
+                    updateQuery = `${updateQueryBase} WHERE puc = $20 RETURNING *`;
                 }
                 else {
                     console.log("DEBUG: Decrementing orderedquantity");
                     updateQuery = `
           UPDATE product_revo 
           SET quantity = $1, 
-              ecompublishedquantity = GREATEST(0, $2 - GREATEST(0, COALESCE(orderedquantity, 0) - $15)), 
+              ecompublishedquantity = GREATEST(0, $2 - GREATEST(0, COALESCE(orderedquantity, 0) - $19)), 
               soldquantity = $3, 
               availablequantity = $4, 
               productstatus = $5, 
-              overallavailableqty = GREATEST(0, $6 - GREATEST(0, COALESCE(orderedquantity, 0) - $15)), 
+              overallavailableqty = GREATEST(0, $6 - GREATEST(0, COALESCE(orderedquantity, 0) - $19)), 
               rentalsoldquantity = $7,
               oncatalogueqty = $8,
               offcatalogueqty = $9,
               rentaltotalquantity = $10,
               rentalavailablequantity = $11,
-              bin_qty = $12,
-              archive_qty = $13,
-              ewaste_qty = $14,
-              orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $15)
-          WHERE puc = $16 RETURNING *`;
+              reservedforrentalquantity = $12,
+              serviceholdquantity = $13,
+              damagedquantity = $14,
+              lostquantity = $15,
+              bin_qty = $16,
+              archive_qty = $17,
+              ewaste_qty = $18,
+              orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $19)
+          WHERE puc = $20 RETURNING *`;
                 }
             }
             else {
-                updateQuery = `${updateQueryBase} WHERE puc = $15 RETURNING *`;
+                updateQuery = `${updateQueryBase} WHERE puc = $19 RETURNING *`;
             }
             let updateParams = [];
             if (issold && !isNaN(orderedquantityNumber)) {
@@ -1545,6 +1591,10 @@ export var productrevoService;
                     offcatalogueqty,
                     rentaltotalquantity,
                     rentalavailablequantity,
+                    reservedforrentalquantity,
+                    serviceholdquantity,
+                    damagedquantity,
+                    lostquantity,
                     bin_qty,
                     archive_qty,
                     ewaste_qty,
@@ -1565,6 +1615,10 @@ export var productrevoService;
                     offcatalogueqty,
                     rentaltotalquantity,
                     rentalavailablequantity,
+                    reservedforrentalquantity,
+                    serviceholdquantity,
+                    damagedquantity,
+                    lostquantity,
                     bin_qty,
                     archive_qty,
                     ewaste_qty,
@@ -1616,12 +1670,16 @@ export var productrevoService;
                         'rentaltotalquantity',     $10::integer,
                         'rentalsoldquantity',      $11::integer,
                         'rentalavailablequantity', $12::integer,
-                        'orderedquantity',         $13::integer,
-                        'thirdpartyorderquantity', $14::integer,
-                        'thirdpartysoldquantity',  $15::integer
+                        'reservedforrentalquantity', $13::integer,
+                        'serviceholdquantity',     $14::integer,
+                        'damagedquantity',         $15::integer,
+                        'lostquantity',            $16::integer,
+                        'orderedquantity',         $17::integer,
+                        'thirdpartyorderquantity', $18::integer,
+                        'thirdpartysoldquantity',  $19::integer
                     )
                 )
-            WHERE puc = $16
+            WHERE puc = $20
             RETURNING *
         `;
             const updateQueries = batchData.map(data => {
@@ -1640,6 +1698,10 @@ export var productrevoService;
                         data.rentaltotalquantity,
                         data.rentalsoldquantity,
                         data.rentalavailablequantity,
+                        data.reservedforrentalquantity,
+                        data.serviceholdquantity,
+                        data.damagedquantity,
+                        data.lostquantity,
                         data.ordered_qty,
                         data.thirdpartyorder_qty,
                         data.thirdpartysold_qty,
@@ -1651,7 +1713,7 @@ export var productrevoService;
             // clobber each other and drop branch keys under load.
             const byPuc = new Map();
             for (const u of updateQueries) {
-                const pucKey = String(u.params[15]);
+                const pucKey = String(u.params[19]);
                 const list = byPuc.get(pucKey) ?? [];
                 list.push(u);
                 byPuc.set(pucKey, list);
@@ -1750,12 +1812,15 @@ export var productrevoService;
     productrevoService.bulkupsertProducttosetZero = (async (data, setzero) => {
         try {
             console.log(data + 'data for bulk upsert product to set zero');
-            if (data.length === 0) {
+            const lockableItems = Array.isArray(data)
+                ? data.filter((item) => !isRentalOrderItem(item))
+                : [];
+            if (lockableItems.length === 0) {
                 return { message: 'No data to update' };
             }
             let querytext = 'UPDATE product_revo SET lock_qty = CASE id ';
             const values = [];
-            data.forEach((item, index) => {
+            lockableItems.forEach((item, index) => {
                 if (setzero) {
                     const idPlaceholder = index + 1;
                     querytext += `WHEN $${idPlaceholder} THEN 0 `;
@@ -1770,10 +1835,10 @@ export var productrevoService;
             });
             querytext += 'ELSE lock_qty END WHERE id IN (';
             if (setzero) {
-                querytext += data.map((_, index) => `$${index + 1}`).join(', ');
+                querytext += lockableItems.map((_, index) => `$${index + 1}`).join(', ');
             }
             else {
-                querytext += data.map((_, index) => `$${index * 2 + 1}`).join(', ');
+                querytext += lockableItems.map((_, index) => `$${index * 2 + 1}`).join(', ');
             }
             querytext += ');';
             await query(querytext, values);
@@ -1812,7 +1877,7 @@ export var productrevoService;
         UPDATE product_revo
         SET rentalorderedquantity = rentalorderedquantity + $1,
             -- rentalavailablequantity is usually computed, but let's ensure it stays consistent if stored
-            rentalavailablequantity = rentalavailablequantity - $1
+            rentalavailablequantity = GREATEST(0, COALESCE(rentalavailablequantity, 0) - $1)
         WHERE id = $2
         RETURNING *`;
                     let result = await query(queryText, [orderedquantity, id]);
@@ -1826,6 +1891,7 @@ export var productrevoService;
                     const queryText = `
         UPDATE product_revo
         SET orderedquantity = COALESCE(orderedquantity, 0) + $1,
+            lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1),
             overallavailableqty = GREATEST(0, COALESCE(overallavailableqty, 0) - $1),
             ecompublishedquantity = GREATEST(0, COALESCE(ecompublishedquantity, 0) - $1)
         WHERE id = $2
@@ -1873,11 +1939,79 @@ export var productrevoService;
                     AND stocktype <> 'third_party_product'
                 ) AS available_quantity_count,
 
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
-                -- Rental quantities should include both ecompublish=true and ecompublish=false stocks.
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'on_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS on_catalogue_count,
+
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'off_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS off_catalogue_count,
+
+-- ✅ Rental should NOT depend on ecompublish
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_total_count,
+
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Rental Sold'
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_sold_count,
+
+-- ✅ New metric (keep this)
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Reserved for Rental'
+        THEN 1 ELSE 0 
+    END
+), 0) AS reserved_rental_count
+,
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Service Hold'
+        THEN 1 ELSE 0
+    END
+), 0) AS service_hold_count,
+
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Damaged'
+        THEN 1 ELSE 0
+    END
+), 0) AS damaged_count,
+
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Lost'
+        THEN 1 ELSE 0
+    END
+), 0) AS lost_count
 
                 -- overallavailableqty = physical ecom=true Available count
                 --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
@@ -1937,7 +2071,11 @@ export var productrevoService;
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
+            reservedforrentalquantity = counts.reserved_rental_count,
+            serviceholdquantity = counts.service_hold_count,
+            damagedquantity = counts.damaged_count,
+            lostquantity = counts.lost_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count,
             overallavailableqty = counts.overall_available_qty - COALESCE(orderedquantity, 0),
             ecompublishedquantity = counts.ecom_published_qty - COALESCE(orderedquantity, 0),
             bin_qty = counts.bin_count,
@@ -1946,7 +2084,7 @@ export var productrevoService;
         FROM counts
         WHERE product_revo.puc = $1
         RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
-                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  (counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count) as rental_available_count,
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
         console.log('queryText:', queryText);
