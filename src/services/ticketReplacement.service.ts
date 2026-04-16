@@ -7,6 +7,7 @@ import {
 } from "./rentalIssue.service.js";
 import { rentalAgreementService } from "./rentalAgreement.service.js";
 import { processRentalRenewal } from "./rentalRenewal.service.js";
+import { stockRevoService } from "./stockRevo.service.js";
 
 const REPAIR_RENTAL_TICKET_TYPE = "repair rental";
 const INITIATED_REPLACEMENT_STATUS = "replacement_requested";
@@ -50,6 +51,22 @@ const normalizeText = (value: any) =>
 
 const normalizeComparableText = (value: any) =>
   String(value ?? "").trim().toLowerCase();
+
+const parseJsonValue = <T>(value: any, fallback: T): T => {
+  if (value == null) {
+    return fallback;
+  }
+
+  if (typeof value === "object") {
+    return value as T;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
 
 const toPositiveInteger = (value: any) => {
   const parsed = Number(value);
@@ -120,7 +137,11 @@ const buildReplacementContext = async (ticketId: number) => {
         ol.productamount AS resolved_productamount,
         ol.orderamount AS resolved_orderamount,
         ol.userid AS resolved_userid,
-        ol.modifieddate AS resolved_orderline_modifieddate
+        ol.modifieddate AS resolved_orderline_modifieddate,
+        ra.id AS resolved_agreement_rowid,
+        ra.agreementnumber AS resolved_agreementnumber,
+        ra.agreementpdfurl AS resolved_agreementpdfurl,
+        ra.documentsnapshot AS resolved_agreement_documentsnapshot
       FROM tickets t
       LEFT JOIN LATERAL (
         SELECT *
@@ -139,6 +160,8 @@ const buildReplacementContext = async (ticketId: number) => {
           ol.id DESC
         LIMIT 1
       ) ol ON TRUE
+      LEFT JOIN rental_agreement ra
+        ON ra.id = COALESCE(ol.agreementid, t.agreementid)
       WHERE t.id = $1
       LIMIT 1
     `,
@@ -265,6 +288,8 @@ const buildReplacementContext = async (ticketId: number) => {
         holdreason,
         holdticketid,
         location,
+        lostdate,
+        lostreason,
         modifieddate
       FROM stock_revo
       WHERE
@@ -309,6 +334,41 @@ const buildReplacementContext = async (ticketId: number) => {
     [ticketId]
   );
 
+  const agreementDocument = parseJsonValue<Record<string, any>>(
+    ticketRow.resolved_agreement_documentsnapshot,
+    {}
+  );
+  const annexure3Snapshot = agreementDocument?.annexure3 ?? null;
+  const signatureSnapshot = agreementDocument?.signatures ?? null;
+  const linkedAgreement =
+    ticketRow.resolved_agreement_rowid == null
+      ? null
+      : {
+          id: Number(ticketRow.resolved_agreement_rowid),
+          agreementnumber: ticketRow.resolved_agreementnumber ?? null,
+          agreementpdfurl: ticketRow.resolved_agreementpdfurl ?? null,
+          documentsnapshot: agreementDocument,
+          lossdeclarationgenerated: Boolean(annexure3Snapshot?.declarationDate),
+          lossdeclarationfinalizedat: annexure3Snapshot?.finalizedAt ?? null,
+          lossdeclarationfinalizedby: annexure3Snapshot?.finalizedBy ?? null,
+          lossdeclarationdetails: annexure3Snapshot
+            ? {
+                declarationdate: annexure3Snapshot.declarationDate ?? null,
+                incidentdate: annexure3Snapshot.incidentDate ?? null,
+                incidenttime: annexure3Snapshot.incidentTime ?? "",
+                incidentlocation: annexure3Snapshot.incidentLocation ?? "",
+                circumstances: annexure3Snapshot.circumstances ?? "",
+                firncnumber: annexure3Snapshot.firNcNumber ?? "",
+                policestation: annexure3Snapshot.policeStation ?? "",
+                firncfilingdate: annexure3Snapshot.firNcFilingDate ?? null,
+                lesseesignatoryname:
+                  signatureSnapshot?.lesseeSignatoryName ?? "",
+                lesseesignatorydesignation:
+                  signatureSnapshot?.lesseeSignatoryDesignation ?? "",
+              }
+            : null,
+        };
+
   return {
     ticket: ticketRow,
     resolutionstatus: linkedOrderline ? "resolved" : "unresolved",
@@ -318,6 +378,7 @@ const buildReplacementContext = async (ticketId: number) => {
         ? "assetnumber"
         : null,
     linkedorderline: linkedOrderline,
+    linkedagreement: linkedAgreement,
     currentstock: stockResult.rows[0] ?? null,
     monthsalreadybilled,
     remainingmonths,
@@ -2188,6 +2249,18 @@ export module ticketReplacementService {
       await client.query("COMMIT");
       transactionStarted = false;
 
+      const affectedPuc = normalizeText(lostResult.stock?.puc);
+      if (affectedPuc) {
+        try {
+          await stockRevoService.updateQuantity([affectedPuc], 0, false, true);
+        } catch (refreshError) {
+          console.error(
+            "Rental lost quantity refresh failed after commit:",
+            refreshError
+          );
+        }
+      }
+
       return {
         message: "Rental asset marked as lost successfully.",
         ticket: lostResult.ticket,
@@ -2206,6 +2279,156 @@ export module ticketReplacementService {
       throw new Error(error?.message || "Failed to mark the rental asset as lost.");
     } finally {
       client.release();
+    }
+  };
+
+  export const generateRentalLossDeclaration = async (request: any) => {
+    try {
+      const ticketId = toPositiveInteger(request.params.id);
+      const context = await buildReplacementContext(ticketId);
+
+      if (!context.linkedorderline) {
+        throw new Error("Unable to resolve the active rental contract for this ticket.");
+      }
+
+      const agreementId =
+        context.linkedorderline?.agreementid != null
+          ? Number(context.linkedorderline.agreementid)
+          : context.ticket?.agreementid != null
+            ? Number(context.ticket.agreementid)
+            : null;
+
+      if (agreementId == null) {
+        throw new Error("No rental agreement is linked to this lost asset.");
+      }
+
+      if (context.linkedagreement?.lossdeclarationfinalizedat) {
+        throw new Error(
+          "Loss declaration has already been finalized. Regeneration is disabled."
+        );
+      }
+
+      const linkedAssetStatus = normalizeComparableText(
+        context.linkedorderline?.rentalassetstatus
+      );
+      const rentalActionType = normalizeComparableText(context.ticket?.rentalactiontype);
+      const rentalActionStatus = normalizeComparableText(
+        context.ticket?.rentalactionstatus
+      );
+
+      if (
+        rentalActionType !== "lost" &&
+        linkedAssetStatus !== "lost" &&
+        rentalActionStatus !== "lost_confirmed"
+      ) {
+        throw new Error(
+          "Loss declaration is available only after the rental asset is marked as lost."
+        );
+      }
+
+      await rentalAgreementService.refreshRentalAgreementPdfById(agreementId, {
+        modifiedBy: request.session?.id ?? null,
+        lesseeSignatoryName: normalizeText(request.body?.lesseesignatoryname),
+        lesseeSignatoryDesignation: normalizeText(
+          request.body?.lesseesignatorydesignation
+        ),
+        annexure3: {
+          declarationDate:
+            toOptionalPositiveBigInt(request.body?.declarationdate) ??
+            Math.trunc(Date.now() / 1000),
+          incidentDate:
+            toOptionalPositiveBigInt(request.body?.incidentdate) ??
+            context.currentstock?.lostdate ??
+            null,
+          incidentTime: normalizeText(request.body?.incidenttime),
+          incidentLocation: normalizeText(request.body?.incidentlocation),
+          circumstances:
+            normalizeText(request.body?.circumstances) ??
+            normalizeText(context.currentstock?.lostreason) ??
+            null,
+          firNcNumber: normalizeText(request.body?.firncnumber),
+          policeStation: normalizeText(request.body?.policestation),
+          firNcFilingDate: toOptionalPositiveBigInt(
+            request.body?.firncfilingdate
+          ),
+        },
+      });
+
+      return {
+        message: "Rental loss declaration generated successfully.",
+        agreement: await rentalAgreementService.getRentalAgreementById({
+          params: { id: agreementId },
+        }),
+        context: await buildReplacementContext(ticketId),
+      };
+    } catch (error: any) {
+      console.error("Query Execution Error: IN generateRentalLossDeclaration", error);
+      throw new Error(
+        error?.message || "Failed to generate the rental loss declaration."
+      );
+    }
+  };
+
+  export const finalizeRentalLossDeclaration = async (request: any) => {
+    try {
+      const ticketId = toPositiveInteger(request.params.id);
+      const context = await buildReplacementContext(ticketId);
+
+      if (!context.linkedorderline) {
+        throw new Error("Unable to resolve the active rental contract for this ticket.");
+      }
+
+      const agreementId =
+        context.linkedorderline?.agreementid != null
+          ? Number(context.linkedorderline.agreementid)
+          : context.ticket?.agreementid != null
+            ? Number(context.ticket.agreementid)
+            : null;
+
+      if (agreementId == null) {
+        throw new Error("No rental agreement is linked to this lost asset.");
+      }
+
+      if (!context.linkedagreement?.lossdeclarationgenerated) {
+        throw new Error(
+          "Generate the loss declaration before finalizing Annexure III."
+        );
+      }
+
+      if (context.linkedagreement?.lossdeclarationfinalizedat) {
+        return {
+          message: "Rental loss declaration is already finalized.",
+          agreement: await rentalAgreementService.getRentalAgreementById({
+            params: { id: agreementId },
+          }),
+          context,
+        };
+      }
+
+      await rentalAgreementService.refreshRentalAgreementPdfById(agreementId, {
+        modifiedBy: request.session?.id ?? null,
+        annexure3: {
+          finalizedAt: Math.trunc(Date.now() / 1000),
+          finalizedBy:
+            normalizeText(request.session?.name) ??
+            normalizeText(request.session?.username) ??
+            normalizeText(request.session?.email) ??
+            normalizeText(request.session?.id),
+        },
+      });
+
+      return {
+        message: "Rental loss declaration finalized successfully.",
+        agreement: await rentalAgreementService.getRentalAgreementById({
+          params: { id: agreementId },
+        }),
+        context: await buildReplacementContext(ticketId),
+      };
+    } catch (error: any) {
+      console.error("Query Execution Error: IN finalizeRentalLossDeclaration", error);
+      throw new Error(
+        error?.message || "Failed to finalize the rental loss declaration."
+      );
     }
   };
 
@@ -2297,6 +2520,18 @@ export module ticketReplacementService {
 
       await client.query("COMMIT");
       transactionStarted = false;
+
+      const affectedPuc = normalizeText(damageResult.stock?.puc);
+      if (affectedPuc) {
+        try {
+          await stockRevoService.updateQuantity([affectedPuc], 0, false, true);
+        } catch (refreshError) {
+          console.error(
+            "Rental damaged quantity refresh failed after commit:",
+            refreshError
+          );
+        }
+      }
 
       return {
         message:
@@ -2588,12 +2823,6 @@ export module ticketReplacementService {
     }
   };
 }
-
-
-
-
-
-
 
 
 

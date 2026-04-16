@@ -7,6 +7,7 @@ import { sendMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 export var ordersService;
 (function (ordersService) {
+    const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
     ordersService.getlatestOrderData = async (request) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
@@ -882,6 +883,7 @@ ${whereClause} ${orderByClause}`;
             const result = await query(querydata, params);
             const updatedRow = result.rows[0];
             const newStatus = updatedRow?.orderstatus;
+            const orderType = normalizeComparableText(updatedRow?.ordername);
             if (newStatus === 'cancelled') {
                 // productid on orders is already an int[] — do NOT double-wrap it
                 const productIds = Array.isArray(updatedRow.productid)
@@ -890,6 +892,9 @@ ${whereClause} ${orderByClause}`;
                 const quantitydata = Number(updatedRow.quantity);
                 // Decrement orderedquantity and refresh quantityforlocation JSONB
                 await productrevoService.updateCancelledOrderedQuantity(productIds, quantitydata);
+                if (orderType === "rental") {
+                    await stockRevoService.releaseReservedRentalStockForOrder(updatedRow.orderid);
+                }
                 const userid = updatedRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
                 const template = emailTemplates.orders.cancelled;
@@ -951,12 +956,16 @@ ${whereClause} ${orderByClause}`;
             const lineRow = result.rows[0];
             const lineStatus = lineRow?.orderstatus;
             const lineType = lineRow?.ordertype;
+            const orderType = normalizeComparableText(lineRow?.ordername);
             if (lineStatus === 'cancelled') {
                 // Only normal orders track orderedquantity — 3rd-party orders do not
                 if (lineType === 'Orders') {
                     const productid = lineRow.productid; // single int on orderline
                     const quantitydata = Number(lineRow.quantity);
                     await productrevoService.updateCancelledOrderedQuantity([productid], quantitydata);
+                }
+                if (orderType === "rental") {
+                    await stockRevoService.releaseReservedRentalStockForOrderline(lineRow.orderlinenumber);
                 }
                 const userid = lineRow.userid;
                 const getuser = await query(`SELECT * FROM users WHERE id = $1`, [userid]);
@@ -1240,16 +1249,34 @@ ${whereClause} ${orderByClause}`;
                 }
                 rfidMap.set(item.rfid, true);
             }
+            let ordername = '';
+            for (const item of orderData) {
+                if (item.ordername) {
+                    ordername = item.ordername;
+                    break;
+                }
+            }
+            if (!ordername && orderData[0]?.orderlinenumber) {
+                const orderlineQuery = await query(`SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`, [orderData[0].orderlinenumber]);
+                ordername = orderlineQuery.rows[0]?.ordername || '';
+            }
+            const isRentalValidation = normalizeComparableText(ordername) === "rental";
+            const validationParams = [];
+            const validationWhere = orderData.map((item) => {
+                validationParams.push(item.rfid);
+                const rfidParamIndex = validationParams.length;
+                validationParams.push(item.productid);
+                const productParamIndex = validationParams.length;
+                return isRentalValidation
+                    ? `(rfid = $${rfidParamIndex} AND puc IN (SELECT puc FROM product_revo WHERE id = $${productParamIndex}) AND (stockstatus = 'Available' OR stockstatus = 'Reserved for Rental'))`
+                    : `(rfid = $${rfidParamIndex} AND puc IN (SELECT puc FROM product_revo WHERE id = $${productParamIndex}) AND stockstatus = 'Available')`;
+            }).join(' OR ');
             const validationQuery = `
-                SELECT rfid, puc 
-                FROM stock_revo 
-                WHERE rfid = ANY($1)
-                AND puc IN (SELECT puc FROM product_revo WHERE id = ANY($2))
-                AND stockstatus = 'Available'
+                SELECT rfid, puc
+                FROM stock_revo
+                WHERE ${validationWhere}
             `;
-            const rfids = orderData.map(item => item.rfid);
-            const productIds = orderData.map(item => item.productid);
-            const validationResult = await query(validationQuery, [rfids, productIds]);
+            const validationResult = await query(validationQuery, validationParams);
             // Check if all RFIDs were found
             if (validationResult.rows.length !== orderData.length) {
                 const foundRfids = new Set(validationResult.rows.map(row => row.rfid));
@@ -1268,14 +1295,6 @@ ${whereClause} ${orderByClause}`;
             else if (updateStock && (updateStock.command === "UPDATE" || updateStock.command === "INSERT")) {
                 const pucArray = Array.from(new Set(updateStock.result.rows.map(row => row.puc)));
                 // Determine if this is a rental order
-                // Try to get ordername from orderData first
-                let ordername = '';
-                for (const item of orderData) {
-                    if (item.ordername) {
-                        ordername = item.ordername;
-                        break;
-                    }
-                }
                 // If ordername not in request, fetch from database using orderlinenumber from updateStock result
                 if (!ordername && updateStock.result.rows.length > 0) {
                     const orderlinenumber = updateStock.result.rows[0]?.orderlinenumber;
@@ -1510,24 +1529,36 @@ ${whereClause} ${orderByClause}`;
             });
             console.log('Product IDs:', productid);
             console.log('Cart IDs:', cartId);
-            // Query product_revo table to get availablequantity for each productid
+            // Query product_revo table to get stock availability for each productid.
+            // Rental orders must use rentalavailablequantity instead of the normal availablequantity column.
             const quantityQuery = `
-            SELECT id AS productid, availablequantity
+            SELECT id AS productid, availablequantity, rentalavailablequantity
             FROM product_revo
             WHERE id = ANY($1)
         `;
             const quantityResult = await query(quantityQuery, [productid]);
             console.log('Available quantities:', quantityResult.rows);
             const availableQuantities = quantityResult.rows.reduce((acc, row) => {
-                acc[row.productid] = row.availablequantity;
+                acc[row.productid] = {
+                    availablequantity: Number(row.availablequantity ?? 0),
+                    rentalavailablequantity: Number(row.rentalavailablequantity ?? 0),
+                };
                 return acc;
             }, {});
             // Split orderData into orders and thirdpartyorders based on quantity check
             const ordersToInsert = [];
             const thirdPartyOrdersToInsert = [];
             orderData.forEach((item) => {
-                const available = availableQuantities[item.productid] || 0;
-                if (item.quantity <= available) {
+                const productAvailability = availableQuantities[item.productid] || {
+                    availablequantity: 0,
+                    rentalavailablequantity: 0,
+                };
+                const isRentalOrder = String(item.invoicefor ?? "").trim().toLowerCase() === "product rental";
+                const available = isRentalOrder
+                    ? productAvailability.rentalavailablequantity
+                    : productAvailability.availablequantity;
+                const requestedQuantity = Number(item.quantity ?? 0);
+                if (requestedQuantity <= available) {
                     // Entire quantity can be fulfilled from available stock
                     ordersToInsert.push({ ...item });
                 }
@@ -1535,20 +1566,17 @@ ${whereClause} ${orderByClause}`;
                     // Split the order
                     console.log("available", available);
                     console.log("item.invoicefor", item.invoicefor);
+                    if (isRentalOrder) {
+                        throw new Error(`Insufficient rental stock available for product ${item.productid}.`);
+                    }
                     if (available > 0) {
                         // Add available quantity to orders
                         let orderItem = { ...item, quantity: available };
                         ordersToInsert.push(orderItem);
                     }
-                    else if (available <= 0 && item.invoicefor == "product rental") {
-                        console.log("comes inside else if");
-                        let orderItem = { ...item, quantity: available };
-                        ordersToInsert.push(orderItem);
-                        console.log("orderItem", orderItem);
-                    }
                     // Add remaining quantity to thirdpartyorders
-                    if (item.invoicefor != "product rental") {
-                        const thirdPartyQuantity = item.quantity - available;
+                    if (!isRentalOrder) {
+                        const thirdPartyQuantity = requestedQuantity - available;
                         if (thirdPartyQuantity > 0) {
                             const thirdPartyItem = { ...item, quantity: thirdPartyQuantity };
                             thirdPartyOrdersToInsert.push(thirdPartyItem);
@@ -1860,12 +1888,16 @@ Thank You!`,
                 return;
             }
             const uniqueorderid = orderIdResult.rows[0].orderid;
-            const productIdOrderlineQuery = `SELECT productid FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineQuery = `SELECT productid, ordername FROM orderline WHERE uniqueorderid = $1`;
             const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
             if (productIdOrderlineResult.rows.length > 0) {
-                const productIds = productIdOrderlineResult.rows.map(row => row.productid);
-                const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
-                await query(updateLockQtyQuery, [productIds]);
+                const productIds = productIdOrderlineResult.rows
+                    .filter(row => String(row.ordername ?? '').trim().toLowerCase() !== 'rental')
+                    .map(row => row.productid);
+                if (productIds.length > 0) {
+                    const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
+                    await query(updateLockQtyQuery, [productIds]);
+                }
             }
             const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1;`;
             await query(deleteOrderlineQuery, [uniqueorderid]);
@@ -1910,12 +1942,12 @@ Thank You!`,
             const uniqueorderid = orderIdResult.rows[0].orderid;
             console.log("Unique Order ID to delete:", uniqueorderid);
             // Step 2: Get all product ids associated with order lines
-            const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineQuery = `SELECT productid, quantity, ordername FROM orderline WHERE uniqueorderid = $1`;
             const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
             console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
             if (productIdOrderlineResult.rows.length > 0) {
                 console.log("Updating lock_qty for products associated with the order");
-                const products = productIdOrderlineResult.rows;
+                const products = productIdOrderlineResult.rows.filter((product) => String(product.ordername ?? '').trim().toLowerCase() !== 'rental');
                 console.log("Products to update:", products);
                 // Iterate through each product and update individually
                 for (const product of products) {

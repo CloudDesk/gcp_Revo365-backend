@@ -2083,14 +2083,18 @@ Thank You!`,
 
             const uniqueorderid = orderIdResult.rows[0].orderid;
 
-            const productIdOrderlineQuery = `SELECT productid FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineQuery = `SELECT productid, ordername FROM orderline WHERE uniqueorderid = $1`;
             const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
 
             if (productIdOrderlineResult.rows.length > 0) {
-                const productIds = productIdOrderlineResult.rows.map(row => row.productid);
+                const productIds = productIdOrderlineResult.rows
+                    .filter(row => String(row.ordername ?? '').trim().toLowerCase() !== 'rental')
+                    .map(row => row.productid);
 
-                const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
-                await query(updateLockQtyQuery, [productIds]);
+                if (productIds.length > 0) {
+                    const updateLockQtyQuery = `UPDATE product_revo SET lock_qty = 0 WHERE id = ANY($1::int[])`;
+                    await query(updateLockQtyQuery, [productIds]);
+                }
             }
 
             const deleteOrderlineQuery = `DELETE FROM orderline WHERE uniqueorderid = $1;`;
@@ -2148,14 +2152,16 @@ Thank You!`,
             console.log("Unique Order ID to delete:", uniqueorderid);
 
             // Step 2: Get all product ids associated with order lines
-            const productIdOrderlineQuery = `SELECT productid, quantity FROM orderline WHERE uniqueorderid = $1`;
+            const productIdOrderlineQuery = `SELECT productid, quantity, ordername FROM orderline WHERE uniqueorderid = $1`;
             const productIdOrderlineResult = await query(productIdOrderlineQuery, [uniqueorderid]);
 
             console.log("Product IDs from orderline:", productIdOrderlineResult.rows);
 
             if (productIdOrderlineResult.rows.length > 0) {
                 console.log("Updating lock_qty for products associated with the order");
-                const products = productIdOrderlineResult.rows;
+                const products = productIdOrderlineResult.rows.filter(
+                    (product) => String(product.ordername ?? '').trim().toLowerCase() !== 'rental'
+                );
                 console.log("Products to update:", products);
                 // Iterate through each product and update individually
                 for (const product of products) {
@@ -2188,5 +2194,4 @@ Thank You!`,
     };
 
 }
-
 

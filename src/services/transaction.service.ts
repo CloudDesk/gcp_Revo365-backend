@@ -69,9 +69,28 @@ const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: a
   return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
 };
 
+const isRentalOrderItem = (item: any) => {
+  const orderName = String(item?.ordername ?? "").trim().toLowerCase();
+  const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
+  return orderName === "rental" || invoiceFor === "product rental";
+};
+
 const groupOrderQuantities = (orderItems: any[] = []) => {
   const grouped = new Map<number, number>();
   for (const item of orderItems) {
+    if (isRentalOrderItem(item)) continue;
+    const productId = toSafeNumber(item?.productid, 0);
+    const qty = toSafeNumber(item?.quantity, 0);
+    if (!productId || qty <= 0) continue;
+    grouped.set(productId, (grouped.get(productId) || 0) + qty);
+  }
+  return grouped;
+};
+
+const groupRentalOrderQuantities = (orderItems: any[] = []) => {
+  const grouped = new Map<number, number>();
+  for (const item of orderItems) {
+    if (!isRentalOrderItem(item)) continue;
     const productId = toSafeNumber(item?.productid, 0);
     const qty = toSafeNumber(item?.quantity, 0);
     if (!productId || qty <= 0) continue;
@@ -1470,6 +1489,7 @@ export module transactionService {
         productupdateorderqty = orderdata.map((element: any) => ({
           ...element,
         }));
+        const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
         let insertdata = await productrevoService.bulkupsertProducttosetZero(
           orderdata,
           false
@@ -1488,13 +1508,11 @@ export module transactionService {
             console.log("Request Body:", request.body);
             console.log("Request Body Order:", request.body.order);
             if (request.body.order[0].invoicefor === "product rental") {
-
-
-
+              const requestedQty = requestedRentalQuantities.get(
+                toSafeNumber(product.id, 0)
+              ) || 0;
               return (
-                toSafeNumber(product.rentalavailablequantity, 0) -
-                  toSafeNumber(product.lock_qty, 0) >=
-                0
+                toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty
               );
             } else {
 
@@ -1621,6 +1639,7 @@ export module transactionService {
         };
       } else {
         console.log("online pay");
+        const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
         // Step 1: Reserve inventory for this checkout attempt
         await productrevoService.bulkupsertProducttosetZero(
           orderdata,
@@ -1637,16 +1656,16 @@ export module transactionService {
         const allQuantitiesAvailable = result.rows.every(
           (product) => {
             if (request.body.order[0].invoicefor === "product rental") {
+              const requestedQty = requestedRentalQuantities.get(
+                toSafeNumber(product.id, 0)
+              ) || 0;
               console.log("product.rentalavailablequantity", product.rentalavailablequantity);
-              console.log("product.lock_qty", product.lock_qty);
+              console.log("requested rental quantity", requestedQty);
               console.log("product.rentalorderedquantity", product.rentalorderedquantity);
-              console.log("rental - lock", Number(product.rentalavailablequantity) - Number(product.lock_qty));
               console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
 
               return (
-                toSafeNumber(product.rentalavailablequantity, 0) -
-                  toSafeNumber(product.lock_qty, 0) >=
-                0
+                toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty
               );
             } else {
               console.log("eles product.overallavailableqty", product.overallavailableqty);

@@ -52,6 +52,11 @@ Handlebars.registerHelper("joinArr", (arr: any, sep: string) => {
   return arr.join(sep ?? ", ");
 });
 
+Handlebars.registerHelper("defaultText", (value: any, fallback = "___________") => {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+});
+
 Handlebars.registerHelper("ordinal", (n: number) => {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;

@@ -3,8 +3,16 @@ import { getRentalAgreementTemplate } from "../utils/rentalAgreementHandlebars.j
 
 const RENTAL_AGREEMENT_BUCKET = "rental-agreeements";
 const RENTAL_AGREEMENT_FOLDER = "rental-agreements";
+const DOCUMENT_VERSION = "v1";
 
-// ── Sanitise filename ────────────────────────────────────────────────────────
+const LESSOR_DETAILS = {
+  companyName: "TEQIT",
+  address:
+    "1/54, Old Mahabalipuram Road, Seevaram, Perungudi Rajiv Gandhi Salai, Chennai - 600096",
+  gstin: "33AAMCR5393J1ZV",
+  noticeEmailOrAddress: "rentals@teqit.in",
+};
+
 const sanitizeFileName = (value: any) =>
   String(value ?? "rental-agreement")
     .trim()
@@ -12,200 +20,478 @@ const sanitizeFileName = (value: any) =>
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "rental-agreement";
 
-// ── Epoch normaliser ─────────────────────────────────────────────────────────
+const normalizeText = (value: any) => {
+  const text = String(value ?? "").trim();
+  return text || null;
+};
+
 const normaliseEpoch = (value: any): number | null => {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return String(Math.trunc(n)).length <= 10 ? n : Math.trunc(n / 1000);
+  if (value == null || value === "") {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return String(Math.trunc(numericValue)).length <= 10
+      ? Math.trunc(numericValue)
+      : Math.trunc(numericValue / 1000);
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return Math.floor(parsedDate.getTime() / 1000);
 };
 
-// ── Currency formatter ───────────────────────────────────────────────────────
-const toNum = (v: any): number => {
-  const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(n) ? n : 0;
+const toNum = (value: any): number => {
+  const numericValue = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
 };
 
-// ── Build the template data object ───────────────────────────────────────────
-const buildAgreementData = (
+const toOptionalNumber = (value: any): number | null => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
+};
+
+const parseJsonValue = <T>(value: any, fallback: T): T => {
+  if (value == null) {
+    return fallback;
+  }
+
+  if (typeof value === "object") {
+    return value as T;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const buildAddressText = (source: any) => {
+  const parts = [
+    source?.address_doornumber,
+    source?.address_address,
+    source?.address_landmark,
+    source?.address_city,
+    source?.address_state,
+    source?.address_pincode,
+  ]
+    .map((part) => normalizeText(part))
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(", ") : null;
+};
+
+const coalesceText = (...values: any[]) => {
+  for (const value of values) {
+    const normalized = normalizeText(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const coalesceEpoch = (...values: any[]) => {
+  for (const value of values) {
+    const normalized = normaliseEpoch(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const formatEpochTime = (value: any) => {
+  const epoch = normaliseEpoch(value);
+  if (!epoch) {
+    return null;
+  }
+
+  const parsedDate = new Date(epoch * 1000);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
+const getAccessoriesText = (asset: any) =>
+  coalesceText(
+    asset?.accessories,
+    asset?.laptopaccessories,
+    asset?.mobileaccessories,
+    asset?.accessoriesincluded
+  );
+
+const deriveSecurityDepositMonths = (
+  securityDepositAmount: number | null,
+  totalMonthlyRentalExclGst: number
+) => {
+  if (
+    securityDepositAmount == null ||
+    securityDepositAmount <= 0 ||
+    totalMonthlyRentalExclGst <= 0
+  ) {
+    return null;
+  }
+
+  const derivedValue = securityDepositAmount / totalMonthlyRentalExclGst;
+  const roundedValue = Math.round(derivedValue);
+  return Math.abs(derivedValue - roundedValue) < 0.01 ? roundedValue : null;
+};
+
+const indexRowsByAssetNumber = (rows: any[] | undefined, assetKey: string) =>
+  new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => normalizeText(row?.[assetKey]))
+      .map((row) => [String(row[assetKey]).trim(), row])
+  );
+
+const normalizeOverrideRows = (rows: any[] | undefined, assetKey: string) =>
+  Array.isArray(rows)
+    ? rows
+        .map((row) => ({
+          ...row,
+          [assetKey]: normalizeText(row?.[assetKey]),
+        }))
+        .filter((row) => row[assetKey])
+    : [];
+
+const buildAgreementDocument = (
   agreement: any,
   assets: any[],
   options: Record<string, any> = {}
 ) => {
-  const customerName = [agreement.firstname, agreement.lastname]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-
-  const equipmentItems = assets.map((asset: any, idx: number) => ({
-    sNo: idx + 1,
-    assetNumber: asset.assetnumber ?? asset.orderlinenumber ?? "-",
-    deliveryDate:
-      normaliseEpoch(asset.rentstartdate) ??
-      normaliseEpoch(agreement.agreementstartdate),
-    makeModel: asset.productname ?? "-",
-    serialNumber: asset.serialnumber ?? asset.assetnumber ?? "-",
-    accessories: asset.accessories ?? "Laptop Bag, Power Adapter",
-    monthlyRentalExclGST: toNum(asset.productamount),
-    remarks: asset.remarks ?? "",
-  }));
-
-  const totalMonthly = equipmentItems.reduce(
-    (sum, item) => sum + item.monthlyRentalExclGST,
-    0
+  const previousDocument = parseJsonValue<Record<string, any>>(
+    agreement.documentsnapshot,
+    {}
+  );
+  const pricingSnapshot = parseJsonValue<Record<string, any>>(
+    agreement.pricingtermssnapshot,
+    {}
   );
 
-  const conditionReport = assets.map((asset: any) => ({
-    assetNumber: asset.assetnumber ?? "-",
-    model: asset.productname ?? "-",
-    serialNumber: asset.serialnumber ?? asset.assetnumber ?? "-",
-    conditionOnDelivery: asset.conditionOnDelivery ?? "Good",
-    preExistingDamageNotes: asset.preExistingDamageNotes ?? "",
-  }));
+  const customerPersonName = [agreement.firstname, agreement.lastname]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(" ");
+  const registeredAddress =
+    coalesceText(
+      options.lesseeAddress,
+      previousDocument?.lessee?.registeredAddress,
+      buildAddressText(agreement),
+      buildAddressText(assets[0]),
+      assets[0]?.location
+    ) || "";
+  const deliveryAddress =
+    coalesceText(
+      options.deliveryAddress,
+      previousDocument?.annexure1?.deliveryAddress,
+      previousDocument?.annexure2?.deliveryAddress,
+      buildAddressText(agreement),
+      buildAddressText(assets[0]),
+      assets[0]?.location,
+      registeredAddress
+    ) || "";
+  const customerCompanyName =
+    coalesceText(
+      options.lesseeCompanyName,
+      previousDocument?.lessee?.customerCompanyName,
+      agreement.companyname
+    ) ||
+    customerPersonName ||
+    "Customer";
+  const agreementDate =
+    coalesceEpoch(
+      agreement.agreementstartdate,
+      previousDocument?.agreementDate,
+      Date.now()
+    ) ?? Math.floor(Date.now() / 1000);
+  const totalMonthlyRentalExclGst =
+    toNum(pricingSnapshot?.monthlyamount) ||
+    assets.reduce((sum, asset) => sum + toNum(asset?.productamount), 0);
+  const securityDepositAmount =
+    toOptionalNumber(options.securityDepositAmount) ??
+    toOptionalNumber(previousDocument?.annexure1?.securityDepositAmount) ??
+    null;
+  const securityDepositMonths =
+    toOptionalNumber(options.securityDepositMonths) ??
+    toOptionalNumber(previousDocument?.commercial?.securityDepositMonths) ??
+    deriveSecurityDepositMonths(
+      securityDepositAmount,
+      totalMonthlyRentalExclGst
+    );
+  const minimumLockInMonths =
+    toOptionalNumber(options.minimumLockInMonths) ??
+    toOptionalNumber(previousDocument?.commercial?.minimumLockInMonths) ??
+    Math.max(...assets.map((asset) => Number(asset?.rentalfor ?? 0)), 0);
+  const commercialCity =
+    coalesceText(
+      previousDocument?.commercial?.city,
+      agreement.address_city,
+      assets[0]?.address_city,
+      options.arbitrationCity,
+      options.jurisdictionCity,
+      "Chennai"
+    ) || "Chennai";
+
+  const annexure1RowIndex = indexRowsByAssetNumber(
+    previousDocument?.annexure1?.equipmentRows,
+    "assetNo"
+  );
+  const annexure1OverrideIndex = indexRowsByAssetNumber(
+    normalizeOverrideRows(options.annexure1EquipmentRows, "assetNo"),
+    "assetNo"
+  );
+  const annexure2RowIndex = indexRowsByAssetNumber(
+    previousDocument?.annexure2?.deliveryRows,
+    "assetNo"
+  );
+  const annexure2OverrideIndex = indexRowsByAssetNumber(
+    normalizeOverrideRows(options.annexure2DeliveryRows, "assetNo"),
+    "assetNo"
+  );
+
+  const equipmentRows = assets.map((asset: any, index: number) => {
+    const previousRow = annexure1RowIndex.get(String(asset.assetnumber ?? "").trim());
+    const overrideRow = annexure1OverrideIndex.get(String(asset.assetnumber ?? "").trim());
+
+    return {
+      sno: index + 1,
+      assetNo: coalesceText(asset.assetnumber, previousRow?.assetNo, "-") || "-",
+      dateOfDelivery:
+        coalesceEpoch(
+          asset.rentstartdate,
+          asset.deliverydate,
+          previousRow?.dateOfDelivery,
+          agreement.agreementstartdate
+        ) ?? agreementDate,
+      makeModel:
+        coalesceText(
+          asset.productname,
+          [asset.brand, asset.model].filter(Boolean).join(" "),
+          previousRow?.makeModel,
+          "-"
+        ) || "-",
+      serialNo:
+        coalesceText(asset.serialnumber, previousRow?.serialNo, asset.assetnumber, "-") ||
+        "-",
+      accessories:
+        coalesceText(
+          overrideRow?.accessories,
+          getAccessoriesText(asset),
+          previousRow?.accessories
+        ) || "",
+      monthlyRentalExclGst:
+        toOptionalNumber(asset.productamount) ??
+        toOptionalNumber(previousRow?.monthlyRentalExclGst) ??
+        0,
+      remarks: coalesceText(overrideRow?.remarks, asset.remarks, previousRow?.remarks) || "",
+    };
+  });
+
+  const deliveryRows = assets.map((asset: any, index: number) => {
+    const previousRow = annexure2RowIndex.get(String(asset.assetnumber ?? "").trim());
+    const overrideRow = annexure2OverrideIndex.get(String(asset.assetnumber ?? "").trim());
+
+    return {
+      sno: index + 1,
+      assetNo: coalesceText(asset.assetnumber, previousRow?.assetNo, "-") || "-",
+      model:
+        coalesceText(
+          asset.productname,
+          [asset.brand, asset.model].filter(Boolean).join(" "),
+          previousRow?.model,
+          "-"
+        ) || "-",
+      serialNo:
+        coalesceText(asset.serialnumber, previousRow?.serialNo, asset.assetnumber, "-") ||
+        "-",
+      conditionOnDelivery:
+        coalesceText(
+          overrideRow?.conditionOnDelivery,
+          previousRow?.conditionOnDelivery,
+          asset.conditionondelivery,
+          asset.damageassessment,
+          "Good"
+        ) || "Good",
+      preExistingDamageNotes:
+        coalesceText(
+          overrideRow?.preExistingDamageNotes,
+          previousRow?.preExistingDamageNotes,
+          asset.preexistingdamagenotes,
+          asset.lostreason
+        ) || "",
+    };
+  });
+
+  const affectedAssetNos = equipmentRows
+    .map((row) => row.assetNo)
+    .filter((value) => value && value !== "-");
+  const affectedSerialNos = equipmentRows
+    .map((row) => row.serialNo)
+    .filter((value) => value && value !== "-");
+  const annexure3Options = options.annexure3 ?? {};
+  const lostIncidentEpoch =
+    coalesceEpoch(
+      annexure3Options?.incidentDate,
+      previousDocument?.annexure3?.incidentDate,
+      assets.find((asset) => asset?.lostdate)?.lostdate
+    ) ?? null;
 
   return {
-    agreementDate:
-      normaliseEpoch(agreement.agreementstartdate) ??
-      Math.floor(Date.now() / 1000),
-    agreementNumber: agreement.agreementnumber ?? `TEQIT/RA/-`,
-
+    agreementDate,
+    agreementNumber: coalesceText(agreement.agreementnumber, previousDocument?.agreementNumber, "-"),
     lessor: {
-      name: "TEQIT",
-      address:
-        "1/54, Old Mahabalipuram Road, Seevaram, Perungudi Rajiv Gandhi Salai, Chennai - 600096",
-      gstin: "33AAMCR5393J1ZV",
-      email: options.lessorEmail ?? "rentals@teqit.in",
-      logoUrl: options.logoUrl ?? null,
+      companyName: LESSOR_DETAILS.companyName,
+      address: LESSOR_DETAILS.address,
+      gstin: LESSOR_DETAILS.gstin,
+      noticeEmailOrAddress: LESSOR_DETAILS.noticeEmailOrAddress,
     },
-
     lessee: {
-      companyName:
-        (options.lesseeCompanyName ?? customerName) || "Customer",
-      address: options.lesseeAddress ?? assets[0]?.location ?? "",
-      gstin: options.lesseeGstin ?? null,
-      contactPersonName: customerName || null,
-      contactPhone: agreement.usermobilenumber ?? null,
-      contactEmail: agreement.useremail ?? null,
-      authorizedSignatoryName:
-        options.lesseeSignatoryName ?? customerName ?? null,
-      authorizedSignatoryDesignation:
-        options.lesseeSignatoryDesignation ?? null,
+      customerCompanyName: customerCompanyName,
+      registeredAddress: registeredAddress,
+      gstin:
+        coalesceText(
+          options.lesseeGstin,
+          previousDocument?.lessee?.gstin,
+          agreement.gstnumber,
+          assets[0]?.gstnumber
+        ) || "",
     },
-
-    rentalTerms: {
-      minimumLockInMonths:
-        options.minimumLockInMonths ??
-        Math.max(...assets.map((a: any) => Number(a.rentalfor ?? 0)), 12),
+    commercial: {
+      minimumLockInMonths: minimumLockInMonths ?? 0,
+      securityDepositMonths,
+      city: commercialCity,
+    },
+    annexure1: {
+      date: agreementDate,
+      securityDepositAmount,
+      chequeTransferRef:
+        coalesceText(
+          options.securityDepositRef,
+          previousDocument?.annexure1?.chequeTransferRef
+        ) || "",
+      minimumLockInPeriodMonths: minimumLockInMonths ?? 0,
+      deliveryAddress,
+      totalMonthlyRentalExclGst,
+      equipmentRows,
+    },
+    annexure2: {
+      customerName:
+        coalesceText(previousDocument?.annexure2?.customerName, customerCompanyName) ||
+        customerCompanyName,
       deliveryDate:
-        normaliseEpoch(assets[0]?.rentstartdate) ??
-        normaliseEpoch(agreement.agreementstartdate),
-      rentalEndDate: normaliseEpoch(agreement.agreementenddate),
-      autoRenewalEnabled: options.autoRenewalEnabled ?? true,
-      earlyTerminationNoticeDays: options.earlyTerminationNoticeDays ?? 30,
-      maintenanceSLADays: options.maintenanceSLADays ?? 3,
-      arbitrationCity: options.arbitrationCity ?? "Chennai",
-      jurisdictionCity: options.jurisdictionCity ?? "Chennai",
-      customTermsClause: options.customTermsClause ?? null,
+        coalesceEpoch(
+          assets[0]?.rentstartdate,
+          assets[0]?.deliverydate,
+          previousDocument?.annexure2?.deliveryDate,
+          agreement.agreementstartdate
+        ) ?? agreementDate,
+      deliveryAddress,
+      deliveryRows,
     },
-
-    paymentTerms: {
-      monthlyRentalExclGST:
-        toNum(agreement.pricingtermssnapshot?.monthlyamount) || totalMonthly,
-      gstType: options.gstType ?? "CGST+SGST",
-      cgstPercentage: options.cgstPercentage ?? 9,
-      sgstPercentage: options.sgstPercentage ?? 9,
-      igstPercentage: options.igstPercentage ?? 18,
-      paymentDueDay: options.paymentDueDay ?? 5,
-      latePaymentPenaltyPct: options.latePaymentPenaltyPct ?? 2,
-      latePaymentGraceDays: options.latePaymentGraceDays ?? 15,
-      firstMonthProRata: options.firstMonthProRata ?? true,
-      acceptedPaymentModes: options.acceptedPaymentModes ?? [
-        "NEFT",
-        "RTGS",
-        "UPI",
-        "Cheque",
-      ],
-      paymentFavourOf: "TEQIT",
-    },
-
-    securityDeposit: {
-      amount: toNum(options.securityDepositAmount),
-      chequeTransferRef: options.securityDepositRef ?? null,
-      refundTimingDays: options.refundTimingDays ?? 15,
-      adjustableAgainstRent: false,
-    },
-
-    logistics: {
-      deliveryAddress:
-        options.deliveryAddress ??
-        assets[0]?.location ??
+    annexure3: {
+      declarationDate:
+        coalesceEpoch(
+          annexure3Options?.declarationDate,
+          previousDocument?.annexure3?.declarationDate
+        ) ?? null,
+      letterheadAddress:
+        coalesceText(
+          annexure3Options?.letterheadAddress,
+          previousDocument?.annexure3?.letterheadAddress,
+          registeredAddress
+        ) ||
         "",
-      logisticsChargesBorneBy: options.logisticsChargesBorneBy ?? "Lessee",
-      relocationConsentRequired: true,
+      incidentDate:
+        lostIncidentEpoch,
+      incidentTime:
+        coalesceText(
+          annexure3Options?.incidentTime,
+          previousDocument?.annexure3?.incidentTime,
+          formatEpochTime(lostIncidentEpoch)
+        ) || "",
+      incidentLocation:
+        coalesceText(
+          annexure3Options?.incidentLocation,
+          previousDocument?.annexure3?.incidentLocation
+        ) || "",
+      affectedAssetNos,
+      affectedSerialNos,
+      circumstances:
+        coalesceText(
+          annexure3Options?.circumstances,
+          previousDocument?.annexure3?.circumstances,
+          assets.find((asset) => asset?.lostreason)?.lostreason
+        ) || "",
+      firNcNumber:
+        coalesceText(
+          annexure3Options?.firNcNumber,
+          previousDocument?.annexure3?.firNcNumber
+        ) || "",
+      policeStation:
+        coalesceText(
+          annexure3Options?.policeStation,
+          previousDocument?.annexure3?.policeStation
+        ) || "",
+      firNcFilingDate:
+        coalesceEpoch(
+          annexure3Options?.firNcFilingDate,
+          previousDocument?.annexure3?.firNcFilingDate
+        ) ?? null,
+      finalizedAt:
+        coalesceEpoch(
+          annexure3Options?.finalizedAt,
+          previousDocument?.annexure3?.finalizedAt
+        ) ?? null,
+      finalizedBy:
+        coalesceText(
+          annexure3Options?.finalizedBy,
+          previousDocument?.annexure3?.finalizedBy
+        ) || "",
     },
-
-    equipment: {
-      items: equipmentItems,
-      totalMonthlyRentalExclGST: totalMonthly,
-    },
-
-    deliveryAcknowledgement: {
-      customerName: customerName,
-      deliveryDate:
-        normaliseEpoch(assets[0]?.rentstartdate) ??
-        normaliseEpoch(agreement.agreementstartdate),
-      deliveryAddress:
-        options.deliveryAddress ?? assets[0]?.location ?? "",
-      conditionReport,
-      lessorDeliveryRepName: options.lessorDeliveryRepName ?? "",
-      lesseeRecipientName:
-        options.lesseeRecipientName ?? customerName ?? "",
-      lesseeRecipientDate:
-        normaliseEpoch(assets[0]?.rentstartdate) ??
-        normaliseEpoch(agreement.agreementstartdate),
-    },
-
-    theftLossDeclaration: {
-      declarationDate: null,
-      incidentDate: null,
-      incidentTime: null,
-      incidentLocation: null,
-      affectedAssetNumbers: assets.map((a: any) => a.assetnumber ?? "-"),
-      affectedSerialNumbers: assets.map((a: any) => a.assetnumber ?? "-"),
-      circumstancesOfLoss: null,
-      incidentType: "stolen / lost",
-      firNcNumber: null,
-      policeStation: null,
-      firFilingDate: null,
-      signatoryName: options.lesseeSignatoryName ?? customerName ?? "",
-      signatoryDesignation: options.lesseeSignatoryDesignation ?? "",
-    },
-
     signatures: {
-      lessorSignatoryName:
-        options.lessorSignatoryName ?? "Authorized Representative",
-      lessorSignatoryDesignation: options.lessorSignatoryDesignation ?? "Director",
-      lessorSignatureDate: Math.floor(Date.now() / 1000),
       lesseeSignatoryName:
-        options.lesseeSignatoryName ?? customerName ?? "",
-      lesseeSignatoryDesignation: options.lesseeSignatoryDesignation ?? "",
-      lesseeSignatureDate: null,
-      witness1Name: options.witness1Name ?? null,
-      witness1SignatureDate: null,
-      witness2Name: options.witness2Name ?? null,
-      witness2SignatureDate: null,
+        coalesceText(
+          options.lesseeSignatoryName,
+          previousDocument?.signatures?.lesseeSignatoryName,
+          customerPersonName
+        ) || "",
+      lesseeSignatoryDesignation:
+        coalesceText(
+          options.lesseeSignatoryDesignation,
+          previousDocument?.signatures?.lesseeSignatoryDesignation
+        ) || "",
+      witness1Name:
+        coalesceText(
+          options.witness1Name,
+          previousDocument?.signatures?.witness1Name
+        ) || "",
+      witness2Name:
+        coalesceText(
+          options.witness2Name,
+          previousDocument?.signatures?.witness2Name
+        ) || "",
     },
   };
 };
 
-// ── Puppeteer PDF generator ──────────────────────────────────────────────────
 const generatePdfBuffer = async (html: string): Promise<Buffer> => {
-  // Dynamic import so the service still loads even if puppeteer isn't installed yet
   let browser: any;
   try {
     const puppeteer = await import("puppeteer-core");
     let executablePath: string;
 
-    // Try @sparticuz/chromium first (GCP/Cloud Run compatible)
     try {
       const chromium = await import("@sparticuz/chromium");
       executablePath = await chromium.default.executablePath();
@@ -216,16 +502,19 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
         headless: true,
       });
     } catch {
-      // Fallback: try local Chrome/Chromium
       const possiblePaths = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
         "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
       ];
       const fs = await import("fs");
       executablePath =
-        possiblePaths.find((p) => fs.default.existsSync(p)) ?? "";
+        possiblePaths.find((pathValue) => fs.default.existsSync(pathValue)) ?? "";
       if (!executablePath) {
         throw new Error(
           "No Chrome/Chromium executable found. Install @sparticuz/chromium or Google Chrome."
@@ -249,15 +538,18 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
 
     await browser.close();
     return Buffer.from(pdf);
-  } catch (err) {
+  } catch (error) {
     if (browser) {
-      try { await browser.close(); } catch { /* ignore */ }
+      try {
+        await browser.close();
+      } catch {
+        // ignore browser cleanup failures
+      }
     }
-    throw err;
+    throw error;
   }
 };
 
-// ── Public service ───────────────────────────────────────────────────────────
 export module rentalAgreementPdfService {
   export const generateAgreementPdf = async (
     agreement: any,
@@ -271,25 +563,38 @@ export module rentalAgreementPdfService {
       lesseeSignatoryDesignation?: string | null;
       securityDepositAmount?: number | null;
       securityDepositRef?: string | null;
+      securityDepositMonths?: number | null;
       minimumLockInMonths?: number | null;
+      witness1Name?: string | null;
+      witness2Name?: string | null;
       customTermsClause?: string | null;
       arbitrationCity?: string | null;
       jurisdictionCity?: string | null;
       lessorDeliveryRepName?: string | null;
+      deliveryAddress?: string | null;
+      annexure1EquipmentRows?: any[] | null;
+      annexure2DeliveryRows?: any[] | null;
+      annexure3?: {
+        declarationDate?: number | null;
+        letterheadAddress?: string | null;
+        incidentDate?: number | null;
+        incidentTime?: string | null;
+        incidentLocation?: string | null;
+        circumstances?: string | null;
+        firNcNumber?: string | null;
+        policeStation?: string | null;
+        firNcFilingDate?: number | null;
+        finalizedAt?: number | null;
+        finalizedBy?: string | null;
+      } | null;
       [key: string]: any;
     } = {}
   ) => {
-    // 1. Build data
-    const data = buildAgreementData(agreement, assets, options);
-
-    // 2. Render HTML via Handlebars
+    const document = buildAgreementDocument(agreement, assets, options);
     const template = getRentalAgreementTemplate();
-    const html = template(data);
-
-    // 3. Generate PDF via Puppeteer
+    const html = template(document);
     const pdfBuffer = await generatePdfBuffer(html);
 
-    // 4. Upload to GCP Cloud Storage
     const safeAgreementNumber = sanitizeFileName(
       agreement.agreementnumber ?? agreement.id
     );
@@ -308,8 +613,11 @@ export module rentalAgreementPdfService {
         },
       });
     } catch (error: any) {
-      const msg = String(error?.message ?? "");
-      if (msg.includes("invalid_grant") || msg.includes("Invalid JWT Signature")) {
+      const message = String(error?.message ?? "");
+      if (
+        message.includes("invalid_grant") ||
+        message.includes("Invalid JWT Signature")
+      ) {
         throw new Error(
           "GCP authentication failed for bucket upload. Use Application Default Credentials locally or the assigned Cloud Run identity."
         );
@@ -322,6 +630,8 @@ export module rentalAgreementPdfService {
       folder: RENTAL_AGREEMENT_FOLDER,
       destination,
       url: `https://storage.googleapis.com/${RENTAL_AGREEMENT_BUCKET}/${destination}?v=${generatedAt}`,
+      document,
+      documentVersion: DOCUMENT_VERSION,
     };
   };
 }

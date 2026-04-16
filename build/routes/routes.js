@@ -52,7 +52,7 @@ import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
 import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
-import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema } from "../schemas/ticketReplacement.schema.js";
+import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema, generateRentalLossDeclarationSchema, finalizeRentalLossDeclarationSchema } from "../schemas/ticketReplacement.schema.js";
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 const Revo365Routes = async function (fastify, opts) {
@@ -130,6 +130,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
+    fastify.post('/v2/stock/:id/release-service-hold', { preHandler: [getSession] }, stockRevoController.releaseServiceHoldStockToAvailable);
+    fastify.post('/v2/stock/:id/mark-found', { preHandler: [getSession] }, stockRevoController.markLostStockAsFound);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);
     // fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
     fastify.get('/v2/stock/Archieve', { preHandler: [getSession] }, stockRevoController.getArcheivedStocksRevo);
@@ -307,6 +309,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
     fastify.post('/tickets/:id/rental-replacement/return', { preHandler: [getSession, validateRequestBody(returnRentalAssetSchema)] }, ticketReplacementController.returnRentalAsset);
     fastify.post('/tickets/:id/rental-replacement/mark-lost', { preHandler: [getSession, validateRequestBody(markRentalAssetLostSchema)] }, ticketReplacementController.markRentalAssetLost);
+    fastify.post('/tickets/:id/rental-replacement/generate-loss-declaration', { preHandler: [getSession, validateRequestBody(generateRentalLossDeclarationSchema)] }, ticketReplacementController.generateRentalLossDeclaration);
+    fastify.post('/tickets/:id/rental-replacement/finalize-loss-declaration', { preHandler: [getSession, validateRequestBody(finalizeRentalLossDeclarationSchema)] }, ticketReplacementController.finalizeRentalLossDeclaration);
     fastify.post('/tickets/:id/rental-replacement/assess-damage', { preHandler: [getSession, validateRequestBody(assessRentalDamageSchema)] }, ticketReplacementController.assessRentalDamage);
     fastify.post('/tickets/:id/rental-replacement/link-penalty', { preHandler: [getSession, validateRequestBody(linkPenaltyInvoiceSchema)] }, ticketReplacementController.linkPenaltyInvoice);
     fastify.post('/tickets/:id/rental-replacement/renew', { preHandler: [getSession, validateRequestBody(renewRentalContractSchema)] }, ticketReplacementController.renewRentalContract);

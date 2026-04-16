@@ -7,6 +7,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import Razorpay from "razorpay";
 import { ENV_RAZORPAY_KEY_ID, ENV_RAZORPAY_KEY_SECRET, ENV_RAZORPAY_WEBHOOK_SECRET, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
+import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
@@ -54,9 +55,29 @@ const computePayableAmountFromOrderInput = (orderItems, fallbackAmount) => {
     }, 0);
     return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
 };
+const isRentalOrderItem = (item) => {
+    const orderName = String(item?.ordername ?? "").trim().toLowerCase();
+    const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
+    return orderName === "rental" || invoiceFor === "product rental";
+};
 const groupOrderQuantities = (orderItems = []) => {
     const grouped = new Map();
     for (const item of orderItems) {
+        if (isRentalOrderItem(item))
+            continue;
+        const productId = toSafeNumber(item?.productid, 0);
+        const qty = toSafeNumber(item?.quantity, 0);
+        if (!productId || qty <= 0)
+            continue;
+        grouped.set(productId, (grouped.get(productId) || 0) + qty);
+    }
+    return grouped;
+};
+const groupRentalOrderQuantities = (orderItems = []) => {
+    const grouped = new Map();
+    for (const item of orderItems) {
+        if (!isRentalOrderItem(item))
+            continue;
         const productId = toSafeNumber(item?.productid, 0);
         const qty = toSafeNumber(item?.quantity, 0);
         if (!productId || qty <= 0)
@@ -1151,6 +1172,7 @@ export var transactionService;
                 productupdateorderqty = orderdata.map((element) => ({
                     ...element,
                 }));
+                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
                 const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
@@ -1162,9 +1184,8 @@ export var transactionService;
                     console.log("Request Body:", request.body);
                     console.log("Request Body Order:", request.body.order);
                     if (request.body.order[0].invoicefor === "product rental") {
-                        return (toSafeNumber(product.rentalavailablequantity, 0) -
-                            toSafeNumber(product.lock_qty, 0) >=
-                            0);
+                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
+                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
                     }
                     else {
                         return (Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
@@ -1224,6 +1245,10 @@ export var transactionService;
                 console.log("---------------");
                 const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
                 console.log("Update Orderline Status:", updateOrderlineStatus.rows);
+                const rentalOrders = insertorderdata.rows.filter((row) => String(row?.ordername ?? "").trim().toLowerCase() === "rental");
+                if (rentalOrders.length > 0) {
+                    await stockRevoService.allocateRentalStock(rentalOrders);
+                }
                 if (productupdateorderqty.length > 0) {
                     console.log("Come's inside if productupdateorderqty");
                     const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
@@ -1256,6 +1281,7 @@ export var transactionService;
             }
             else {
                 console.log("online pay");
+                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
                 // Step 1: Reserve inventory for this checkout attempt
                 await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
@@ -1266,14 +1292,12 @@ export var transactionService;
                 console.log("Request Body:", request.body);
                 const allQuantitiesAvailable = result.rows.every((product) => {
                     if (request.body.order[0].invoicefor === "product rental") {
+                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
                         console.log("product.rentalavailablequantity", product.rentalavailablequantity);
-                        console.log("product.lock_qty", product.lock_qty);
+                        console.log("requested rental quantity", requestedQty);
                         console.log("product.rentalorderedquantity", product.rentalorderedquantity);
-                        console.log("rental - lock", Number(product.rentalavailablequantity) - Number(product.lock_qty));
                         console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
-                        return (toSafeNumber(product.rentalavailablequantity, 0) -
-                            toSafeNumber(product.lock_qty, 0) >=
-                            0);
+                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
                     }
                     else {
                         console.log("eles product.overallavailableqty", product.overallavailableqty);

@@ -148,12 +148,14 @@ const getAgreementContextRows = async (
         ol.orderlinenumber,
         ol.uniqueorderid,
         ol.userid AS customerid,
+        ol.addressid,
         ol.productid,
         ol.productname,
         ol.assetnumber,
         ol.rentalfor,
         ol.rentstartdate,
         ol.rentenddate,
+        ol.deliverydate,
         ol.productamount,
         ol.orderamount,
         ol.rentalcontractstatus,
@@ -166,10 +168,29 @@ const getAgreementContextRows = async (
         sr.id AS stockid,
         sr.stockstatus,
         sr.rentalassetstatus AS stock_rentalassetstatus,
+        sr.serialnumber,
+        sr.lostdate,
+        sr.lostreason,
+        sr.damageassessment,
         u.firstname,
         u.lastname,
         u.useremail,
         u.usermobilenumber,
+        u.gstnumber,
+        u.isbusinessuser,
+        a.name AS address_name,
+        a.mobilenumber AS address_mobilenumber,
+        a.pincode AS address_pincode,
+        a.doornumber AS address_doornumber,
+        a.address AS address_address,
+        a.landmark AS address_landmark,
+        a.state AS address_state,
+        a.city AS address_city,
+        p.model,
+        p.accessoriesincluded,
+        p.accessories,
+        p.laptopaccessories,
+        p.mobileaccessories,
         existing_agreement.id AS existingagreementid,
         existing_agreement.agreementnumber AS existingagreementnumber,
         existing_agreement.agreementstatus AS existingagreementstatus
@@ -178,6 +199,10 @@ const getAgreementContextRows = async (
         ON CAST(sr.assetnumber AS TEXT) = CAST(ol.assetnumber AS TEXT)
       LEFT JOIN users u
         ON u.id = ol.userid
+      LEFT JOIN address a
+        ON a.id = ol.addressid
+      LEFT JOIN product_revo p
+        ON p.id = ol.productid
       LEFT JOIN LATERAL (
         SELECT ra.id, ra.agreementnumber, ra.agreementstatus
         FROM rental_agreement ra
@@ -210,6 +235,16 @@ const groupAgreementContextRows = (rows: any[]) => {
       lastname: row.lastname,
       useremail: row.useremail,
       usermobilenumber: row.usermobilenumber,
+      gstnumber: row.gstnumber,
+      isbusinessuser: row.isbusinessuser,
+      address_name: row.address_name,
+      address_mobilenumber: row.address_mobilenumber,
+      address_pincode: row.address_pincode,
+      address_doornumber: row.address_doornumber,
+      address_address: row.address_address,
+      address_landmark: row.address_landmark,
+      address_state: row.address_state,
+      address_city: row.address_city,
       primaryorderlineid: row.orderlineid,
       agreementstartdate: null,
       agreementenddate: null,
@@ -247,10 +282,12 @@ const groupAgreementContextRows = (rows: any[]) => {
       orderlinenumber: row.orderlinenumber,
       productid: row.productid,
       productname: row.productname,
+      model: row.model,
       assetnumber: row.assetnumber,
       rentalfor: rentalMonths,
       rentstartdate: row.rentstartdate,
       rentenddate: row.rentenddate,
+      deliverydate: row.deliverydate,
       productamount: row.productamount,
       location: row.location,
       vendorname: row.vendorname,
@@ -258,6 +295,23 @@ const groupAgreementContextRows = (rows: any[]) => {
       brand: row.brand,
       stockid: row.stockid,
       stockstatus: row.stockstatus,
+      serialnumber: row.serialnumber,
+      accessoriesincluded: row.accessoriesincluded,
+      accessories: row.accessories,
+      laptopaccessories: row.laptopaccessories,
+      mobileaccessories: row.mobileaccessories,
+      damageassessment: row.damageassessment,
+      lostdate: row.lostdate,
+      lostreason: row.lostreason,
+      address_name: row.address_name,
+      address_mobilenumber: row.address_mobilenumber,
+      address_pincode: row.address_pincode,
+      address_doornumber: row.address_doornumber,
+      address_address: row.address_address,
+      address_landmark: row.address_landmark,
+      address_state: row.address_state,
+      address_city: row.address_city,
+      gstnumber: row.gstnumber,
       assetstatus: getAgreementAssetStatus(row),
     });
 
@@ -266,7 +320,26 @@ const groupAgreementContextRows = (rows: any[]) => {
 
   return Array.from(groupedContracts.values()).sort((left, right) => {
     return Number(right.agreementstartdate ?? 0) - Number(left.agreementstartdate ?? 0);
-  });
+  }).map((contract) => ({
+    ...contract,
+    registeredaddress: [
+      contract.address_doornumber,
+      contract.address_address,
+      contract.address_landmark,
+      contract.address_city,
+      contract.address_state,
+      contract.address_pincode,
+    ]
+      .map((part: any) => normalizeText(part))
+      .filter(Boolean)
+      .join(", "),
+    city: normalizeText(contract.address_city),
+    customergstin: normalizeText(contract.gstnumber),
+    customerdisplayname: [contract.firstname, contract.lastname]
+      .map((value: any) => normalizeText(value))
+      .filter(Boolean)
+      .join(" "),
+  }));
 };
 
 const getAgreementList = async (customerId?: number | null, uniqueOrderId?: string | null) => {
@@ -277,7 +350,9 @@ const getAgreementList = async (customerId?: number | null, uniqueOrderId?: stri
         u.firstname,
         u.lastname,
         u.useremail,
-        u.usermobilenumber
+        u.usermobilenumber,
+        u.gstnumber,
+        u.isbusinessuser
       FROM rental_agreement ra
       LEFT JOIN users u
         ON u.id = ra.customerid
@@ -300,10 +375,37 @@ const getAgreementList = async (customerId?: number | null, uniqueOrderId?: stri
           ol.productname,
           ol.productamount,
           ol.rentstartdate,
-          ol.rentenddate
+          ol.rentenddate,
+          ol.deliverydate,
+          ol.brand,
+          ol.addressid,
+          sr.serialnumber,
+          sr.lostdate,
+          sr.lostreason,
+          sr.damageassessment,
+          a.name AS address_name,
+          a.mobilenumber AS address_mobilenumber,
+          a.pincode AS address_pincode,
+          a.doornumber AS address_doornumber,
+          a.address AS address_address,
+          a.landmark AS address_landmark,
+          a.state AS address_state,
+          a.city AS address_city,
+          p.model,
+          p.accessoriesincluded,
+          p.accessories,
+          p.laptopaccessories,
+          p.mobileaccessories
         FROM rental_agreement_asset raa
         LEFT JOIN orderline ol
           ON ol.id = raa.orderlineid
+        LEFT JOIN stock_revo sr
+          ON sr.id = raa.stockid
+          OR CAST(sr.assetnumber AS TEXT) = CAST(raa.assetnumber AS TEXT)
+        LEFT JOIN address a
+          ON a.id = ol.addressid
+        LEFT JOIN product_revo p
+          ON p.id = ol.productid
         WHERE raa.agreementid = ANY($1)
         ORDER BY raa.agreementid DESC, raa.id ASC
       `,
@@ -454,6 +556,51 @@ const refreshAgreementContractSnapshot = async (
   };
 };
 
+const getDocumentOptionPayload = (body: any = {}, modifiedBy: number | null = null) => ({
+  modifiedBy,
+  logoUrl: normalizeText(body?.logoUrl),
+  lesseeCompanyName: normalizeText(body?.lesseeCompanyName),
+  lesseeAddress: normalizeText(body?.lesseeAddress),
+  lesseeGstin: normalizeText(body?.lesseeGstin),
+  lesseeSignatoryName: normalizeText(body?.lesseeSignatoryName),
+  lesseeSignatoryDesignation: normalizeText(body?.lesseeSignatoryDesignation),
+  securityDepositAmount:
+    body?.securityDepositAmount != null
+      ? Number(body.securityDepositAmount)
+      : null,
+  securityDepositRef: normalizeText(body?.securityDepositRef),
+  securityDepositMonths:
+    body?.securityDepositMonths != null
+      ? Number(body.securityDepositMonths)
+      : null,
+  minimumLockInMonths:
+    body?.minimumLockInMonths != null ? Number(body.minimumLockInMonths) : null,
+  witness1Name: normalizeText(body?.witness1Name),
+  witness2Name: normalizeText(body?.witness2Name),
+  arbitrationCity: normalizeText(body?.arbitrationCity),
+  jurisdictionCity: normalizeText(body?.jurisdictionCity),
+  customTermsClause: normalizeText(body?.customTermsClause),
+  deliveryAddress: normalizeText(body?.deliveryAddress),
+  annexure1EquipmentRows: Array.isArray(body?.annexure1EquipmentRows)
+    ? body.annexure1EquipmentRows
+        .map((row: any) => ({
+          assetNo: normalizeText(row?.assetNo),
+          accessories: normalizeText(row?.accessories),
+          remarks: normalizeText(row?.remarks),
+        }))
+        .filter((row: any) => row.assetNo)
+    : null,
+  annexure2DeliveryRows: Array.isArray(body?.annexure2DeliveryRows)
+    ? body.annexure2DeliveryRows
+        .map((row: any) => ({
+          assetNo: normalizeText(row?.assetNo),
+          conditionOnDelivery: normalizeText(row?.conditionOnDelivery),
+          preExistingDamageNotes: normalizeText(row?.preExistingDamageNotes),
+        }))
+        .filter((row: any) => row.assetNo)
+    : null,
+});
+
 const attachAgreementPdf = async (
   agreementId: number,
   options: {
@@ -468,7 +615,10 @@ const attachAgreementPdf = async (
     // Financial
     securityDepositAmount?: number | null;
     securityDepositRef?: string | null;
+    securityDepositMonths?: number | null;
     minimumLockInMonths?: number | null;
+    witness1Name?: string | null;
+    witness2Name?: string | null;
     // Legal
     arbitrationCity?: string | null;
     jurisdictionCity?: string | null;
@@ -477,6 +627,21 @@ const attachAgreementPdf = async (
     lessorDeliveryRepName?: string | null;
     lesseeRecipientName?: string | null;
     deliveryAddress?: string | null;
+    annexure1EquipmentRows?: any[] | null;
+    annexure2DeliveryRows?: any[] | null;
+    annexure3?: {
+      declarationDate?: number | null;
+      letterheadAddress?: string | null;
+      incidentDate?: number | null;
+      incidentTime?: string | null;
+      incidentLocation?: string | null;
+      circumstances?: string | null;
+      firNcNumber?: string | null;
+      policeStation?: string | null;
+      firNcFilingDate?: number | null;
+      finalizedAt?: number | null;
+      finalizedBy?: string | null;
+    } | null;
   } = {}
 ) => {
   const agreementDetail = await getAgreementDetailById(agreementId);
@@ -492,13 +657,17 @@ const attachAgreementPdf = async (
       SET
         agreementpdfurl = $1,
         agreementtemplateversion = $2,
-        modifiedby = COALESCE($3, modifiedby)
-      WHERE id = $4
+        documentsnapshot = $3::jsonb,
+        documentversion = $4,
+        modifiedby = COALESCE($5, modifiedby)
+      WHERE id = $6
       RETURNING *
     `,
     [
       pdfResult.url,
       AGREEMENT_TEMPLATE_VERSION,
+      JSON.stringify(pdfResult.document),
+      pdfResult.documentVersion,
       options.modifiedBy ?? null,
       agreementId,
     ]
@@ -512,13 +681,20 @@ const attachAgreementPdf = async (
 
 export module rentalAgreementService {
   export const getRentalAgreementCreateContext = async (request: any) => {
-    const customerId = toPositiveInteger(
-      request.query?.customerid,
-      "customer id"
-    );
+    const customerIdRaw = request.query?.customerid;
+    const uniqueOrderId = normalizeText(request.query?.uniqueorderid);
+    const customerId =
+      customerIdRaw == null || customerIdRaw === ""
+        ? null
+        : toPositiveInteger(customerIdRaw, "customer id");
+
+    if (customerId == null && !uniqueOrderId) {
+      throw new Error("Customer id or unique order id is required.");
+    }
+
     const contextRows = await getAgreementContextRows(rootExecutor, {
       customerId,
-      uniqueOrderId: null,
+      uniqueOrderId,
     });
 
     return groupAgreementContextRows(contextRows);
@@ -740,24 +916,10 @@ export module rentalAgreementService {
 
       let pdfWarning: string | null = null;
       try {
-        await attachAgreementPdf(persistedAgreement.id, {
-          modifiedBy: creatorId,
-          logoUrl: normalizeText(request.body?.logoUrl),
-          lesseeCompanyName: normalizeText(request.body?.lesseeCompanyName),
-          lesseeAddress: normalizeText(request.body?.lesseeAddress),
-          lesseeGstin: normalizeText(request.body?.lesseeGstin),
-          lesseeSignatoryName: normalizeText(request.body?.lesseeSignatoryName),
-          lesseeSignatoryDesignation: normalizeText(request.body?.lesseeSignatoryDesignation),
-          securityDepositAmount: request.body?.securityDepositAmount != null
-            ? Number(request.body.securityDepositAmount) : null,
-          securityDepositRef: normalizeText(request.body?.securityDepositRef),
-          minimumLockInMonths: request.body?.minimumLockInMonths != null
-            ? Number(request.body.minimumLockInMonths) : null,
-          arbitrationCity: normalizeText(request.body?.arbitrationCity),
-          jurisdictionCity: normalizeText(request.body?.jurisdictionCity),
-          customTermsClause: normalizeText(request.body?.customTermsClause),
-          deliveryAddress: normalizeText(request.body?.deliveryAddress),
-        });
+        await attachAgreementPdf(
+          persistedAgreement.id,
+          getDocumentOptionPayload(request.body, creatorId)
+        );
       } catch (pdfError: any) {
         console.error("Agreement PDF generation failed", pdfError);
         pdfWarning =
@@ -785,24 +947,10 @@ export module rentalAgreementService {
 
   export const regenerateRentalAgreementPdf = async (request: any) => {
     const agreementId = toPositiveInteger(request.params?.id, "agreement id");
-    const result = await attachAgreementPdf(agreementId, {
-      modifiedBy: request.session?.id ?? null,
-      logoUrl: normalizeText(request.body?.logoUrl),
-      lesseeCompanyName: normalizeText(request.body?.lesseeCompanyName),
-      lesseeAddress: normalizeText(request.body?.lesseeAddress),
-      lesseeGstin: normalizeText(request.body?.lesseeGstin),
-      lesseeSignatoryName: normalizeText(request.body?.lesseeSignatoryName),
-      lesseeSignatoryDesignation: normalizeText(request.body?.lesseeSignatoryDesignation),
-      securityDepositAmount: request.body?.securityDepositAmount != null
-        ? Number(request.body.securityDepositAmount) : null,
-      securityDepositRef: normalizeText(request.body?.securityDepositRef),
-      minimumLockInMonths: request.body?.minimumLockInMonths != null
-        ? Number(request.body.minimumLockInMonths) : null,
-      arbitrationCity: normalizeText(request.body?.arbitrationCity),
-      jurisdictionCity: normalizeText(request.body?.jurisdictionCity),
-      customTermsClause: normalizeText(request.body?.customTermsClause),
-      deliveryAddress: normalizeText(request.body?.deliveryAddress),
-    });
+    const result = await attachAgreementPdf(
+      agreementId,
+      getDocumentOptionPayload(request.body, request.session?.id ?? null)
+    );
 
     return {
       message: "Rental agreement PDF generated successfully.",
@@ -813,7 +961,7 @@ export module rentalAgreementService {
 
   export const refreshRentalAgreementPdfById = async (
     agreementId: number,
-    options: { logoUrl?: string | null; modifiedBy?: number | null } = {}
+    options: Record<string, any> = {}
   ) => attachAgreementPdf(agreementId, options);
 
   export const syncTechnicalReplacementAgreement = async ({

@@ -22,6 +22,56 @@ export var stockRevoController;
             reply.send(error.message);
         }
     };
+    stockRevoController.releaseServiceHoldStockToAvailable = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            const stockId = Number(id);
+            const result = await stockRevoService.releaseServiceHoldStockToAvailable(stockId, request.session?.id ?? null);
+            if (result?.command === "UPDATE") {
+                const pucArray = result.affectedPucs || Array.from(new Set(result.result.rows.map((row) => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
+                reply.status(200).send({
+                    message: "Stock marked as repaired and moved to Available.",
+                    stock: result.result.rows[0] ?? null,
+                });
+            }
+            else if (result?.status) {
+                reply.status(result.status).send({ message: result.message });
+            }
+            else {
+                reply.status(404).send({ error: [result] });
+            }
+        }
+        catch (error) {
+            console.error("Error in releaseServiceHoldStockToAvailable", error);
+            reply.send(error.message);
+        }
+    };
+    stockRevoController.markLostStockAsFound = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            const stockId = Number(id);
+            const result = await stockRevoService.markLostStockAsFound(stockId, request.session?.id ?? null);
+            if (result?.command === "UPDATE") {
+                const pucArray = result.affectedPucs || Array.from(new Set(result.result.rows.map((row) => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
+                reply.status(200).send({
+                    message: "Lost stock marked as found and moved to Available.",
+                    stock: result.result.rows[0] ?? null,
+                });
+            }
+            else if (result?.status) {
+                reply.status(result.status).send({ message: result.message });
+            }
+            else {
+                reply.status(404).send({ error: [result] });
+            }
+        }
+        catch (error) {
+            console.error("Error in markLostStockAsFound", error);
+            reply.send(error.message);
+        }
+    };
     stockRevoController.getEwasteStocksRevo = async (request, reply) => {
         try {
             let getProductsResult = await stockRevoService.getEwasteStocksrevo(request);
