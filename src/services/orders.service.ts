@@ -2061,7 +2061,11 @@ Thank You!`,
                 };
 
             }
-            let sendemail = await sendMail(maildata, false);
+            try {
+                await sendMail(maildata, false);
+            } catch (mailError: any) {
+                console.error('Order email notification failed, continuing order flow:', mailError?.message || mailError);
+            }
             return result.rows;
 
         } catch (error) {
@@ -2194,4 +2198,3 @@ Thank You!`,
     };
 
 }
-
