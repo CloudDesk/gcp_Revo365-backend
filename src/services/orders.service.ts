@@ -2591,14 +2591,15 @@ Thank You!`,
                 };
 
             }
+<<<<<<< HEAD
+            let sendemail = await sendTransactionalMail(maildata.body);
+=======
             try {
-                await sendTransactionalMail(maildata.body);
+                await sendMail(maildata, false);
             } catch (mailError: any) {
-                console.error(
-                    "Order email notification failed, continuing order flow:",
-                    mailError?.message || mailError
-                );
+                console.error('Order email notification failed, continuing order flow:', mailError?.message || mailError);
             }
+>>>>>>> rental-flow
             return result.rows;
 
         } catch (error) {
