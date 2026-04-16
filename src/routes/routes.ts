@@ -60,6 +60,10 @@ import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
+import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
+import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema, generateRentalLossDeclarationSchema, finalizeRentalLossDeclarationSchema } from "../schemas/ticketReplacement.schema.js";
+import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
+import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -146,6 +150,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
+    fastify.post('/v2/stock/:id/release-service-hold', { preHandler: [getSession] }, stockRevoController.releaseServiceHoldStockToAvailable);
+    fastify.post('/v2/stock/:id/mark-found', { preHandler: [getSession] }, stockRevoController.markLostStockAsFound);
+    fastify.post('/v2/stock/:id/mark-repaired', { preHandler: [getSession] }, stockRevoController.markDamagedStockAsRepaired);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);
     // fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
     fastify.get('/v2/stock/Archieve', { preHandler: [getSession] }, stockRevoController.getArcheivedStocksRevo);
@@ -359,6 +366,26 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     fastify.get('/customer/tickets', { preHandler: [getSession] }, ticketController.getTicketDynamicData);
     fastify.get('/tickets/queue', { preHandler: [getSession] }, ticketController.getQueueTicketsData);
+    fastify.get('/tickets/:id/rental-replacement/context', { preHandler: [getSession] }, ticketReplacementController.getRentalReplacementContext);
+    fastify.get('/tickets/:id/rental-replacement/history', { preHandler: [getSession] }, ticketReplacementController.getRentalReplacementHistory);
+    fastify.post('/tickets/:id/rental-replacement/initiate', { preHandler: [getSession, validateRequestBody(initiateRentalReplacementSchema)] }, ticketReplacementController.initiateRentalReplacement);
+    fastify.post('/tickets/:id/rental-replacement/receive-old-asset', { preHandler: [getSession, validateRequestBody(receiveOldAssetSchema)] }, ticketReplacementController.receiveOldAsset);
+    fastify.post('/tickets/:id/rental-replacement/assign-technical', { preHandler: [getSession, validateRequestBody(assignTechnicalReplacementSchema)] }, ticketReplacementController.assignTechnicalReplacement);
+    fastify.post('/tickets/:id/rental-replacement/assign-commercial', { preHandler: [getSession, validateRequestBody(assignCommercialReplacementSchema)] }, ticketReplacementController.assignCommercialReplacement);
+    fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
+    fastify.post('/tickets/:id/rental-replacement/return', { preHandler: [getSession, validateRequestBody(returnRentalAssetSchema)] }, ticketReplacementController.returnRentalAsset);
+    fastify.post('/tickets/:id/rental-replacement/mark-lost', { preHandler: [getSession, validateRequestBody(markRentalAssetLostSchema)] }, ticketReplacementController.markRentalAssetLost);
+    fastify.post('/tickets/:id/rental-replacement/generate-loss-declaration', { preHandler: [getSession, validateRequestBody(generateRentalLossDeclarationSchema)] }, ticketReplacementController.generateRentalLossDeclaration);
+    fastify.post('/tickets/:id/rental-replacement/finalize-loss-declaration', { preHandler: [getSession, validateRequestBody(finalizeRentalLossDeclarationSchema)] }, ticketReplacementController.finalizeRentalLossDeclaration);
+    fastify.post('/tickets/:id/rental-replacement/assess-damage', { preHandler: [getSession, validateRequestBody(assessRentalDamageSchema)] }, ticketReplacementController.assessRentalDamage);
+    fastify.post('/tickets/:id/rental-replacement/link-penalty', { preHandler: [getSession, validateRequestBody(linkPenaltyInvoiceSchema)] }, ticketReplacementController.linkPenaltyInvoice);
+    fastify.post('/tickets/:id/rental-replacement/renew', { preHandler: [getSession, validateRequestBody(renewRentalContractSchema)] }, ticketReplacementController.renewRentalContract);
+    fastify.post('/tickets/:id/rental-replacement/stop-rental', { preHandler: [getSession, validateRequestBody(stopRentalSchema)] }, ticketReplacementController.stopRental);
+    fastify.get('/rental-agreements/create-context', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementCreateContext);
+    fastify.get('/rental-agreements', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreements);
+    fastify.get('/rental-agreements/:id', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementById);
+    fastify.post('/rental-agreements', { preHandler: [getSession, validateRequestBody(createRentalAgreementSchema)] }, rentalAgreementController.createRentalAgreement);
+    fastify.post('/rental-agreements/:id/generate-pdf', { preHandler: [getSession, validateRequestBody(regenerateRentalAgreementPdfSchema)] }, rentalAgreementController.regenerateRentalAgreementPdf);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
     fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
@@ -515,3 +542,5 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 }
 
 export default Revo365Routes
+
+

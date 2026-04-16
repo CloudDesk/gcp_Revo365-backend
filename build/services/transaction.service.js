@@ -7,6 +7,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import Razorpay from "razorpay";
 import { ENV_RAZORPAY_KEY_ID, ENV_RAZORPAY_KEY_SECRET, ENV_RAZORPAY_WEBHOOK_SECRET, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
+import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
@@ -54,9 +55,29 @@ const computePayableAmountFromOrderInput = (orderItems, fallbackAmount) => {
     }, 0);
     return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
 };
+const isRentalOrderItem = (item) => {
+    const orderName = String(item?.ordername ?? "").trim().toLowerCase();
+    const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
+    return orderName === "rental" || invoiceFor === "product rental";
+};
 const groupOrderQuantities = (orderItems = []) => {
     const grouped = new Map();
     for (const item of orderItems) {
+        if (isRentalOrderItem(item))
+            continue;
+        const productId = toSafeNumber(item?.productid, 0);
+        const qty = toSafeNumber(item?.quantity, 0);
+        if (!productId || qty <= 0)
+            continue;
+        grouped.set(productId, (grouped.get(productId) || 0) + qty);
+    }
+    return grouped;
+};
+const groupRentalOrderQuantities = (orderItems = []) => {
+    const grouped = new Map();
+    for (const item of orderItems) {
+        if (!isRentalOrderItem(item))
+            continue;
         const productId = toSafeNumber(item?.productid, 0);
         const qty = toSafeNumber(item?.quantity, 0);
         if (!productId || qty <= 0)
@@ -313,6 +334,7 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         : { rows: [] };
     const orderLineItems = orderLineResult.rows.map((row) => ({
         id: row.id,
+        uniqueorderid: row.uniqueorderid,
         productid: row.productid,
         quantity: row.quantity,
         ordername: row.ordername,
@@ -345,6 +367,20 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         productIds,
         expectedAmountRupees,
     };
+};
+const resolveUniqueOrderIdFromContext = (context) => {
+    const candidates = [
+        context?.primaryOrderRow?.uniqueorderid,
+        context?.orderLineItems?.[0]?.uniqueorderid,
+        context?.combinedOrderRows?.[0]?.orderid,
+        context?.combinedOrderRows?.[0]?.uniqueorderid,
+    ];
+    for (const candidate of candidates) {
+        if (candidate != null && String(candidate).trim() !== "") {
+            return String(candidate).trim();
+        }
+    }
+    return null;
 };
 const createShiprocketOrderForTransaction = async (context, transactionData) => {
     try {
@@ -464,6 +500,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     if (!lock.acquired) {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
                 status: 200,
@@ -473,7 +510,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+                },
             };
         }
         logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
@@ -487,6 +527,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     try {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
                 status: 200,
@@ -496,7 +537,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(existingContext),
+                },
             };
         }
         if (verifyCheckoutSignature) {
@@ -590,7 +634,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             return {
                 status: 200,
                 message: "Payment already processed",
-                data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                data: {
+                    redirectUrl: REDIRECT_URL_SUCCESS,
+                    uniqueorderid: resolveUniqueOrderIdFromContext(context),
+                },
             };
         }
         const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
@@ -639,7 +686,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 return {
                     status: 200,
                     message: "Payment already processed",
-                    data: { redirectUrl: REDIRECT_URL_SUCCESS },
+                    data: {
+                        redirectUrl: REDIRECT_URL_SUCCESS,
+                        uniqueorderid: resolveUniqueOrderIdFromContext(await getOrderContextByMerchantTransactionId(merchantTransactionId)),
+                    },
                 };
             }
             throw error;
@@ -700,7 +750,11 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         return {
             status: 200,
             message: "Payment verified and processed successfully",
-            data: { redirectUrl: REDIRECT_URL_SUCCESS },
+            uniqueorderid: resolveUniqueOrderIdFromContext(context),
+            data: {
+                redirectUrl: REDIRECT_URL_SUCCESS,
+                uniqueorderid: resolveUniqueOrderIdFromContext(context),
+            },
         };
     }
     finally {
@@ -1093,12 +1147,32 @@ export var transactionService;
             console.log(">>Tran", request.body.transaction, ">>Tran");
             console.log(">>orde", request.body.order, ">>orde");
             console.log("End");
+            // Ensure rental quantities are up-to-date before reserving inventory.
+            // Rental stock availability should consider both ecompublish=true/false items.
+            if (request.body?.order?.[0]?.invoicefor === "product rental") {
+                try {
+                    const productIds = Array.from(new Set((orderdata || [])
+                        .map((item) => Number(item?.productid))
+                        .filter((id) => Number.isFinite(id) && id > 0)));
+                    if (productIds.length > 0) {
+                        const pucResult = await query(`SELECT DISTINCT puc FROM product_revo WHERE id = ANY($1)`, [productIds]);
+                        const pucs = (pucResult.rows || [])
+                            .map((row) => String(row?.puc || "").trim())
+                            .filter(Boolean);
+                        await Promise.all(pucs.map((puc) => productrevoService.updateCatalogueQuantities(puc)));
+                    }
+                }
+                catch (error) {
+                    console.warn("Failed to refresh rental catalogue quantities before checkout:", error?.message || error);
+                }
+            }
             if (request.body.order[0].paymentmethod === "Cash") {
                 console.log("Inside Cash");
                 dummyorderdata = orderdata.map((element) => ({ ...element }));
                 productupdateorderqty = orderdata.map((element) => ({
                     ...element,
                 }));
+                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
                 let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
                 const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
@@ -1110,8 +1184,8 @@ export var transactionService;
                     console.log("Request Body:", request.body);
                     console.log("Request Body Order:", request.body.order);
                     if (request.body.order[0].invoicefor === "product rental") {
-                        return (Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                            Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0);
+                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
+                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
                     }
                     else {
                         return (Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
@@ -1120,6 +1194,7 @@ export var transactionService;
                 });
                 console.log("All quantities available:", allQuantitiesAvailable);
                 if (!allQuantitiesAvailable) {
+                    await releaseInventoryLocksByOrderItems(orderdata);
                     return {
                         status: 400,
                         message: "One or more products are out of stock. Please try again later.",
@@ -1170,6 +1245,10 @@ export var transactionService;
                 console.log("---------------");
                 const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
                 console.log("Update Orderline Status:", updateOrderlineStatus.rows);
+                const rentalOrders = insertorderdata.rows.filter((row) => String(row?.ordername ?? "").trim().toLowerCase() === "rental");
+                if (rentalOrders.length > 0) {
+                    await stockRevoService.allocateRentalStock(rentalOrders);
+                }
                 if (productupdateorderqty.length > 0) {
                     console.log("Come's inside if productupdateorderqty");
                     const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
@@ -1187,9 +1266,11 @@ export var transactionService;
                 console.log("end");
                 return {
                     status: 200,
+                    uniqueorderid: insertorderdata.rows[0].orderid,
                     data: {
                         status: "success",
                         message: "Order placed successfully",
+                        uniqueorderid: insertorderdata.rows[0].orderid,
                         // orderId: order.id,
                         // amount: order.amount,
                         // currency: order.currency,
@@ -1200,6 +1281,7 @@ export var transactionService;
             }
             else {
                 console.log("online pay");
+                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
                 // Step 1: Reserve inventory for this checkout attempt
                 await productrevoService.bulkupsertProducttosetZero(orderdata, false);
                 const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
@@ -1210,13 +1292,12 @@ export var transactionService;
                 console.log("Request Body:", request.body);
                 const allQuantitiesAvailable = result.rows.every((product) => {
                     if (request.body.order[0].invoicefor === "product rental") {
+                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
                         console.log("product.rentalavailablequantity", product.rentalavailablequantity);
-                        console.log("product.lock_qty", product.lock_qty);
+                        console.log("requested rental quantity", requestedQty);
                         console.log("product.rentalorderedquantity", product.rentalorderedquantity);
-                        console.log("rental - lock", Number(product.rentalavailablequantity) - Number(product.lock_qty));
                         console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
-                        return (Number(product.rentalavailablequantity) - Number(product.lock_qty) >= 0 &&
-                            Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity) >= 0);
+                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
                     }
                     else {
                         console.log("eles product.overallavailableqty", product.overallavailableqty);

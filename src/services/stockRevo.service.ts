@@ -4,6 +4,46 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { productrevoService } from "./productrevo.service.js";
 import { DateCustomize } from "../utils/Date/Date.js";
 export module stockRevoService {
+    const AVAILABLE_STOCK_STATUS = "Available";
+    const RESERVED_RENTAL_STOCK_STATUS = "Reserved for Rental";
+    const RENTAL_SOLD_STOCK_STATUS = "Rental Sold";
+    const SERVICE_HOLD_STOCK_STATUS = "Service Hold";
+    const DAMAGED_STOCK_STATUS = "Damaged";
+    const LOST_STOCK_STATUS = "Lost";
+    const AVAILABLE_STOCK_ASSET_STATUS = "available";
+
+    const normalizeComparableText = (value: any) =>
+        String(value ?? "").trim().toLowerCase();
+
+    const getManualStockStatusTransitionError = (
+        currentStatus: any,
+        requestedStatus: any
+    ) => {
+        const current = normalizeComparableText(currentStatus);
+        const next = normalizeComparableText(requestedStatus);
+
+        if (!current || !next || current === next) {
+            return null;
+        }
+
+        if (current === normalizeComparableText(RESERVED_RENTAL_STOCK_STATUS) && next !== current) {
+            return "Use the rental order workflow to manage Reserved for Rental assets.";
+        }
+
+        if (current === normalizeComparableText(SERVICE_HOLD_STOCK_STATUS) && next === normalizeComparableText(AVAILABLE_STOCK_STATUS)) {
+            return "Use the repair release action to move a Service Hold asset back to Available.";
+        }
+
+        if (next === normalizeComparableText(AVAILABLE_STOCK_STATUS) && (
+            current === normalizeComparableText(DAMAGED_STOCK_STATUS)
+            || current === normalizeComparableText(LOST_STOCK_STATUS)
+        )) {
+            return "Damaged or Lost stocks cannot be directly moved to Available.";
+        }
+
+        return null;
+    };
+
     const getVisibilityCondition = (mode: "visible" | "hidden") => {
         if (mode === "hidden") {
             return `(p.ecomvisible = FALSE)`;
@@ -123,7 +163,7 @@ export module stockRevoService {
 
             if (id) {
                 // Fetch current stocktype to check for third_party_product restrictions
-                const oldStockResult = await query(`SELECT puc, stocktype FROM stock_revo WHERE id = $1`, [id]);
+                const oldStockResult = await query(`SELECT puc, stocktype, stockstatus FROM stock_revo WHERE id = $1`, [id]);
                 if (oldStockResult.rows.length > 0) {
                     const currentRow = oldStockResult.rows[0];
                     affectedPucs.add(currentRow.puc);
@@ -137,6 +177,15 @@ export module stockRevoService {
                                 delete upsertFields[key];
                             }
                         });
+                    }
+
+                    const statusTransitionError = getManualStockStatusTransitionError(
+                        currentRow.stockstatus,
+                        upsertFields.stockstatus
+                    );
+
+                    if (statusTransitionError) {
+                        return { message: statusTransitionError, status: 400 };
                     }
                 }
 
@@ -194,6 +243,251 @@ export module stockRevoService {
 
         } catch (error) {
             console.error("Query Execution Error: IN upsertStockRevoData", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
+    export const releaseServiceHoldStockToAvailable = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to release the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(SERVICE_HOLD_STOCK_STATUS)) {
+                return {
+                    message: "Only Service Hold stocks can be marked repaired.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = $2,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN releaseServiceHoldStockToAvailable", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
+    export const markLostStockAsFound = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to restore the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(LOST_STOCK_STATUS)) {
+                return {
+                    message: "Only Lost stocks can be marked as found.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = CASE
+                            WHEN stocktype = 'rental_product' THEN $2
+                            ELSE rentalassetstatus
+                        END,
+                        lostdate = NULL,
+                        lostreason = NULL,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN markLostStockAsFound", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+        }
+    };
+
+    export const markDamagedStockAsRepaired = async (stockId: number, modifiedBy?: number | null) => {
+        try {
+            if (!stockId) {
+                return { message: "Id is required to restore the stock.", status: 400 };
+            }
+
+            const currentStockResult = await query(
+                `SELECT * FROM stock_revo WHERE id = $1`,
+                [stockId]
+            );
+
+            if (currentStockResult.rows.length === 0) {
+                return { message: "No stock found with this id.", status: 404 };
+            }
+
+            const currentStock = currentStockResult.rows[0];
+            if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(DAMAGED_STOCK_STATUS)) {
+                return {
+                    message: "Only Damaged stocks can be marked as repaired/available.",
+                    status: 400,
+                };
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        servicestatus = NULL,
+                        holdreason = NULL,
+                        holdticketid = NULL,
+                        orderlinenumber = NULL,
+                        agreementid = NULL,
+                        rentalassetstatus = CASE
+                            WHEN stocktype = 'rental_product' THEN $2
+                            ELSE rentalassetstatus
+                        END,
+                        damageassessment = NULL,
+                        damageddate = NULL,
+                        nonreturnable = FALSE,
+                        lastticketid = COALESCE(holdticketid, lastticketid),
+                        modifiedby = COALESCE($4, modifiedby)
+                    WHERE id = $3
+                    RETURNING *
+                `,
+                [
+                    AVAILABLE_STOCK_STATUS,
+                    AVAILABLE_STOCK_ASSET_STATUS,
+                    stockId,
+                    modifiedBy ?? null,
+                ]
+            );
+
+            const puc = result.rows[0]?.puc;
+            if (puc) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+
+            const countQuery = `
+                SELECT COUNT(*) FROM stock_revo 
+                WHERE puc = $1
+                AND (isdeleted = false OR isdeleted IS NULL)
+                AND (isarchive = false OR isarchive IS NULL)
+                AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                AND (ewaste = false OR ewaste IS NULL)
+            `;
+            const countResult = await query(countQuery, [puc]);
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            return {
+                command: "UPDATE",
+                result,
+                totalCount,
+                affectedPucs: puc ? [puc] : [],
+            };
+        } catch (error) {
+            console.error("Query Execution Error: IN markDamagedStockAsRepaired", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -505,6 +799,30 @@ export module stockRevoService {
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Reserved for Rental'
+                    ) AS reservedforrentalquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Service Hold'
+                    ) AS serviceholdquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Damaged'
+                    ) AS damagedquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+                        AND stocktype = 'rental_product'
+                        AND stockstatus = 'Lost'
+                    ) AS lostquantity,
+
+                    COUNT(*) FILTER (
+                        WHERE ${activeFilters}
                         AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype <> 'third_party_product'
@@ -547,7 +865,11 @@ export module stockRevoService {
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
                         AND ecompublish = false
-                        AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold')
+                        AND (
+                            stockstatus = 'Available'
+                            OR stockstatus = 'Rental Sold'
+                            OR stockstatus = 'Reserved for Rental'
+                        )
                         AND stocktype = 'rental_product'
                     ) AS rentaltotalquantity,
 
@@ -570,6 +892,10 @@ export module stockRevoService {
                 const oncatalogueqty = parseInt(quantityResult.rows[0].oncatalogueqty, 10);
                 const offcatalogueqty = parseInt(quantityResult.rows[0].offcatalogueqty, 10);
                 const rentaltotalquantity = parseInt(quantityResult.rows[0].rentaltotalquantity, 10);
+                const reservedforrentalquantity = parseInt(quantityResult.rows[0].reservedforrentalquantity, 10);
+                const serviceholdquantity = parseInt(quantityResult.rows[0].serviceholdquantity, 10);
+                const damagedquantity = parseInt(quantityResult.rows[0].damagedquantity, 10);
+                const lostquantity = parseInt(quantityResult.rows[0].lostquantity, 10);
                 const bin_qty = parseInt(quantityResult.rows[0].bin_qty, 10);
                 const archive_qty = parseInt(quantityResult.rows[0].archive_qty, 10);
                 const ewaste_qty = parseInt(quantityResult.rows[0].ewaste_qty, 10);
@@ -587,6 +913,10 @@ export module stockRevoService {
                     offcatalogueqty: offcatalogueqty,
                     rentaltotalquantity: rentaltotalquantity,
                     rentalavailablequantity: rentalavailablequantity,
+                    reservedforrentalquantity,
+                    serviceholdquantity,
+                    damagedquantity,
+                    lostquantity,
                     bin_qty,
                     archive_qty,
                     ewaste_qty
@@ -759,7 +1089,11 @@ export module stockRevoService {
 
                     COUNT(s.id) FILTER (
                         WHERE s.ecompublish = false
-                        AND (s.stockstatus = 'Available' OR s.stockstatus = 'Rental Sold')
+                        AND (
+                            s.stockstatus = 'Available'
+                            OR s.stockstatus = 'Rental Sold'
+                            OR s.stockstatus = 'Reserved for Rental'
+                        )
                         AND s.stocktype = 'rental_product'
                     ) AS rentaltotalquantity,
 
@@ -768,6 +1102,26 @@ export module stockRevoService {
                         AND s.stockstatus = 'Rental Sold'
                         AND s.stocktype = 'rental_product'
                     ) AS rentalsoldquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Reserved for Rental'
+                    ) AS reservedforrentalquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Service Hold'
+                    ) AS serviceholdquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Damaged'
+                    ) AS damagedquantity,
+
+                    COUNT(s.id) FILTER (
+                        WHERE s.stocktype = 'rental_product'
+                        AND s.stockstatus = 'Lost'
+                    ) AS lostquantity,
 
                     COALESCE(om.ordered_qty, 0) AS ordered_qty,
                     COALESCE(om.thirdpartyorder_qty, 0) AS thirdpartyorder_qty,
@@ -798,6 +1152,10 @@ export module stockRevoService {
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
                 rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
                 rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10),
+                reservedforrentalquantity: parseInt(row.reservedforrentalquantity, 10),
+                serviceholdquantity: parseInt(row.serviceholdquantity, 10),
+                damagedquantity: parseInt(row.damagedquantity, 10),
+                lostquantity: parseInt(row.lostquantity, 10),
                 ordered_qty: parseInt(row.ordered_qty, 10),
                 thirdpartyorder_qty: parseInt(row.thirdpartyorder_qty, 10),
                 thirdpartysold_qty: parseInt(row.thirdpartysold_qty, 10)
@@ -886,41 +1244,57 @@ export module stockRevoService {
     export const upsertStockRevoDatarfid = async (rfidDataArray: any) => {
         try {
             console.log("RFID Data Array:", rfidDataArray);
-            let rfidValues = rfidDataArray.map(item => item.rfid);
             let productid = rfidDataArray[0].productid;
-            let arraylength = rfidDataArray.length;
-            let ordername = rfidDataArray[0].ordername;
+            const arraylength = rfidDataArray.length;
+            let ordername = rfidDataArray[0]?.ordername;
 
+            if (!ordername && rfidDataArray[0]?.orderlinenumber) {
+                const orderlineQuery = await query(
+                    `SELECT ordername FROM orderline WHERE orderlinenumber = $1 LIMIT 1`,
+                    [rfidDataArray[0].orderlinenumber]
+                );
+                ordername = orderlineQuery.rows[0]?.ordername ?? "";
+            }
 
-            const isRental = ordername === 'rental';
+            const isRental = normalizeComparableText(ordername) === "rental";
+            const stockStatusValue = isRental ? RENTAL_SOLD_STOCK_STATUS : "Sold";
 
-            let stockStatusValue = isRental ? 'Rental Sold' : 'Sold';
+            const queryParams: any[] = [productid];
+            const mappedConditions = rfidDataArray.map((item) => {
+                queryParams.push(item.rfid);
+                const rfidParamIndex = queryParams.length;
+                queryParams.push(item.orderlinenumber ?? null);
+                const orderlineParamIndex = queryParams.length;
 
-            let caseStatementsOrderId = rfidDataArray.map((item) => {
-                return `WHEN rfid = '${item.rfid}' THEN '${item.orderlinenumber}'`;
-            }).join(' ');
+                return {
+                    caseClause: `WHEN rfid = $${rfidParamIndex} THEN $${orderlineParamIndex}`,
+                    whereClause: isRental
+                        ? `(rfid = $${rfidParamIndex} AND (stockstatus = '${AVAILABLE_STOCK_STATUS}' OR (stockstatus = '${RESERVED_RENTAL_STOCK_STATUS}' AND orderlinenumber = $${orderlineParamIndex})))`
+                        : `(rfid = $${rfidParamIndex} AND stockstatus = '${AVAILABLE_STOCK_STATUS}')`,
+                };
+            });
 
             let updateQuery = `
                 UPDATE stock_revo 
                 SET 
-                    orderlinenumber = CASE ${caseStatementsOrderId} END,
+                    orderlinenumber = CASE ${mappedConditions
+                        .map((item) => item.caseClause)
+                        .join(" ")} ELSE orderlinenumber END,
                     stockstatus = '${stockStatusValue}',
-                    stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END,
-                    rfid = NULL
+                    stocktype = CASE WHEN stocktype = 'off_catalogue_product' THEN 'on_catalogue_product' ELSE stocktype END
                 WHERE 
-                    rfid IN (${rfidValues.map((rfid) => `'${rfid}'`).join(',')}) 
+                    (${mappedConditions.map((item) => item.whereClause).join(" OR ")})
                     AND puc IN (SELECT puc FROM product_revo WHERE id = $1)
-                    AND stockstatus = 'Available'
                 RETURNING *;
             `;
 
-            let result = await query(updateQuery, [productid]);
+            let result = await query(updateQuery, queryParams);
 
-            if (result.rows.length !== rfidValues.length) {
+            if (result.rows.length !== arraylength) {
                 return {
                     error: 'Error in RFID scan. Ensure all RFIDs are valid.',
                     updatedCount: result.rows.length,
-                    expectedCount: rfidValues.length
+                    expectedCount: arraylength
                 };
             }
 
@@ -959,59 +1333,185 @@ export module stockRevoService {
         try {
             console.log('Allocating Rental Stock for orders:', orders);
             for (const order of orders) {
-                // Determine if this is a rental product (ecompublish = false check is ideal, but for now we might rely on the caller or check here)
-                // Assuming the caller only passes rental orders or we check 'ordername' if available on the order object
-                // But safer to check db or rely on caller. Let's rely on logic for any product that has rental stock.
-
-                // We will attempt to update 'Available' rental stock for this product.
-                const productid = order.productid; // Or orderLine productid
-                const quantity = order.quantity;
-                const orderid = order.orderid; // The unique string order ID (e.g. TEQIT...)
-                const orderlineid = order.id; // orderline PK if linking to orderline, but stock links to orderid usually
-
-                if (!productid || !quantity || !orderid) {
-                    console.warn('Missing details for rental allocation:', order);
+                const uniqueOrderId = String(order?.orderid ?? "").trim();
+                if (!uniqueOrderId) {
+                    console.warn('Missing unique order id for rental allocation:', order);
                     continue;
                 }
 
-                // Update 'quantity' number of rows from 'Available' to 'Rental Sold'
-                // Targeting stocktype='rental_product' and ecompublish=false
-                const updateQuery = `
-                    UPDATE stock_revo
-                    SET 
-                        stockstatus = 'Rental Sold',
-                        orderid = $1,
-                        modifieddate = COALESCE(modifieddate, CURRENT_TIMESTAMP)
-                    WHERE id IN (
-                        SELECT id
-                        FROM stock_revo
-                        WHERE 
-                            puc IN (SELECT puc FROM product_revo WHERE id = $2)
-                            AND stocktype = 'rental_product'
-                            AND ecompublish = false
-                            AND stockstatus = 'Available'
-                            AND isdeleted = false
-                            AND isarchive = false
-                            AND removefromrecyclebin = false
-                            AND ewaste = false
-                        LIMIT $3
-                        FOR UPDATE
-                    )
-                    RETURNING puc;
-                `;
+                const orderlinesResult = await query(
+                    `
+                        SELECT
+                            orderlinenumber,
+                            productid,
+                            assetnumber,
+                            quantity
+                        FROM orderline
+                        WHERE uniqueorderid = $1
+                          AND LOWER(COALESCE(ordername, '')) = 'rental'
+                    `,
+                    [uniqueOrderId]
+                );
 
-                const result = await query(updateQuery, [orderid, productid, quantity]);
-                console.log(`Allocated ${result.rowCount} rental items for Product ID ${productid}`);
+                for (const line of orderlinesResult.rows) {
+                    const assetIdentifier = String(line.assetnumber ?? "").trim();
+                    let result;
 
-                if (result.rowCount > 0) {
-                    const puc = result.rows[0].puc;
-                    await productrevoService.updateCatalogueQuantities(puc);
+                    if (assetIdentifier) {
+                        result = await query(
+                            `
+                                UPDATE stock_revo
+                                SET
+                                    stockstatus = $1,
+                                    orderid = $2,
+                                    orderlinenumber = $3,
+                                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                                WHERE id = (
+                                    SELECT id
+                                    FROM stock_revo
+                                    WHERE
+                                        (CAST(assetnumber AS TEXT) = $4 OR CAST(rfid AS TEXT) = $4)
+                                        AND puc IN (SELECT puc FROM product_revo WHERE id = $5)
+                                        AND stocktype = 'rental_product'
+                                        AND ecompublish = false
+                                        AND stockstatus = 'Available'
+                                        AND isdeleted = false
+                                        AND isarchive = false
+                                        AND removefromrecyclebin = false
+                                        AND ewaste = false
+                                    ORDER BY
+                                        CASE WHEN CAST(assetnumber AS TEXT) = $4 THEN 0 ELSE 1 END,
+                                        modifieddate DESC NULLS LAST,
+                                        id DESC
+                                    LIMIT 1
+                                    FOR UPDATE
+                                )
+                                RETURNING puc
+                            `,
+                            [
+                                RESERVED_RENTAL_STOCK_STATUS,
+                                uniqueOrderId,
+                                line.orderlinenumber,
+                                assetIdentifier,
+                                line.productid,
+                            ]
+                        );
+                    } else {
+                        const quantity = Math.max(Number(line.quantity) || 1, 1);
+                        result = await query(
+                            `
+                                UPDATE stock_revo
+                                SET
+                                    stockstatus = $1,
+                                    orderid = $2,
+                                    orderlinenumber = $3,
+                                    modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                                WHERE id IN (
+                                    SELECT id
+                                    FROM stock_revo
+                                    WHERE
+                                        puc IN (SELECT puc FROM product_revo WHERE id = $4)
+                                        AND stocktype = 'rental_product'
+                                        AND ecompublish = false
+                                        AND stockstatus = 'Available'
+                                        AND isdeleted = false
+                                        AND isarchive = false
+                                        AND removefromrecyclebin = false
+                                        AND ewaste = false
+                                    LIMIT $5
+                                    FOR UPDATE
+                                )
+                                RETURNING puc
+                            `,
+                            [
+                                RESERVED_RENTAL_STOCK_STATUS,
+                                uniqueOrderId,
+                                line.orderlinenumber,
+                                line.productid,
+                                quantity,
+                            ]
+                        );
+                    }
+
+                    console.log(`Reserved ${result.rowCount} rental items for orderline ${line.orderlinenumber}`);
+
+                    if (!result.rowCount) {
+                        console.warn(`Unable to reserve rental stock for orderline ${line.orderlinenumber}`);
+                        continue;
+                    }
+
+                    const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+                    for (const puc of pucs) {
+                        await productrevoService.updateCatalogueQuantities(puc);
+                    }
                 }
             }
         } catch (error) {
             console.error("Error in allocateRentalStock:", error);
             // Don't block the order flow if stock allocation fails, but log it critical
             // throw error; 
+        }
+    };
+
+    export const releaseReservedRentalStockForOrder = async (uniqueOrderId: string) => {
+        try {
+            const normalizedOrderId = String(uniqueOrderId ?? "").trim();
+            if (!normalizedOrderId) {
+                return;
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        orderid = NULL,
+                        orderlinenumber = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                    WHERE orderid = $2
+                      AND stockstatus = $3
+                    RETURNING puc
+                `,
+                [AVAILABLE_STOCK_STATUS, normalizedOrderId, RESERVED_RENTAL_STOCK_STATUS]
+            );
+
+            const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+            for (const puc of pucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrder:", error);
+        }
+    };
+
+    export const releaseReservedRentalStockForOrderline = async (orderlinenumber: string) => {
+        try {
+            const normalizedOrderline = String(orderlinenumber ?? "").trim();
+            if (!normalizedOrderline) {
+                return;
+            }
+
+            const result = await query(
+                `
+                    UPDATE stock_revo
+                    SET
+                        stockstatus = $1,
+                        orderid = NULL,
+                        orderlinenumber = NULL,
+                        modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
+                    WHERE orderlinenumber = $2
+                      AND stockstatus = $3
+                    RETURNING puc
+                `,
+                [AVAILABLE_STOCK_STATUS, normalizedOrderline, RESERVED_RENTAL_STOCK_STATUS]
+            );
+
+            const pucs = Array.from(new Set(result.rows.map((row: any) => row.puc).filter(Boolean)));
+            for (const puc of pucs) {
+                await productrevoService.updateCatalogueQuantities(puc);
+            }
+        } catch (error) {
+            console.error("Error in releaseReservedRentalStockForOrderline:", error);
         }
     };
 }

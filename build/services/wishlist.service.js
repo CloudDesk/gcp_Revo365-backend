@@ -141,17 +141,40 @@ export var wishListService;
         try {
             let querydata;
             let params;
-            const { id, ...upsertFields } = wishlistData;
+            const { id, ...payloadFields } = wishlistData;
+            // Wishlist is stored in cart table using flags.
+            const upsertFields = {
+                ...payloadFields,
+                iswishlist: true,
+                iscart: false,
+            };
+            if (!id && upsertFields.userid && upsertFields.productid) {
+                const existingResult = await query(`SELECT id FROM cart WHERE userid = $1 AND productid = $2 LIMIT 1`, [upsertFields.userid, upsertFields.productid]);
+                if (existingResult.rows.length > 0) {
+                    const existingId = existingResult.rows[0].id;
+                    const fieldNames = Object.keys(upsertFields);
+                    const fieldValues = Object.values(upsertFields);
+                    querydata = `UPDATE cart SET ${fieldNames
+                        .map((field, index) => `${field} = $${index + 1}`)
+                        .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+                    params = [...fieldValues, existingId];
+                    const updated = await query(querydata, params);
+                    return updated;
+                }
+            }
+            if (!id && upsertFields.quantity === undefined) {
+                upsertFields.quantity = 1;
+            }
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
-                querydata = `UPDATE wishlist SET ${fieldNames
+                querydata = `UPDATE cart SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO wishlist (${fieldNames.join(", ")}) VALUES (${fieldNames
+                querydata = `INSERT INTO cart (${fieldNames.join(", ")}) VALUES (${fieldNames
                     .map((_, index) => `$${index + 1}`)
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;

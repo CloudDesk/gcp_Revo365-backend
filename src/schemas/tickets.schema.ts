@@ -243,6 +243,12 @@ export const ticketsSchema = {
                 type: "Queue Number should be an integer"
             }
         },
+        requestedrenewaldate: {
+            type: ['integer', 'null'],
+            errorMessage: {
+                type: "Requested Renewal Date should be an integer"
+            }
+        },
     },
     required: [
         // 'tickettype'
