@@ -2591,7 +2591,14 @@ Thank You!`,
                 };
 
             }
-            let sendemail = await sendTransactionalMail(maildata.body);
+            try {
+                await sendTransactionalMail(maildata.body);
+            } catch (mailError: any) {
+                console.error(
+                    "Order email notification failed, continuing order flow:",
+                    mailError?.message || mailError
+                );
+            }
             return result.rows;
 
         } catch (error) {
@@ -2710,4 +2717,3 @@ Thank You!`,
     };
 
 }
-

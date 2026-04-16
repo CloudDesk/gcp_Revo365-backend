@@ -1,4 +1,4 @@
-import { ARRAY, ARRAYOFOBJECT, BIG_INT, BOOLEAN, INTEGER, NUMERIC, TEXT, TEXTA, TEXTB, VARCHAR, _VARCHAR, tsvector } from "./dataTypeconfig.js";
+import { ARRAY, ARRAYOFOBJECT, BIG_INT, BOOLEAN, DATE, INTEGER, NUMERIC, TEXT, TEXTA, TEXTB, TIMESTAMP, TIMESTAMPTZ, VARCHAR, _VARCHAR, tsvector } from "./dataTypeconfig.js";
 const dataTypeCheck = async (result: any) => {
   try {
     const columns = result.fields;
@@ -28,6 +28,9 @@ const dataTypeCheck = async (result: any) => {
           case TEXTB:
           case ARRAY:
           case BOOLEAN:
+          case DATE:
+          case TIMESTAMP:
+          case TIMESTAMPTZ:
           case _VARCHAR:
           case ARRAYOFOBJECT:
           case tsvector:
