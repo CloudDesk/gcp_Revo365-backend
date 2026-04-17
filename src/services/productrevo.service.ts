@@ -1567,7 +1567,6 @@ export module productrevoService {
       const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
       const queryText = `
           SELECT 
-            p.*,
             COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
             COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
             COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
@@ -1581,7 +1580,10 @@ export module productrevoService {
               COALESCE(stock_counts.live_rentaltotalquantity, 0)
                 - COALESCE(stock_counts.live_rentalsoldquantity, 0)
                 - COALESCE(stock_counts.reservedforrentalquantity, 0)
-            ) AS rentalavailablequantity
+            ) AS rentalavailablequantity,
+            -- Keep p.* after the live overrides because pg's row parser keeps the
+            -- first duplicate field name it sees in the result set.
+            p.*
           FROM product_revo p
           LEFT JOIN LATERAL (
             SELECT

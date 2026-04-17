@@ -250,6 +250,7 @@ export const processRentalReturn = async ({
         servicestatus = NULL,
         holdreason = NULL,
         holdticketid = NULL,
+        orderid = NULL,
         orderlinenumber = NULL,
         rentalassetstatus = $2,
         agreementid = NULL,

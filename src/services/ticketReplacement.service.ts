@@ -53,6 +53,26 @@ const normalizeText = (value: any) =>
 const normalizeComparableText = (value: any) =>
   String(value ?? "").trim().toLowerCase();
 
+const refreshReplacementQuantityViews = async (pucs: Array<any>) => {
+  const normalizedPucs = Array.from(
+    new Set(
+      (pucs || [])
+        .map((value) => normalizeText(value))
+        .filter(Boolean)
+    )
+  ) as string[];
+
+  if (normalizedPucs.length === 0) {
+    return;
+  }
+
+  for (const puc of normalizedPucs) {
+    await productrevoService.updateCatalogueQuantities(puc);
+  }
+
+  await stockRevoService.testinupdateQuantity(normalizedPucs, false);
+};
+
 const parseJsonValue = <T>(value: any, fallback: T): T => {
   if (value == null) {
     return fallback;
@@ -826,6 +846,8 @@ export module ticketReplacementService {
       await client.query("COMMIT");
       transactionStarted = false;
 
+      await refreshReplacementQuantityViews([stockUpdateResult.rows[0]?.puc]);
+
       return {
         message: "Old asset received successfully.",
         ticket: updatedTicketResult.rows[0],
@@ -1106,6 +1128,8 @@ export module ticketReplacementService {
 
       await client.query("COMMIT");
       transactionStarted = false;
+
+      await refreshReplacementQuantityViews([updatedStockResult.rows[0]?.puc]);
 
       let agreementWarning: string | null = null;
       const agreementId =
@@ -1859,6 +1883,8 @@ export module ticketReplacementService {
       await client.query("COMMIT");
       transactionStarted = false;
 
+      await refreshReplacementQuantityViews([updatedStockResult.rows[0]?.puc]);
+
       let agreementWarning: string | null = null;
       const agreementId =
         agreementSyncResult?.agreement?.id ??
@@ -2147,6 +2173,7 @@ export module ticketReplacementService {
       const returnedStockPuc = returnResult.stock?.puc;
       if (returnedStockPuc) {
         await productrevoService.updateCatalogueQuantities(returnedStockPuc);
+        await stockRevoService.testinupdateQuantity([returnedStockPuc], false);
       }
 
       return {
@@ -2829,8 +2856,6 @@ export module ticketReplacementService {
     }
   };
 }
-
-
 
 
 
