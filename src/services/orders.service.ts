@@ -2600,6 +2600,23 @@ Thank You!`,
                 ? String(emailid).trim()
                 : null;
 
+            const rentalOrderRows = result.rows.filter(
+                (row: any) =>
+                    normalizeComparableText(row?.ordername) === "rental" ||
+                    normalizeComparableText(row?.invoicefor) === "product rental"
+            );
+            const isRentalOrderEmail = rentalOrderRows.length > 0;
+            const rentalOrderLogContext = {
+                orderid,
+                orderstatus,
+                paymentfailed,
+                recipient: resolvedRecipient,
+                orderLineNumbers: rentalOrderRows.map((row: any) => row?.orderlinenumber).filter(Boolean),
+                uniqueOrderIds: Array.from(
+                    new Set(rentalOrderRows.map((row: any) => row?.uniqueorderid).filter(Boolean))
+                ),
+            };
+
             if (!resolvedRecipient) {
                 const lineUserId = result.rows.find((row: any) => row?.userid)?.userid;
                 if (lineUserId) {
@@ -2610,23 +2627,56 @@ Thank You!`,
                     const candidateEmail = userResult.rows[0]?.useremail;
                     if (isLikelyEmailAddress(candidateEmail)) {
                         resolvedRecipient = String(candidateEmail).trim();
+                        if (isRentalOrderEmail) {
+                            rentalOrderLogContext.recipient = resolvedRecipient;
+                        }
                     }
                 }
             }
 
             try {
                 if (resolvedRecipient) {
+                    if (isRentalOrderEmail) {
+                        console.log(
+                            "[RentalOrderEmail] Sending rental order confirmation email",
+                            rentalOrderLogContext
+                        );
+                    }
                     await sendTransactionalMail({
                         ...maildata.body,
                         to: resolvedRecipient,
                     });
+                    if (isRentalOrderEmail) {
+                        console.log(
+                            "[RentalOrderEmail] Rental order confirmation email sent successfully",
+                            rentalOrderLogContext
+                        );
+                    }
                 } else {
                     console.warn(
                         "Order email notification skipped: no valid recipient email found",
                         { orderid, providedRecipient: emailid || null }
                     );
+                    if (isRentalOrderEmail) {
+                        console.warn(
+                            "[RentalOrderEmail] Rental order confirmation email skipped: no valid recipient email found",
+                            {
+                                ...rentalOrderLogContext,
+                                providedRecipient: emailid || null,
+                            }
+                        );
+                    }
                 }
             } catch (mailError: any) {
+                if (isRentalOrderEmail) {
+                    console.error(
+                        "[RentalOrderEmail] Rental order confirmation email failed",
+                        {
+                            ...rentalOrderLogContext,
+                            error: mailError?.message || mailError,
+                        }
+                    );
+                }
                 console.error(
                     "Order email notification failed, continuing order flow:",
                     mailError?.message || mailError
