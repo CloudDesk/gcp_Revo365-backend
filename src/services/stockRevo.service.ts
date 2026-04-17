@@ -1152,7 +1152,10 @@ export module stockRevoService {
                 thirdpartyavailableqty: parseInt(row.thirdpartyavailableqty, 10),
                 rentaltotalquantity: parseInt(row.rentaltotalquantity, 10),
                 rentalsoldquantity: parseInt(row.rentalsoldquantity, 10),
-                rentalavailablequantity: parseInt(row.rentaltotalquantity, 10) - parseInt(row.rentalsoldquantity, 10),
+                rentalavailablequantity:
+                    parseInt(row.rentaltotalquantity, 10)
+                    - parseInt(row.rentalsoldquantity, 10)
+                    - parseInt(row.reservedforrentalquantity, 10),
                 reservedforrentalquantity: parseInt(row.reservedforrentalquantity, 10),
                 serviceholdquantity: parseInt(row.serviceholdquantity, 10),
                 damagedquantity: parseInt(row.damagedquantity, 10),
