@@ -9,6 +9,7 @@ import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
 import fastifyRawBody from "fastify-raw-body";
+import { verifyMailTransport } from "./Gmail/gmail.js";
 
 import fs from "fs";
 
@@ -104,6 +105,7 @@ fastify.addHook("onReady", async () => {
     await checkDatabaseConnection();
     await connectGetSessionredis();
     await runMigrations();
+    await verifyMailTransport();
     // done()
     // console.log(fastify.isServerReady, 'Loging value is');
   } catch (error) {

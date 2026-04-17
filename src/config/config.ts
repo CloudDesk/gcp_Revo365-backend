@@ -15,11 +15,11 @@ const config = {
   REDIRECT_URL_PAYMENT_STATUS: process.env.REDIRECT_URL_PAYMENT_STATUS,
   REDIRECT_URL_SUCCESS: process.env.REDIRECT_URL_SUCCESS,
   REDIRECT_URL_FAILURE: process.env.REDIRECT_URL_FAILURE,
-  GMAIL_SERVICE: process.env.GMAIL_SERVICE,
-  GMAIL_HOST: process.env.GMAIL_HOST,
-  GMAIL_PORT: process.env.GMAIL_PORT,
-  GMAIL_AUTH_USER: process.env.GMAIL_AUTH_USER,
-  GMAIL_AUTH_PASSWORD: process.env.GMAIL_AUTH_PASSWORD,
+  MAIL_SERVICE: process.env.MAIL_SERVICE ?? process.env.GMAIL_SERVICE,
+  MAIL_HOST: process.env.MAIL_HOST ?? process.env.GMAIL_HOST,
+  MAIL_PORT: process.env.MAIL_PORT ?? process.env.GMAIL_PORT,
+  MAIL_AUTH_USER: process.env.MAIL_AUTH_USER ?? process.env.GMAIL_AUTH_USER,
+  MAIL_AUTH_PASSWORD: process.env.MAIL_AUTH_PASSWORD ?? process.env.GMAIL_AUTH_PASSWORD,
   GCP_TASK_URL: process.env.GCP_TASK_URL,
   GCP_PROJECT_ID: process.env.GCP_PROJECT_ID,
   GCP_PROJECT_QUEUE: process.env.GCP_PROJECT_QUEUE,
@@ -62,11 +62,11 @@ export const { PROTOCOL } = config;
 export const { REDIRECT_URL_PAYMENT_STATUS } = config;
 export const { REDIRECT_URL_SUCCESS } = config;
 export const { REDIRECT_URL_FAILURE } = config;
-export const { GMAIL_SERVICE } = config;
-export const { GMAIL_HOST } = config;
-export const { GMAIL_PORT } = config;
-export const { GMAIL_AUTH_USER } = config;
-export const { GMAIL_AUTH_PASSWORD } = config;
+export const { MAIL_SERVICE } = config;
+export const { MAIL_HOST } = config;
+export const { MAIL_PORT } = config;
+export const { MAIL_AUTH_USER } = config;
+export const { MAIL_AUTH_PASSWORD } = config;
 export const { GCP_TASK_URL } = config;
 export const { GCP_PROJECT_ID } = config;
 export const { GCP_PROJECT_QUEUE } = config;

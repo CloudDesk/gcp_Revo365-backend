@@ -401,6 +401,11 @@ export module ordersService {
     const normalizeComparableText = (value: any) =>
         String(value ?? "").trim().toLowerCase();
 
+    const isLikelyEmailAddress = (value: any) => {
+        const normalized = String(value ?? "").trim();
+        return normalized.includes("@") && normalized.includes(".");
+    };
+
     const sendOrderCancellationEmail = async (userid: any, orderId: any, orderAmount: any) => {
         if (!userid) return;
 
@@ -2591,8 +2596,36 @@ Thank You!`,
                 };
 
             }
+            let resolvedRecipient = isLikelyEmailAddress(emailid)
+                ? String(emailid).trim()
+                : null;
+
+            if (!resolvedRecipient) {
+                const lineUserId = result.rows.find((row: any) => row?.userid)?.userid;
+                if (lineUserId) {
+                    const userResult = await query(
+                        `SELECT useremail FROM users WHERE id = $1 LIMIT 1`,
+                        [lineUserId]
+                    );
+                    const candidateEmail = userResult.rows[0]?.useremail;
+                    if (isLikelyEmailAddress(candidateEmail)) {
+                        resolvedRecipient = String(candidateEmail).trim();
+                    }
+                }
+            }
+
             try {
-                await sendTransactionalMail(maildata.body);
+                if (resolvedRecipient) {
+                    await sendTransactionalMail({
+                        ...maildata.body,
+                        to: resolvedRecipient,
+                    });
+                } else {
+                    console.warn(
+                        "Order email notification skipped: no valid recipient email found",
+                        { orderid, providedRecipient: emailid || null }
+                    );
+                }
             } catch (mailError: any) {
                 console.error(
                     "Order email notification failed, continuing order flow:",

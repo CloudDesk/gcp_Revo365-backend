@@ -2351,7 +2351,7 @@ COALESCE(SUM(
         AND stockstatus = 'Lost'
         THEN 1 ELSE 0
     END
-), 0) AS lost_count
+), 0) AS lost_count,
 
                 -- overallavailableqty = physical ecom=true Available count
                 --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)

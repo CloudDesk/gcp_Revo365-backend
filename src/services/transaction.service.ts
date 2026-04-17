@@ -1443,7 +1443,23 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
       } as ShiprocketCreateResult;
     }
 
-    const orderData = context.orderLineItems[0] || context.primaryOrderRow;
+    const shippableOrderLineItems = (context.orderLineItems || []).filter(
+      (item: any) => !isRentalOrderItem(item)
+    );
+
+    if (shippableOrderLineItems.length === 0) {
+      console.log("[Shiprocket] create skipped — rental-only transaction", {
+        merchantTransactionId: merchantTx,
+        transactionFor: context?.transactionFor || null,
+      });
+      return {
+        ok: true,
+        reason: "rental_only_transaction",
+        merchantTransactionId: merchantTx,
+      } as ShiprocketCreateResult;
+    }
+
+    const orderData = shippableOrderLineItems[0] || context.primaryOrderRow;
     if (!orderData || !context.user || !context.address) {
       return {
         ok: false,
@@ -1465,14 +1481,14 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
       shiprocketSettings.pickupLocation ||
       resolveFulfillmentLocation({
         requestedLocation:
-          context.orderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ??
+          shippableOrderLineItems.find((item: any) => item?.deliveryfrom)?.deliveryfrom ??
           context.combinedOrderRows.find((row: any) => row?.location)?.location ??
           null,
       });
 
     const shiprocketOrderItems =
-      context.orderLineItems.length > 0
-        ? context.orderLineItems.map((item: any) => ({
+      shippableOrderLineItems.length > 0
+        ? shippableOrderLineItems.map((item: any) => ({
           name: item.productname || "Product",
           sku: `SKU-${item.productid}`,
           units: toSafeNumber(item.quantity, 1),
@@ -1488,7 +1504,7 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
         ];
 
     const computedSubtotal =
-      context.orderLineItems.reduce((sum: number, item: any) => {
+      shippableOrderLineItems.reduce((sum: number, item: any) => {
         const quantity = toSafeNumber(item.quantity, 0);
         const productAmount = toSafeNumber(item.productamount, 0);
         return sum + quantity * productAmount;

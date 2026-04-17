@@ -8,6 +8,7 @@ import {
 import { rentalAgreementService } from "./rentalAgreement.service.js";
 import { processRentalRenewal } from "./rentalRenewal.service.js";
 import { stockRevoService } from "./stockRevo.service.js";
+import { productrevoService } from "./productrevo.service.js";
 
 const REPAIR_RENTAL_TICKET_TYPE = "repair rental";
 const INITIATED_REPLACEMENT_STATUS = "replacement_requested";
@@ -2143,6 +2144,11 @@ export module ticketReplacementService {
       await client.query("COMMIT");
       transactionStarted = false;
 
+      const returnedStockPuc = returnResult.stock?.puc;
+      if (returnedStockPuc) {
+        await productrevoService.updateCatalogueQuantities(returnedStockPuc);
+      }
+
       return {
         message: "Rental asset returned successfully.",
         ticket: returnResult.ticket,
@@ -2823,7 +2829,6 @@ export module ticketReplacementService {
     }
   };
 }
-
 
 
 
