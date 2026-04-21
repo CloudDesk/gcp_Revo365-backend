@@ -7,6 +7,7 @@ import { cartservice } from "./cart.service.js";
 import { performance } from 'perf_hooks';
 import { productrevoInsertSchema } from "../schemas/productrevo.schema.js";
 import { createHash } from "crypto";
+// import { stockRevoService } from './stockRevo.service.js'; // REMOVED TO BREAK CIRCULAR LOOP
 
 export module productrevoService {
 
@@ -27,6 +28,12 @@ export module productrevoService {
   ]);
   const MIGRATION_TABLE_MISSING_CODE = "42P01";
   const MIGRATION_COLUMN_MISSING_CODE = "42703";
+  const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
+  const isRentalOrderItem = (item: any) => {
+    const orderName = String(item?.ordername ?? "").trim().toLowerCase();
+    const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
+    return orderName === "rental" || invoiceFor === "product rental";
+  };
 
   export type BulkInsertMode = "strict" | "skip_duplicates";
 
@@ -1558,11 +1565,65 @@ export module productrevoService {
   export const getEachProductsRevo = async function (request: any, id: Number, visibilityMode?: "visible" | "hidden") {
     try {
       const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
-      const queryText = `SELECT * FROM product_revo
-           WHERE id = $1
-             AND (isarchive = FALSE OR isarchive IS NULL)
-             AND (isdeleted = FALSE OR isdeleted IS NULL)
-             AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)${visibilityClause}`;
+      const queryText = `
+          SELECT 
+            COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
+            COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
+            COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity,
+            -- Override stored rental counters with live stock-derived values for
+            -- the product detail API so reserved assets are reflected correctly.
+            COALESCE(stock_counts.live_rentaltotalquantity, 0) AS rentaltotalquantity,
+            COALESCE(stock_counts.live_rentalsoldquantity, 0) AS rentalsoldquantity,
+            GREATEST(
+              0,
+              COALESCE(stock_counts.live_rentaltotalquantity, 0)
+                - COALESCE(stock_counts.live_rentalsoldquantity, 0)
+                - COALESCE(stock_counts.reservedforrentalquantity, 0)
+            ) AS rentalavailablequantity,
+            -- Keep p.* after the live overrides because pg's row parser keeps the
+            -- first duplicate field name it sees in the result set.
+            p.*
+          FROM product_revo p
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Reserved for Rental'
+              ) AS reservedforrentalquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Service Hold'
+              ) AS serviceholdquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Damaged'
+              ) AS damagedquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Lost'
+              ) AS lostquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+              ) AS live_rentaltotalquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Rental Sold'
+              ) AS live_rentalsoldquantity
+            FROM stock_revo
+            WHERE puc = p.puc
+          ) stock_counts ON TRUE
+          WHERE p.id = $1
+            AND (p.isarchive = FALSE OR p.isarchive IS NULL)
+            AND (p.isdeleted = FALSE OR p.isdeleted IS NULL)
+            AND (p.removefromrecyclebin = FALSE OR p.removefromrecyclebin IS NULL)${visibilityClause}`;
       const result: QueryResult = await query(
         queryText,
         [id]
@@ -1741,12 +1802,12 @@ export module productrevoService {
       if (quertTogetThirdpartyproduct.rows.length > 0) {
         const stockid = quertTogetThirdpartyproduct.rows[0].id;
         const thirdpartyquantity = quertTogetThirdpartyproduct.rows[0].thirdpartyquantity;
-        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = (${thirdpartyquantity} + availablequantity) WHERE puc = $1  RETURNING *`;
+        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = GREATEST(0, (${thirdpartyquantity} + COALESCE(availablequantity, 0)) - COALESCE(orderedquantity, 0)) WHERE puc = $1  RETURNING *`;
         const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
         console.log("result of update overall available quantity", result.rows);
         return result.rows[0];
       } else {
-        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = availablequantity WHERE puc = $1  RETURNING *`;
+        const queryToUpdateOverallAvailableQuantity = `UPDATE product_revo SET overallavailableqty = GREATEST(0, COALESCE(availablequantity, 0) - COALESCE(orderedquantity, 0)) WHERE puc = $1  RETURNING *`;
         const result = await query(queryToUpdateOverallAvailableQuantity, [puc]);
         return result.rows[0];
       }
@@ -1771,6 +1832,10 @@ export module productrevoService {
       offcatalogueqty,
       rentaltotalquantity,
       rentalavailablequantity,
+      reservedforrentalquantity,
+      serviceholdquantity,
+      damagedquantity,
+      lostquantity,
       bin_qty,
       archive_qty,
       ewaste_qty
@@ -1794,35 +1859,61 @@ export module productrevoService {
       let updateQueryBase = `
       UPDATE product_revo 
       SET quantity = $1, 
-          ecompublishedquantity = $2, 
+          ecompublishedquantity = GREATEST(0, $2 - COALESCE(orderedquantity, 0)), 
           soldquantity = $3, 
           availablequantity = $4, 
           productstatus = $5, 
-          overallavailableqty = $6, 
+          overallavailableqty = GREATEST(0, $6 - COALESCE(orderedquantity, 0)), 
           rentalsoldquantity = $7,
           oncatalogueqty = $8,
           offcatalogueqty = $9,
           rentaltotalquantity = $10,
           rentalavailablequantity = $11,
-          bin_qty = $12,
-          archive_qty = $13,
-          ewaste_qty = $14
+          reservedforrentalquantity = $12,
+          serviceholdquantity = $13,
+          damagedquantity = $14,
+          lostquantity = $15,
+          bin_qty = $16,
+          archive_qty = $17,
+          ewaste_qty = $18
     `;
 
       let updateQuery = '';
       console.log("DEBUG upsertQuantityFields - issold:", issold, "isRental:", isRental, "orderedquantityNumber:", orderedquantityNumber);
       if (issold && !isNaN(orderedquantityNumber)) {
-        // Decrement rentalorderedquantity for rental orders, orderedquantity for regular orders
+        // When stock has been physically consumed, release the matching committed
+        // reservation in the same statement so sellable counters are not double-subtracted.
         if (isRental) {
           console.log("DEBUG: Decrementing rentalorderedquantity");
-          updateQueryBase += `, rentalorderedquantity = rentalorderedquantity - $15`;
+          updateQueryBase += `, rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $19)`;
+          updateQuery = `${updateQueryBase} WHERE puc = $20 RETURNING *`;
         } else {
           console.log("DEBUG: Decrementing orderedquantity");
-          updateQueryBase += `, orderedquantity = orderedquantity - $15`;
+          updateQuery = `
+          UPDATE product_revo 
+          SET quantity = $1, 
+              ecompublishedquantity = GREATEST(0, $2 - GREATEST(0, COALESCE(orderedquantity, 0) - $19)), 
+              soldquantity = $3, 
+              availablequantity = $4, 
+              productstatus = $5, 
+              overallavailableqty = GREATEST(0, $6 - GREATEST(0, COALESCE(orderedquantity, 0) - $19)), 
+              rentalsoldquantity = $7,
+              oncatalogueqty = $8,
+              offcatalogueqty = $9,
+              rentaltotalquantity = $10,
+              rentalavailablequantity = $11,
+              reservedforrentalquantity = $12,
+              serviceholdquantity = $13,
+              damagedquantity = $14,
+              lostquantity = $15,
+              bin_qty = $16,
+              archive_qty = $17,
+              ewaste_qty = $18,
+              orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $19)
+          WHERE puc = $20 RETURNING *`;
         }
-        updateQuery = `${updateQueryBase} WHERE puc = $16 RETURNING *`;
       } else {
-        updateQuery = `${updateQueryBase} WHERE puc = $15 RETURNING *`;
+        updateQuery = `${updateQueryBase} WHERE puc = $19 RETURNING *`;
       }
 
       let updateParams = [];
@@ -1839,6 +1930,10 @@ export module productrevoService {
           offcatalogueqty,
           rentaltotalquantity,
           rentalavailablequantity,
+          reservedforrentalquantity,
+          serviceholdquantity,
+          damagedquantity,
+          lostquantity,
           bin_qty,
           archive_qty,
           ewaste_qty,
@@ -1858,6 +1953,10 @@ export module productrevoService {
           offcatalogueqty,
           rentaltotalquantity,
           rentalavailablequantity,
+          reservedforrentalquantity,
+          serviceholdquantity,
+          damagedquantity,
+          lostquantity,
           bin_qty,
           archive_qty,
           ewaste_qty,
@@ -1912,10 +2011,17 @@ export module productrevoService {
                         'thirdpartyavailableqty',  $9::integer,
                         'rentaltotalquantity',     $10::integer,
                         'rentalsoldquantity',      $11::integer,
-                        'rentalavailablequantity', $12::integer
+                        'rentalavailablequantity', $12::integer,
+                        'reservedforrentalquantity', $13::integer,
+                        'serviceholdquantity',     $14::integer,
+                        'damagedquantity',         $15::integer,
+                        'lostquantity',            $16::integer,
+                        'orderedquantity',         $17::integer,
+                        'thirdpartyorderquantity', $18::integer,
+                        'thirdpartysoldquantity',  $19::integer
                     )
                 )
-            WHERE puc = $13
+            WHERE puc = $20
             RETURNING *
         `;
       const updateQueries = batchData.map(data => {
@@ -1934,13 +2040,43 @@ export module productrevoService {
             data.rentaltotalquantity,
             data.rentalsoldquantity,
             data.rentalavailablequantity,
+            data.reservedforrentalquantity,
+            data.serviceholdquantity,
+            data.damagedquantity,
+            data.lostquantity,
+            data.ordered_qty,
+            data.thirdpartyorder_qty,
+            data.thirdpartysold_qty,
             data.puc
           ]
         };
       });
-      const updatePromises = updateQueries.map(update => query(update.query, update.params));
-      const updateResults = await Promise.all(updatePromises);
-      return updateResults;
+      // Serialize jsonb_set per PUC: parallel updates on the same product_revo row
+      // clobber each other and drop branch keys under load.
+      const byPuc = new Map<string, typeof updateQueries>();
+      for (const u of updateQueries) {
+        const pucKey = String(u.params[19]);
+        const list = byPuc.get(pucKey) ?? [];
+        list.push(u);
+        byPuc.set(pucKey, list);
+      }
+      // Same PUC: must be sequential. Different PUCs: parallel (separate rows).
+      const groups = await Promise.all(
+        [...byPuc.values()].map(async (queries) => {
+          const part: any[] = [];
+          for (const u of queries) {
+            part.push(await query(u.query, u.params));
+          }
+          return part;
+        })
+      );
+
+      const updatedPucs = Array.from(new Set(batchData.map((row) => row?.puc).filter(Boolean)));
+      if (updatedPucs.length > 0) {
+        await syncGlobalProductOrderedQuantities(updatedPucs);
+      }
+
+      return groups.flat();
 
     } catch (error) {
       console.error("Error in testupsertQuantityFieldsBatch", error);
@@ -1949,20 +2085,97 @@ export module productrevoService {
     }
   };
 
+  const syncGlobalProductOrderedQuantities = async (pucs: string[]) => {
+    const uniquePucs = Array.from(new Set((pucs || []).map((p) => String(p || "").trim()).filter(Boolean)));
+    if (uniquePucs.length === 0) return;
+
+    const syncQuery = `
+      WITH target_products AS (
+        SELECT id, puc
+        FROM product_revo
+        WHERE puc = ANY($1::text[])
+      ),
+      ordered_counts AS (
+        SELECT
+          ol.productid,
+          COALESCE(SUM(ol.quantity), 0) AS ordered_qty
+        FROM orderline ol
+        JOIN target_products tp ON tp.id = ol.productid
+        WHERE ol.ordertype = 'Orders'
+          AND ol.orderstatus NOT IN (
+            'payment_failed',
+            'cancelled',
+            'returned',
+            'delivered',
+            'Sold',
+            'ready_to_dispatch',
+            'shipped'
+          )
+        GROUP BY ol.productid
+      ),
+      physical_sellable AS (
+        SELECT
+          s.puc,
+          (
+            COALESCE(SUM(CASE
+              WHEN s.stocktype = 'third_party_product'
+               AND s.ecompublish = true
+               AND (s.isdeleted = false OR s.isdeleted IS NULL)
+               AND (s.isarchive = false OR s.isarchive IS NULL)
+               AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+               AND (s.ewaste = false OR s.ewaste IS NULL)
+              THEN s.thirdpartyquantity
+              ELSE 0
+            END), 0)
+            +
+            COALESCE(SUM(CASE
+              WHEN s.stocktype <> 'third_party_product'
+               AND s.ecompublish = true
+               AND s.stockstatus = 'Available'
+               AND (s.isdeleted = false OR s.isdeleted IS NULL)
+               AND (s.isarchive = false OR s.isarchive IS NULL)
+               AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+               AND (s.ewaste = false OR s.ewaste IS NULL)
+              THEN 1
+              ELSE 0
+            END), 0)
+          ) AS physical_sellable_qty
+        FROM stock_revo s
+        JOIN target_products tp ON tp.puc = s.puc
+        GROUP BY s.puc
+      )
+      UPDATE product_revo pr
+      SET
+        orderedquantity = COALESCE(oc.ordered_qty, 0),
+        overallavailableqty = GREATEST(0, COALESCE(ps.physical_sellable_qty, 0) - COALESCE(oc.ordered_qty, 0)),
+        ecompublishedquantity = GREATEST(0, COALESCE(ps.physical_sellable_qty, 0) - COALESCE(oc.ordered_qty, 0))
+      FROM target_products tp
+      LEFT JOIN ordered_counts oc ON oc.productid = tp.id
+      LEFT JOIN physical_sellable ps ON ps.puc = tp.puc
+      WHERE pr.id = tp.id
+    `;
+
+    await query(syncQuery, [uniquePucs]);
+  };
+
 
 
   export const bulkupsertProducttosetZero = (async (data, setzero) => {
     try {
 
       console.log(data + 'data for bulk upsert product to set zero');
-      if (data.length === 0) {
+      const lockableItems = Array.isArray(data)
+        ? data.filter((item: any) => !isRentalOrderItem(item))
+        : [];
+
+      if (lockableItems.length === 0) {
         return { message: 'No data to update' };
       }
 
       let querytext = 'UPDATE product_revo SET lock_qty = CASE id ';
       const values = [];
 
-      data.forEach((item, index) => {
+      lockableItems.forEach((item, index) => {
         if (setzero) {
           const idPlaceholder = index + 1;
           querytext += `WHEN $${idPlaceholder} THEN 0 `;
@@ -1978,9 +2191,9 @@ export module productrevoService {
       querytext += 'ELSE lock_qty END WHERE id IN (';
 
       if (setzero) {
-        querytext += data.map((_, index) => `$${index + 1}`).join(', ');
+        querytext += lockableItems.map((_, index) => `$${index + 1}`).join(', ');
       } else {
-        querytext += data.map((_, index) => `$${index * 2 + 1}`).join(', ');
+        querytext += lockableItems.map((_, index) => `$${index * 2 + 1}`).join(', ');
       }
 
       querytext += ');';
@@ -2005,12 +2218,12 @@ export module productrevoService {
   }
 
 
-  export async function updateOrderedQuantityarray(updatedData) {
+   export async function updateOrderedQuantityarray(updatedData) {
     try {
-      console.log('Inside updateorderqty');
-      console.log('Inside updateorderqty', updatedData);
-
+      console.log('ANTIGRAVITY_LOG: updateOrderedQuantityarray triggered', JSON.stringify(updatedData));
       let data = [];
+      const updatedPucs = new Set<string>();
+
       for (const e of updatedData) {
         const { id, orderedquantity } = e;
         console.log(id, orderedquantity, 'kkkk');
@@ -2024,24 +2237,41 @@ export module productrevoService {
           const queryText = `
         UPDATE product_revo
         SET rentalorderedquantity = rentalorderedquantity + $1,
-            lock_qty = lock_qty - $1 
+            -- rentalavailablequantity is usually computed, but let's ensure it stays consistent if stored
+            rentalavailablequantity = GREATEST(0, COALESCE(rentalavailablequantity, 0) - $1)
         WHERE id = $2
         RETURNING *`;
           let result = await query(queryText, [orderedquantity, id]);
-          data.push(result);
+          if (result.rows?.[0]) {
+            data.push(result);
+            updatedPucs.add(result.rows[0].puc);
+          }
         } else {
-          console.log('Updating orderedquantity for normal product');
+          console.log('ANTIGRAVITY_LOG: Updating orderedquantity for normal product ID:', id);
           const queryText = `
         UPDATE product_revo
-        SET orderedquantity = orderedquantity + $1,
-            lock_qty = lock_qty - $1 
+        SET orderedquantity = COALESCE(orderedquantity, 0) + $1,
+            lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1),
+            overallavailableqty = GREATEST(0, COALESCE(overallavailableqty, 0) - $1),
+            ecompublishedquantity = GREATEST(0, COALESCE(ecompublishedquantity, 0) - $1)
         WHERE id = $2
         RETURNING *`;
           let result = await query(queryText, [orderedquantity, id]);
-          data.push(result);
+          console.log('ANTIGRAVITY_LOG: Result for ID', id, result.rows?.[0]);
+          if (result.rows?.[0]) {
+            data.push(result);
+            updatedPucs.add(result.rows[0].puc);
+          }
         }
-
       }
+
+      // Trigger location-wise JSONB update via dynamic import to break circularity
+      if (updatedPucs.size > 0) {
+        console.log('ANTIGRAVITY_LOG: Triggering JSONB update for PUCs:', Array.from(updatedPucs));
+        const { stockRevoService } = await import('./stockRevo.service.js');
+        await stockRevoService.testinupdateQuantity(Array.from(updatedPucs) as string[], false);
+      }
+
       return data;
     } catch (error) {
       console.error('Error in updateOrderedQuantityarray:', error);
@@ -2071,18 +2301,87 @@ export module productrevoService {
                     AND stocktype <> 'third_party_product'
                 ) AS available_quantity_count,
 
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'on_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS on_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'off_catalogue_product' AND stockstatus = 'Available' THEN 1 ELSE 0 END), 0) AS off_catalogue_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND (stockstatus = 'Available' OR stockstatus = 'Rental Sold') THEN 1 ELSE 0 END), 0) AS rental_total_count,
-                COALESCE(SUM(CASE WHEN ${activeFilters} AND stocktype = 'rental_product' AND ecompublish = false AND stockstatus = 'Rental Sold' THEN 1 ELSE 0 END), 0) AS rental_sold_count,
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'on_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS on_catalogue_count,
 
-                -- overallavailableqty logic (Live stock only)
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'off_catalogue_product'
+        AND stockstatus = 'Available'
+        THEN 1 ELSE 0 
+    END
+), 0) AS off_catalogue_count,
+
+-- ✅ Rental should NOT depend on ecompublish
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_total_count,
+
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Rental Sold'
+        THEN 1 ELSE 0 
+    END
+), 0) AS rental_sold_count,
+
+-- ✅ New metric (keep this)
+COALESCE(SUM(
+    CASE 
+        WHEN ${activeFilters}
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Reserved for Rental'
+        THEN 1 ELSE 0 
+    END
+), 0) AS reserved_rental_count
+,
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Service Hold'
+        THEN 1 ELSE 0
+    END
+), 0) AS service_hold_count,
+
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Damaged'
+        THEN 1 ELSE 0
+    END
+), 0) AS damaged_count,
+
+COALESCE(SUM(
+    CASE
+        WHEN (removefromrecyclebin = false OR removefromrecyclebin IS NULL)
+        AND stocktype = 'rental_product'
+        AND stockstatus = 'Lost'
+        THEN 1 ELSE 0
+    END
+), 0) AS lost_count,
+
+                -- overallavailableqty = physical ecom=true Available count
+                --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                 (
                     COALESCE(SUM(CASE
                         WHEN ${activeFilters}
                           AND stocktype = 'third_party_product'
                           AND ecompublish = true
-                          AND stockstatus = 'Available'
                         THEN thirdpartyquantity
                         ELSE 0
                     END), 0)
@@ -2097,13 +2396,13 @@ export module productrevoService {
                     END), 0)
                 ) AS overall_available_qty,
 
-                -- ecompublishedquantity logic (Live stock only)
+                -- ecompublishedquantity = physical ecom=true Available count
+                --                       + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)
                 (
                     COALESCE(SUM(CASE
                         WHEN ${activeFilters}
                           AND stocktype = 'third_party_product'
                           AND ecompublish = true
-                          AND stockstatus = 'Available'
                         THEN thirdpartyquantity
                         ELSE 0
                     END), 0)
@@ -2134,16 +2433,20 @@ export module productrevoService {
             offcatalogueqty = counts.off_catalogue_count,
             rentaltotalquantity = counts.rental_total_count,
             rentalsoldquantity = counts.rental_sold_count,
-            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count,
-            overallavailableqty = counts.overall_available_qty,
-            ecompublishedquantity = counts.ecom_published_qty,
+            reservedforrentalquantity = counts.reserved_rental_count,
+            serviceholdquantity = counts.service_hold_count,
+            damagedquantity = counts.damaged_count,
+            lostquantity = counts.lost_count,
+            rentalavailablequantity = counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count,
+            overallavailableqty = counts.overall_available_qty - COALESCE(orderedquantity, 0),
+            ecompublishedquantity = counts.ecom_published_qty - COALESCE(orderedquantity, 0),
             bin_qty = counts.bin_count,
             archive_qty = counts.archive_count,
             ewaste_qty = counts.ewaste_count
         FROM counts
         WHERE product_revo.puc = $1
         RETURNING counts.on_catalogue_count, counts.off_catalogue_count, counts.rental_total_count,
-                  (counts.rental_total_count - counts.rental_sold_count) as rental_available_count,
+                  (counts.rental_total_count - counts.rental_sold_count - counts.reserved_rental_count) as rental_available_count,
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
     console.log('queryText:', queryText);
@@ -2169,13 +2472,115 @@ export module productrevoService {
   export async function updateCancelledOrderedQuantity(productIds: Array<number>, quantitydata: number) {
 
     try {
-      const queryvalue = `UPDATE product_revo SET orderedquantity = orderedquantity - ${quantitydata} 
-      WHERE id = ANY($1::int[])    AND orderedquantity > 0
-      returning *`;
-      let resultdata = await query(queryvalue, [productIds]);
-      return resultdata
+      const queryvalue = `UPDATE product_revo 
+      SET orderedquantity = GREATEST(0, orderedquantity - $2),
+          overallavailableqty = overallavailableqty + $2,
+          ecompublishedquantity = ecompublishedquantity + $2
+      WHERE id = ANY($1::int[]) AND orderedquantity >= $2
+      RETURNING *`;
+      let resultdata = await query(queryvalue, [productIds, quantitydata]);
+      console.log('ANTIGRAVITY_LOG: Cancel order result count:', resultdata.rows?.length);
+      
+      // Sync locations if any rows updated via dynamic import
+      if (resultdata.rows?.length > 0) {
+        const pucs = [...new Set(resultdata.rows.map(r => r.puc))] as string[];
+        const { stockRevoService } = await import('./stockRevo.service.js');
+        await stockRevoService.testinupdateQuantity(pucs, false);
+      }
+
+      return resultdata;
     } catch (error) {
       console.error('Error in updateCancelledOrderedQuantity:', error);
+      throw error;
+    }
+  }
+
+  export async function releaseCommittedQuantityForOrderLines(
+    lines: Array<{
+      productid: number;
+      quantity: number;
+      ordername?: string | null;
+      ordertype?: string | null;
+    }>,
+    restoreAvailability: boolean
+  ) {
+    try {
+      const normalLines = new Map<number, number>();
+      const rentalLines = new Map<number, number>();
+
+      for (const line of lines || []) {
+        if (line?.ordertype && line.ordertype !== "Orders") continue;
+        const productId = Number(line?.productid);
+        const quantity = Number(line?.quantity);
+        if (!Number.isFinite(productId) || productId <= 0) continue;
+        if (!Number.isFinite(quantity) || quantity <= 0) continue;
+
+        const orderName = String(line?.ordername || "").trim().toLowerCase();
+        if (orderName === "rental") {
+          rentalLines.set(productId, (rentalLines.get(productId) || 0) + quantity);
+        } else {
+          normalLines.set(productId, (normalLines.get(productId) || 0) + quantity);
+        }
+      }
+
+      const updatedPucs = new Set<string>();
+
+      for (const [productId, quantity] of normalLines) {
+        const result = restoreAvailability
+          ? await query(
+            `UPDATE product_revo 
+             SET orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $2),
+                 overallavailableqty = COALESCE(overallavailableqty, 0) + $2,
+                 ecompublishedquantity = COALESCE(ecompublishedquantity, 0) + $2
+             WHERE id = $1
+             RETURNING puc`,
+            [productId, quantity]
+          )
+          : await query(
+            `UPDATE product_revo
+             SET orderedquantity = GREATEST(0, COALESCE(orderedquantity, 0) - $2)
+             WHERE id = $1
+             RETURNING puc`,
+            [productId, quantity]
+          );
+
+        if (result.rows[0]?.puc) {
+          updatedPucs.add(result.rows[0].puc);
+        }
+      }
+
+      for (const [productId, quantity] of rentalLines) {
+        const result = restoreAvailability
+          ? await query(
+            `UPDATE product_revo
+             SET rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $2),
+                 rentalavailablequantity = COALESCE(rentalavailablequantity, 0) + $2
+             WHERE id = $1
+             RETURNING puc`,
+            [productId, quantity]
+          )
+          : await query(
+            `UPDATE product_revo
+             SET rentalorderedquantity = GREATEST(0, COALESCE(rentalorderedquantity, 0) - $2)
+             WHERE id = $1
+             RETURNING puc`,
+            [productId, quantity]
+          );
+
+        if (result.rows[0]?.puc) {
+          updatedPucs.add(result.rows[0].puc);
+        }
+      }
+
+      if (updatedPucs.size > 0) {
+        const { stockRevoService } = await import('./stockRevo.service.js');
+        await stockRevoService.testinupdateQuantity(Array.from(updatedPucs), false);
+      }
+
+      return { success: true, updatedPucs: Array.from(updatedPucs) };
+    } catch (error) {
+      console.error('Error in releaseCommittedQuantityForOrderLines:', error);
+      throw error;
     }
   }
 }

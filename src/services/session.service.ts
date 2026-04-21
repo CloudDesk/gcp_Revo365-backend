@@ -2,7 +2,6 @@ import { REDIS_SESSIONEXSEC } from '../config/config.js';
 import { redisClient } from '../database/redis.session.js';
 
 export const saveSession = async (sessionId, sessionData): Promise<string> => {
-  console.log('Inside saveSessionredis');
   const createdTime = Math.floor(Date.now() / 1000);
 
   const sessionDataWithCreatedTime = {
@@ -23,7 +22,6 @@ export const saveSession = async (sessionId, sessionData): Promise<string> => {
 };
 export const getSession = async (req: any, reply: any): Promise<any> => {
     try {
-      console.log('Inside GetSession');
       const sessionId = req.headers.authorization;
       
       if (!sessionId) {

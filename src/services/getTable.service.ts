@@ -55,7 +55,6 @@ export module getTables {
                     }
                 })
             });
-            console.log("Allowed Tables:", allowedTables);
             return allowedTables;
         } catch (error) {
             console.error("Error in getUserTable:", error);

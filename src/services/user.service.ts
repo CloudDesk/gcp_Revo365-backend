@@ -1,6 +1,6 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from 'uuid';
@@ -103,15 +103,19 @@ export module userService {
       let data: any = { email: request.body.useremail }
       if (!request.body.otp) {
         generatedotp = Math.floor(1000 + Math.random() * 9000);
-        request.body.subject = "OTP Verification Code";
-        request.body.text =
-          "Your otp code to Reset Password For Revo Site is " + generatedotp;
-        request.body.to = request.body.useremail;
         let otpsave = await saveOtp(request.query.useremail, generatedotp);
         let finduser = await getUsersData(request);
         if (finduser && finduser.length > 0) {
-          data.otp = generatedotp
-          let emailresult = await sendMail(request, generatedotp);
+          data.otp = generatedotp;
+          try {
+            await sendTransactionalMail({
+              to: request.body.useremail,
+              subject: 'OTP Verification Code',
+              text: `Your OTP to reset your Revo password is: ${generatedotp}. It is valid for 10 minutes.`,
+            });
+          } catch (mailErr: any) {
+            console.error('[forgotuser] OTP email failed:', mailErr?.message || mailErr);
+          }
           return { status: "success", Message: "OTP sent Successfuly" };
         } else {
           return {
@@ -141,21 +145,28 @@ export module userService {
   };
 
   export const getLoggedInUsersData = async (request, reply) => {
-    console.log("getLoggedInUsersData", request.params)
+    const useremail = request?.body?.useremail ?? request?.params?.useremail;
+    const userpassword =
+      request?.body?.userpassword ?? request?.params?.userpassword;
+
+    console.log("getLoggedInUsersData", { useremail });
+
+    if (!useremail || !userpassword) {
+      return "User Credentials are wrong. Please try again";
+    }
     try {
       const ecomQuery = `SELECT * FROM users WHERE LOWER(useremail) = LOWER($1)`;
-      const ecomResult = await query(ecomQuery, [request.params.useremail]);
+      const ecomResult = await query(ecomQuery, [useremail]);
       if (ecomResult.rows.length > 0) {
         let validatePassword = await hashValidator(
-          request.params.userpassword,
+          userpassword,
           ecomResult.rows[0].userpassword
         );
 
         if (validatePassword) {
           const sessionId = uuidv4();
           const sessionData = {
-            useremail: request.params.useremail,
-            userpassword: request.params.userpassword
+            useremail
           };
           let sessionSaved = await saveSession(sessionId, sessionData);
 
@@ -170,11 +181,11 @@ export module userService {
       } else {
         console.log("else")
         const inventoryQuery = `SELECT * FROM inventoryusers WHERE useremail = $1`;
-        const inventoryResult = await query(inventoryQuery, [request.params.useremail]);
+        const inventoryResult = await query(inventoryQuery, [useremail]);
 
         if (inventoryResult.rows.length > 0) {
           let validatePassword = await hashValidator(
-            request.params.userpassword,
+            userpassword,
             inventoryResult.rows[0].userpassword
           );
           if (validatePassword) {
