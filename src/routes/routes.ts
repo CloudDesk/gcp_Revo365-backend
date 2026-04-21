@@ -225,6 +225,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/whatsapp/inventoryusers/tickets', InventoryuserController.getInventoryUsersDataTickets);
 
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
+    fastify.post('/inventoryusers/login', InventoryuserController.getLoggedInInventoryUsersData);
     fastify.post('/inventoryusers', InventoryuserController.upsertInventoryUser);
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
