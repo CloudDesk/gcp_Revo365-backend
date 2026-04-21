@@ -1284,11 +1284,23 @@ export var productrevoService;
             const visibilityClause = visibilityMode ? ` AND ${getVisibilityCondition(visibilityMode)}` : '';
             const queryText = `
           SELECT 
-            p.*,
             COALESCE(stock_counts.reservedforrentalquantity, 0) AS reservedforrentalquantity,
             COALESCE(stock_counts.serviceholdquantity, 0) AS serviceholdquantity,
             COALESCE(stock_counts.damagedquantity, 0) AS damagedquantity,
-            COALESCE(stock_counts.lostquantity, 0) AS lostquantity
+            COALESCE(stock_counts.lostquantity, 0) AS lostquantity,
+            -- Override stored rental counters with live stock-derived values for
+            -- the product detail API so reserved assets are reflected correctly.
+            COALESCE(stock_counts.live_rentaltotalquantity, 0) AS rentaltotalquantity,
+            COALESCE(stock_counts.live_rentalsoldquantity, 0) AS rentalsoldquantity,
+            GREATEST(
+              0,
+              COALESCE(stock_counts.live_rentaltotalquantity, 0)
+                - COALESCE(stock_counts.live_rentalsoldquantity, 0)
+                - COALESCE(stock_counts.reservedforrentalquantity, 0)
+            ) AS rentalavailablequantity,
+            -- Keep p.* after the live overrides because pg's row parser keeps the
+            -- first duplicate field name it sees in the result set.
+            p.*
           FROM product_revo p
           LEFT JOIN LATERAL (
             SELECT
@@ -1311,7 +1323,17 @@ export var productrevoService;
                 WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Lost'
-              ) AS lostquantity
+              ) AS lostquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus IN ('Available', 'Rental Sold', 'Reserved for Rental')
+              ) AS live_rentaltotalquantity,
+              COUNT(*) FILTER (
+                WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
+                  AND stocktype = 'rental_product'
+                  AND stockstatus = 'Rental Sold'
+              ) AS live_rentalsoldquantity
             FROM stock_revo
             WHERE puc = p.puc
           ) stock_counts ON TRUE
@@ -2011,7 +2033,7 @@ COALESCE(SUM(
         AND stockstatus = 'Lost'
         THEN 1 ELSE 0
     END
-), 0) AS lost_count
+), 0) AS lost_count,
 
                 -- overallavailableqty = physical ecom=true Available count
                 --                     + ALL thirdpartyquantity from ecom=true 3rd-party rows (no stockstatus filter)

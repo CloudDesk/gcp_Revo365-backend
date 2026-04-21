@@ -5,15 +5,17 @@ import { query } from "../database/postgres.js";
 import { ordersService } from "./orders.service.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import Razorpay from "razorpay";
-import { ENV_RAZORPAY_KEY_ID, ENV_RAZORPAY_KEY_SECRET, ENV_RAZORPAY_WEBHOOK_SECRET, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
+import { ENV_SHIPROCKET_WEBHOOK_TOKEN, ENV_RAZORPAY_KEY_ID, ENV_RAZORPAY_KEY_SECRET, ENV_RAZORPAY_WEBHOOK_SECRET, REDIRECT_URL_PAYMENT_STATUS, REDIRECT_URL_SUCCESS, } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
-import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
 import { messageinitialization } from "../firebase/firebasepushmessage.js";
 import { thirdPartyOrdersService } from "./thirdpartyorders.service.js";
+import { inventoryReservationService } from "./inventoryReservation.service.js";
 import loginShiprocket from "../shiprocket/shiprocketAuth.js";
 import { redisClient } from "../database/redis.session.js";
+import { resolveFulfillmentLocation } from "../config/fulfillment.config.js";
+import { cancelShiprocketOrderForMerchant, getShiprocketSettings as getPersistedShiprocketSettings, listShiprocketPickupLocations, upsertShiprocketSettings, } from "./shiprocket.service.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -37,28 +39,147 @@ const toSafeNumber = (value, defaultValue = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : defaultValue;
 };
+const normalizeOptionalLocation = (value) => {
+    if (value === null || value === undefined)
+        return null;
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+};
+const isRentalOrderItem = (item) => {
+    const invoiceFor = String(item?.invoicefor || "").trim().toLowerCase();
+    const orderName = String(item?.ordername || "").trim().toLowerCase();
+    return invoiceFor === "product rental" || orderName === "rental";
+};
+const resolveRequestedLocation = (item) => normalizeOptionalLocation(item?.deliveryfrom) ||
+    normalizeOptionalLocation(item?.storelocation) ||
+    normalizeOptionalLocation(item?.storeLocation) ||
+    normalizeOptionalLocation(item?.location) ||
+    null;
+const allocateProductLocationsForOrder = async (orderItems = []) => {
+    const productItems = (orderItems || []).filter((item) => {
+        const productId = toSafeNumber(item?.productid, 0);
+        const quantity = toSafeNumber(item?.quantity, 0);
+        return productId > 0 && quantity > 0 && !isRentalOrderItem(item);
+    });
+    if (productItems.length === 0) {
+        return;
+    }
+    const productIds = Array.from(new Set(productItems.map((item) => toSafeNumber(item?.productid, 0)).filter((id) => id > 0)));
+    if (productIds.length === 0) {
+        return;
+    }
+    const availabilityResult = await query(`
+    SELECT
+      p.id AS productid,
+      s.location,
+      COUNT(*)::int AS available_qty
+    FROM stock_revo s
+    JOIN product_revo p ON p.puc = s.puc
+    WHERE p.id = ANY($1::int[])
+      AND s.ecompublish = true
+      AND s.stockstatus = 'Available'
+      AND s.stocktype IN ('on_catalogue_product', 'off_catalogue_product')
+      AND (s.isdeleted = false OR s.isdeleted IS NULL)
+      AND (s.isarchive = false OR s.isarchive IS NULL)
+      AND (s.removefromrecyclebin = false OR s.removefromrecyclebin IS NULL)
+      AND (s.ewaste = false OR s.ewaste IS NULL)
+      AND s.location IS NOT NULL
+      AND s.location <> ''
+    GROUP BY p.id, s.location
+    `, [productIds]);
+    const availabilityByProduct = new Map();
+    for (const row of availabilityResult.rows || []) {
+        const productId = toSafeNumber(row?.productid, 0);
+        const location = normalizeOptionalLocation(row?.location);
+        const availableQty = toSafeNumber(row?.available_qty, 0);
+        if (!productId || !location || availableQty <= 0)
+            continue;
+        if (!availabilityByProduct.has(productId)) {
+            availabilityByProduct.set(productId, []);
+        }
+        availabilityByProduct.get(productId).push({ location, availableQty });
+    }
+    availabilityByProduct.forEach((locations) => {
+        locations.sort((a, b) => {
+            if (b.availableQty !== a.availableQty)
+                return b.availableQty - a.availableQty;
+            return a.location.localeCompare(b.location);
+        });
+    });
+    const demandByProductLocation = new Map();
+    for (const item of productItems) {
+        const productId = toSafeNumber(item?.productid, 0);
+        const requestedQty = toSafeNumber(item?.quantity, 0);
+        if (!productId || requestedQty <= 0)
+            continue;
+        const locations = availabilityByProduct.get(productId) || [];
+        if (locations.length === 0)
+            continue;
+        const requestedLocation = resolveRequestedLocation(item);
+        let chosenLocation = null;
+        let bestRemaining = -1;
+        for (const candidate of locations) {
+            const demandKey = `${productId}::${candidate.location}`;
+            const reservedSoFar = demandByProductLocation.get(demandKey) || 0;
+            const remaining = candidate.availableQty - reservedSoFar;
+            if (requestedLocation && candidate.location === requestedLocation && remaining >= requestedQty) {
+                chosenLocation = candidate.location;
+                break;
+            }
+            if (!requestedLocation && remaining >= requestedQty) {
+                chosenLocation = candidate.location;
+                break;
+            }
+            if (remaining > bestRemaining) {
+                bestRemaining = remaining;
+                chosenLocation = candidate.location;
+            }
+        }
+        if (!chosenLocation)
+            continue;
+        const chosenKey = `${productId}::${chosenLocation}`;
+        demandByProductLocation.set(chosenKey, (demandByProductLocation.get(chosenKey) || 0) + requestedQty);
+        // Phase 1: stamp head_office as the authoritative fulfillment location on every
+        // order item so reservations, orderlines, and Shiprocket all share one source.
+        // chosenLocation is still used above for demand-tracking (stock validation);
+        // only the location written onto the item is overridden here.
+        // Phase 2: replace resolveFulfillmentLocation() with the assigned warehouse
+        // from fulfillment_assignments once that table is live.
+        const fulfillmentLocation = resolveFulfillmentLocation({ requestedLocation: chosenLocation });
+        item.location = fulfillmentLocation;
+        if (!normalizeOptionalLocation(item?.storelocation)) {
+            item.storelocation = fulfillmentLocation;
+        }
+    }
+};
+const resolveTransactionStoreLocation = (orderItems = []) => {
+    const productLocations = (orderItems || [])
+        .filter((item) => !isRentalOrderItem(item))
+        .map((item) => resolveRequestedLocation(item))
+        .filter((location) => Boolean(location));
+    const uniqueLocations = Array.from(new Set(productLocations));
+    return uniqueLocations.length === 1 ? uniqueLocations[0] : null;
+};
 const computePayableAmountFromOrderInput = (orderItems, fallbackAmount) => {
+    const fallback = toSafeNumber(fallbackAmount, 0);
     if (!Array.isArray(orderItems) || orderItems.length === 0) {
-        return toSafeNumber(fallbackAmount, 0);
+        return fallback;
     }
     const computed = orderItems.reduce((total, item) => {
         const quantity = toSafeNumber(item?.quantity, 0);
         const productAmount = toSafeNumber(item?.productamount, 0);
         const lineOrderAmount = toSafeNumber(item?.orderamount, 0);
-        if (productAmount > 0 && quantity > 0) {
-            return total + productAmount * quantity;
-        }
         if (lineOrderAmount > 0) {
             return total + lineOrderAmount;
         }
+        if (productAmount > 0 && quantity > 0) {
+            return total + productAmount * quantity;
+        }
         return total;
     }, 0);
-    return computed > 0 ? computed : toSafeNumber(fallbackAmount, 0);
-};
-const isRentalOrderItem = (item) => {
-    const orderName = String(item?.ordername ?? "").trim().toLowerCase();
-    const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
-    return orderName === "rental" || invoiceFor === "product rental";
+    // Frontend total may include shipping/tax not represented in order lines.
+    // Use the higher value so Razorpay amount stays aligned with checkout summary.
+    return Math.max(computed, fallback);
 };
 const groupOrderQuantities = (orderItems = []) => {
     const grouped = new Map();
@@ -86,31 +207,154 @@ const groupRentalOrderQuantities = (orderItems = []) => {
     }
     return grouped;
 };
-const releaseInventoryLocksByOrderItems = async (orderItems = []) => {
-    const grouped = groupOrderQuantities(orderItems);
-    if (grouped.size === 0) {
+const validateReservationCapacity = async (orderItems = [], merchantTransactionId) => {
+    const requestedByProduct = new Map();
+    for (const item of orderItems || []) {
+        const productId = toSafeNumber(item?.productid, 0);
+        const quantity = toSafeNumber(item?.quantity, 0);
+        if (!productId || quantity <= 0)
+            continue;
+        const invoiceFor = String(item?.invoicefor || "").trim().toLowerCase();
+        const orderName = String(item?.ordername || "").trim().toLowerCase();
+        const reservationType = invoiceFor === "product rental" || orderName === "rental" ? "rental" : "product";
+        const key = `${productId}::${reservationType}`;
+        const existing = requestedByProduct.get(key);
+        if (existing) {
+            existing.requestedQuantity += quantity;
+            continue;
+        }
+        requestedByProduct.set(key, {
+            productId,
+            reservationType,
+            requestedQuantity: quantity,
+        });
+    }
+    const productIds = Array.from(new Set(Array.from(requestedByProduct.values()).map((entry) => entry.productId)));
+    if (productIds.length === 0) {
+        return { ok: true, violations: [] };
+    }
+    const productRows = await query(`SELECT id, overallavailableqty, rentalavailablequantity
+     FROM product_revo
+     WHERE id = ANY($1::int[])`, [productIds]);
+    const heldRows = await inventoryReservationService.getHeldReservationTotalsByProduct(productIds, merchantTransactionId || null);
+    const heldByProduct = new Map();
+    for (const row of heldRows) {
+        const key = `${row.productid}::${row.reservation_type}`;
+        heldByProduct.set(key, toSafeNumber(row.held_quantity, 0));
+    }
+    const availabilityByProduct = new Map();
+    for (const row of productRows.rows) {
+        availabilityByProduct.set(Number(row.id), row);
+    }
+    const violations = [];
+    for (const requestSummary of requestedByProduct.values()) {
+        const productRow = availabilityByProduct.get(requestSummary.productId);
+        const totalHeld = heldByProduct.get(`${requestSummary.productId}::${requestSummary.reservationType}`) || 0;
+        const availableToPromise = requestSummary.reservationType === "rental"
+            ? toSafeNumber(productRow?.rentalavailablequantity, 0)
+            : toSafeNumber(productRow?.overallavailableqty, 0);
+        if (availableToPromise - totalHeld - requestSummary.requestedQuantity < 0) {
+            violations.push({
+                productId: requestSummary.productId,
+                reservationType: requestSummary.reservationType,
+                availableToPromise,
+                heldQuantity: totalHeld,
+                requestedQuantity: requestSummary.requestedQuantity,
+            });
+        }
+    }
+    return {
+        ok: violations.length === 0,
+        violations,
+    };
+};
+const buildProductCommitUpdatesFromRows = (rows = []) => {
+    const grouped = new Map();
+    for (const row of rows || []) {
+        const productId = toSafeNumber(row?.productid, 0);
+        const quantity = toSafeNumber(row?.quantity, 0);
+        if (!productId || quantity <= 0)
+            continue;
+        const reservationType = String(row?.reservation_type || "").trim().toLowerCase();
+        const normalizedOrderName = String(row?.ordername || "").trim().toLowerCase();
+        const ordername = reservationType === "rental" || normalizedOrderName === "rental" ? "rental" : "online";
+        const key = `${productId}::${ordername}`;
+        const existing = grouped.get(key);
+        if (existing) {
+            existing.orderedquantity += quantity;
+            continue;
+        }
+        grouped.set(key, {
+            id: productId,
+            orderedquantity: quantity,
+            ordername,
+        });
+    }
+    return Array.from(grouped.values());
+};
+const clearLegacyLockQtyForRows = async (rows = []) => {
+    const grouped = new Map();
+    for (const row of rows || []) {
+        const productId = toSafeNumber(row?.productid, 0);
+        const quantity = toSafeNumber(row?.quantity, 0);
+        if (!productId || quantity <= 0)
+            continue;
+        grouped.set(productId, (grouped.get(productId) || 0) + quantity);
+    }
+    for (const [productId, quantity] of grouped.entries()) {
+        await query(`
+      UPDATE product_revo
+      SET lock_qty = GREATEST(0, COALESCE(lock_qty, 0) - $1)
+      WHERE id = $2
+      `, [quantity, productId]);
+    }
+};
+const commitMerchantTransactionInventory = async (merchantTransactionId, fallbackOrderLineItems = []) => {
+    const heldReservationResult = await inventoryReservationService.getReservationsForMerchantTransactionId(merchantTransactionId, ["held"]);
+    const heldReservationRows = heldReservationResult?.rows || [];
+    const reservationDrivenUpdates = buildProductCommitUpdatesFromRows(heldReservationRows);
+    const fallbackUpdates = buildProductCommitUpdatesFromRows((fallbackOrderLineItems || []).filter((item) => item?.ordertype === "Orders"));
+    const quantityUpdates = reservationDrivenUpdates.length > 0 ? reservationDrivenUpdates : fallbackUpdates;
+    if (quantityUpdates.length > 0) {
+        await productrevoService.updateOrderedQuantityarray(quantityUpdates);
+    }
+    const legacyLockRows = heldReservationRows.length > 0
+        ? heldReservationRows
+        : (fallbackOrderLineItems || []).filter((item) => item?.ordertype === "Orders");
+    if (legacyLockRows.length > 0) {
+        await clearLegacyLockQtyForRows(legacyLockRows);
+    }
+    await inventoryReservationService.commitHeldReservationsForMerchantTransactionId(merchantTransactionId);
+    return {
+        quantityUpdates,
+        heldReservationRows,
+    };
+};
+const deletePurchasedCartEntries = async (userId, orderItems = []) => {
+    const numericUserId = toSafeNumber(userId, 0);
+    if (!numericUserId)
+        return;
+    const requestedCartIds = orderItems
+        .map((item) => toSafeNumber(item?.cartId, 0))
+        .filter((id) => id > 0);
+    if (requestedCartIds.length > 0) {
+        await cartservice.deleteCart(Array.from(new Set(requestedCartIds)));
         return;
     }
-    const entries = Array.from(grouped.entries());
-    const values = [];
-    const cases = [];
-    const inClauses = [];
-    entries.forEach(([productId, qty], index) => {
-        const productIdPlaceholder = index * 2 + 1;
-        const qtyPlaceholder = index * 2 + 2;
-        values.push(productId, qty);
-        cases.push(`WHEN id = $${productIdPlaceholder} THEN GREATEST(lock_qty - $${qtyPlaceholder}, 0)`);
-        inClauses.push(`$${productIdPlaceholder}`);
-    });
-    const releaseQuery = `
-    UPDATE product_revo
-    SET lock_qty = CASE
-      ${cases.join(" ")}
-      ELSE lock_qty
-    END
-    WHERE id IN (${inClauses.join(", ")})
-  `;
-    await query(releaseQuery, values);
+    const productIds = Array.from(new Set(orderItems
+        .map((item) => toSafeNumber(item?.productid, 0))
+        .filter((id) => id > 0)));
+    if (productIds.length === 0)
+        return;
+    const cartRows = await query(`SELECT id
+     FROM cart
+     WHERE userid = $1
+       AND iscart = TRUE
+       AND productid = ANY($2::int[])`, [numericUserId, productIds]);
+    const cartIds = cartRows.rows.map((row) => Number(row.id)).filter((id) => id > 0);
+    if (cartIds.length > 0) {
+        await cartservice.deleteCart(cartIds);
+    }
 };
 const safeCleanupPendingOrder = async (merchantTransactionId) => {
     if (!merchantTransactionId)
@@ -129,6 +373,148 @@ const parseHeaderValue = (headerValue) => {
         return headerValue[0] || null;
     }
     return String(headerValue);
+};
+const normalizeOptionalText = (value) => {
+    if (value === null || value === undefined)
+        return null;
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+};
+const safeTimingCompare = (expected, received) => {
+    try {
+        const expectedBuffer = Buffer.from(expected || "", "utf8");
+        const receivedBuffer = Buffer.from(received || "", "utf8");
+        if (expectedBuffer.length === 0 || receivedBuffer.length === 0)
+            return false;
+        if (expectedBuffer.length !== receivedBuffer.length)
+            return false;
+        return crypto.timingSafeEqual(new Uint8Array(expectedBuffer), new Uint8Array(receivedBuffer));
+    }
+    catch {
+        return false;
+    }
+};
+const getMerchantTransactionIdIfExists = async (merchantTransactionId) => {
+    const normalizedMerchantTx = normalizeOptionalText(merchantTransactionId);
+    if (!normalizedMerchantTx)
+        return null;
+    const result = await query(`
+    SELECT merchanttransactionid
+    FROM orders
+    WHERE merchanttransactionid = $1
+    UNION ALL
+    SELECT merchanttransactionid
+    FROM thirdpartyorders
+    WHERE merchanttransactionid = $1
+    LIMIT 1
+    `, [normalizedMerchantTx]);
+    return result.rows[0]?.merchanttransactionid || null;
+};
+const resolveMerchantTransactionIdFromShiprocketRefs = async ({ directCandidates = [], shipmentIds = [], shiprocketOrderIds = [], channelOrderIds = [], }) => {
+    const normalizedDirectCandidates = Array.from(new Set((directCandidates || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)));
+    for (const directCandidate of normalizedDirectCandidates) {
+        const merchantTx = await getMerchantTransactionIdIfExists(directCandidate);
+        if (merchantTx) {
+            return merchantTx;
+        }
+    }
+    const shipmentRefs = Array.from(new Set((shipmentIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)));
+    const shiprocketOrderRefs = Array.from(new Set((shiprocketOrderIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)));
+    const channelOrderRefs = Array.from(new Set((channelOrderIds || [])
+        .map((candidate) => normalizeOptionalText(candidate))
+        .filter(Boolean)));
+    if (shipmentRefs.length === 0 &&
+        shiprocketOrderRefs.length === 0 &&
+        channelOrderRefs.length === 0) {
+        return null;
+    }
+    const lookupResult = await query(`
+    SELECT merchanttransactionid
+    FROM (
+      SELECT merchanttransactionid, 1 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_shipment_id::text, '') = ANY($1::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 1 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_shipment_id::text, '') = ANY($1::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 2 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_order_id::text, '') = ANY($2::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 2 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_order_id::text, '') = ANY($2::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 3 AS priority
+      FROM orders
+      WHERE COALESCE(shiprocket_channel_order_id::text, '') = ANY($3::text[])
+      UNION ALL
+      SELECT merchanttransactionid, 3 AS priority
+      FROM thirdpartyorders
+      WHERE COALESCE(shiprocket_channel_order_id::text, '') = ANY($3::text[])
+    ) refs
+    ORDER BY priority
+    LIMIT 1
+    `, [shipmentRefs, shiprocketOrderRefs, channelOrderRefs]);
+    return lookupResult.rows[0]?.merchanttransactionid || null;
+};
+const extractShiprocketWebhookIdentifiers = (payload) => {
+    const data = payload?.data || {};
+    const trackingData = payload?.tracking_data || data?.tracking_data || {};
+    const trackingTrack = trackingData?.shipment_track?.[0] || {};
+    return {
+        directMerchantTransactionCandidates: [
+            payload?.merchanttransactionid,
+            payload?.merchantTransactionId,
+            payload?.merchant_transaction_id,
+            payload?.reference_id,
+            data?.merchanttransactionid,
+            data?.merchantTransactionId,
+            data?.merchant_transaction_id,
+            data?.reference_id,
+            payload?.channel_order_id,
+            payload?.channelOrderId,
+            data?.channel_order_id,
+            data?.channelOrderId,
+            payload?.order_id,
+            payload?.orderId,
+            data?.order_id,
+            data?.orderId,
+        ],
+        shipmentIds: [
+            payload?.shipment_id,
+            payload?.shipmentId,
+            data?.shipment_id,
+            data?.shipmentId,
+            trackingData?.shipment_id,
+            trackingData?.shipmentId,
+            trackingTrack?.shipment_id,
+        ],
+        shiprocketOrderIds: [
+            payload?.shiprocket_order_id,
+            payload?.shiprocketOrderId,
+            data?.shiprocket_order_id,
+            data?.shiprocketOrderId,
+            payload?.order_id,
+            payload?.orderId,
+            data?.order_id,
+            data?.orderId,
+        ],
+        channelOrderIds: [
+            payload?.channel_order_id,
+            payload?.channelOrderId,
+            data?.channel_order_id,
+            data?.channelOrderId,
+        ],
+    };
 };
 const shortRef = (value, prefix = 6, suffix = 4) => {
     if (!value)
@@ -338,6 +724,7 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         productid: row.productid,
         quantity: row.quantity,
         ordername: row.ordername,
+        ordertype: row.ordertype,
         userid: row.userid,
         addressid: row.addressid,
         invoicefor: row.invoicefor,
@@ -345,6 +732,8 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         orderamount: row.orderamount,
         productamount: row.productamount,
         productname: row.productname,
+        deliveryfrom: row.deliveryfrom,
+        merchanttransactionid: row.merchanttransactionid,
     }));
     const productIdsFromOrderLine = orderLineItems
         .map((row) => row.productid)
@@ -368,6 +757,313 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId) => 
         expectedAmountRupees,
     };
 };
+const isTruthyFlag = (value) => value === true ||
+    value === "true" ||
+    value === 1 ||
+    value === "1";
+const getLatestTransactionByMerchantTransactionId = async (merchantTransactionId) => {
+    if (!merchantTransactionId)
+        return null;
+    const result = await query(`
+    SELECT *
+    FROM transaction
+    WHERE merchanttransactionid = $1
+    ORDER BY createddate DESC
+    LIMIT 1
+    `, [merchantTransactionId]);
+    return result.rows[0] || null;
+};
+const syncSuccessfulPaymentStateFromTransaction = async (context, transactionRow) => {
+    if (!context || !transactionRow) {
+        return context;
+    }
+    const orderHeaders = (context.combinedOrderRows || []).filter((row) => String(row?.orderid || "").startsWith("TEQIT"));
+    const thirdPartyHeaders = (context.combinedOrderRows || []).filter((row) => !String(row?.orderid || "").startsWith("TEQIT"));
+    const orderNeedsUpdate = orderHeaders.some((row) => !isTruthyFlag(row?.ispaymentsucceed));
+    const thirdPartyNeedsUpdate = thirdPartyHeaders.some((row) => !isTruthyFlag(row?.ispaymentsucceed));
+    const transactionSummary = {
+        transactionid: transactionRow?.transactionid,
+        name: transactionRow?.name || context?.user?.useremail || "unknown",
+    };
+    if (orderNeedsUpdate && orderHeaders.length > 0) {
+        await ordersService.updateOrder({ order: orderHeaders, transactiondata: transactionSummary }, false);
+    }
+    if (thirdPartyNeedsUpdate && thirdPartyHeaders.length > 0) {
+        await thirdPartyOrdersService.updateThirdPartyOrder({ order: thirdPartyHeaders, transactiondata: transactionSummary }, false);
+    }
+    if (!orderNeedsUpdate && !thirdPartyNeedsUpdate) {
+        return context;
+    }
+    return await getOrderContextByMerchantTransactionId(context.merchantTransactionId);
+};
+const mapShiprocketStatusToOrderStatus = (rawStatus) => {
+    const normalized = String(rawStatus || "").trim().toLowerCase();
+    if (!normalized)
+        return null;
+    if (normalized.includes("delivered"))
+        return "delivered";
+    if (normalized.includes("return"))
+        return "returned";
+    if (normalized.includes("cancel"))
+        return "cancelled";
+    if (normalized.includes("out for delivery") ||
+        normalized.includes("in transit") ||
+        normalized.includes("shipped") ||
+        normalized.includes("dispatch") ||
+        normalized.includes("pickup")) {
+        return "shipped";
+    }
+    if (normalized.includes("ready") ||
+        normalized.includes("manifest") ||
+        normalized.includes("awb") ||
+        normalized.includes("label")) {
+        return "ready_to_dispatch";
+    }
+    return "ordered";
+};
+const mapShiprocketStatusCodeToOrderStatus = (statusCode) => {
+    if (statusCode === null || statusCode === undefined)
+        return null;
+    if (statusCode === 8)
+        return "cancelled";
+    if (statusCode === 1)
+        return "ordered";
+    return null;
+};
+const deriveShiprocketRawStatusFromCode = (statusCode, errorText) => {
+    const normalizedError = String(errorText || "").trim().toLowerCase();
+    if (normalizedError.includes("cancel"))
+        return "CANCELED";
+    if (statusCode === 8)
+        return "CANCELED";
+    if (statusCode === 1)
+        return "NEW";
+    return null;
+};
+const toNullableInteger = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+        return null;
+    return Math.trunc(parsed);
+};
+const extractShiprocketTrackingSummary = (payload) => {
+    let normalizedPayload = payload;
+    if (Array.isArray(normalizedPayload) && normalizedPayload.length > 0) {
+        normalizedPayload = normalizedPayload[0];
+    }
+    if (normalizedPayload &&
+        typeof normalizedPayload === "object" &&
+        !normalizedPayload?.tracking_data &&
+        !normalizedPayload?.data?.tracking_data) {
+        const nestedEntries = Object.values(normalizedPayload).filter((value) => value && typeof value === "object");
+        if (nestedEntries.length === 1) {
+            normalizedPayload = nestedEntries[0];
+        }
+    }
+    const trackingData = normalizedPayload?.tracking_data ||
+        normalizedPayload?.data?.tracking_data ||
+        normalizedPayload?.data ||
+        {};
+    const scans = normalizedPayload?.scans ||
+        normalizedPayload?.data?.scans ||
+        trackingData?.shipment_track_activities ||
+        [];
+    const primaryTrack = trackingData?.shipment_track?.[0] ||
+        trackingData?.shipment_track_activities?.[0] ||
+        trackingData?.track_status ||
+        {};
+    const firstScan = Array.isArray(scans) && scans.length > 0 ? scans[0] : {};
+    const shipmentStatusCode = toNullableInteger(normalizedPayload?.shipment_status_id) ??
+        toNullableInteger(normalizedPayload?.current_status_id) ??
+        toNullableInteger(normalizedPayload?.data?.shipment_status_id) ??
+        toNullableInteger(normalizedPayload?.data?.current_status_id) ??
+        toNullableInteger(trackingData?.shipment_status) ??
+        toNullableInteger(trackingData?.track_status) ??
+        toNullableInteger(normalizedPayload?.status_code);
+    const explicitRawStatus = normalizeOptionalText(normalizedPayload?.current_status) ||
+        normalizeOptionalText(normalizedPayload?.shipment_status) ||
+        normalizeOptionalText(normalizedPayload?.data?.current_status) ||
+        normalizeOptionalText(normalizedPayload?.data?.shipment_status) ||
+        normalizeOptionalText(trackingData?.shipment_status_label) ||
+        normalizeOptionalText(trackingData?.current_status) ||
+        normalizeOptionalText(primaryTrack?.current_status) ||
+        normalizeOptionalText(primaryTrack?.activity) ||
+        normalizeOptionalText(firstScan?.activity) ||
+        normalizeOptionalText(normalizedPayload?.status);
+    const rawStatus = explicitRawStatus ||
+        deriveShiprocketRawStatusFromCode(shipmentStatusCode, trackingData?.error ||
+            normalizedPayload?.error ||
+            normalizedPayload?.message);
+    const mappedOrderStatus = mapShiprocketStatusToOrderStatus(rawStatus) ??
+        mapShiprocketStatusCodeToOrderStatus(shipmentStatusCode);
+    return {
+        rawStatus,
+        mappedOrderStatus,
+        awbCode: normalizedPayload?.awb ||
+            normalizedPayload?.awb_code ||
+            normalizedPayload?.data?.awb ||
+            normalizedPayload?.data?.awb_code ||
+            trackingData?.awb_code ||
+            trackingData?.awb ||
+            primaryTrack?.awb_code ||
+            null,
+        shipmentStatusCode,
+        trackingData,
+        scans,
+    };
+};
+const applyShipmentLifecycleToOrders = async (merchantTransactionId, mappedStatus) => {
+    if (!merchantTransactionId || !mappedStatus)
+        return;
+    let previousStatuses = new Map();
+    if (mappedStatus === "returned") {
+        const previousLineResult = await query(`
+      SELECT id, orderstatus
+      FROM orderline
+      WHERE merchanttransactionid = $1
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')
+      `, [merchantTransactionId]);
+        previousStatuses = new Map((previousLineResult.rows || []).map((row) => [
+            Number(row.id),
+            String(row.orderstatus || "").trim().toLowerCase(),
+        ]));
+    }
+    let lineUpdateQuery = "";
+    if (mappedStatus === "delivered") {
+        lineUpdateQuery = `
+      UPDATE orderline
+      SET orderstatus = $1,
+          dispatcheddate = COALESCE(dispatcheddate, EXTRACT(EPOCH FROM NOW())::bigint),
+          delivereddate = COALESCE(delivereddate, EXTRACT(EPOCH FROM NOW())::bigint)
+      WHERE merchanttransactionid = $2
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered')
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+    `;
+    }
+    else if (mappedStatus === "shipped") {
+        lineUpdateQuery = `
+      UPDATE orderline
+      SET orderstatus = $1,
+          readytodispatchdate = COALESCE(readytodispatchdate, EXTRACT(EPOCH FROM NOW())::bigint),
+          dispatcheddate = COALESCE(dispatcheddate, EXTRACT(EPOCH FROM NOW())::bigint)
+      WHERE merchanttransactionid = $2
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped')
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+    `;
+    }
+    else if (mappedStatus === "ready_to_dispatch") {
+        lineUpdateQuery = `
+      UPDATE orderline
+      SET orderstatus = $1,
+          readytodispatchdate = COALESCE(readytodispatchdate, EXTRACT(EPOCH FROM NOW())::bigint)
+      WHERE merchanttransactionid = $2
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed', 'delivered', 'shipped', 'ready_to_dispatch')
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+    `;
+    }
+    else if (mappedStatus === "returned") {
+        lineUpdateQuery = `
+      UPDATE orderline
+      SET orderstatus = $1,
+          returneddate = COALESCE(returneddate, EXTRACT(EPOCH FROM NOW())::bigint)
+      WHERE merchanttransactionid = $2
+        AND COALESCE(orderstatus, '') NOT IN ('cancelled', 'returned', 'payment_failed')
+      RETURNING id, uniqueorderid, orderlinenumber, merchanttransactionid, productid, quantity, ordername, ordertype, deliveryfrom
+    `;
+    }
+    else {
+        return;
+    }
+    const lineUpdateResult = await query(lineUpdateQuery, [mappedStatus, merchantTransactionId]);
+    if (mappedStatus === "returned" && lineUpdateResult.rows.length > 0) {
+        await ordersService.handleReturnedOrderLines(lineUpdateResult.rows, previousStatuses);
+    }
+    if ((mappedStatus === "shipped" || mappedStatus === "delivered") && lineUpdateResult.rows.length > 0) {
+        await inventoryReservationService.transitionCommittedReservationsForOrderLines(lineUpdateResult.rows, "consumed", "shipment_sync");
+    }
+    const uniqueOrderIds = Array.from(new Set(lineUpdateResult.rows.map((row) => row.uniqueorderid).filter(Boolean)));
+    if (uniqueOrderIds.length > 0) {
+        await ordersService.syncOrderHeadersFromOrderLines(uniqueOrderIds);
+    }
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const shiprocketAlreadySyncedForMerchant = async (merchantTransactionId) => {
+    if (!merchantTransactionId)
+        return true;
+    try {
+        const r = await query(`SELECT 1 FROM orders WHERE merchanttransactionid = $1 AND shiprocket_order_id IS NOT NULL
+       UNION ALL
+       SELECT 1 FROM thirdpartyorders WHERE merchanttransactionid = $1 AND shiprocket_order_id IS NOT NULL
+       LIMIT 1`, [merchantTransactionId]);
+        return r.rows.length > 0;
+    }
+    catch {
+        return false;
+    }
+};
+/**
+ * Same Shiprocket ad-hoc create as Razorpay finalize, for Cash / PhonePe / retries.
+ * Safe to call multiple times: skips if shipment ids already stored.
+ */
+const syncShiprocketAfterSuccessfulPayment = async (merchantTransactionId, transactionMeta) => {
+    if (!merchantTransactionId) {
+        return {
+            ok: false,
+            reason: "missing_merchant_transaction_id",
+            merchantTransactionId: null,
+        };
+    }
+    try {
+        if (await shiprocketAlreadySyncedForMerchant(merchantTransactionId)) {
+            console.log("[Shiprocket] Already synced; skip", shortRef(merchantTransactionId, 8, 6));
+            return {
+                ok: true,
+                reason: "already_synced",
+                merchantTransactionId,
+            };
+        }
+        const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+        if (!context) {
+            console.warn("[Shiprocket] No order context for merchant tx", merchantTransactionId);
+            return {
+                ok: false,
+                reason: "missing_order_context",
+                merchantTransactionId,
+            };
+        }
+        const tx = {
+            merchanttransactionId: merchantTransactionId,
+            name: transactionMeta?.name ?? context.user?.useremail ?? "unknown",
+            amount: toSafeNumber(transactionMeta?.amount ?? context.expectedAmountRupees, 0),
+            mobilenumber: transactionMeta?.mobilenumber ??
+                context.user?.usermobilenumber ??
+                context.address?.mobilenumber ??
+                null,
+        };
+        const createResult = await createShiprocketOrderForTransaction(context, tx);
+        if (!createResult.ok) {
+            console.error("[Shiprocket] create failed after payment", {
+                merchantTransactionId,
+                reason: createResult.reason,
+                pickupLocation: createResult.pickupLocation || null,
+                attempts: createResult.attempts || 0,
+                statusCode: createResult.statusCode ?? null,
+                response: createResult.response ?? null,
+                error: createResult.error ?? null,
+            });
+        }
+        return createResult;
+    }
+    catch (e) {
+        console.error("[Shiprocket] syncShiprocketAfterSuccessfulPayment:", e?.message || e);
+        return {
+            ok: false,
+            reason: "sync_exception",
+            merchantTransactionId,
+            error: e?.response?.data || e?.message || e,
+        };
+    }
+};
 const resolveUniqueOrderIdFromContext = (context) => {
     const candidates = [
         context?.primaryOrderRow?.uniqueorderid,
@@ -384,15 +1080,80 @@ const resolveUniqueOrderIdFromContext = (context) => {
 };
 const createShiprocketOrderForTransaction = async (context, transactionData) => {
     try {
-        const token = await loginShiprocket();
-        const orderData = context.orderLineItems[0] || context.primaryOrderRow;
-        if (!orderData || !context.user || !context.address) {
-            return;
+        const merchantTx = transactionData?.merchanttransactionId;
+        if (!merchantTx) {
+            return {
+                ok: false,
+                reason: "missing_merchant_transaction_id",
+                merchantTransactionId: null,
+            };
         }
+        if (await shiprocketAlreadySyncedForMerchant(merchantTx)) {
+            console.log("[Shiprocket] create skipped — DB already has shipment ids");
+            return {
+                ok: true,
+                reason: "already_synced",
+                merchantTransactionId: merchantTx,
+            };
+        }
+        const shippableOrderLineItems = (context.orderLineItems || []).filter((item) => !isRentalOrderItem(item));
+        if (shippableOrderLineItems.length === 0) {
+            console.log("[Shiprocket] create skipped — rental-only transaction", {
+                merchantTransactionId: merchantTx,
+                transactionFor: context?.transactionFor || null,
+            });
+            return {
+                ok: true,
+                reason: "rental_only_transaction",
+                merchantTransactionId: merchantTx,
+            };
+        }
+        const orderData = shippableOrderLineItems[0] || context.primaryOrderRow;
+        if (!orderData || !context.user || !context.address) {
+            return {
+                ok: false,
+                reason: "missing_required_order_context",
+                merchantTransactionId: merchantTx,
+            };
+        }
+        const shiprocketSettings = await getPersistedShiprocketSettings();
+        if (!shiprocketSettings.autoCreateEnabled) {
+            return {
+                ok: true,
+                reason: "auto_create_disabled",
+                merchantTransactionId: merchantTx,
+            };
+        }
+        const pickupLocation = shiprocketSettings.pickupLocation ||
+            resolveFulfillmentLocation({
+                requestedLocation: shippableOrderLineItems.find((item) => item?.deliveryfrom)?.deliveryfrom ??
+                    context.combinedOrderRows.find((row) => row?.location)?.location ??
+                    null,
+            });
+        const shiprocketOrderItems = shippableOrderLineItems.length > 0
+            ? shippableOrderLineItems.map((item) => ({
+                name: item.productname || "Product",
+                sku: `SKU-${item.productid}`,
+                units: toSafeNumber(item.quantity, 1),
+                selling_price: toSafeNumber(item.productamount, 0),
+            }))
+            : [
+                {
+                    name: orderData.productname || "Product",
+                    sku: `SKU-${orderData.productid}`,
+                    units: toSafeNumber(orderData.quantity, 1),
+                    selling_price: toSafeNumber(orderData.productamount, 0),
+                },
+            ];
+        const computedSubtotal = shippableOrderLineItems.reduce((sum, item) => {
+            const quantity = toSafeNumber(item.quantity, 0);
+            const productAmount = toSafeNumber(item.productamount, 0);
+            return sum + quantity * productAmount;
+        }, 0) || toSafeNumber(orderData.orderamount, transactionData.amount);
         const shiprocketPayload = {
             order_id: transactionData.merchanttransactionId,
             order_date: new Date().toISOString(),
-            pickup_location: "warehouse",
+            pickup_location: pickupLocation,
             billing_customer_name: context.user?.firstname || "Customer",
             billing_last_name: context.user?.lastname || "Customer",
             billing_address: context.address?.address || "Not Provided",
@@ -414,37 +1175,86 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
             shipping_is_billing: true,
             shipping_email: context.user?.useremail || transactionData.name,
             shipping_phone: context.user?.usermobilenumber || transactionData.mobilenumber,
-            order_items: [
-                {
-                    name: orderData.productname || "Product",
-                    sku: `SKU-${orderData.productid}`,
-                    units: toSafeNumber(orderData.quantity, 1),
-                    selling_price: toSafeNumber(orderData.productamount, 0),
-                },
-            ],
+            order_items: shiprocketOrderItems,
             payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
-            sub_total: toSafeNumber(orderData.orderamount, transactionData.amount),
-            length: 10,
-            breadth: 10,
-            height: 10,
-            weight: 0.5,
+            sub_total: computedSubtotal,
+            length: shiprocketSettings.defaultLength,
+            breadth: shiprocketSettings.defaultBreadth,
+            height: shiprocketSettings.defaultHeight,
+            weight: shiprocketSettings.defaultWeight,
         };
-        let shiprocketOrderData = null;
-        try {
-            const shiprocketResponse = await axios.post(`${process.env.SHIPROCKET_BASE_URL}/orders/create/adhoc`, shiprocketPayload, {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-            });
-            shiprocketOrderData = shiprocketResponse.data;
+        const baseUrl = process.env.SHIPROCKET_BASE_URL;
+        if (!baseUrl) {
+            console.error("[Shiprocket] SHIPROCKET_BASE_URL is not set");
+            return {
+                ok: false,
+                reason: "missing_shiprocket_base_url",
+                merchantTransactionId: merchantTx,
+                pickupLocation,
+            };
         }
-        catch (error) {
-            console.error("Shiprocket order creation failed:", error.response?.data || error.message);
-            return;
+        const maxAttempts = 3;
+        const retryDelaysMs = [0, 600, 2000];
+        let shiprocketOrderData = null;
+        let lastError = null;
+        let lastResponse = null;
+        let lastStatusCode = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (retryDelaysMs[attempt] > 0) {
+                await sleep(retryDelaysMs[attempt]);
+            }
+            try {
+                const token = await loginShiprocket();
+                if (!token) {
+                    lastError = "shiprocket_login_failed";
+                    console.error(`[Shiprocket] login failed (attempt ${attempt + 1}/${maxAttempts})`, {
+                        merchantTransactionId: merchantTx,
+                        pickupLocation,
+                    });
+                    continue;
+                }
+                const shiprocketResponse = await axios.post(`${baseUrl}/orders/create/adhoc`, shiprocketPayload, {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                });
+                const data = shiprocketResponse.data;
+                lastResponse = data;
+                lastStatusCode = shiprocketResponse.status || null;
+                if (data && (data.order_id != null || data.shipment_id != null)) {
+                    shiprocketOrderData = data;
+                    break;
+                }
+                console.warn(`[Shiprocket] Unexpected response (attempt ${attempt + 1}/${maxAttempts})`, {
+                    merchantTransactionId: merchantTx,
+                    pickupLocation,
+                    httpStatus: shiprocketResponse.status || null,
+                    response: data,
+                });
+            }
+            catch (error) {
+                lastError = error?.response?.data || error?.message || error;
+                lastStatusCode = error?.response?.status || null;
+                console.error(`[Shiprocket] order create failed (attempt ${attempt + 1}/${maxAttempts}):`, {
+                    merchantTransactionId: merchantTx,
+                    pickupLocation,
+                    httpStatus: error?.response?.status || null,
+                    error: error?.response?.data || error?.message,
+                });
+            }
         }
         if (!shiprocketOrderData) {
-            return;
+            return {
+                ok: false,
+                reason: "shiprocket_create_failed",
+                merchantTransactionId: merchantTx,
+                pickupLocation,
+                attempts: maxAttempts,
+                statusCode: lastStatusCode,
+                error: lastError,
+                response: lastResponse,
+            };
         }
         await query(`UPDATE orders 
        SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, shiprocket_status_code = $3, shiprocket_status = $4, shiprocket_channel_order_id = $5
@@ -466,9 +1276,26 @@ const createShiprocketOrderForTransaction = async (context, transactionData) => 
             shiprocketOrderData.channel_order_id,
             transactionData.merchanttransactionId,
         ]);
+        return {
+            ok: true,
+            reason: "shipment_created",
+            merchantTransactionId: merchantTx,
+            pickupLocation,
+            attempts: 1,
+            statusCode: 200,
+            shiprocketOrderId: normalizeOptionalText(shiprocketOrderData.order_id),
+            shiprocketShipmentId: normalizeOptionalText(shiprocketOrderData.shipment_id),
+            response: shiprocketOrderData,
+        };
     }
     catch (error) {
         console.error("Shiprocket integration failed:", error?.message || error);
+        return {
+            ok: false,
+            reason: "shiprocket_integration_exception",
+            merchantTransactionId: transactionData?.merchanttransactionId || null,
+            error: error?.response?.data || error?.message || error,
+        };
     }
 };
 const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrderId, razorpaySignature, verifyCheckoutSignature, source, traceId = null, }) => {
@@ -525,8 +1352,8 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         return { status: 202, message: "Payment processing in progress" };
     }
     try {
-        const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
-        if (existingTransaction.rows.length > 0) {
+        let existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
+        if (existingTransactionRecord) {
             const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -606,7 +1433,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             });
             return { status: 400, message: "Payment not captured" };
         }
-        const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+        let context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
         if (!context) {
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -622,8 +1449,107 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
             transactionFor: context?.transactionFor,
             expectedAmountRupees: context?.expectedAmountRupees,
         });
-        const alreadySucceeded = context.combinedOrderRows.some((row) => row?.ispaymentsucceed === true || row?.ispaymentsucceed === "true");
-        if (alreadySucceeded) {
+        const expectedAmountPaise = Math.round(toSafeNumber(gatewayOrder?.amount, 0));
+        if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Amount mismatch between order and payment",
+                expectedAmountPaise,
+                receivedAmountPaise: Number(payment.amount),
+            });
+            return { status: 400, message: "Amount mismatch between order and payment" };
+        }
+        const settledAmountRupees = Number(payment.amount) / 100;
+        const transactionPayload = {
+            transaction: {
+                merchanttransactionId: merchantTransactionId,
+                name: context.user?.useremail || "unknown",
+                amount: toSafeNumber(settledAmountRupees, 0),
+                mobilenumber: context.user?.usermobilenumber || context.address?.mobilenumber || null,
+                productid: context.productIds,
+                transactionfor: context.transactionFor,
+                userId: context.userId,
+                transactiondata: payment,
+                razorpay_signature: razorpaySignature || "",
+            },
+            order: context.orderLineItems,
+        };
+        const heldReservationResult = await inventoryReservationService.getReservationsForMerchantTransactionId(merchantTransactionId, ["held"]);
+        const hasHeldReservations = (heldReservationResult?.rows || []).length > 0;
+        const alreadySucceeded = context.combinedOrderRows.some((row) => isTruthyFlag(row?.ispaymentsucceed));
+        const headersNeedPaymentStateSync = context.combinedOrderRows.some((row) => !isTruthyFlag(row?.ispaymentsucceed));
+        if (!existingTransactionRecord) {
+            let result;
+            try {
+                logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_START", {
+                    merchantTransactionId,
+                    orderLineItems: context.orderLineItems.length,
+                });
+                result = await transactionService.insertTransactionData(transactionPayload, context.combinedOrderRows);
+            }
+            catch (error) {
+                if (error?.code === "23505") {
+                    existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
+                    logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_SKIPPED", {
+                        merchantTransactionId,
+                        reason: "unique-constraint-existing-transaction",
+                        transactionid: existingTransactionRecord?.transactionid || null,
+                    });
+                }
+                else {
+                    throw error;
+                }
+            }
+            if (result) {
+                logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
+                    merchantTransactionId,
+                    transactionCount: Array.isArray(result?.transactionData)
+                        ? result.transactionData.length
+                        : 0,
+                    orderDataRows: Array.isArray(result?.orderdata) ? result.orderdata.length : 0,
+                });
+                if (!result?.orderdata ||
+                    !result?.transactionData ||
+                    result.orderdata.length === 0 ||
+                    result.transactionData.length === 0) {
+                    const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+                    logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                        merchantTransactionId,
+                        status: 400,
+                        message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
+                        failedProcessSnapshot,
+                    });
+                    return {
+                        status: 400,
+                        message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
+                    };
+                }
+                existingTransactionRecord =
+                    result?.transactionData?.[0] ||
+                        (await getLatestTransactionByMerchantTransactionId(merchantTransactionId));
+                context =
+                    (await getOrderContextByMerchantTransactionId(merchantTransactionId)) || context;
+            }
+        }
+        if (!existingTransactionRecord) {
+            const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
+            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
+                merchantTransactionId,
+                status: 400,
+                message: "Unable to resolve transaction record for successful payment",
+                failedProcessSnapshot,
+            });
+            return {
+                status: 400,
+                message: "Unable to resolve transaction record for successful payment",
+            };
+        }
+        if (headersNeedPaymentStateSync || !alreadySucceeded) {
+            context =
+                (await syncSuccessfulPaymentStateFromTransaction(context, existingTransactionRecord)) || context;
+        }
+        if (!hasHeldReservations && context.combinedOrderRows.every((row) => isTruthyFlag(row?.ispaymentsucceed))) {
             const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -640,18 +1566,18 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 },
             };
         }
-        const expectedAmountPaise = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
-        if (expectedAmountPaise > 0 && Number(payment.amount) !== expectedAmountPaise) {
+        const expectedAmountPaiseFromContext = Math.round(toSafeNumber(context.expectedAmountRupees, 0) * 100);
+        if (expectedAmountPaiseFromContext > 0 && Number(payment.amount) !== expectedAmountPaiseFromContext) {
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
                 status: 400,
                 message: "Amount mismatch between order and payment",
-                expectedAmountPaise,
+                expectedAmountPaise: expectedAmountPaiseFromContext,
                 receivedAmountPaise: Number(payment.amount),
             });
             return { status: 400, message: "Amount mismatch between order and payment" };
         }
-        const transactionPayload = {
+        const transactionPayloadForWebhook = {
             transaction: {
                 merchanttransactionId: merchantTransactionId,
                 name: context.user?.useremail || "unknown",
@@ -671,7 +1597,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 merchantTransactionId,
                 orderLineItems: context.orderLineItems.length,
             });
-            result = await transactionService.insertTransactionData(transactionPayload, context.combinedOrderRows);
+            result = await transactionService.insertTransactionData(transactionPayloadForWebhook, context.combinedOrderRows);
         }
         catch (error) {
             if (error?.code === "23505") {
@@ -696,50 +1622,40 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         }
         logWebhookStep(resolvedTraceId, "TRANSACTION_INSERT_RESULT", {
             merchantTransactionId,
-            transactionCount: Array.isArray(result?.transactionData)
-                ? result.transactionData.length
-                : 0,
-            orderDataRows: Array.isArray(result?.orderdata) ? result.orderdata.length : 0,
+            source: "reservation_ledger_with_orderline_fallback",
         });
-        if (!result?.orderdata ||
-            !result?.transactionData ||
-            result.orderdata.length === 0 ||
-            result.transactionData.length === 0) {
-            const failedProcessSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
-            logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
-                merchantTransactionId,
-                status: 400,
-                message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
-                failedProcessSnapshot,
-            });
-            return {
-                status: 400,
-                message: "Transaction failure. If payment debited, it will be refunded in 5 business days",
-            };
-        }
-        const updateProductQtyData = context.orderLineItems.map((item) => ({
-            id: item.productid,
-            orderedquantity: item.quantity,
-            ordername: item.ordername,
-        }));
-        if (updateProductQtyData.length > 0) {
-            logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_START", {
-                merchantTransactionId,
-                items: updateProductQtyData,
-            });
-            await productrevoService.updateOrderedQuantityarray(updateProductQtyData);
-            logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_DONE", {
-                merchantTransactionId,
-                updatedProducts: updateProductQtyData.length,
-            });
-        }
+        const inventoryCommitResult = await commitMerchantTransactionInventory(merchantTransactionId, context.orderLineItems);
+        logWebhookStep(resolvedTraceId, "PRODUCT_QTY_UPDATE_DONE", {
+            merchantTransactionId,
+            updatedProducts: inventoryCommitResult.quantityUpdates.length,
+            updatedItems: inventoryCommitResult.quantityUpdates,
+            heldReservationRows: inventoryCommitResult.heldReservationRows.length,
+        });
+        await deletePurchasedCartEntries(context.userId, context.orderLineItems);
         logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_START", {
             merchantTransactionId,
         });
-        await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
-        logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_DONE", {
-            merchantTransactionId,
-        });
+        const shiprocketCreateResult = await createShiprocketOrderForTransaction(context, transactionPayload.transaction);
+        if (shiprocketCreateResult?.ok) {
+            logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_DONE", {
+                merchantTransactionId,
+                reason: shiprocketCreateResult.reason,
+                pickupLocation: shiprocketCreateResult.pickupLocation || null,
+                shiprocketOrderId: shiprocketCreateResult.shiprocketOrderId || null,
+                shiprocketShipmentId: shiprocketCreateResult.shiprocketShipmentId || null,
+            });
+        }
+        else {
+            logWebhookStep(resolvedTraceId, "SHIPROCKET_SYNC_FAILED", {
+                merchantTransactionId,
+                reason: shiprocketCreateResult?.reason || "unknown",
+                pickupLocation: shiprocketCreateResult?.pickupLocation || null,
+                attempts: shiprocketCreateResult?.attempts || 0,
+                statusCode: shiprocketCreateResult?.statusCode ?? null,
+                response: shiprocketCreateResult?.response ?? null,
+                error: shiprocketCreateResult?.error ?? null,
+            });
+        }
         const successSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
         logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
             merchantTransactionId,
@@ -831,21 +1747,25 @@ export var transactionService;
         try {
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
-            dummyorderdata = orderdata.map((element) => ({ ...element }));
-            productupdateorderqty = orderdata.map((element) => ({ ...element }));
-            let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
-            const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-            const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
-            const result = await query(queryText, productid);
-            const allQuantitiesAvailable = result.rows.every((product) => Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-                Number(product.overallavailableqty - Number(product.orderedquantity)) >= 0);
-            if (!allQuantitiesAvailable) {
+            await allocateProductLocationsForOrder(orderdata);
+            request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
+            const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(orderdata, merchanttransactionId);
+            if (fulfillmentBuckets.validationErrors.length > 0) {
+                return {
+                    status: 400,
+                    message: "One or more products are out of stock. Please try again later.",
+                    errorDetails: fulfillmentBuckets.validationErrors,
+                };
+            }
+            await inventoryReservationService.replaceHeldReservations(merchanttransactionId, fulfillmentBuckets.ordersToInsert);
+            const capacityCheck = await validateReservationCapacity(fulfillmentBuckets.ordersToInsert, merchanttransactionId);
+            if (!capacityCheck.ok) {
+                await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "insufficient_inventory");
                 return {
                     status: 400,
                     message: "One or more products are out of stock. Please try again later.",
                 };
             }
-            transactionDataset = request.body;
             const data = {
                 merchantId: MERCHANT_ID,
                 merchantTransactionId: merchanttransactionId,
@@ -882,32 +1802,31 @@ export var transactionService;
             }
             catch (error) {
                 console.log(error.message, "Error in axios options");
+                await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "gateway_initialization_error");
                 return REDIRECT_URL_SUCCESS;
             }
             request.body.order.forEach((e) => {
                 e.merchanttransactionid = response.data.data.merchantTransactionId;
             });
-            request.body.order.forEach((e) => {
-                cartIddata.push(e.cartId);
-            });
             try {
                 let createHttpTaskResult = await createHttpTask(response.data.data.merchantTransactionId);
                 console.log(createHttpTaskResult, " ===>> createHttpTaskResult");
                 if (createHttpTaskResult?.success === false) {
+                    await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(response.data.data.merchantTransactionId, "task_creation_failed");
                     return {
                         status: 400,
                         message: "Task Not Created For Making Order. Please contact Admin",
                     };
                 }
                 let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
-                insersertdordderdatawithprocessing = insertorderdata.rows;
             }
             catch (error) {
                 console.log(error.message, "Error in Task paymentInitialization");
-                let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+                await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(response?.data?.data?.merchantTransactionId || merchanttransactionId, "order_initialization_error");
+                await safeCleanupPendingOrder(response?.data?.data?.merchantTransactionId || merchanttransactionId);
                 return {
                     status: 500,
-                    message: "Error processing order. Inventory has been reset.",
+                    message: "Error processing order. Inventory reservation has been released.",
                 };
             }
             console.log(response, " ===>> response in axios");
@@ -916,7 +1835,8 @@ export var transactionService;
         catch (error) {
             console.error("Query Execution Error: IN paymentInitialization", error.message);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+            await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(request?.body?.transaction?.merchanttransactionId, "payment_initialization_error");
+            await safeCleanupPendingOrder(request?.body?.transaction?.merchanttransactionId);
             return ErrorMessage;
         }
     };
@@ -945,54 +1865,55 @@ export var transactionService;
                 },
             };
             const response = await axios(options);
-            let message = {};
+            const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+            if (!context) {
+                return { message: "Payment timed out, try again." };
+            }
             if (response.data.code && response.data.code == "PAYMENT_SUCCESS") {
-                transactionDataset.transaction.transactiondata = response.data;
-                message.payment = "Payment done Successfully";
-                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing);
+                const transactionPayload = {
+                    transaction: {
+                        merchanttransactionId: merchantTransactionId,
+                        name: context.user?.useremail || "unknown",
+                        amount: toSafeNumber(context.expectedAmountRupees, 0),
+                        mobilenumber: context.user?.usermobilenumber || context.address?.mobilenumber || null,
+                        productid: context.productIds,
+                        transactionfor: context.transactionFor,
+                        userId: context.userId,
+                        transactiondata: response.data,
+                        razorpay_signature: "",
+                    },
+                    order: context.orderLineItems,
+                };
+                let result = await transactionService.insertTransactionData(transactionPayload, context.combinedOrderRows);
                 if (result.orderdata &&
                     result.orderdata.length > 0 &&
                     result.transactionData &&
                     result.transactionData.length > 0) {
-                    if (productupdateorderqty.length > 0) {
-                        let updateproductorderquantiydata = [];
-                        productupdateorderqty.forEach((e) => {
-                            updateproductorderquantiydata.push({
-                                id: e.productid,
-                                orderedquantity: e.quantity,
-                                ordername: e.ordername, // needed to distinguish rental vs normal
-                            });
-                        });
-                        const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
-                        let deleteCartData = await cartservice.deleteCart(cartIddata);
-                        const messageData = {
-                            title: "Hello User",
-                            body: "Payment Done Successfully",
-                        };
-                        let resut = await messageinitialization(transactionDataset.transaction.userId, messageData);
-                        if (updatedOrderQuantity == "UPDATE") {
-                        }
-                        else {
-                        }
-                    }
+                    await commitMerchantTransactionInventory(merchantTransactionId, context.orderLineItems);
+                    await deletePurchasedCartEntries(context.userId, context.orderLineItems);
+                    const messageData = {
+                        title: "Hello User",
+                        body: "Payment Done Successfully",
+                    };
+                    await messageinitialization(context.userId, messageData);
+                    await syncShiprocketAfterSuccessfulPayment(merchantTransactionId, {
+                        name: context.user?.useremail || "unknown",
+                        amount: toSafeNumber(context.expectedAmountRupees, 0),
+                        mobilenumber: context.user?.usermobilenumber || context.address?.mobilenumber || null,
+                    });
                 }
                 else {
-                    let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+                    await safeCleanupPendingOrder(merchantTransactionId);
                     return "Transaction Failure If payment debited it will be refunded in 5 business Days";
                 }
             }
             else {
-                let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
-                transactionDataset.transaction.transactiondata = response.data;
-                message.payment = "Payment done Successfully";
+                await safeCleanupPendingOrder(merchantTransactionId);
                 const messageData = {
                     title: "Hello User",
                     body: "Payment Not Done. If Any Payment Debited it will be refunded in 5 business Days",
                 };
-                messageinitialization(transactionDataset.transaction.userId, messageData);
-                let result = await transactionService.insertTransactionData(transactionDataset, insersertdordderdatawithprocessing, 
-                // razorpay_signature,
-                true);
+                await messageinitialization(context.userId, messageData);
             }
             const queryParams = new URLSearchParams(response.data).toString();
             let url = REDIRECT_URL_SUCCESS;
@@ -1002,7 +1923,7 @@ export var transactionService;
             reply.redirect(url);
         }
         catch (error) {
-            let insertdata = await productrevoService.bulkupsertProducttosetZero(dummyorderdata, true);
+            await safeCleanupPendingOrder(request?.query?.id);
             console.error("Query Execution Error: IN paymentConfirmation", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
@@ -1143,12 +2064,19 @@ export var transactionService;
             console.log("Inside paymentInitializationRazorpay service");
             let { merchanttransactionId, name, amount, mobilenumber, userid, productid, transactionfor, } = request.body.transaction;
             let orderdata = request.body.order;
-            console.log(">>body", request.body, ">>body");
-            console.log(">>Tran", request.body.transaction, ">>Tran");
-            console.log(">>orde", request.body.order, ">>orde");
-            console.log("End");
-            // Ensure rental quantities are up-to-date before reserving inventory.
-            // Rental stock availability should consider both ecompublish=true/false items.
+            // ✅ Assign locations
+            await allocateProductLocationsForOrder(orderdata);
+            request.body.transaction.storelocation = resolveTransactionStoreLocation(orderdata);
+            // ✅ Build fulfillment
+            const fulfillmentBuckets = await ordersService.buildFulfillmentBuckets(orderdata, merchanttransactionId);
+            if (fulfillmentBuckets.validationErrors.length > 0) {
+                return {
+                    status: 400,
+                    message: "One or more products are out of stock. Please try again later.",
+                    errorDetails: fulfillmentBuckets.validationErrors,
+                };
+            }
+            // ✅ Refresh rental quantities
             if (request.body?.order?.[0]?.invoicefor === "product rental") {
                 try {
                     const productIds = Array.from(new Set((orderdata || [])
@@ -1163,107 +2091,70 @@ export var transactionService;
                     }
                 }
                 catch (error) {
-                    console.warn("Failed to refresh rental catalogue quantities before checkout:", error?.message || error);
+                    console.warn("Rental quantity refresh failed:", error?.message || error);
                 }
             }
+            // ======================================================
+            // ✅ CASH PAYMENT FLOW
+            // ======================================================
             if (request.body.order[0].paymentmethod === "Cash") {
-                console.log("Inside Cash");
-                dummyorderdata = orderdata.map((element) => ({ ...element }));
-                productupdateorderqty = orderdata.map((element) => ({
-                    ...element,
-                }));
-                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
-                let insertdata = await productrevoService.bulkupsertProducttosetZero(orderdata, false);
-                const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-                const queryText = `SELECT id, overallavailableqty, rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
-                const result = await query(queryText, productid);
-                console.log("Result from product_revo:", result.rows);
-                console.log("Result from product_revo:", result.rows);
-                const allQuantitiesAvailable = result.rows.every((product) => {
-                    console.log("Product:", product);
-                    console.log("Request Body:", request.body);
-                    console.log("Request Body Order:", request.body.order);
-                    if (request.body.order[0].invoicefor === "product rental") {
-                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
-                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
-                    }
-                    else {
-                        return (Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-                            Number(product.overallavailableqty) - Number(product.orderedquantity) >= 0);
-                    }
-                });
-                console.log("All quantities available:", allQuantitiesAvailable);
-                if (!allQuantitiesAvailable) {
-                    await releaseInventoryLocksByOrderItems(orderdata);
+                await inventoryReservationService.replaceHeldReservations(merchanttransactionId, fulfillmentBuckets.ordersToInsert);
+                const capacityCheck = await validateReservationCapacity(fulfillmentBuckets.ordersToInsert, merchanttransactionId);
+                if (!capacityCheck.ok) {
+                    await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "insufficient_inventory");
                     return {
                         status: 400,
                         message: "One or more products are out of stock. Please try again later.",
                     };
                 }
-                transactionDataset = request.body;
-                console.log("Transaction Data from inital:", transactionDataset);
-                console.log("Merc Id:", merchanttransactionId);
-                let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
-                console.log("Insert Order Data Result:", insertorderdata.rows);
-                console.log(">>body", request.body, ">>body");
-                const transactionData = {
-                    ...request.body.transaction,
-                    transactiondata: JSON.stringify({
-                        Amount: request.body.transaction.amount,
-                        status: "Cash Paid",
-                    }),
+                // ✅ Create order
+                const insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
+                const context = await getOrderContextByMerchantTransactionId(merchanttransactionId);
+                if (!context) {
+                    await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "missing_order_context");
+                    await safeCleanupPendingOrder(merchanttransactionId);
+                    return {
+                        status: 500,
+                        message: "Unable to finalize cash order.",
+                    };
+                }
+                // ✅ Insert transaction
+                const transactionPayload = {
+                    transaction: {
+                        merchanttransactionId,
+                        name,
+                        amount: toSafeNumber(amount, 0),
+                        mobilenumber: mobilenumber === "" ? null : mobilenumber,
+                        productid,
+                        transactionfor,
+                        userId: context.userId,
+                        transactiondata: {
+                            status: "Cash Paid",
+                            provider: "offline_cash",
+                            amount: toSafeNumber(amount, 0),
+                        },
+                        razorpay_signature: "",
+                    },
+                    order: context.orderLineItems,
                 };
-                console.log("Final transactionData:", transactionData);
-                console.log(">>Tran");
-                let { userId, transactiondata } = transactionData;
-                mobilenumber === ""
-                    ? (mobilenumber = null)
-                    : (mobilenumber = mobilenumber);
-                const insertTransactionQuery = `
-                INSERT INTO transaction (merchanttransactionid, name, amount, mobilenumber, productid, transactionfor, userId, transactiondata)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                RETURNING *`;
-                const values = [
-                    merchanttransactionId,
+                const transactionResult = await transactionService.insertTransactionData(transactionPayload, context.combinedOrderRows);
+                if (!transactionResult?.orderdata ||
+                    !transactionResult?.transactionData) {
+                    await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "cash_finalize_failed");
+                    await safeCleanupPendingOrder(merchanttransactionId);
+                    return {
+                        status: 500,
+                        message: "Unable to finalize cash order.",
+                    };
+                }
+                // ✅ Commit inventory
+                await commitMerchantTransactionInventory(merchanttransactionId, context.orderLineItems);
+                await deletePurchasedCartEntries(context.userId, orderdata);
+                await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
                     name,
                     amount,
                     mobilenumber,
-                    productid,
-                    transactionfor,
-                    userId,
-                    transactiondata,
-                ];
-                const transactionResult = await query(insertTransactionQuery, values);
-                console.log("Transaction Result:", transactionResult.rows);
-                const updateOrderStatus = await query(`UPDATE orders SET orderstatus = 'ordered', merchanttransactionid = $1, transactionid = $3, ispaymentsucceed = true WHERE id = $2 `, [
-                    merchanttransactionId,
-                    insertorderdata.rows[0].id,
-                    transactionResult.rows[0].transactionid,
-                ]);
-                // console.log("Update Order Status:", updateOrderStatus);
-                console.log(">>>>>", productupdateorderqty, ">>>>>");
-                console.log("---------------");
-                const updateOrderlineStatus = await query(`UPDATE orderline SET orderstatus = 'ordered', merchanttransactionid = $1 WHERE uniqueorderid = $2`, [merchanttransactionId, insertorderdata.rows[0].orderid]);
-                console.log("Update Orderline Status:", updateOrderlineStatus.rows);
-                const rentalOrders = insertorderdata.rows.filter((row) => String(row?.ordername ?? "").trim().toLowerCase() === "rental");
-                if (rentalOrders.length > 0) {
-                    await stockRevoService.allocateRentalStock(rentalOrders);
-                }
-                if (productupdateorderqty.length > 0) {
-                    console.log("Come's inside if productupdateorderqty");
-                    const updateproductorderquantiydata = productupdateorderqty.map((e) => ({
-                        id: e.productid,
-                        orderedquantity: e.quantity,
-                        ordername: e.ordername
-                    }));
-                    console.log("Update Product Order Quantity Data:", updateproductorderquantiydata);
-                    console.log("ggg");
-                    const updatedOrderQuantity = await productrevoService.updateOrderedQuantityarray(updateproductorderquantiydata);
-                    // console.log("Updated Order Quantity:", updatedOrderQuantity);
-                    console.log(cartIddata, "cart id to delete");
-                    console.log("final");
-                }
-                console.log("end");
+                });
                 return {
                     status: 200,
                     uniqueorderid: insertorderdata.rows[0].orderid,
@@ -1271,197 +2162,67 @@ export var transactionService;
                         status: "success",
                         message: "Order placed successfully",
                         uniqueorderid: insertorderdata.rows[0].orderid,
-                        // orderId: order.id,
-                        // amount: order.amount,
-                        // currency: order.currency,
-                        // key: RAZORPAY_KEY_ID,
-                        // redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
                     },
                 };
             }
-            else {
-                console.log("online pay");
-                const requestedRentalQuantities = groupRentalOrderQuantities(orderdata);
-                // Step 1: Reserve inventory for this checkout attempt
-                await productrevoService.bulkupsertProducttosetZero(orderdata, false);
-                const productId = productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-                const queryText = `SELECT id, overallavailableqty,rentalavailablequantity,rentalorderedquantity, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
-                const result = await query(queryText, productid);
-                console.log("Result from product_revo:", result);
-                console.log("Result from product_revo:", result.rows);
-                console.log("Request Body:", request.body);
-                const allQuantitiesAvailable = result.rows.every((product) => {
-                    if (request.body.order[0].invoicefor === "product rental") {
-                        const requestedQty = requestedRentalQuantities.get(toSafeNumber(product.id, 0)) || 0;
-                        console.log("product.rentalavailablequantity", product.rentalavailablequantity);
-                        console.log("requested rental quantity", requestedQty);
-                        console.log("product.rentalorderedquantity", product.rentalorderedquantity);
-                        console.log("rental - order", Number(product.rentalavailablequantity) - Number(product.rentalorderedquantity));
-                        return (toSafeNumber(product.rentalavailablequantity, 0) >= requestedQty);
-                    }
-                    else {
-                        console.log("eles product.overallavailableqty", product.overallavailableqty);
-                        console.log("eles product.lock_qty", product.lock_qty);
-                        console.log("eles product.orderedquantity", product.orderedquantity);
-                        return (Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-                            Number(product.overallavailableqty) - Number(product.orderedquantity) >= 0);
-                    }
-                });
-                console.log("All quantities available:", allQuantitiesAvailable);
-                if (!allQuantitiesAvailable) {
-                    await releaseInventoryLocksByOrderItems(orderdata);
-                    return {
-                        status: 400,
-                        message: "One or more products are out of stock. Please try again later.",
-                    };
-                }
-                console.log("Merc Id:", merchanttransactionId);
-                const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
-                // Step 2: Create Razorpay order
-                const order = await razorpay.orders.create({
-                    amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
-                    currency: "INR",
-                    receipt: merchanttransactionId,
-                    notes: {
-                        name,
-                        mobilenumber,
-                        userid,
-                        transactionfor,
-                    },
-                });
-                // Step 3: Persist provisional order rows tied to merchant transaction id
-                request.body.order.forEach((e) => {
-                    e.merchanttransactionid = merchanttransactionId;
-                });
-                // Step 4: Create HTTP task and insert order data
-                try {
-                    let createHttpTaskResult = await createHttpTask(merchanttransactionId);
-                    console.log("Create Http Task Result:", createHttpTaskResult);
-                    if (createHttpTaskResult?.success === false) {
-                        console.warn("Cloud Task could not be created for transaction cleanup. Proceeding with order placement anyway. Error:", createHttpTaskResult.error);
-                    }
-                    console.log("Insert Order Data Result:", request.body.order);
-                    let insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
-                    console.log("Insert Order Data Result:", insertorderdata.rows);
-                }
-                catch (error) {
-                    console.log(error.message, "Error in Task paymentInitializationRazorpay");
-                    await releaseInventoryLocksByOrderItems(orderdata);
-                    return {
-                        status: 500,
-                        message: "Error processing order. Inventory reservation has been released.",
-                    };
-                }
-                // Step 5: Return Razorpay order details for frontend
+            // ======================================================
+            // ✅ ONLINE PAYMENT FLOW
+            // ======================================================
+            await inventoryReservationService.replaceHeldReservations(merchanttransactionId, fulfillmentBuckets.ordersToInsert);
+            const capacityCheck = await validateReservationCapacity(fulfillmentBuckets.ordersToInsert, merchanttransactionId);
+            if (!capacityCheck.ok) {
+                await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "insufficient_inventory");
                 return {
-                    status: 200,
-                    data: {
-                        orderId: order.id,
-                        amount: order.amount,
-                        currency: order.currency,
-                        key: RAZORPAY_KEY_ID,
-                        redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-                    },
+                    status: 400,
+                    message: "One or more products are out of stock. Please try again later.",
                 };
             }
-            // Step 1: Inventory check (same as PhonePe)
-            // dummyorderdata = orderdata.map((element: any) => ({ ...element }));
-            // productupdateorderqty = orderdata.map((element: any) => ({ ...element }));
-            // let insertdata = await productrevoService.bulkupsertProducttosetZero(
-            //   orderdata,
-            //   false
-            // );
-            // const productId =
-            //   productid && productid.map((_, index) => `$${index + 1}`).join(", ");
-            // const queryText = `SELECT id, overallavailableqty, orderedquantity, lock_qty FROM product_revo WHERE id IN (${productId})`;
-            // const result = await query(queryText, productid);
-            // console.log("Result from product_revo:", result);
-            // console.log("Result from product_revo:", result.rows);
-            // const allQuantitiesAvailable = result.rows.every(
-            //   (product) =>
-            //     Number(product.overallavailableqty) - Number(product.lock_qty) >= 0 &&
-            //     Number(
-            //       product.overallavailableqty - Number(product.orderedquantity)
-            //     ) >= 0
-            // );
-            // console.log("All quantities available:", allQuantitiesAvailable);
-            // if (!allQuantitiesAvailable) {
-            //   return {
-            //     status: 400,
-            //     message:
-            //       "One or more products are out of stock. Please try again later.",
-            //   };
-            // }
-            // transactionDataset = request.body;
-            // console.log("Transaction Data from inital:", transactionDataset);
-            // console.log('Merc Id:', merchanttransactionId);
-            // // Step 2: Create Razorpay order
-            // const order = await razorpay.orders.create({
-            //   amount: Number(transactionDataset.transaction.amount)*100,
-            //   currency: "INR",
-            //   receipt: merchanttransactionId,
-            //   notes: {
-            //     name,
-            //     mobilenumber,
-            //     userid,
-            //     transactionfor,
-            //   },
-            // });
-            // console.log("order is : " + JSON.stringify(order));
-            // console.log("Razorpay Order ID:", order);
-            // // Step 3: Update order data with Razorpay order ID
-            // request.body.order.forEach((e) => {
-            //   e.merchanttransactionid = merchanttransactionId; // Use Razorpay order ID
-            // });
-            // request.body.order.forEach((e) => {
-            //   cartIddata.push(e.cartId);
-            // });
-            // // Step 4: Create HTTP task and insert order data
-            // try {
-            //   let createHttpTaskResult = await createHttpTask(order.id);
-            //   if (createHttpTaskResult?.success === false) {
-            //     return {
-            //       status: 400,
-            //       message: "Task Not Created For Making Order. Please contact Admin",
-            //     };
-            //   }
-            //   let insertorderdata = await ordersService.bulkInsertOrder(
-            //     request.body.transaction,
-            //     request.body.order
-            //   );
-            //   console.log("Insert Order Data Result:", insertorderdata.rows);
-            //   insersertdordderdatawithprocessing = insertorderdata.rows;
-            // } catch (error) {
-            //   console.log(
-            //     error.message,
-            //     "Error in Task paymentInitializationRazorpay"
-            //   );
-            //   await productrevoService.bulkupsertProducttosetZero(
-            //     dummyorderdata,
-            //     true
-            //   );
-            //   return {
-            //     status: 500,
-            //     message: "Error processing order. Inventory has been reset.",
-            //   };
-            // }
-            // // Step 5: Return Razorpay order details for frontend
-            // return {
-            //   status: 200,
-            //   data: {
-            //     orderId: order.id,
-            //     amount: order.amount,
-            //     currency: order.currency,
-            //     key: RAZORPAY_KEY_ID,
-            //     redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
-            //   },
-            // };
+            const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
+            const order = await razorpay.orders.create({
+                amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
+                currency: "INR",
+                receipt: merchanttransactionId,
+                notes: {
+                    name,
+                    mobilenumber,
+                    userid,
+                    transactionfor,
+                },
+            });
+            request.body.order.forEach((e) => {
+                e.merchanttransactionid = merchanttransactionId;
+            });
+            try {
+                await createHttpTask(merchanttransactionId);
+                const insertorderdata = await ordersService.bulkInsertOrder(request.body.transaction, request.body.order);
+                if (!insertorderdata?.rows?.length) {
+                    throw new Error("Failed to initialize order");
+                }
+            }
+            catch (error) {
+                await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(merchanttransactionId, "order_initialization_error");
+                await safeCleanupPendingOrder(merchanttransactionId);
+                return {
+                    status: 500,
+                    message: "Error processing order. Inventory reservation released.",
+                };
+            }
+            return {
+                status: 200,
+                data: {
+                    orderId: order.id,
+                    amount: order.amount,
+                    currency: order.currency,
+                    key: RAZORPAY_KEY_ID,
+                    redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/confirmation-razorpay?id=${order.id}&token=${request.headers.authorization}`,
+                },
+            };
         }
         catch (error) {
-            console.error("Query Execution Error: IN test", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            await releaseInventoryLocksByOrderItems(request?.body?.order || []);
-            return ErrorMessage;
+            console.error("Query Execution Error: IN paymentInitializationRazorpay", error);
+            await inventoryReservationService.releaseHeldReservationsForMerchantTransactionId(request?.body?.transaction?.merchanttransactionId, "razorpay_initialization_error");
+            await safeCleanupPendingOrder(request?.body?.transaction?.merchanttransactionId);
+            return await ErrorHandler.handleQueryError(error);
         }
     };
     transactionService.paymentConfirmationRazorpay = async (request) => {
@@ -1651,6 +2412,263 @@ export var transactionService;
             });
             console.error("Query Execution Error: IN paymentWebhookRazorpay", error);
             return { status: 500, message: "Error processing Razorpay webhook" };
+        }
+    };
+    transactionService.paymentWebhookShiprocket = async (request) => {
+        try {
+            const configuredToken = normalizeOptionalText(ENV_SHIPROCKET_WEBHOOK_TOKEN || process.env.SHIPROCKET_WEBHOOK_TOKEN);
+            if (!configuredToken) {
+                return {
+                    status: 500,
+                    message: "Shiprocket webhook token is not configured",
+                };
+            }
+            const receivedToken = normalizeOptionalText(parseHeaderValue(request?.headers?.["x-api-key"]));
+            if (!receivedToken) {
+                return {
+                    status: 401,
+                    message: "Missing x-api-key header",
+                };
+            }
+            if (!safeTimingCompare(configuredToken, receivedToken)) {
+                return {
+                    status: 401,
+                    message: "Invalid x-api-key",
+                };
+            }
+            const payload = request?.body || {};
+            const identifiers = extractShiprocketWebhookIdentifiers(payload);
+            const merchantTransactionId = await resolveMerchantTransactionIdFromShiprocketRefs({
+                directCandidates: identifiers.directMerchantTransactionCandidates,
+                shipmentIds: identifiers.shipmentIds,
+                shiprocketOrderIds: identifiers.shiprocketOrderIds,
+                channelOrderIds: identifiers.channelOrderIds,
+            });
+            if (!merchantTransactionId) {
+                return {
+                    status: 200,
+                    message: "Shiprocket webhook received but no matching order found",
+                };
+            }
+            const trackingSummary = extractShiprocketTrackingSummary(payload);
+            await query(`UPDATE orders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`, [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]);
+            await query(`UPDATE thirdpartyorders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`, [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]);
+            await applyShipmentLifecycleToOrders(merchantTransactionId, trackingSummary.mappedOrderStatus);
+            return {
+                status: 200,
+                message: "Shiprocket webhook processed successfully",
+                data: {
+                    merchantTransactionId,
+                    shiprocketStatus: trackingSummary.rawStatus,
+                    mappedOrderStatus: trackingSummary.mappedOrderStatus,
+                    shipmentStatusCode: trackingSummary.shipmentStatusCode,
+                    awbCode: trackingSummary.awbCode,
+                },
+            };
+        }
+        catch (error) {
+            console.error("Error processing Shiprocket webhook:", error?.response?.data || error?.message || error);
+            return {
+                status: 500,
+                message: "Error processing Shiprocket webhook",
+            };
+        }
+    };
+    transactionService.syncShiprocketShipmentStatus = async (request) => {
+        try {
+            const merchantTransactionIdFromBody = request?.body?.merchanttransactionId;
+            const payload = request?.body || {};
+            const identifiers = extractShiprocketWebhookIdentifiers(payload);
+            const merchantTransactionId = await resolveMerchantTransactionIdFromShiprocketRefs({
+                directCandidates: [
+                    merchantTransactionIdFromBody,
+                    ...identifiers.directMerchantTransactionCandidates,
+                ],
+                shipmentIds: identifiers.shipmentIds,
+                shiprocketOrderIds: identifiers.shiprocketOrderIds,
+                channelOrderIds: identifiers.channelOrderIds,
+            });
+            if (!merchantTransactionId) {
+                return {
+                    status: 400,
+                    message: "merchantTransactionId or shipment reference is required",
+                };
+            }
+            const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+            if (!context) {
+                return {
+                    status: 404,
+                    message: "No order found for the provided shipment reference",
+                };
+            }
+            const token = await loginShiprocket();
+            const baseUrl = process.env.SHIPROCKET_BASE_URL;
+            if (!token || !baseUrl) {
+                return {
+                    status: 500,
+                    message: "Shiprocket configuration is incomplete",
+                };
+            }
+            const trackingResponse = await axios.get(`${baseUrl}/courier/track`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                params: {
+                    order_id: merchantTransactionId,
+                },
+            });
+            const trackingSummary = extractShiprocketTrackingSummary(trackingResponse.data);
+            await query(`UPDATE orders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`, [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]);
+            await query(`UPDATE thirdpartyorders
+         SET shiprocket_status = COALESCE($1, shiprocket_status),
+             shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+         WHERE merchanttransactionid = $3`, [trackingSummary.rawStatus, trackingSummary.shipmentStatusCode, merchantTransactionId]);
+            await applyShipmentLifecycleToOrders(merchantTransactionId, trackingSummary.mappedOrderStatus);
+            return {
+                status: 200,
+                message: "Shipment status synchronized successfully",
+                data: {
+                    merchantTransactionId,
+                    shiprocketStatus: trackingSummary.rawStatus,
+                    mappedOrderStatus: trackingSummary.mappedOrderStatus,
+                    shipmentStatusCode: trackingSummary.shipmentStatusCode,
+                    awbCode: trackingSummary.awbCode,
+                },
+            };
+        }
+        catch (error) {
+            console.error("Error syncing Shiprocket shipment status:", error?.response?.data || error?.message || error);
+            return {
+                status: 500,
+                message: "Unable to sync Shiprocket shipment status",
+            };
+        }
+    };
+    transactionService.getShiprocketSettings = async () => {
+        try {
+            const settings = await getPersistedShiprocketSettings();
+            return {
+                status: 200,
+                message: "Shiprocket settings fetched successfully",
+                data: settings,
+            };
+        }
+        catch (error) {
+            return {
+                status: 500,
+                message: "Unable to fetch Shiprocket settings",
+                error: error?.message || error,
+            };
+        }
+    };
+    transactionService.updateShiprocketSettings = async (request) => {
+        try {
+            const settings = await upsertShiprocketSettings(request?.body || {});
+            return {
+                status: 200,
+                message: "Shiprocket settings updated successfully",
+                data: settings,
+            };
+        }
+        catch (error) {
+            return {
+                status: 500,
+                message: "Unable to update Shiprocket settings",
+                error: error?.message || error,
+            };
+        }
+    };
+    transactionService.getShiprocketPickupLocations = async () => {
+        try {
+            const result = await listShiprocketPickupLocations();
+            return {
+                status: result.ok ? 200 : 500,
+                message: result.message,
+                data: result.data || [],
+            };
+        }
+        catch (error) {
+            return {
+                status: 500,
+                message: "Unable to fetch Shiprocket pickup locations",
+                error: error?.response?.data || error?.message || error,
+            };
+        }
+    };
+    transactionService.createShiprocketShipment = async (request) => {
+        try {
+            const merchantTransactionId = normalizeOptionalText(request?.body?.merchantTransactionId || request?.body?.merchanttransactionid);
+            if (!merchantTransactionId) {
+                return {
+                    status: 400,
+                    message: "merchantTransactionId is required",
+                };
+            }
+            const context = await getOrderContextByMerchantTransactionId(merchantTransactionId);
+            if (!context) {
+                return {
+                    status: 404,
+                    message: "No order found for the provided merchantTransactionId",
+                };
+            }
+            const transactionRow = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
+            if (!transactionRow) {
+                return {
+                    status: 400,
+                    message: "No successful payment transaction found for this order",
+                };
+            }
+            const createResult = await createShiprocketOrderForTransaction(context, transactionRow);
+            return {
+                status: createResult?.ok ? 200 : 500,
+                message: createResult?.ok
+                    ? "Shiprocket shipment created successfully"
+                    : "Unable to create Shiprocket shipment",
+                data: createResult,
+            };
+        }
+        catch (error) {
+            return {
+                status: 500,
+                message: "Unable to create Shiprocket shipment",
+                error: error?.response?.data || error?.message || error,
+            };
+        }
+    };
+    transactionService.cancelShiprocketShipment = async (request) => {
+        try {
+            const merchantTransactionId = normalizeOptionalText(request?.body?.merchantTransactionId || request?.body?.merchanttransactionid);
+            if (!merchantTransactionId) {
+                return {
+                    status: 400,
+                    message: "merchantTransactionId is required",
+                };
+            }
+            const result = await cancelShiprocketOrderForMerchant(merchantTransactionId);
+            return {
+                status: result?.ok ? 200 : 500,
+                message: result?.ok
+                    ? "Shiprocket cancellation processed"
+                    : "Unable to cancel Shiprocket shipment",
+                data: result,
+            };
+        }
+        catch (error) {
+            return {
+                status: 500,
+                message: "Unable to cancel Shiprocket shipment",
+                error: error?.response?.data || error?.message || error,
+            };
         }
     };
     transactionService.paymentInitializationRazorpayTicket = async (request) => {

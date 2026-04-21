@@ -408,20 +408,17 @@ export const processRentalDamageAssessment = async ({ executor, context, ticketI
       SET
         stockstatus = CASE
           WHEN $1::boolean THEN $2
-          ELSE stockstatus
+          ELSE $12
         END,
         servicestatus = CASE
           WHEN $1::boolean THEN NULL
-          ELSE servicestatus
+          ELSE $13
         END,
         holdreason = CASE
           WHEN $1::boolean THEN $3
-          ELSE holdreason
+          ELSE $14
         END,
-        holdticketid = CASE
-          WHEN $1::boolean THEN $4
-          ELSE holdticketid
-        END,
+        holdticketid = $4,
         rentalassetstatus = CASE
           WHEN $1::boolean THEN $5
           ELSE rentalassetstatus
@@ -439,17 +436,20 @@ export const processRentalDamageAssessment = async ({ executor, context, ticketI
       WHERE id = $11
       RETURNING *
     `, [
-        isNonReturnable,
-        DAMAGED_NON_RETURNABLE_STOCK_STATUS,
-        DAMAGED_NON_RETURNABLE_HOLD_REASON,
-        ticketId,
-        DAMAGED_NON_RETURNABLE_ORDERLINE_ASSET_STATUS,
-        normalizedAssetNumber,
-        agreementId,
-        normalizeText(linkedOrderline.orderlinenumber),
-        normalizedAssessment,
-        damagedAt,
-        stockToAssess.id,
+        isNonReturnable, // $1
+        DAMAGED_NON_RETURNABLE_STOCK_STATUS, // $2  non-returnable: 'Damaged'
+        DAMAGED_NON_RETURNABLE_HOLD_REASON, // $3  non-returnable: 'damaged_non_returnable'
+        ticketId, // $4  holdticketid (always set)
+        DAMAGED_NON_RETURNABLE_ORDERLINE_ASSET_STATUS, // $5  non-returnable: 'damaged_non_returnable'
+        normalizedAssetNumber, // $6
+        agreementId, // $7
+        normalizeText(linkedOrderline.orderlinenumber), // $8
+        normalizedAssessment, // $9
+        damagedAt, // $10
+        stockToAssess.id, // $11
+        SERVICE_HOLD_STOCK_STATUS, // $12 returnable: 'Service Hold'
+        SERVICE_HOLD_SERVICE_STATUS, // $13 returnable: 'service_hold'
+        "damaged_returnable", // $14 returnable: hold reason
     ]);
     const ticketUpdateResult = await executor.query(`
       UPDATE tickets

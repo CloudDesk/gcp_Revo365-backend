@@ -138,17 +138,21 @@ export var userService;
         }
     };
     userService.getLoggedInUsersData = async (request, reply) => {
-        console.log("getLoggedInUsersData", request.params);
+        const useremail = request?.body?.useremail ?? request?.params?.useremail;
+        const userpassword = request?.body?.userpassword ?? request?.params?.userpassword;
+        console.log("getLoggedInUsersData", { useremail });
+        if (!useremail || !userpassword) {
+            return "User Credentials are wrong. Please try again";
+        }
         try {
             const ecomQuery = `SELECT * FROM users WHERE LOWER(useremail) = LOWER($1)`;
-            const ecomResult = await query(ecomQuery, [request.params.useremail]);
+            const ecomResult = await query(ecomQuery, [useremail]);
             if (ecomResult.rows.length > 0) {
-                let validatePassword = await hashValidator(request.params.userpassword, ecomResult.rows[0].userpassword);
+                let validatePassword = await hashValidator(userpassword, ecomResult.rows[0].userpassword);
                 if (validatePassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
-                        useremail: request.params.useremail,
-                        userpassword: request.params.userpassword
+                        useremail
                     };
                     let sessionSaved = await saveSession(sessionId, sessionData);
                     if (sessionSaved) {
@@ -165,9 +169,9 @@ export var userService;
             else {
                 console.log("else");
                 const inventoryQuery = `SELECT * FROM inventoryusers WHERE useremail = $1`;
-                const inventoryResult = await query(inventoryQuery, [request.params.useremail]);
+                const inventoryResult = await query(inventoryQuery, [useremail]);
                 if (inventoryResult.rows.length > 0) {
-                    let validatePassword = await hashValidator(request.params.userpassword, inventoryResult.rows[0].userpassword);
+                    let validatePassword = await hashValidator(userpassword, inventoryResult.rows[0].userpassword);
                     if (validatePassword) {
                         const sessionId = uuidv4();
                         const sessionData = {

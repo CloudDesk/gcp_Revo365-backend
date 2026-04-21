@@ -147,6 +147,56 @@ export var transactionController;
             reply.status(500).send({ message: "Shipment sync failed" });
         }
     };
+    transactionController.getShiprocketSettings = async (request, reply) => {
+        try {
+            const result = await transactionService.getShiprocketSettings();
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getShiprocketSettings Controller", error);
+            reply.status(500).send({ message: "Unable to fetch Shiprocket settings" });
+        }
+    };
+    transactionController.updateShiprocketSettings = async (request, reply) => {
+        try {
+            const result = await transactionService.updateShiprocketSettings(request);
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN updateShiprocketSettings Controller", error);
+            reply.status(500).send({ message: "Unable to update Shiprocket settings" });
+        }
+    };
+    transactionController.getShiprocketPickupLocations = async (request, reply) => {
+        try {
+            const result = await transactionService.getShiprocketPickupLocations();
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getShiprocketPickupLocations Controller", error);
+            reply.status(500).send({ message: "Unable to fetch Shiprocket pickup locations" });
+        }
+    };
+    transactionController.createShiprocketShipment = async (request, reply) => {
+        try {
+            const result = await transactionService.createShiprocketShipment(request);
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN createShiprocketShipment Controller", error);
+            reply.status(500).send({ message: "Unable to create Shiprocket shipment" });
+        }
+    };
+    transactionController.cancelShiprocketShipment = async (request, reply) => {
+        try {
+            const result = await transactionService.cancelShiprocketShipment(request);
+            reply.status(result?.status || 200).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN cancelShiprocketShipment Controller", error);
+            reply.status(500).send({ message: "Unable to cancel Shiprocket shipment" });
+        }
+    };
     transactionController.paymentInitializationRazorpayTicket = async (request, reply) => {
         try {
             let transactionData = await transactionService.paymentInitializationRazorpayTicket(request);

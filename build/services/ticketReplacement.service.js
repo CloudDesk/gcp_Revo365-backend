@@ -4,6 +4,7 @@ import { linkRentalPenaltyInvoice, processRentalDamageAssessment, processRentalL
 import { rentalAgreementService } from "./rentalAgreement.service.js";
 import { processRentalRenewal } from "./rentalRenewal.service.js";
 import { stockRevoService } from "./stockRevo.service.js";
+import { productrevoService } from "./productrevo.service.js";
 const REPAIR_RENTAL_TICKET_TYPE = "repair rental";
 const INITIATED_REPLACEMENT_STATUS = "replacement_requested";
 const OLD_ASSET_RECEIVED_STATUS = "old_asset_received";
@@ -42,6 +43,18 @@ const STOP_RENTAL_FINANCIAL_MODES = new Set([
 const RENEWED_ACTION_STATUS = "renewed";
 const normalizeText = (value) => value == null ? null : String(value).trim();
 const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
+const refreshReplacementQuantityViews = async (pucs) => {
+    const normalizedPucs = Array.from(new Set((pucs || [])
+        .map((value) => normalizeText(value))
+        .filter(Boolean)));
+    if (normalizedPucs.length === 0) {
+        return;
+    }
+    for (const puc of normalizedPucs) {
+        await productrevoService.updateCatalogueQuantities(puc);
+    }
+    await stockRevoService.testinupdateQuantity(normalizedPucs, false);
+};
 const parseJsonValue = (value, fallback) => {
     if (value == null) {
         return fallback;
@@ -620,6 +633,7 @@ export var ticketReplacementService;
         `, [OLD_ASSET_RECEIVED_STATUS, ticketId]);
             await client.query("COMMIT");
             transactionStarted = false;
+            await refreshReplacementQuantityViews([stockUpdateResult.rows[0]?.puc]);
             return {
                 message: "Old asset received successfully.",
                 ticket: updatedTicketResult.rows[0],
@@ -801,6 +815,7 @@ export var ticketReplacementService;
                     : null;
             await client.query("COMMIT");
             transactionStarted = false;
+            await refreshReplacementQuantityViews([updatedStockResult.rows[0]?.puc]);
             let agreementWarning = null;
             const agreementId = agreementSyncResult?.agreement?.id ??
                 (context.linkedorderline.agreementid != null
@@ -1366,6 +1381,7 @@ export var ticketReplacementService;
                     : null;
             await client.query("COMMIT");
             transactionStarted = false;
+            await refreshReplacementQuantityViews([updatedStockResult.rows[0]?.puc]);
             let agreementWarning = null;
             const agreementId = agreementSyncResult?.agreement?.id ??
                 (context.linkedorderline.agreementid != null
@@ -1583,6 +1599,11 @@ export var ticketReplacementService;
             });
             await client.query("COMMIT");
             transactionStarted = false;
+            const returnedStockPuc = returnResult.stock?.puc;
+            if (returnedStockPuc) {
+                await productrevoService.updateCatalogueQuantities(returnedStockPuc);
+                await stockRevoService.testinupdateQuantity([returnedStockPuc], false);
+            }
             return {
                 message: "Rental asset returned successfully.",
                 ticket: returnResult.ticket,
@@ -1849,6 +1870,15 @@ export var ticketReplacementService;
             });
             await client.query("COMMIT");
             transactionStarted = false;
+            const affectedPuc = normalizeText(damageResult.stock?.puc);
+            if (affectedPuc) {
+                try {
+                    await stockRevoService.updateQuantity([affectedPuc], 0, false, true);
+                }
+                catch (refreshError) {
+                    console.error("Rental damaged quantity refresh failed after commit:", refreshError);
+                }
+            }
             return {
                 message: damageassessment === "non_returnable"
                     ? "Rental asset marked as non-returnable damage successfully."

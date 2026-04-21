@@ -72,6 +72,31 @@ export var stockRevoController;
             reply.send(error.message);
         }
     };
+    stockRevoController.markDamagedStockAsRepaired = async (request, reply) => {
+        try {
+            const { id } = request.params;
+            const stockId = Number(id);
+            const result = await stockRevoService.markDamagedStockAsRepaired(stockId, request.session?.id ?? null);
+            if (result?.command === "UPDATE") {
+                const pucArray = result.affectedPucs || Array.from(new Set(result.result.rows.map((row) => row.puc)));
+                await stockRevoService.updateQuantity(pucArray);
+                reply.status(200).send({
+                    message: "Damaged stock marked as repaired and moved to Available.",
+                    stock: result.result.rows[0] ?? null,
+                });
+            }
+            else if (result?.status) {
+                reply.status(result.status).send({ message: result.message });
+            }
+            else {
+                reply.status(404).send({ error: [result] });
+            }
+        }
+        catch (error) {
+            console.error("Error in markDamagedStockAsRepaired", error);
+            reply.send(error.message);
+        }
+    };
     stockRevoController.getEwasteStocksRevo = async (request, reply) => {
         try {
             let getProductsResult = await stockRevoService.getEwasteStocksrevo(request);

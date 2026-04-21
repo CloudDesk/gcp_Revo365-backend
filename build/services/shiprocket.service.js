@@ -1,6 +1,187 @@
 // src/services/shiprocket.service.ts
 import axios from "axios";
 import loginShiprocket from "../shiprocket/shiprocketAuth.js";
+import { query } from "../database/postgres.js";
+import { resolveFulfillmentLocation } from "../config/fulfillment.config.js";
+const normalizeOptionalText = (value) => {
+    if (value === null || value === undefined)
+        return null;
+    const normalized = String(value).trim();
+    return normalized.length > 0 ? normalized : null;
+};
+const toSafeNumber = (value, fallback) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const DEFAULT_SHIPROCKET_SETTINGS = {
+    pickupLocation: resolveFulfillmentLocation(),
+    defaultWeight: 0.5,
+    defaultLength: 10,
+    defaultBreadth: 10,
+    defaultHeight: 10,
+    autoCreateEnabled: true,
+    autoCancelEnabled: true,
+};
+const mapShiprocketSettingsRow = (row) => ({
+    pickupLocation: normalizeOptionalText(row?.pickup_location) ||
+        DEFAULT_SHIPROCKET_SETTINGS.pickupLocation,
+    defaultWeight: toSafeNumber(row?.default_weight, DEFAULT_SHIPROCKET_SETTINGS.defaultWeight),
+    defaultLength: toSafeNumber(row?.default_length, DEFAULT_SHIPROCKET_SETTINGS.defaultLength),
+    defaultBreadth: toSafeNumber(row?.default_breadth, DEFAULT_SHIPROCKET_SETTINGS.defaultBreadth),
+    defaultHeight: toSafeNumber(row?.default_height, DEFAULT_SHIPROCKET_SETTINGS.defaultHeight),
+    autoCreateEnabled: row?.auto_create_enabled !== false,
+    autoCancelEnabled: row?.auto_cancel_enabled !== false,
+});
+export const getShiprocketSettings = async () => {
+    try {
+        const result = await query(`SELECT pickup_location, default_weight, default_length, default_breadth, default_height,
+              auto_create_enabled, auto_cancel_enabled
+       FROM shiprocket_settings
+       WHERE id = 1`, []);
+        return mapShiprocketSettingsRow(result.rows[0] || null);
+    }
+    catch (error) {
+        return { ...DEFAULT_SHIPROCKET_SETTINGS };
+    }
+};
+export const upsertShiprocketSettings = async (settings) => {
+    const current = await getShiprocketSettings();
+    const next = {
+        pickupLocation: normalizeOptionalText(settings?.pickupLocation) ||
+            normalizeOptionalText(settings?.pickup_location) ||
+            current.pickupLocation,
+        defaultWeight: toSafeNumber(settings?.defaultWeight ?? settings?.default_weight, current.defaultWeight),
+        defaultLength: toSafeNumber(settings?.defaultLength ?? settings?.default_length, current.defaultLength),
+        defaultBreadth: toSafeNumber(settings?.defaultBreadth ?? settings?.default_breadth, current.defaultBreadth),
+        defaultHeight: toSafeNumber(settings?.defaultHeight ?? settings?.default_height, current.defaultHeight),
+        autoCreateEnabled: settings?.autoCreateEnabled ??
+            settings?.auto_create_enabled ??
+            current.autoCreateEnabled,
+        autoCancelEnabled: settings?.autoCancelEnabled ??
+            settings?.auto_cancel_enabled ??
+            current.autoCancelEnabled,
+    };
+    const result = await query(`INSERT INTO shiprocket_settings (
+        id, pickup_location, default_weight, default_length, default_breadth, default_height,
+        auto_create_enabled, auto_cancel_enabled, updated_at
+     )
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+        pickup_location = EXCLUDED.pickup_location,
+        default_weight = EXCLUDED.default_weight,
+        default_length = EXCLUDED.default_length,
+        default_breadth = EXCLUDED.default_breadth,
+        default_height = EXCLUDED.default_height,
+        auto_create_enabled = EXCLUDED.auto_create_enabled,
+        auto_cancel_enabled = EXCLUDED.auto_cancel_enabled,
+        updated_at = NOW()
+     RETURNING pickup_location, default_weight, default_length, default_breadth, default_height,
+               auto_create_enabled, auto_cancel_enabled`, [
+        next.pickupLocation,
+        next.defaultWeight,
+        next.defaultLength,
+        next.defaultBreadth,
+        next.defaultHeight,
+        next.autoCreateEnabled,
+        next.autoCancelEnabled,
+    ]);
+    return mapShiprocketSettingsRow(result.rows[0] || null);
+};
+export const listShiprocketPickupLocations = async () => {
+    const token = await loginShiprocket();
+    if (!token) {
+        return {
+            ok: false,
+            message: "Unable to authenticate with Shiprocket",
+            data: [],
+        };
+    }
+    const response = await axios.get(`${process.env.SHIPROCKET_BASE_URL}/settings/company/pickup`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+    const locations = response?.data?.data?.shipping_address || [];
+    return {
+        ok: true,
+        message: "Pickup locations fetched successfully",
+        data: locations,
+    };
+};
+const updateShiprocketStatusForMerchant = async (merchantTransactionId, status, statusCode) => {
+    await query(`UPDATE orders
+     SET shiprocket_status = COALESCE($1, shiprocket_status),
+         shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+     WHERE merchanttransactionid = $3`, [status, statusCode ?? null, merchantTransactionId]);
+    await query(`UPDATE thirdpartyorders
+     SET shiprocket_status = COALESCE($1, shiprocket_status),
+         shiprocket_status_code = COALESCE($2, shiprocket_status_code)
+     WHERE merchanttransactionid = $3`, [status, statusCode ?? null, merchantTransactionId]);
+};
+export const cancelShiprocketOrderForMerchant = async (merchantTransactionId) => {
+    if (!merchantTransactionId) {
+        return { ok: false, reason: "missing_merchant_transaction_id" };
+    }
+    const settings = await getShiprocketSettings();
+    if (!settings.autoCancelEnabled) {
+        return { ok: true, reason: "auto_cancel_disabled" };
+    }
+    const orderLookup = await query(`SELECT merchanttransactionid, shiprocket_order_id, shiprocket_shipment_id, shiprocket_status
+     FROM orders
+     WHERE merchanttransactionid = $1
+     UNION ALL
+     SELECT merchanttransactionid, shiprocket_order_id, shiprocket_shipment_id, shiprocket_status
+     FROM thirdpartyorders
+     WHERE merchanttransactionid = $1
+     LIMIT 1`, [merchantTransactionId]);
+    const row = orderLookup.rows[0];
+    if (!row) {
+        return { ok: false, reason: "merchant_not_found" };
+    }
+    const shiprocketOrderId = row?.shiprocket_order_id;
+    const shiprocketStatus = normalizeOptionalText(row?.shiprocket_status)?.toLowerCase();
+    if (!shiprocketOrderId) {
+        return { ok: true, reason: "no_shiprocket_order" };
+    }
+    if (shiprocketStatus &&
+        ["cancelled", "canceled", "delivered", "shipped", "rto delivered"].includes(shiprocketStatus)) {
+        return { ok: true, reason: "already_terminal", currentStatus: row?.shiprocket_status };
+    }
+    const token = await loginShiprocket();
+    if (!token || !process.env.SHIPROCKET_BASE_URL) {
+        return { ok: false, reason: "shiprocket_configuration_incomplete" };
+    }
+    try {
+        const response = await axios.post(`${process.env.SHIPROCKET_BASE_URL}/orders/cancel`, {
+            ids: [Number(shiprocketOrderId)],
+        }, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+        });
+        const message = normalizeOptionalText(response?.data?.message) || "cancel_requested";
+        await updateShiprocketStatusForMerchant(merchantTransactionId, message, response?.status || null);
+        return {
+            ok: true,
+            reason: "cancel_requested",
+            response: response?.data || null,
+            statusCode: response?.status || null,
+        };
+    }
+    catch (error) {
+        const errorMessage = normalizeOptionalText(error?.response?.data?.message) ||
+            normalizeOptionalText(error?.message) ||
+            "shiprocket_cancel_failed";
+        await updateShiprocketStatusForMerchant(merchantTransactionId, errorMessage, error?.response?.status || null);
+        return {
+            ok: false,
+            reason: "shiprocket_cancel_failed",
+            error: error?.response?.data || error?.message || error,
+            statusCode: error?.response?.status || null,
+        };
+    }
+};
 class ShiprocketShippingService {
     constructor() {
         this.token = null;

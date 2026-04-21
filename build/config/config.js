@@ -14,11 +14,11 @@ const config = {
     REDIRECT_URL_PAYMENT_STATUS: process.env.REDIRECT_URL_PAYMENT_STATUS,
     REDIRECT_URL_SUCCESS: process.env.REDIRECT_URL_SUCCESS,
     REDIRECT_URL_FAILURE: process.env.REDIRECT_URL_FAILURE,
-    GMAIL_SERVICE: process.env.GMAIL_SERVICE,
-    GMAIL_HOST: process.env.GMAIL_HOST,
-    GMAIL_PORT: process.env.GMAIL_PORT,
-    GMAIL_AUTH_USER: process.env.GMAIL_AUTH_USER,
-    GMAIL_AUTH_PASSWORD: process.env.GMAIL_AUTH_PASSWORD,
+    MAIL_SERVICE: process.env.MAIL_SERVICE ?? process.env.GMAIL_SERVICE,
+    MAIL_HOST: process.env.MAIL_HOST ?? process.env.GMAIL_HOST,
+    MAIL_PORT: process.env.MAIL_PORT ?? process.env.GMAIL_PORT,
+    MAIL_AUTH_USER: process.env.MAIL_AUTH_USER ?? process.env.GMAIL_AUTH_USER,
+    MAIL_AUTH_PASSWORD: process.env.MAIL_AUTH_PASSWORD ?? process.env.GMAIL_AUTH_PASSWORD,
     GCP_TASK_URL: process.env.GCP_TASK_URL,
     GCP_PROJECT_ID: process.env.GCP_PROJECT_ID,
     GCP_PROJECT_QUEUE: process.env.GCP_PROJECT_QUEUE,
@@ -37,6 +37,12 @@ const config = {
     SHIPROCKET_BASE_URL: process.env.SHIPROCKET_BASE_URL,
     ENV_GOOGLE_LOCATION_ID: process.env.ENV_GOOGLE_LOCATION_ID,
     ENV_GOOGLE_API_KEY: process.env.ENV_GOOGLE_API_KEY,
+    /**
+     * The Shiprocket-registered pickup location name used for all outbound shipments.
+     * Phase 1: always "head_office".
+     * Phase 2: override per-order from fulfillment_assignments.assigned_location.
+     */
+    FULFILLMENT_DEFAULT_LOCATION: process.env.FULFILLMENT_DEFAULT_LOCATION ?? "head_office",
     // ENV_GOOGLE_CLIENT_ID: process.env.ENV_GOOGLE_CLIENT_ID,
     // ENV_GOOGLE_CLIENT_SECRET: process.env.ENV_GOOGLE_CLIENT_SECRET,
     // ENV_GOOGLE_REDIRECT_URI: process.env.ENV_GOOGLE_REDIRECT_URI,
@@ -54,11 +60,11 @@ export const { PROTOCOL } = config;
 export const { REDIRECT_URL_PAYMENT_STATUS } = config;
 export const { REDIRECT_URL_SUCCESS } = config;
 export const { REDIRECT_URL_FAILURE } = config;
-export const { GMAIL_SERVICE } = config;
-export const { GMAIL_HOST } = config;
-export const { GMAIL_PORT } = config;
-export const { GMAIL_AUTH_USER } = config;
-export const { GMAIL_AUTH_PASSWORD } = config;
+export const { MAIL_SERVICE } = config;
+export const { MAIL_HOST } = config;
+export const { MAIL_PORT } = config;
+export const { MAIL_AUTH_USER } = config;
+export const { MAIL_AUTH_PASSWORD } = config;
 export const { GCP_TASK_URL } = config;
 export const { GCP_PROJECT_ID } = config;
 export const { GCP_PROJECT_QUEUE } = config;
@@ -77,6 +83,7 @@ export const { SHIPROCKET_PASSWORD } = config;
 export const { SHIPROCKET_BASE_URL } = config;
 export const { ENV_GOOGLE_LOCATION_ID } = config;
 export const { ENV_GOOGLE_API_KEY } = config;
+export const { FULFILLMENT_DEFAULT_LOCATION } = config;
 // export const { ENV_GOOGLE_CLIENT_ID } = config
 // export const { ENV_GOOGLE_CLIENT_SECRET } = config  
 // export const { ENV_GOOGLE_REDIRECT_URI } = config
