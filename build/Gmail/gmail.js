@@ -65,7 +65,7 @@ export const verifyMailTransport = async () => {
 // Returns a Promise that resolves only after Gmail confirms delivery (or throws).
 export const sendTransactionalMail = async (payload) => {
     const mailOptions = {
-        from: `"Revo" <${MAIL_AUTH_USER}>`,
+        from: `"Teqit" <${MAIL_AUTH_USER}>`,
         to: payload.to,
         cc: payload.cc,
         subject: payload.subject,
