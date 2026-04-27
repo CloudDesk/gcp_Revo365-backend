@@ -152,6 +152,7 @@ export var userService;
                 if (validatePassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
+                        id: ecomResult.rows[0]?.id,
                         useremail
                     };
                     let sessionSaved = await saveSession(sessionId, sessionData);

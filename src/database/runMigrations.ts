@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pool from './postgres.js';
@@ -12,7 +12,13 @@ const __dirname  = dirname(__filename);
  * Called once from index.ts onReady hook.
  */
 export async function runMigrations(): Promise<void> {
-  const migrationDir = join(__dirname, 'migrations');
+  const candidateDirectories = [
+    join(__dirname, 'migrations'),
+    join(__dirname, '..', '..', 'src', 'database', 'migrations'),
+  ];
+  const migrationDir =
+    candidateDirectories.find((directory) => existsSync(directory)) ??
+    candidateDirectories[0];
   let migrationFiles: string[] = [];
 
   try {

@@ -249,6 +249,12 @@ export const ticketsSchema = {
                 type: "Requested Renewal Date should be an integer"
             }
         },
+        requestedstopdate: {
+            type: ['integer', 'null'],
+            errorMessage: {
+                type: "Requested Stop Date should be an integer"
+            }
+        },
     },
     required: [
         // 'tickettype'
