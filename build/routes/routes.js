@@ -192,6 +192,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/inventoryusers/tickets', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/whatsapp/inventoryusers/tickets', InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
+    fastify.post('/inventoryusers/login', InventoryuserController.getLoggedInInventoryUsersData);
     fastify.post('/inventoryusers', InventoryuserController.upsertInventoryUser);
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);

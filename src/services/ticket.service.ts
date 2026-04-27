@@ -293,6 +293,7 @@ const TICKET_BIGINT_FIELDS = new Set([
   "assigneddate",
   "productdelivereddate",
   "requestedrenewaldate",
+  "requestedstopdate",
   "approvedrenewaldate",
   "receivedassetdate",
   "resolvedassetdate",

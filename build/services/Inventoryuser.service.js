@@ -103,16 +103,21 @@ export var userInventoryService;
         }
     };
     userInventoryService.getLoggedInInventoryUsersData = async (request, reply) => {
+        const useremail = request?.body?.useremail ?? request?.params?.useremail;
+        const userpassword = request?.body?.userpassword ?? request?.params?.userpassword;
+        if (!useremail || !userpassword) {
+            return "user Credentials are wrong please try again";
+        }
         try {
-            const queryString = `SELECT * FROM Inventoryusers where useremail = '${request.params.useremail}'`;
-            const result = await query(queryString, []);
+            const queryString = `SELECT * FROM Inventoryusers WHERE LOWER(useremail) = LOWER($1)`;
+            const result = await query(queryString, [useremail]);
             if (result && result.rows.length > 0) {
-                let validatepassword = await hashValidator(request.params.userpassword, result.rows[0].userpassword);
+                let validatepassword = await hashValidator(userpassword, result.rows[0].userpassword);
                 if (validatepassword) {
                     const sessionId = uuidv4();
                     const sessionData = {
                         id: result.rows[0].id, // ← needed for hiddenby, adminreplyby etc.
-                        useremail: request.params.useremail,
+                        useremail,
                         role: result.rows[0].role,
                     };
                     let sessionsaved = await saveSession(sessionId, sessionData);
