@@ -9,12 +9,10 @@ import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
 import fastifyRawBody from "fastify-raw-body";
-import { verifyMailTransport } from "./Gmail/gmail.js";
 
 import fs from "fs";
 
 import { connectGetSessionredis } from "./database/redis.session.js";
-import { runMigrations } from "./database/runMigrations.js";
 
 interface CustomRequest extends FastifyRequest {
   startTime?: [number, number]; 
@@ -104,10 +102,6 @@ fastify.addHook("onReady", async () => {
   try {
     await checkDatabaseConnection();
     await connectGetSessionredis();
-    await runMigrations();
-    await verifyMailTransport();
-    // done()
-    // console.log(fastify.isServerReady, 'Loging value is');
   } catch (error) {
     console.error("Failed to connect to the database:", error);
     return error;
