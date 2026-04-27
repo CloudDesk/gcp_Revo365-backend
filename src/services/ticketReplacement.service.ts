@@ -25,6 +25,9 @@ const ALLOWED_REPLACEMENT_TYPES = new Set([
 const REJECTED_REPLACEMENT_STATUS = "replacement_rejected";
 const COMPLETED_REPLACEMENT_STATUS = "replacement_completed";
 const RETURNED_ACTION_STATUS = "returned";
+const STOP_REQUESTED_ACTION_STATUS = "stop_requested";
+const STOPPED_ACTION_STATUS = "stopped";
+const STOP_RENTAL_ACTION_TYPE = "stop_rental";
 const FINAL_REPLACEMENT_STATUSES = new Set([
   COMPLETED_REPLACEMENT_STATUS,
   REJECTED_REPLACEMENT_STATUS,
@@ -93,6 +96,15 @@ const toPositiveInteger = (value: any) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error("A valid numeric id is required.");
+  }
+  return Math.trunc(parsed);
+};
+
+const toOptionalPositiveBigInt = (value: any) => {
+  if (value == null) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("A valid non-negative effectivefrom is required.");
   }
   return Math.trunc(parsed);
 };
@@ -454,6 +466,72 @@ const getActiveReplacementRecord = async (
   return result.rows[0] ?? null;
 };
 
+const isStopRentalTicket = (context: any) =>
+  normalizeComparableText(context?.ticket?.rentalactiontype) ===
+  STOP_RENTAL_ACTION_TYPE;
+
+const createStopRentalHistoryRecord = async (
+  executor: any,
+  context: any,
+  ticketId: number,
+  oldassetnumber: string,
+  remarks: string | null,
+  createdBy: any
+) => {
+  const historyInsertResult = await executor.query(
+    `
+      INSERT INTO rental_replacement_history (
+        ticketid,
+        ticketnumber,
+        sourceorderlineid,
+        uniqueorderid,
+        replacementstatus,
+        effectivefrom,
+        oldassetnumber,
+        oldproductid,
+        monthsalreadybilled,
+        remainingmonths,
+        revisedremainingmonths,
+        remarks,
+        createdby,
+        agreementid,
+        customerid,
+        assetnumber,
+        actiontype,
+        actionstatus
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12, $13,
+        $14, $15, $16, $17, $18
+      )
+      RETURNING *
+    `,
+    [
+      ticketId,
+      context.ticket.ticketnumber,
+      context.linkedorderline.id,
+      context.linkedorderline.uniqueorderid,
+      INITIATED_REPLACEMENT_STATUS,
+      toOptionalPositiveBigInt(context.ticket.requestedstopdate),
+      oldassetnumber,
+      context.linkedorderline.productid,
+      context.monthsalreadybilled,
+      context.remainingmonths,
+      context.remainingmonths,
+      remarks,
+      createdBy,
+      context.linkedorderline.agreementid ?? context.ticket.agreementid ?? null,
+      context.linkedorderline.userid ?? context.ticket.userid ?? null,
+      context.linkedorderline.assetnumber ?? context.ticket.assetnumber ?? oldassetnumber,
+      STOP_RENTAL_ACTION_TYPE,
+      STOP_REQUESTED_ACTION_STATUS,
+    ]
+  );
+
+  return historyInsertResult.rows[0];
+};
+
 const getReplacementCandidateStock = async (
   assetOrRfid: string,
   expectedProductId?: number | null
@@ -522,6 +600,7 @@ export module ticketReplacementService {
     try {
       const ticketId = toPositiveInteger(request.params.id);
       const context = await buildReplacementContext(ticketId);
+      const isStopRentalRequest = isStopRentalTicket(context);
       return context.replacementhistory;
     } catch (error) {
       console.error(
@@ -550,6 +629,7 @@ export module ticketReplacementService {
       }
 
       const context = await buildReplacementContext(ticketId);
+      const isStopRentalRequest = isStopRentalTicket(context);
 
       if (!context.linkedorderline) {
         throw new Error(
@@ -682,6 +762,7 @@ export module ticketReplacementService {
       }
 
       const context = await buildReplacementContext(ticketId);
+      const isStopRentalRequest = isStopRentalTicket(context);
 
       if (!context.linkedorderline) {
         throw new Error(
@@ -695,34 +776,37 @@ export module ticketReplacementService {
         ticketId
       );
 
-      if (!activeReplacement) {
+      if (!activeReplacement && !isStopRentalRequest) {
         throw new Error(
           "Initiate rental replacement before receiving the old asset."
         );
       }
 
       const replacementStatus = normalizeComparableText(
-        activeReplacement.replacementstatus
+        activeReplacement?.replacementstatus
       );
 
-      if (FINAL_REPLACEMENT_STATUSES.has(replacementStatus)) {
+      if (activeReplacement && FINAL_REPLACEMENT_STATUSES.has(replacementStatus)) {
         throw new Error(
           "This replacement flow is already closed and cannot receive the old asset."
         );
       }
 
-      if (replacementStatus === OLD_ASSET_RECEIVED_STATUS) {
+      if (activeReplacement && replacementStatus === OLD_ASSET_RECEIVED_STATUS) {
         throw new Error("Old asset has already been received for this ticket.");
       }
 
-      if (replacementStatus !== INITIATED_REPLACEMENT_STATUS) {
+      if (
+        activeReplacement &&
+        replacementStatus !== INITIATED_REPLACEMENT_STATUS
+      ) {
         throw new Error(
           "Old asset can be received only after replacement initiation and before further replacement actions."
         );
       }
 
       const expectedOldAssetNumber = normalizeText(
-        activeReplacement.oldassetnumber ??
+        activeReplacement?.oldassetnumber ??
           context.linkedorderline.assetnumber ??
           context.ticket.assetnumber
       );
@@ -793,6 +877,19 @@ export module ticketReplacementService {
       await client.query("BEGIN");
       transactionStarted = true;
 
+      let ensuredActiveReplacement = activeReplacement;
+
+      if (!ensuredActiveReplacement) {
+        ensuredActiveReplacement = await createStopRentalHistoryRecord(
+          client,
+          context,
+          ticketId,
+          oldassetnumber,
+          remarks,
+          request.session?.id ?? null
+        );
+      }
+
       const stockUpdateResult = await client.query(
         `
           UPDATE stock_revo
@@ -820,6 +917,7 @@ export module ticketReplacementService {
           UPDATE rental_replacement_history
           SET
             replacementstatus = $1,
+            actionstatus = $1,
             oldassetnumber = $2,
             remarks = COALESCE($3, remarks)
           WHERE id = $4
@@ -829,18 +927,29 @@ export module ticketReplacementService {
           OLD_ASSET_RECEIVED_STATUS,
           oldassetnumber,
           remarks,
-          activeReplacement.id,
+          ensuredActiveReplacement.id,
         ]
       );
 
       const updatedTicketResult = await client.query(
         `
           UPDATE tickets
-          SET replacementstatus = $1
-          WHERE id = $2
+          SET
+            linkedorderlineid = $1,
+            activereplacementid = $2,
+            replacementstatus = $3,
+            rentalactionstatus = $3,
+            receivedassetdate = $4
+          WHERE id = $5
           RETURNING *
         `,
-        [OLD_ASSET_RECEIVED_STATUS, ticketId]
+        [
+          context.linkedorderline.id,
+          ensuredActiveReplacement.id,
+          OLD_ASSET_RECEIVED_STATUS,
+          toEpochSeconds(new Date()),
+          ticketId,
+        ]
       );
 
       await client.query("COMMIT");
@@ -1185,15 +1294,6 @@ export module ticketReplacementService {
   const COMMERCIAL_REPLACEMENT_CLOSE_REASON = "commercial_replacement";
 
   const BILLING_MODES = new Set(["prorated", "next_cycle"]);
-
-  const toOptionalPositiveBigInt = (value: any) => {
-    if (value == null) return null;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      throw new Error("A valid non-negative effectivefrom is required.");
-    }
-    return Math.trunc(parsed);
-  };
 
   const buildNewOrderLineNumber = (baseOrderLineNumber: any) => {
     const base = normalizeText(baseOrderLineNumber) ?? "";
@@ -2784,7 +2884,10 @@ export module ticketReplacementService {
         throw new Error("No active billing line is available to stop for this ticket.");
       }
 
-      const stopEpoch = effectivefrom ?? toEpochSeconds(new Date());
+      const stopEpoch =
+        effectivefrom ??
+        toOptionalPositiveBigInt(context.ticket.requestedstopdate) ??
+        toEpochSeconds(new Date());
 
       await client.query("BEGIN");
       transactionStarted = true;
@@ -2799,15 +2902,17 @@ export module ticketReplacementService {
           UPDATE rental_replacement_history
           SET
             replacementstatus = $1,
+            actionstatus = $2,
             stoprental = TRUE,
-            stoprentalfinancialmode = $2,
-            effectivefrom = COALESCE($3, effectivefrom),
-            remarks = COALESCE($4, remarks)
-          WHERE id = $5
+            stoprentalfinancialmode = $3,
+            effectivefrom = COALESCE($4, effectivefrom),
+            remarks = COALESCE($5, remarks)
+          WHERE id = $6
           RETURNING *
         `,
         [
           COMPLETED_REPLACEMENT_STATUS,
+          STOPPED_ACTION_STATUS,
           stoprentalfinancialmode,
           stopEpoch,
           remarks,
@@ -2821,13 +2926,15 @@ export module ticketReplacementService {
           SET
             stoprental = TRUE,
             replacementstatus = $1,
-            ticketstatus = $2,
-            closeddate = $3
-          WHERE id = $4
+            rentalactionstatus = $2,
+            ticketstatus = $3,
+            closeddate = $4
+          WHERE id = $5
           RETURNING *
         `,
         [
           COMPLETED_REPLACEMENT_STATUS,
+          STOPPED_ACTION_STATUS,
           RESOLVED_CLOSED_TICKET_STATUS,
           stopEpoch,
           ticketId,
