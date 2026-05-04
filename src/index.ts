@@ -113,6 +113,9 @@ fastify.listen({ port: PORT || 5600,host:"0.0.0.0"
   try {
     if (err) {
       console.error(err);
+            console.error(err);
+
+
     }
     if (address) {
       console.log("Successfully Connected", address);
