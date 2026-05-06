@@ -172,6 +172,28 @@ export module recordCountService {
       const keys = Object.keys(queryParams);
       const values = Object.values(queryParams);
       console.log(objectName, "Object Name");
+
+      const targetObj = objectName.toLowerCase().trim();
+      const getCountQuery = async (queryStr: string, params: any[]) => {
+        console.log(queryStr, "Count query string");
+        const result: QueryResult = await query(queryStr, params);
+        return result.rows[0].count;
+      };
+
+      // 🚨 Handle KUBB Tickets search specifically
+      if (targetObj === "kubb_tickets") {
+        const { search, searchTerm } = request.query;
+        const finalSearch = search || searchTerm || "";
+        if (finalSearch) {
+          return await getCountQuery(
+            `select count(*) from kubb_tickets WHERE name ILIKE $1 OR email ILIKE $1 OR phone::text ILIKE $1`,
+            [`%${finalSearch}%`]
+          );
+        }
+        // If no search, return total count for KUBB immediately
+        return await getCountQuery(`select count(*) from kubb_tickets`, []);
+      }
+
       let whereClause = "";
       let globalCount = false;
       let archieveCount = false;
@@ -183,6 +205,11 @@ export module recordCountService {
       const whereClauses = [];
 
       keys.forEach((key, index) => {
+        // 🚨 Skip KUBB search params specifically to prevent column errors
+        if (targetObj === "kubb_tickets" && (key.toLowerCase() === "search" || key.toLowerCase() === "searchterm")) {
+          return;
+        }
+
         const paramValues: any = Array.isArray(values[index])
           ? values[index]
           : [values[index]];
@@ -208,6 +235,8 @@ export module recordCountService {
             "recyclebin",
             "productecom",
             "ewaste",
+            "search",
+            "searchTerm"
           ].includes(key)
         ) {
           const normalClauses = [];
@@ -248,11 +277,6 @@ export module recordCountService {
       whereClause = whereClauses.length > 0 ? whereClauses.join(" AND ") : "";
       console.log(objectName, "object Name is");
       console.log(objectName.toLowerCase(), "object name is ");
-      const getCountQuery = async (queryStr: string, params: any[]) => {
-        console.log(queryStr, "Count query string");
-        const result: QueryResult = await query(queryStr, params);
-        return result.rows[0].count;
-      };
       console.log(whereClause, "where clause is ~");
       if (
         whereClause &&
@@ -392,6 +416,7 @@ export module recordCountService {
         cart: `select count(*) from ${objectName}`,
         orders: `select count(*) from ${objectName}`,
         stock_Revo: `select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
+        kubb_tickets: `select count(*) from ${objectName}`,
       };
 
       if (productecom && objectName === "product_Revo") {

@@ -66,6 +66,7 @@ import { ticketReplacementController } from "../controller/ticketReplacement.con
 import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema, generateRentalLossDeclarationSchema, finalizeRentalLossDeclarationSchema } from "../schemas/ticketReplacement.schema.js";
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
+import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -415,6 +416,12 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
 
+    // KUBB Tickets (New)
+    fastify.post('/kubb_tickets', kubbTicketsController.createTicket);
+    fastify.get('/kubb_tickets/:pageNumber/:recordCount', { preHandler: [getSession] }, kubbTicketsController.getAllTickets);
+    fastify.get('/kubb_tickets/single/:id', { preHandler: [getSession] }, kubbTicketsController.getSingleTicket);
+    fastify.post('/kubb_tickets/update/:id', { preHandler: [getSession] }, kubbTicketsController.updateTicket);
+
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
 
@@ -546,24 +553,24 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // ─────────────────────────────────────────────────────────────────────
 
     // Customer-facing — open reads
-    fastify.get('/products/:productId/reviews',       ratingController.getReviewsForProduct);
+    fastify.get('/products/:productId/reviews', ratingController.getReviewsForProduct);
     fastify.get('/products/:productId/reviews/stats', ratingController.getReviewStats);
 
     // Customer-facing — session required
-    fastify.post(  '/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createReview);
-    fastify.put(   '/reviews/:reviewId',           { preHandler: [getSession] }, ratingController.updateReview);
-    fastify.delete('/reviews/:reviewId',           { preHandler: [getSession] }, ratingController.deleteReviewCustomer);
-    fastify.post(  '/reviews/:reviewId/report',    { preHandler: [getSession] }, ratingController.reportReview);
-    fastify.post(  '/reviews/:reviewId/helpful',   { preHandler: [getSession] }, ratingController.markHelpful);
+    fastify.post('/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createReview);
+    fastify.put('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.updateReview);
+    fastify.delete('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewCustomer);
+    fastify.post('/reviews/:reviewId/report', { preHandler: [getSession] }, ratingController.reportReview);
+    fastify.post('/reviews/:reviewId/helpful', { preHandler: [getSession] }, ratingController.markHelpful);
 
     // Admin-facing — session required
-    fastify.get(   '/admin/reviews',                             { preHandler: [getSession] }, ratingController.getAdminReviews);
-    fastify.post(  '/admin/products/:productId/reviews',         { preHandler: [getSession] }, ratingController.createAdminReview);
-    fastify.post(  '/admin/products/:productId/reviews/bulk',    { preHandler: [getSession] }, ratingController.bulkCreateAdminReviews);
-    fastify.patch( '/admin/reviews/:reviewId/hide',              { preHandler: [getSession] }, ratingController.hideReview);
-    fastify.patch( '/admin/reviews/:reviewId/unhide',            { preHandler: [getSession] }, ratingController.unhideReview);
-    fastify.post(  '/admin/reviews/:reviewId/reply',             { preHandler: [getSession] }, ratingController.addAdminReply);
-    fastify.delete('/admin/reviews/:reviewId',                   { preHandler: [getSession] }, ratingController.deleteReviewAdmin);
+    fastify.get('/admin/reviews', { preHandler: [getSession] }, ratingController.getAdminReviews);
+    fastify.post('/admin/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createAdminReview);
+    fastify.post('/admin/products/:productId/reviews/bulk', { preHandler: [getSession] }, ratingController.bulkCreateAdminReviews);
+    fastify.patch('/admin/reviews/:reviewId/hide', { preHandler: [getSession] }, ratingController.hideReview);
+    fastify.patch('/admin/reviews/:reviewId/unhide', { preHandler: [getSession] }, ratingController.unhideReview);
+    fastify.post('/admin/reviews/:reviewId/reply', { preHandler: [getSession] }, ratingController.addAdminReply);
+    fastify.delete('/admin/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewAdmin);
 }
 
 export default Revo365Routes
