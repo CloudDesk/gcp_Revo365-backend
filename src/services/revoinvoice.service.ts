@@ -93,7 +93,7 @@ export module revoinvoiceservice {
         try {
             let invoicefor = invoicedata[0].invoicefor
             let template = ''
-            if (invoicefor === 'product' || invoicefor === 'penalty') {
+            if (invoicefor === 'product' || invoicefor === 'penalty' || invoicefor === 'rental') {
                 template = "invoice/revoinvoiceproduct.docx";
 
             } else if (invoicefor === 'service') {
@@ -103,6 +103,9 @@ export module revoinvoiceservice {
                 return 'Without Invoice Type you cannot create Invoice'
             }
             let result = await GenerateDocx(request, invoicedata, template);
+            if (typeof result === 'string') {
+                return result;
+            }
             result.invoiceUrl = result.fileurl;
             delete result.fileurl;
             let data = {

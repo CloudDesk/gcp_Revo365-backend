@@ -92,22 +92,17 @@ const convertToPdf = async (docxFilePath, pdfFilePath, id) => {
     let fileurl: String;
     const command = `soffice --headless --convert-to pdf "${docxFilePath}" --outdir "${uploadsDir}"`;
     const { stdout, stderr } = await execAsync(command);
-    // console.log("PDF Generated Successfully", stdout);
+    if (stderr) {
+      console.log("Soffice Stderr (Warnings/Errors):", stderr);
+    }
     console.log(pdfFilePath, " PDF FILE PATH ");
     var filename = pdfFilePath.replace(/^.*[\\/]/, "");
-    console.log(filename, "FILE NAME IS");
-    // fileurl = returnResult.protocol + "s://" + returnResult.headers.host + '/' + filename
     console.log(PROTOCOL, 'PROTOCOL IS DATA');
     fileurl = PROTOCOL + "://" + returnResult.headers.host + "/" + filename;
-    if (stderr) {
-      console.log("Stderr", stderr);
-      return stderr;
-    }
-    // console.log(fileurl,'-- file URL');
-    console.log(id, fileurl, "eee");
     return { fileurl, id };
   } catch (error: any) {
-    console.error("Error :", error);
+    console.error("Error in convertToPdf:", error);
+    throw error;
   }
 };
 

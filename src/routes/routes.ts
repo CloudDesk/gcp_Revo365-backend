@@ -485,6 +485,12 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
+    fastify.post('/generate-document/productinvoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
+    fastify.post('/generate-document/serviceinvoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
+    fastify.post('/generate-document/productinvoice-instore', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
+    fastify.post('/generate-document/po', { preHandler: [getSession] }, generatePurchaseOrderController.purchaseOrderData);
+    fastify.post('/generate-document/pr', { preHandler: [getSession, validateRequestBody(generatePRSchema)] }, generatePRController.generatepr);
+    fastify.post('/generate-document/costestimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);
     //revo-invoice
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);
     fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
