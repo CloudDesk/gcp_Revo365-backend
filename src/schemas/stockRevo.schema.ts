@@ -157,8 +157,12 @@ export const stockrevoSchema = {
         },
         rfid:{
             type: ['string', 'null'],
+            minLength: 10,
+            maxLength: 10,
             errorMessage: {
-                type: 'RFID should be String'
+                type: 'RFID should be String',
+                minLength: 'RFID should contain exactly 10 characters',
+                maxLength: 'RFID should contain exactly 10 characters'
             }
         },
         location:{
