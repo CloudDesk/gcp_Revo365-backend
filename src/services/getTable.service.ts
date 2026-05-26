@@ -25,7 +25,8 @@ export module getTables {
                 transaction: "Transaction",
                 quotes: "Quotes",
                 permissions: "Permissions",
-                kubb_tickets: "KUBB Enquires"
+                kubb_tickets: "KUBB Enquires",
+                buyback_enquiries: "Buyback Enquiries"
             };
             result.rows.unshift({ table: 'home' })
             result = result.rows

@@ -194,6 +194,24 @@ export module recordCountService {
         return await getCountQuery(`select count(*) from kubb_tickets`, []);
       }
 
+      if (targetObj === "buyback_enquiries") {
+        const { search, searchTerm } = request.query;
+        const finalSearch = search || searchTerm || "";
+        if (finalSearch) {
+          return await getCountQuery(
+            `select count(*) from buyback_enquiries
+             WHERE name ILIKE $1
+                OR email ILIKE $1
+                OR phone ILIKE $1
+                OR device_type ILIKE $1
+                OR device_model ILIKE $1
+                OR status ILIKE $1`,
+            [`%${finalSearch}%`]
+          );
+        }
+        return await getCountQuery(`select count(*) from buyback_enquiries`, []);
+      }
+
       let whereClause = "";
       let globalCount = false;
       let archieveCount = false;
@@ -205,8 +223,11 @@ export module recordCountService {
       const whereClauses = [];
 
       keys.forEach((key, index) => {
-        // 🚨 Skip KUBB search params specifically to prevent column errors
-        if (targetObj === "kubb_tickets" && (key.toLowerCase() === "search" || key.toLowerCase() === "searchterm")) {
+        // Skip custom search params that are handled above.
+        if (
+          (targetObj === "kubb_tickets" || targetObj === "buyback_enquiries") &&
+          (key.toLowerCase() === "search" || key.toLowerCase() === "searchterm")
+        ) {
           return;
         }
 
@@ -417,6 +438,7 @@ export module recordCountService {
         orders: `select count(*) from ${objectName}`,
         stock_Revo: `select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
         kubb_tickets: `select count(*) from ${objectName}`,
+        buyback_enquiries: `select count(*) from ${objectName}`,
       };
 
       if (productecom && objectName === "product_Revo") {

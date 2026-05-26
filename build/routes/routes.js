@@ -50,6 +50,7 @@ import { googlereviewController } from "../controller/googlereview.controller.js
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { buybackEnquiriesController } from "../controller/buybackEnquiries.controller.js";
 import { orderReturnsController } from "../controller/orderReturns.controller.js";
 import { refundsController } from "../controller/refunds.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
@@ -57,6 +58,7 @@ import { ticketReplacementController } from "../controller/ticketReplacement.con
 import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema, generateRentalLossDeclarationSchema, finalizeRentalLossDeclarationSchema } from "../schemas/ticketReplacement.schema.js";
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
+import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
         const taskSecretHeader = request.headers["x-task-secret"];
@@ -296,6 +298,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/enquiry-individual', enquiryController.enquiryIndividual);
     // enquiry export — downloads Excel with Corporate + Individual sheets (session-protected)
     fastify.get('/enquiry-export', { preHandler: [getSession] }, enquiryExportController.downloadEnquiryExcel);
+    // buyback enquiries (public create, protected admin views)
+    fastify.post('/buyback-enquiries', buybackEnquiriesController.createEnquiry);
+    fastify.get('/buyback-enquiries/:pageNumber/:recordCount', { preHandler: [getSession] }, buybackEnquiriesController.getAllEnquiries);
+    fastify.get('/buyback-enquiries/single/:id', { preHandler: [getSession] }, buybackEnquiriesController.getSingleEnquiry);
+    fastify.post('/buyback-enquiries/update/:id', { preHandler: [getSession] }, buybackEnquiriesController.updateEnquiry);
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
@@ -349,6 +356,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
     fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
+    // KUBB Tickets (New)
+    fastify.post('/kubb_tickets', kubbTicketsController.createTicket);
+    fastify.get('/kubb_tickets/:pageNumber/:recordCount', { preHandler: [getSession] }, kubbTicketsController.getAllTickets);
+    fastify.get('/kubb_tickets/single/:id', { preHandler: [getSession] }, kubbTicketsController.getSingleTicket);
+    fastify.post('/kubb_tickets/update/:id', { preHandler: [getSession] }, kubbTicketsController.updateTicket);
     // Merchant Transaction Id - 
     // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
     fastify.post('/delete/merchantid', { preHandler: [taskOrSessionAuth] }, ordersController.deleteFailedOrder);

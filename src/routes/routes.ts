@@ -59,6 +59,7 @@ import { googlereviewController } from "../controller/googlereview.controller.js
 import { blogscontroller } from "../controller/blogs.controller.js";
 import { enquiryController } from "../controller/enquiry.controller.js";
 import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { buybackEnquiriesController } from "../controller/buybackEnquiries.controller.js";
 import { orderReturnsController } from "../controller/orderReturns.controller.js";
 import { refundsController } from "../controller/refunds.controller.js";
 import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
@@ -353,6 +354,12 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     // enquiry export — downloads Excel with Corporate + Individual sheets (session-protected)
     fastify.get('/enquiry-export', { preHandler: [getSession] }, enquiryExportController.downloadEnquiryExcel);
 
+    // buyback enquiries (public create, protected admin views)
+    fastify.post('/buyback-enquiries', buybackEnquiriesController.createEnquiry);
+    fastify.get('/buyback-enquiries/:pageNumber/:recordCount', { preHandler: [getSession] }, buybackEnquiriesController.getAllEnquiries);
+    fastify.get('/buyback-enquiries/single/:id', { preHandler: [getSession] }, buybackEnquiriesController.getSingleEnquiry);
+    fastify.post('/buyback-enquiries/update/:id', { preHandler: [getSession] }, buybackEnquiriesController.updateEnquiry);
+
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
@@ -574,5 +581,4 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 }
 
 export default Revo365Routes
-
 

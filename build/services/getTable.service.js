@@ -22,7 +22,9 @@ export var getTables;
                 purchaserequest: "Purchase Request",
                 transaction: "Transaction",
                 quotes: "Quotes",
-                permissions: "Permissions"
+                permissions: "Permissions",
+                kubb_tickets: "KUBB Enquires",
+                buyback_enquiries: "Buyback Enquiries"
             };
             result.rows.unshift({ table: 'home' });
             result = result.rows

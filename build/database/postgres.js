@@ -65,8 +65,8 @@ pool.on("error", (err) => {
 //     }
 //   }
 // };
-export const query = async (stmt, options) => {
-    if (Object.keys(options).length > 0 || options.length > 0) {
+export const query = async (stmt, options = []) => {
+    if (options && (Object.keys(options).length > 0 || options.length > 0)) {
         let res = await pool.query(stmt, options);
         return res;
     }
