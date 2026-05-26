@@ -27,7 +27,20 @@ export module userService {
         const paramValues: any = Array.isArray(values[index])
           ? values[index]
           : [values[index]];
-        if (key === "displaysize" || key === "price") {
+        if (key === "search" || key === "searchTerm") {
+          const searchValue = String(paramValues[0] ?? "").trim();
+          if (searchValue) {
+            whereClauses.push(`(
+              firstname ILIKE $${parameterIndex}
+              OR lastname ILIKE $${parameterIndex}
+              OR CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, '')) ILIKE $${parameterIndex}
+              OR useremail ILIKE $${parameterIndex}
+              OR usermobilenumber::text ILIKE $${parameterIndex}
+            )`);
+            queryParams.push(`%${searchValue}%`);
+            parameterIndex++;
+          }
+        } else if (key === "displaysize" || key === "price") {
           const rangeClauses = paramValues.map((range) => {
             const [lowerBound, upperBound] = range.split("-");
             queryParams.push(lowerBound, upperBound);

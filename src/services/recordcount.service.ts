@@ -212,6 +212,22 @@ export module recordCountService {
         return await getCountQuery(`select count(*) from buyback_enquiries`, []);
       }
 
+      if (targetObj === "users") {
+        const { search, searchTerm } = request.query;
+        const finalSearch = String(search || searchTerm || "").trim();
+        if (finalSearch) {
+          return await getCountQuery(
+            `select count(*) from users
+             WHERE firstname ILIKE $1
+                OR lastname ILIKE $1
+                OR CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, '')) ILIKE $1
+                OR useremail ILIKE $1
+                OR usermobilenumber::text ILIKE $1`,
+            [`%${finalSearch}%`]
+          );
+        }
+      }
+
       let whereClause = "";
       let globalCount = false;
       let archieveCount = false;

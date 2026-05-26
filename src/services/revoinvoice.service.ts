@@ -33,6 +33,131 @@ const fireInvoiceReadyEmail = async (ticketnumber: string, invoiceurl: string) =
     }
 };
 
+const normalizeText = (value: any) =>
+    String(value ?? "")
+        .trim()
+        .toLowerCase();
+
+const normalizeInvoiceItemName = (value: any) =>
+    normalizeText(value)
+        .replace(/\.\.\.$/, "")
+        .trim();
+
+const shouldEnrichRentalAssets = (invoiceForQuery: any) => {
+    const invoiceForValues = Array.isArray(invoiceForQuery)
+        ? invoiceForQuery
+        : invoiceForQuery != null
+            ? [invoiceForQuery]
+            : [];
+
+    return invoiceForValues.some((value) => {
+        const normalized = normalizeText(value);
+        return normalized === "rental" || normalized === "product rental";
+    });
+};
+
+const enrichRentalInvoiceAssets = async (invoiceRows: any[]) => {
+    if (!Array.isArray(invoiceRows) || invoiceRows.length === 0) {
+        return invoiceRows;
+    }
+
+    const orderIds = Array.from(
+        new Set(
+            invoiceRows
+                .map((invoice) => invoice?.orderid)
+                .filter((orderId) => orderId != null && String(orderId).trim() !== "")
+                .map((orderId) => String(orderId))
+        )
+    );
+
+    if (orderIds.length === 0) {
+        return invoiceRows;
+    }
+
+    const orderlineResult = await query(
+        `
+        SELECT
+            uniqueorderid,
+            id AS orderlineid,
+            orderlinenumber,
+            productid,
+            productname,
+            assetnumber
+        FROM orderline
+        WHERE uniqueorderid = ANY($1::text[])
+          AND LOWER(COALESCE(ordername, '')) = 'rental'
+        ORDER BY uniqueorderid, id
+        `,
+        [orderIds]
+    );
+
+    const assetsByOrderId = new Map<string, any[]>();
+    orderlineResult.rows.forEach((row: any) => {
+        const key = String(row.uniqueorderid);
+        const rows = assetsByOrderId.get(key) || [];
+        rows.push(row);
+        assetsByOrderId.set(key, rows);
+    });
+
+    return invoiceRows.map((invoice) => {
+        const rentalAssets = assetsByOrderId.get(String(invoice?.orderid)) || [];
+        const assetNumbers = Array.from(
+            new Set(
+                rentalAssets
+                    .map((asset) => asset.assetnumber)
+                    .filter((assetNumber) => assetNumber != null && String(assetNumber).trim() !== "")
+            )
+        );
+
+        const invoiceData =
+            invoice?.invoicedata && typeof invoice.invoicedata === "object"
+                ? { ...invoice.invoicedata }
+                : invoice?.invoicedata;
+
+        if (invoiceData && Array.isArray(invoiceData.items)) {
+            const usedAssetIndexes = new Set<number>();
+            invoiceData.items = invoiceData.items.map((item: any, itemIndex: number) => {
+                const itemName = normalizeInvoiceItemName(item?.name || item?.productname);
+                let matchedAssetIndex = rentalAssets.findIndex((asset, assetIndex) => {
+                    if (usedAssetIndexes.has(assetIndex)) return false;
+                    const assetProductName = normalizeInvoiceItemName(asset.productname);
+                    return (
+                        itemName &&
+                        assetProductName &&
+                        (itemName === assetProductName ||
+                            itemName.startsWith(assetProductName) ||
+                            assetProductName.startsWith(itemName))
+                    );
+                });
+
+                if (matchedAssetIndex === -1 && rentalAssets.length === invoiceData.items.length) {
+                    matchedAssetIndex = itemIndex;
+                }
+
+                const matchedAsset = matchedAssetIndex >= 0 ? rentalAssets[matchedAssetIndex] : null;
+                if (matchedAssetIndex >= 0) {
+                    usedAssetIndexes.add(matchedAssetIndex);
+                }
+
+                return {
+                    ...item,
+                    assetnumber: item?.assetnumber ?? matchedAsset?.assetnumber ?? null,
+                    orderlineid: item?.orderlineid ?? matchedAsset?.orderlineid ?? null,
+                    orderlinenumber: item?.orderlinenumber ?? matchedAsset?.orderlinenumber ?? null,
+                };
+            });
+        }
+
+        return {
+            ...invoice,
+            assetnumber: invoice?.assetnumber ?? (assetNumbers.join(", ") || null),
+            assetnumbers: assetNumbers,
+            orderlineassets: rentalAssets,
+            invoicedata: invoiceData,
+        };
+    });
+};
+
 export module revoinvoiceservice {
     export const getRevoInvoiceData = async (request: any) => {
         try {
@@ -79,6 +204,9 @@ export module revoinvoiceservice {
 
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
+            if (shouldEnrichRentalAssets(request.query.invoicefor)) {
+                datatypeCheckResult = await enrichRentalInvoiceAssets(datatypeCheckResult);
+            }
             return datatypeCheckResult;
 
         } catch (error) {
