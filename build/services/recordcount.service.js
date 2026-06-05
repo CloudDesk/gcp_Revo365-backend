@@ -190,6 +190,35 @@ export var recordCountService;
                 }
                 return await getCountQuery(`select count(*) from buyback_enquiries`, []);
             }
+            if (targetObj === "service_enquiries") {
+                const { search, searchTerm, status } = request.query;
+                const finalSearch = String(search || searchTerm || "").trim();
+                const finalStatus = String(status || "").trim();
+                const clauses = [];
+                const params = [];
+                let paramIndex = 1;
+                if (finalSearch) {
+                    clauses.push(`
+            (
+              customer_name ILIKE $${paramIndex}
+              OR email ILIKE $${paramIndex}
+              OR phone ILIKE $${paramIndex}
+              OR device_type ILIKE $${paramIndex}
+              OR device_model ILIKE $${paramIndex}
+              OR status ILIKE $${paramIndex}
+              OR issue_description ILIKE $${paramIndex}
+              OR notes ILIKE $${paramIndex}
+            )
+          `);
+                    params.push(`%${finalSearch}%`);
+                    paramIndex++;
+                }
+                if (finalStatus) {
+                    clauses.push(`status = $${paramIndex}`);
+                    params.push(finalStatus);
+                }
+                return await getCountQuery(`select count(*) from service_enquiries${clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""}`, params);
+            }
             if (targetObj === "users") {
                 const { search, searchTerm } = request.query;
                 const finalSearch = String(search || searchTerm || "").trim();
@@ -378,6 +407,7 @@ export var recordCountService;
                 stock_Revo: `select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
                 kubb_tickets: `select count(*) from ${objectName}`,
                 buyback_enquiries: `select count(*) from ${objectName}`,
+                service_enquiries: `select count(*) from ${objectName}`,
             };
             if (productecom && objectName === "product_Revo") {
                 return await getCountQuery(`select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`, []);
