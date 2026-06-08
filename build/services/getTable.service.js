@@ -24,7 +24,8 @@ export var getTables;
                 quotes: "Quotes",
                 permissions: "Permissions",
                 kubb_tickets: "KUBB Enquires",
-                buyback_enquiries: "Buyback Enquiries"
+                buyback_enquiries: "Buyback Enquiries",
+                service_enquiries: "Service Enquiries"
             };
             result.rows.unshift({ table: 'home' });
             result = result.rows
