@@ -34,7 +34,7 @@ const validatePayload = (payload: ReturnType<typeof normalizePayload>) => {
   }
   if (!payload.email || !emailRegex.test(payload.email)) return "Valid email is required";
   if (!payload.device_type) return "Device type is required";
-  if (!payload.device_model) return "Device model is required";
+  //if (!payload.device_model) return "Device model is required";
   return null;
 };
 
