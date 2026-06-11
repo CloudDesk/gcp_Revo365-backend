@@ -13,7 +13,67 @@ export var stockRevoService;
     const DAMAGED_STOCK_STATUS = "Damaged";
     const LOST_STOCK_STATUS = "Lost";
     const AVAILABLE_STOCK_ASSET_STATUS = "available";
+    const BARCODE_LENGTH = 12;
+    const LEGACY_BARCODE_LENGTH = 10;
+    const FIRST_BARCODE_NUMBER = 1;
     const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
+    const normalizeBarcodeValue = (value) => String(value ?? "").trim();
+    const isNewBarcodeNumber = (value) => new RegExp(`^\\d{${BARCODE_LENGTH}}$`).test(normalizeBarcodeValue(value));
+    const isLegacyBarcodeValue = (value) => normalizeBarcodeValue(value).length === LEGACY_BARCODE_LENGTH;
+    const getBarcodeValidationError = (incomingValue, currentValue) => {
+        const incomingBarcode = normalizeBarcodeValue(incomingValue);
+        if (!incomingBarcode) {
+            return null;
+        }
+        if (isNewBarcodeNumber(incomingBarcode)) {
+            return null;
+        }
+        const currentBarcode = normalizeBarcodeValue(currentValue);
+        if (currentBarcode && incomingBarcode === currentBarcode && isLegacyBarcodeValue(incomingBarcode)) {
+            return null;
+        }
+        return `Barcode Number should be exactly ${BARCODE_LENGTH} digits.`;
+    };
+    const getDuplicateBarcodeError = async (barcode, currentId) => {
+        const normalizedBarcode = normalizeBarcodeValue(barcode);
+        if (!normalizedBarcode) {
+            return null;
+        }
+        const result = await query(`
+                SELECT id
+                FROM stock_revo
+                WHERE rfid = $1
+                  AND ($2::int IS NULL OR id <> $2::int)
+                LIMIT 1
+            `, [normalizedBarcode, currentId ? Number(currentId) : null]);
+        return result.rows.length > 0
+            ? "Barcode Number already exists. Please use a unique barcode number."
+            : null;
+    };
+    stockRevoService.generateUniqueBarcodeNumber = async () => {
+        const result = await query(`
+                WITH used AS (
+                    SELECT DISTINCT CAST(rfid AS BIGINT) AS barcode
+                    FROM stock_revo
+                    WHERE rfid ~ '^[0-9]{12}$'
+                      AND CAST(rfid AS BIGINT) >= $1::bigint
+                ),
+                candidates AS (
+                    SELECT generate_series($1::bigint, (SELECT COUNT(*) FROM used) + $1::bigint) AS barcode
+                )
+                SELECT candidates.barcode
+                FROM candidates
+                LEFT JOIN used ON used.barcode = candidates.barcode
+                WHERE used.barcode IS NULL
+                ORDER BY candidates.barcode
+                LIMIT 1
+            `, [FIRST_BARCODE_NUMBER]);
+        const barcodeNumber = Number(result.rows[0]?.barcode ?? FIRST_BARCODE_NUMBER);
+        if (!Number.isFinite(barcodeNumber) || barcodeNumber > 999999999999) {
+            return { message: "Unable to generate a unique Barcode Number.", status: 400 };
+        }
+        return String(barcodeNumber).padStart(BARCODE_LENGTH, "0");
+    };
     const getManualStockStatusTransitionError = (currentStatus, requestedStatus) => {
         const current = normalizeComparableText(currentStatus);
         const next = normalizeComparableText(requestedStatus);
@@ -138,15 +198,27 @@ export var stockRevoService;
                 stockRevoData.releaseyear = converttoutc;
                 console.log(stockRevoData.releaseyear, "releaseyear");
             }
+            if (Object.prototype.hasOwnProperty.call(stockRevoData, "rfid")) {
+                const normalizedBarcode = normalizeBarcodeValue(stockRevoData.rfid);
+                stockRevoData.rfid = normalizedBarcode || null;
+            }
             const { id, ...upsertFields } = stockRevoData;
             let command;
             let affectedPucs = new Set();
             if (id) {
                 // Fetch current stocktype to check for third_party_product restrictions
-                const oldStockResult = await query(`SELECT puc, stocktype, stockstatus FROM stock_revo WHERE id = $1`, [id]);
+                const oldStockResult = await query(`SELECT puc, stocktype, stockstatus, rfid FROM stock_revo WHERE id = $1`, [id]);
                 if (oldStockResult.rows.length > 0) {
                     const currentRow = oldStockResult.rows[0];
                     affectedPucs.add(currentRow.puc);
+                    const barcodeValidationError = getBarcodeValidationError(upsertFields.rfid, currentRow.rfid);
+                    if (barcodeValidationError) {
+                        return { message: barcodeValidationError, status: 400 };
+                    }
+                    const duplicateBarcodeError = await getDuplicateBarcodeError(upsertFields.rfid, id);
+                    if (duplicateBarcodeError) {
+                        return { message: duplicateBarcodeError, status: 400 };
+                    }
                     // If existing stock is third_party_product, restrict updates
                     if (currentRow.stocktype === 'third_party_product') {
                         // Allow updates only for E-commerce toggle (ecompublish) and Asset number (serialnumber)
@@ -176,6 +248,21 @@ export var stockRevoService;
                 command = "UPDATE";
             }
             else {
+                if (!upsertFields.rfid) {
+                    const generatedBarcode = await stockRevoService.generateUniqueBarcodeNumber();
+                    if (typeof generatedBarcode !== "string") {
+                        return generatedBarcode;
+                    }
+                    upsertFields.rfid = generatedBarcode;
+                }
+                const barcodeValidationError = getBarcodeValidationError(upsertFields.rfid);
+                if (barcodeValidationError) {
+                    return { message: barcodeValidationError, status: 400 };
+                }
+                const duplicateBarcodeError = await getDuplicateBarcodeError(upsertFields.rfid);
+                if (duplicateBarcodeError) {
+                    return { message: duplicateBarcodeError, status: 400 };
+                }
                 const fieldNames = Object.keys(upsertFields);
                 const fieldValues = Object.values(upsertFields);
                 querydata = `INSERT INTO stock_revo (${fieldNames.join(", ")}) VALUES (${fieldNames
@@ -1262,7 +1349,7 @@ export var stockRevoService;
             let result = await query(updateQuery, queryParams);
             if (result.rows.length !== arraylength) {
                 return {
-                    error: 'Error in RFID scan. Ensure all RFIDs are valid.',
+                    error: 'Error in barcode scan. Ensure all barcode numbers are valid.',
                     updatedCount: result.rows.length,
                     expectedCount: arraylength
                 };
@@ -1284,7 +1371,7 @@ export var stockRevoService;
                 };
             }
             else {
-                return { error: 'No records were updated. Please check the provided RFIDs.' };
+                return { error: 'No records were updated. Please check the provided barcode numbers.' };
             }
         }
         catch (error) {

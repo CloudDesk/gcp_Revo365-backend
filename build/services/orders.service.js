@@ -1596,12 +1596,12 @@ ${whereClause} ${orderByClause}`;
     ordersService.upsertOrderlinerfid = async (orderData) => {
         try {
             console.log("Order Data in upsertOrderlinerfid:", orderData);
-            // ✅ Prevent duplicate RFID scan
+            // Prevent duplicate barcode scan
             const rfidMap = new Map();
             for (const item of orderData) {
                 if (rfidMap.has(item.rfid)) {
                     return {
-                        error: "Duplicate RFID detected: Same RFID has been scanned multiple times.",
+                        error: "Duplicate Barcode Number detected: Same barcode has been scanned multiple times.",
                         errorDetails: [],
                         statusCode: 401
                     };
@@ -1644,12 +1644,12 @@ ${whereClause} ${orderByClause}`;
              AND pr.id = requested.productid
         `;
             const validationResult = await query(validationQuery, validationValues);
-            // ❌ Validate all RFIDs matched
+            // Validate all barcode numbers matched
             if (validationResult.rows.length !== orderData.length) {
                 const foundPairs = new Set(validationResult.rows.map((row) => `${row.rfid}::${row.productid}`));
                 const invalidRfids = orderData.filter((item) => !foundPairs.has(`${item.rfid}::${item.productid}`));
                 return {
-                    error: `Invalid RFIDs: ${invalidRfids.map(i => `${i.rfid} (product ${i.productid})`).join(', ')}`,
+                    error: `Invalid Barcode Numbers: ${invalidRfids.map(i => `${i.rfid} (product ${i.productid})`).join(', ')}`,
                     errorDetails: [],
                     statusCode: 400
                 };

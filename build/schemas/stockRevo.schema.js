@@ -155,12 +155,10 @@ export const stockrevoSchema = {
         },
         rfid: {
             type: ['string', 'null'],
-            minLength: 10,
-            maxLength: 10,
+            pattern: "^(?:|.{10}|\\d{12})$",
             errorMessage: {
-                type: 'RFID should be String',
-                minLength: 'RFID should contain exactly 10 characters',
-                maxLength: 'RFID should contain exactly 10 characters'
+                type: 'Barcode Number should be String',
+                pattern: 'Barcode Number should be exactly 12 digits. Existing 10-character values are supported for legacy stock.'
             }
         },
         location: {

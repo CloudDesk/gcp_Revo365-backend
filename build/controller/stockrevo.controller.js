@@ -22,6 +22,24 @@ export var stockRevoController;
             reply.send(error.message);
         }
     };
+    stockRevoController.getNextStockBarcodeNumber = async (request, reply) => {
+        try {
+            const result = await stockRevoService.generateUniqueBarcodeNumber();
+            if (typeof result === "string") {
+                reply.status(200).send({ barcode: result });
+            }
+            else if (result?.status) {
+                reply.status(result.status).send({ message: result.message });
+            }
+            else {
+                reply.status(500).send({ message: "Unable to generate Barcode Number." });
+            }
+        }
+        catch (error) {
+            console.error("Error in getNextStockBarcodeNumber", error);
+            reply.send(error.message);
+        }
+    };
     stockRevoController.releaseServiceHoldStockToAvailable = async (request, reply) => {
         try {
             const { id } = request.params;
