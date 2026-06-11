@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { saveSession } from "./session.service.js";
 import { REDIRECT_INVENTORY_URL } from "../config/config.js";
 import { getOtp, saveOtp } from "./otp.service.js";
+import { revoinvoiceservice } from "./revoinvoice.service.js";
 let generatedotp;
 export var userService;
 (function (userService) {
@@ -29,11 +30,13 @@ export var userService;
                     const searchValue = String(paramValues[0] ?? "").trim();
                     if (searchValue) {
                         whereClauses.push(`(
-              firstname ILIKE $${parameterIndex}
-              OR lastname ILIKE $${parameterIndex}
-              OR CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, '')) ILIKE $${parameterIndex}
-              OR useremail ILIKE $${parameterIndex}
-              OR usermobilenumber::text ILIKE $${parameterIndex}
+              u.firstname ILIKE $${parameterIndex}
+              OR u.lastname ILIKE $${parameterIndex}
+              OR CONCAT(COALESCE(u.firstname, ''), ' ', COALESCE(u.lastname, '')) ILIKE $${parameterIndex}
+              OR u.useremail ILIKE $${parameterIndex}
+              OR u.usermobilenumber::text ILIKE $${parameterIndex}
+              OR u.gstnumber ILIKE $${parameterIndex}
+              OR latest_address.city ILIKE $${parameterIndex}
             )`);
                         queryParams.push(`%${searchValue}%`);
                         parameterIndex++;
@@ -60,8 +63,12 @@ export var userService;
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
-                else if (key !== "page" && key !== "count") {
-                    const clauses = paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`);
+                else if (key !== "page" &&
+                    key !== "count" &&
+                    key !== "activerentalonly" &&
+                    key !== "includeRentalTotal") {
+                    const columnName = key === "city" ? "latest_address.city" : `u.${key}`;
+                    const clauses = paramValues.map((_, idx) => `${columnName} = $${parameterIndex + idx}`);
                     whereClauses.push(`(${clauses.join(" OR ")})`);
                     queryParams.push(...paramValues);
                     parameterIndex += paramValues.length;
@@ -69,16 +76,39 @@ export var userService;
             });
             const offset = (pageNumber - 1) * recordCount;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
-            const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-            let queryText = `SELECT * FROM users ${whereClause} ${orderByClause}`;
+            const orderByClause = `ORDER BY u.${orderByField} ${orderByDirection}`;
+            let queryText = `
+        SELECT
+          u.*,
+          latest_address.city,
+          latest_address.city AS address_city,
+          latest_address.state,
+          latest_address.state AS address_state,
+          latest_address.pincode,
+          latest_address.pincode AS address_pincode,
+          0::int AS rentaldevicecount
+        FROM users u
+        LEFT JOIN LATERAL (
+          SELECT city, state, pincode
+          FROM address a
+          WHERE a.userid = u.id
+          ORDER BY a.modifieddate DESC NULLS LAST, a.id DESC
+          LIMIT 1
+        ) latest_address ON true
+        ${whereClause}
+        ${orderByClause}
+      `;
             if (pageNumber && recordCount) {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(queryText, queryParams, "queryText and QueryParams");
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
-            return datatypeCheckResult;
+            const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(datatypeCheckResult.map((row) => row.id), { activeOnly: true });
+            return datatypeCheckResult.map((row) => ({
+                ...row,
+                rentaldevicecount: rentalCounts[row.id] || 0,
+            }));
         }
         catch (error) {
             console.error("Query Execution Error: IN getUsersData", error);

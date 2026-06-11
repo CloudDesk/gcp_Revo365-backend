@@ -36,6 +36,17 @@ const normalizeText = (value) => String(value ?? "")
 const normalizeInvoiceItemName = (value) => normalizeText(value)
     .replace(/\.\.\.$/, "")
     .trim();
+const normalizeInvoiceData = (invoiceData) => {
+    if (!invoiceData || typeof invoiceData === "object") {
+        return invoiceData;
+    }
+    try {
+        return JSON.parse(invoiceData);
+    }
+    catch {
+        return invoiceData;
+    }
+};
 const shouldEnrichRentalAssets = (invoiceForQuery) => {
     const invoiceForValues = Array.isArray(invoiceForQuery)
         ? invoiceForQuery
@@ -83,9 +94,10 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
         const assetNumbers = Array.from(new Set(rentalAssets
             .map((asset) => asset.assetnumber)
             .filter((assetNumber) => assetNumber != null && String(assetNumber).trim() !== "")));
-        const invoiceData = invoice?.invoicedata && typeof invoice.invoicedata === "object"
-            ? { ...invoice.invoicedata }
-            : invoice?.invoicedata;
+        const normalizedInvoiceData = normalizeInvoiceData(invoice?.invoicedata);
+        const invoiceData = normalizedInvoiceData && typeof normalizedInvoiceData === "object"
+            ? { ...normalizedInvoiceData }
+            : normalizedInvoiceData;
         if (invoiceData && Array.isArray(invoiceData.items)) {
             const usedAssetIndexes = new Set();
             invoiceData.items = invoiceData.items.map((item, itemIndex) => {
@@ -126,6 +138,74 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
 };
 export var revoinvoiceservice;
 (function (revoinvoiceservice) {
+    revoinvoiceservice.getRentalAssetCountsByCustomerIds = async (customerIds, options = {}) => {
+        const normalizedCustomerIds = Array.from(new Set(customerIds
+            .map((customerId) => Number(customerId))
+            .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
+            .map((customerId) => Math.trunc(customerId))));
+        if (normalizedCustomerIds.length === 0) {
+            return {};
+        }
+        const invoiceForValues = options.invoiceForValues && options.invoiceForValues.length > 0
+            ? options.invoiceForValues.map((value) => normalizeText(value)).filter(Boolean)
+            : ["rental"];
+        const invoiceResult = await query(`
+            SELECT *
+            FROM revoinvoice
+            WHERE customerid = ANY($1::int[])
+              AND LOWER(COALESCE(invoicefor, '')) = ANY($2::text[])
+            ORDER BY customerid, modifieddate DESC NULLS LAST, id DESC
+            `, [normalizedCustomerIds, invoiceForValues]);
+        const enrichedInvoices = await enrichRentalInvoiceAssets(invoiceResult.rows);
+        const assetKeysByCustomer = new Map();
+        const sequenceByCustomer = new Map();
+        enrichedInvoices.forEach((invoice) => {
+            const customerId = Number(invoice?.customerid);
+            if (!Number.isFinite(customerId)) {
+                return;
+            }
+            if (!assetKeysByCustomer.has(customerId)) {
+                assetKeysByCustomer.set(customerId, new Set());
+                sequenceByCustomer.set(customerId, 0);
+            }
+            const invoiceData = normalizeInvoiceData(invoice?.invoicedata);
+            const items = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
+            const invoiceAssetNumbers = Array.isArray(invoice?.assetnumbers) ? invoice.assetnumbers : [];
+            items.forEach((item) => {
+                const nextSequence = (sequenceByCustomer.get(customerId) || 0) + 1;
+                sequenceByCustomer.set(customerId, nextSequence);
+                const rawStatus = item?.status ||
+                    invoice?.orderstatus ||
+                    invoice?.status ||
+                    invoice?.rentalassetstatus ||
+                    invoice?.invoicefor;
+                const normalizedStatus = normalizeText(rawStatus);
+                const statusForCount = !normalizedStatus ||
+                    normalizedStatus === "rental" ||
+                    normalizedStatus === "product rental"
+                    ? "active"
+                    : normalizedStatus;
+                if (options.activeOnly && !statusForCount.includes("active")) {
+                    return;
+                }
+                const assetNumber = item?.assetnumber ||
+                    item?.assetNumber ||
+                    (items.length === 1 ? invoice?.assetnumber : "") ||
+                    (invoiceAssetNumbers.length === 1 ? invoiceAssetNumbers[0] : "") ||
+                    "";
+                const productName = item?.name || item?.productname || `Item #${nextSequence}`;
+                const assetKey = assetNumber ||
+                    item?.orderlineid ||
+                    item?.orderlinenumber ||
+                    `${invoice?.orderid || "order"}-${normalizeText(productName)}-${nextSequence}`;
+                assetKeysByCustomer.get(customerId)?.add(String(assetKey));
+            });
+        });
+        return Object.fromEntries(normalizedCustomerIds.map((customerId) => [
+            customerId,
+            assetKeysByCustomer.get(customerId)?.size || 0,
+        ]));
+    };
     revoinvoiceservice.getRevoInvoiceData = async (request) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;

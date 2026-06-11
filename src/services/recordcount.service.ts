@@ -1,6 +1,7 @@
 import { query } from "../database/postgres.js";
 import { QueryResult } from "pg";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { revoinvoiceservice } from "./revoinvoice.service.js";
 export module recordCountService {
   export const getRecordCount = async (objectName: string, request: any) => {
     try {
@@ -175,7 +176,6 @@ export module recordCountService {
 
       const targetObj = objectName.toLowerCase().trim();
       const getCountQuery = async (queryStr: string, params: any[]) => {
-        console.log(queryStr, "Count query string");
         const result: QueryResult = await query(queryStr, params);
         return result.rows[0].count;
       };
@@ -249,19 +249,76 @@ export module recordCountService {
       }
 
       if (targetObj === "users") {
-        const { search, searchTerm } = request.query;
+        const { search, searchTerm, isbusinessuser, includeRentalTotal } = request.query;
         const finalSearch = String(search || searchTerm || "").trim();
+        const clauses: string[] = [];
+        const params: any[] = [];
+        let paramIndex = 1;
+        const shouldIncludeRentalTotal = String(includeRentalTotal ?? "").toLowerCase() === "true";
+
         if (finalSearch) {
-          return await getCountQuery(
-            `select count(*) from users
-             WHERE firstname ILIKE $1
-                OR lastname ILIKE $1
-                OR CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, '')) ILIKE $1
-                OR useremail ILIKE $1
-                OR usermobilenumber::text ILIKE $1`,
-            [`%${finalSearch}%`]
+          clauses.push(
+            `(u.firstname ILIKE $${paramIndex}
+              OR u.lastname ILIKE $${paramIndex}
+              OR CONCAT(COALESCE(u.firstname, ''), ' ', COALESCE(u.lastname, '')) ILIKE $${paramIndex}
+              OR u.useremail ILIKE $${paramIndex}
+              OR u.usermobilenumber::text ILIKE $${paramIndex}
+              OR u.gstnumber ILIKE $${paramIndex}
+              OR EXISTS (
+                SELECT 1
+                FROM address a
+                WHERE a.userid = u.id
+                  AND a.city ILIKE $${paramIndex}
+              ))`
           );
+          params.push(`%${finalSearch}%`);
+          paramIndex++;
         }
+
+        if (isbusinessuser !== undefined && isbusinessuser !== "") {
+          clauses.push(`u.isbusinessuser = $${paramIndex}`);
+          params.push(String(isbusinessuser).toLowerCase() === "true");
+          paramIndex++;
+        }
+
+        const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+
+        if (shouldIncludeRentalTotal) {
+          const result: QueryResult = await query(
+            `
+            SELECT COUNT(*)::int AS count
+            FROM users u
+            ${whereSql}
+            `,
+            params
+          );
+          const userIdsResult: QueryResult = await query(
+            `
+            SELECT u.id
+            FROM users u
+            ${whereSql}
+            `,
+            params
+          );
+          const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(
+            userIdsResult.rows.map((row: any) => row.id),
+            { activeOnly: true }
+          );
+          const rentalProductTotal = Object.values(rentalCounts).reduce(
+            (total: number, count: any) => total + Number(count || 0),
+            0
+          );
+
+          return {
+            count: Number(result.rows[0]?.count || 0),
+            rentalproducttotal: rentalProductTotal,
+          };
+        }
+
+        return await getCountQuery(
+          `select count(*) from users u ${whereSql}`,
+          params
+        );
       }
 
       let whereClause = "";
