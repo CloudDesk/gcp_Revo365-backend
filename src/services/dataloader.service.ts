@@ -23,6 +23,20 @@ import { json } from "stream/consumers";
 import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
 //  export const stocklocationdataajv = [];
 
+const normalizeStockImportHeader = (key: string) =>
+  String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+
+const isUploadedBarcodeField = (key: string) =>
+  ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
+
+const removeUploadedBarcodeFields = (row: any) => {
+  Object.keys(row || {}).forEach((key) => {
+    if (isUploadedBarcodeField(key)) {
+      delete row[key];
+    }
+  });
+};
+
 export module dataLoaderService {
   export const getDataLoaderData = async (request) => {
     try {
@@ -33,6 +47,8 @@ export module dataLoaderService {
       await Promise.all(
         jsonresult.map(async (e: any, index: number) => {
           try {
+            removeUploadedBarcodeFields(e);
+
             for (let [key, value] of Object.entries(e)) {
               if (!value) {
                 e[key] = null;
@@ -186,9 +202,6 @@ export module dataLoaderService {
             }
             // Force ecompublish = false if stocktype is rental_product
             if (e.stocktype === "rental_product") {
-              e.ecompublish = false;
-            }
-            if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
               e.ecompublish = false;
             }
             let validationresult = await validateDataLoader(stockrevoSchema, e);

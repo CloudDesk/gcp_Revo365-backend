@@ -8,6 +8,15 @@ import { stockrevoSchema } from "../schemas/stockRevo.schema.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
 //  export const stocklocationdataajv = [];
+const normalizeStockImportHeader = (key) => String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+const isUploadedBarcodeField = (key) => ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
+const removeUploadedBarcodeFields = (row) => {
+    Object.keys(row || {}).forEach((key) => {
+        if (isUploadedBarcodeField(key)) {
+            delete row[key];
+        }
+    });
+};
 export var dataLoaderService;
 (function (dataLoaderService) {
     dataLoaderService.getDataLoaderData = async (request) => {
@@ -18,6 +27,7 @@ export var dataLoaderService;
             let failuredata = [];
             await Promise.all(jsonresult.map(async (e, index) => {
                 try {
+                    removeUploadedBarcodeFields(e);
                     for (let [key, value] of Object.entries(e)) {
                         if (!value) {
                             e[key] = null;
@@ -179,9 +189,6 @@ export var dataLoaderService;
                     }
                     // Force ecompublish = false if stocktype is rental_product
                     if (e.stocktype === "rental_product") {
-                        e.ecompublish = false;
-                    }
-                    if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
                         e.ecompublish = false;
                     }
                     let validationresult = await validateDataLoader(stockrevoSchema, e);

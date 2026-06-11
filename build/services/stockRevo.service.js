@@ -16,8 +16,17 @@ export var stockRevoService;
     const BARCODE_LENGTH = 12;
     const LEGACY_BARCODE_LENGTH = 10;
     const FIRST_BARCODE_NUMBER = 1;
+    const normalizeStockImportHeader = (key) => String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
     const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
     const normalizeBarcodeValue = (value) => String(value ?? "").trim();
+    const isUploadedBarcodeField = (key) => ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
+    const removeUploadedBarcodeFields = (row) => {
+        Object.keys(row || {}).forEach((key) => {
+            if (isUploadedBarcodeField(key)) {
+                delete row[key];
+            }
+        });
+    };
     const isNewBarcodeNumber = (value) => new RegExp(`^\\d{${BARCODE_LENGTH}}$`).test(normalizeBarcodeValue(value));
     const isLegacyBarcodeValue = (value) => normalizeBarcodeValue(value).length === LEGACY_BARCODE_LENGTH;
     const getBarcodeValidationError = (incomingValue, currentValue) => {
@@ -73,6 +82,46 @@ export var stockRevoService;
             return { message: "Unable to generate a unique Barcode Number.", status: 400 };
         }
         return String(barcodeNumber).padStart(BARCODE_LENGTH, "0");
+    };
+    stockRevoService.generateUniqueBarcodeNumbers = async (count) => {
+        const requiredCount = Number(count);
+        if (!Number.isInteger(requiredCount) || requiredCount < 1) {
+            return [];
+        }
+        const result = await query(`
+                WITH used AS (
+                    SELECT DISTINCT CAST(rfid AS BIGINT) AS barcode
+                    FROM stock_revo
+                    WHERE rfid ~ '^[0-9]{12}$'
+                      AND CAST(rfid AS BIGINT) >= $1::bigint
+                ),
+                candidates AS (
+                    SELECT generate_series(
+                        $1::bigint,
+                        (SELECT COUNT(*) FROM used) + $1::bigint + $2::bigint
+                    ) AS barcode
+                )
+                SELECT candidates.barcode
+                FROM candidates
+                LEFT JOIN used ON used.barcode = candidates.barcode
+                WHERE used.barcode IS NULL
+                ORDER BY candidates.barcode
+                LIMIT $2::int
+            `, [FIRST_BARCODE_NUMBER, requiredCount]);
+        if (result.rows.length !== requiredCount) {
+            return { message: "Unable to generate enough unique Barcode Numbers.", status: 400 };
+        }
+        const barcodeNumbers = result.rows.map((row) => {
+            const barcodeNumber = Number(row?.barcode);
+            if (!Number.isFinite(barcodeNumber) || barcodeNumber > 999999999999) {
+                return null;
+            }
+            return String(barcodeNumber).padStart(BARCODE_LENGTH, "0");
+        });
+        if (barcodeNumbers.some((barcode) => !barcode)) {
+            return { message: "Unable to generate a unique Barcode Number.", status: 400 };
+        }
+        return barcodeNumbers;
     };
     const getManualStockStatusTransitionError = (currentStatus, requestedStatus) => {
         const current = normalizeComparableText(currentStatus);
@@ -715,15 +764,23 @@ export var stockRevoService;
     };
     stockRevoService.upsertBulkStockRevoData = async (jsonresult) => {
         try {
+            if (!Array.isArray(jsonresult) || jsonresult.length === 0) {
+                return { message: "No stock rows found for import.", status: 400 };
+            }
             let totalRecords = jsonresult.length;
+            const generatedBarcodes = await stockRevoService.generateUniqueBarcodeNumbers(totalRecords);
+            if (!Array.isArray(generatedBarcodes)) {
+                return generatedBarcodes;
+            }
             for (let i = 0; i < jsonresult.length; i++) {
+                // User-supplied barcode columns are ignored for imports.
+                // The persisted DB field is still rfid, but values are generated server-side.
+                removeUploadedBarcodeFields(jsonresult[i]);
+                jsonresult[i].rfid = generatedBarcodes[i];
                 // Enforce same rules as getDataLoaderDataStock preview route:
                 // - rental_product must always be ecompublish=false
-                // - null/empty rfid means not yet tagged => ecompublish=false
+                // - Barcode Number is auto-generated during import
                 if (jsonresult[i].stocktype === 'rental_product') {
-                    jsonresult[i].ecompublish = false;
-                }
-                if (!jsonresult[i].rfid || jsonresult[i].rfid === '') {
                     jsonresult[i].ecompublish = false;
                 }
                 if (jsonresult[i].manufacturedyear) {
