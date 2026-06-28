@@ -309,6 +309,7 @@ const TICKET_BOOLEAN_FIELDS = new Set([
   "typemanual",
   "replacementrequest",
   "stoprental",
+  "walkintickets",
 ]);
 
 const isNullishStringLiteral = (value: any) =>

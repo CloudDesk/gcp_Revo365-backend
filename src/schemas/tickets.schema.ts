@@ -179,6 +179,12 @@ export const ticketsSchema = {
                 type: "Proceed with Value Service should be a boolean"
             }
         },
+        walkintickets: {
+            type: ['boolean', 'null'],
+            errorMessage: {
+                type: "Walk-in Tickets should be a boolean"
+            }
+        },
         productcategory: {
             type: ['string', 'null'],
             minLength: 1,
