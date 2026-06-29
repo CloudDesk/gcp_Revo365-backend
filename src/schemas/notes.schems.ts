@@ -11,6 +11,16 @@ export const notesSchema = {
                 maxLength:"Quote Number between 2 to 490 characters"
             }
         },
+        ticketnumber:{
+            type:['string','null'],
+            minLength: 2,
+            maxLength: 490,
+            errorMessage:{
+                type:"Ticket Number should be String",
+                minLength:"Ticket Number be alteast 2 characters",
+                maxLength:"Ticket Number between 2 to 490 characters"
+            }
+        },
         title:{
             type:['string','null'],
             minLength: 2,
