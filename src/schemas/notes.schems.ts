@@ -21,6 +21,22 @@ export const notesSchema = {
                 maxLength:"Ticket Number between 2 to 490 characters"
             }
         },
+        technicianid:{
+            type:['integer','null'],
+            errorMessage:{
+                type:"Technician Id should be Integer"
+            }
+        },
+        technicianname:{
+            type:['string','null'],
+            minLength: 2,
+            maxLength: 490,
+            errorMessage:{
+                type:"Technician Name should be String",
+                minLength:"Technician Name be alteast 2 characters",
+                maxLength:"Technician Name between 2 to 490 characters"
+            }
+        },
         title:{
             type:['string','null'],
             minLength: 2,
