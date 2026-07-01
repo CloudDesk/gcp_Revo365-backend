@@ -8,6 +8,7 @@ import { saveSession } from "./session.service.js";
 import { REDIRECT_INVENTORY_URL } from "../config/config.js";
 import { getOtp, saveOtp } from "./otp.service.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
+import { firebaseAuth } from "../firebase/firebaseAdmin.js";
 let generatedotp;
 
 export module userService {
@@ -276,6 +277,95 @@ export module userService {
       return ErrorMessage;
     }
   };
+
+  export const getGoogleLoggedInUserData = async (request: any) => {
+    const idToken = String(request?.body?.idToken || "").trim();
+
+    if (!idToken) {
+      return "Google authentication token is required";
+    }
+
+
+    try {
+      const decodedToken = await firebaseAuth.verifyIdToken(idToken);
+      const useremail = String(decodedToken.email || "").trim().toLowerCase();
+      const emailVerified = decodedToken.email_verified;
+      const displayName = String(decodedToken.name || "").trim();
+      const nameParts = displayName.split(" ").filter(Boolean);
+      const requestFirstname = String(request?.body?.firstname || "").trim();
+      const requestLastname = String(request?.body?.lastname || "").trim();
+      const firstname = requestFirstname || nameParts[0] || "";
+      const lastname =
+        requestLastname || (nameParts.length > 1 ? nameParts.slice(1).join(" ") : "");
+
+      if (!useremail || !emailVerified) {
+        return "Verified Google account email is required";
+      }
+
+      const inventoryQuery = `SELECT id FROM inventoryusers WHERE LOWER(useremail) = LOWER($1)`;
+      const inventoryResult = await query(inventoryQuery, [useremail]);
+
+      if (inventoryResult.rows.length > 0) {
+        return "This email belongs to an inventory user. Please use normal login.";
+      }
+
+      const ecomQuery = `SELECT * FROM users WHERE LOWER(useremail) = LOWER($1)`;
+      let ecomResult = await query(ecomQuery, [useremail]);
+
+      if (ecomResult.rows.length === 0) {
+        const hashedPassword = await hashGenerate(uuidv4());
+        const insertQuery = `
+          INSERT INTO users (firstname, lastname, useremail, userpassword, isbusinessuser)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `;
+
+        ecomResult = await query(insertQuery, [
+          firstname,
+          lastname,
+          useremail,
+          hashedPassword,
+          false,
+        ]);
+      } else if (
+        (!ecomResult.rows[0].firstname || !ecomResult.rows[0].lastname) &&
+        (firstname || lastname)
+      ) {
+        const updateQuery = `
+          UPDATE users
+          SET
+            firstname = COALESCE(NULLIF(firstname, ''), $1),
+            lastname = COALESCE(NULLIF(lastname, ''), $2)
+          WHERE id = $3
+          RETURNING *
+        `;
+
+        ecomResult = await query(updateQuery, [
+          firstname,
+          lastname,
+          ecomResult.rows[0].id,
+        ]);
+      }
+
+      const sessionId = uuidv4();
+      const sessionData = {
+        id: ecomResult.rows[0]?.id,
+        useremail: ecomResult.rows[0]?.useremail,
+      };
+      const sessionSaved = await saveSession(sessionId, sessionData);
+
+      if (sessionSaved) {
+        return { sessionId, userdata: ecomResult.rows };
+      }
+
+      return "Please Contact Admin. You are Not Authorized to Login";
+    } catch (error) {
+      console.error("Query Execution Error: IN getGoogleLoggedInUserData", error);
+      let ErrorMessage = await ErrorHandler.handleQueryError(error);
+      return ErrorMessage;
+    }
+  };
+
   export const deleteUser = async (id: number) => {
     try {
       const result: any = await query(`DELETE FROM users WHERE id = $1`, [id]);

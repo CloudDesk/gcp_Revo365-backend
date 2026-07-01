@@ -56,6 +56,24 @@ export module userController {
         }
     }
 
+    export const getGoogleLoggedInUserData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            let getUsersDataResult: any = await userService.getGoogleLoggedInUserData(request);
+            if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
+                reply.status(401).send({ error: getUsersDataResult })
+            }
+            else if (getUsersDataResult?.sessionId && Array.isArray(getUsersDataResult?.userdata)) {
+                reply.send(getUsersDataResult);
+            }
+            else {
+                reply.status(401).send(getUsersDataResult);
+            }
+        } catch (error) {
+            console.error("Error in getGoogleLoggedInUserData", error);
+            reply.send(error.message);
+        }
+    }
+
     export const deleteUserData = async (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) => {
         try {
             const { id } = request.params;
