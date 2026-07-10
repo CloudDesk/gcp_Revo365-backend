@@ -60,6 +60,9 @@ import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnical
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
+import { rentalInvoiceDocumentController } from "../controller/rentalInvoiceDocument.controller.js";
+import { vendorCustomerAssignmentController } from "../controller/vendorCustomerAssignment.controller.js";
+import { accessController } from "../controller/access.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
         const taskSecretHeader = request.headers["x-task-secret"];
@@ -202,6 +205,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
     fastify.get('/inventoryusers/logout', InventoryuserController.userlogout);
+    fastify.get('/me/access', { preHandler: [getSession] }, accessController.getMyAccess);
+    fastify.get('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.getAssignments);
+    fastify.post('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.replaceAssignments);
     //address
     fastify.get('/address', { preHandler: [getSession] }, addressController.getAddressData);
     fastify.get('/address/:userId', { preHandler: [getSession] }, addressController.getUserAddressData);
@@ -428,6 +434,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);
     fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
     fastify.post('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.upsertRevoInvoice);
+    fastify.post('/revo-invoice/:id/rental-documents', { preHandler: [getSession] }, rentalInvoiceDocumentController.generateRentalInvoiceDocuments);
     //Query Table
     fastify.get('/table', { preHandler: [getSession] }, tablecontoller.getTable);
     //userbased tables

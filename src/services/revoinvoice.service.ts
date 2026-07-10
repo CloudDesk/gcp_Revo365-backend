@@ -5,6 +5,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -301,6 +302,14 @@ export module revoinvoiceservice {
                     parameterIndex += paramValues.length;
                 }
             });
+
+            parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(
+                request,
+                whereClauses,
+                queryParams,
+                parameterIndex,
+                { tableAlias: "revoinvoice", customerColumn: "customerid" }
+            );
 
             const offset = (pageNumber - 1) * recordCount;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : '';

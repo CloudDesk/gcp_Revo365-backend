@@ -1,5 +1,6 @@
 import pool, { query } from "../database/postgres.js";
 import { rentalAgreementPdfService } from "./rentalAgreementPdf.service.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 const ACTIVE_RENTAL_ORDER_NAME = "rental";
 const DEFAULT_BILLING_FREQUENCY = "monthly";
@@ -122,7 +123,7 @@ const getStockIdentifier = (row: any) =>
 
 const getAgreementContextRows = async (
   executor: any,
-  filters: { customerId?: number | null; uniqueOrderId?: string | null }
+  filters: { customerId?: number | null; uniqueOrderId?: string | null; request?: any }
 ) => {
   const whereClauses: string[] = [
     `LOWER(COALESCE(ol.ordername, '')) = $1`,
@@ -140,6 +141,14 @@ const getAgreementContextRows = async (
     params.push(filters.uniqueOrderId);
     whereClauses.push(`CAST(ol.uniqueorderid AS TEXT) = $${params.length}`);
   }
+
+  await accessScopeService.appendVendorCustomerColumnScope(
+    filters.request,
+    whereClauses,
+    params,
+    params.length + 1,
+    { tableAlias: "ol", customerColumn: "userid" }
+  );
 
   const result = await executor.query(
     `
@@ -342,7 +351,25 @@ const groupAgreementContextRows = (rows: any[]) => {
   }));
 };
 
-const getAgreementList = async (customerId?: number | null, uniqueOrderId?: string | null) => {
+const getAgreementList = async (
+  customerId?: number | null,
+  uniqueOrderId?: string | null,
+  request?: any
+) => {
+  const whereClauses = [
+    `($1::int IS NULL OR ra.customerid = $1)`,
+    `($2::text IS NULL OR CAST(ra.uniqueorderid AS TEXT) = $2)`,
+  ];
+  const params: any[] = [customerId ?? null, uniqueOrderId ?? null];
+
+  await accessScopeService.appendVendorCustomerColumnScope(
+    request,
+    whereClauses,
+    params,
+    3,
+    { tableAlias: "ra", customerColumn: "customerid" }
+  );
+
   const result = await query(
     `
       SELECT
@@ -356,11 +383,10 @@ const getAgreementList = async (customerId?: number | null, uniqueOrderId?: stri
       FROM rental_agreement ra
       LEFT JOIN users u
         ON u.id = ra.customerid
-      WHERE ($1::int IS NULL OR ra.customerid = $1)
-        AND ($2::text IS NULL OR CAST(ra.uniqueorderid AS TEXT) = $2)
+      WHERE ${whereClauses.join(" AND ")}
       ORDER BY ra.modifieddate DESC NULLS LAST, ra.id DESC
     `,
-    [customerId ?? null, uniqueOrderId ?? null]
+    params
   );
 
   const agreementIds = result.rows.map((row: any) => row.id);
@@ -422,8 +448,8 @@ const getAgreementList = async (customerId?: number | null, uniqueOrderId?: stri
   }));
 };
 
-const getAgreementDetailById = async (agreementId: number) => {
-  const agreements = await getAgreementList(null, null);
+const getAgreementDetailById = async (agreementId: number, request?: any) => {
+  const agreements = await getAgreementList(null, null, request);
   const agreement = agreements.find(
     (agreementRow) => Number(agreementRow.id) === Number(agreementId)
   );
@@ -695,6 +721,7 @@ export module rentalAgreementService {
     const contextRows = await getAgreementContextRows(rootExecutor, {
       customerId,
       uniqueOrderId,
+      request,
     });
 
     return groupAgreementContextRows(contextRows);
@@ -707,12 +734,12 @@ export module rentalAgreementService {
         ? null
         : toPositiveInteger(customerIdRaw, "customer id");
     const uniqueOrderId = normalizeText(request.query?.uniqueorderid);
-    return getAgreementList(customerId, uniqueOrderId);
+    return getAgreementList(customerId, uniqueOrderId, request);
   };
 
   export const getRentalAgreementById = async (request: any) => {
     const agreementId = toPositiveInteger(request.params?.id, "agreement id");
-    return getAgreementDetailById(agreementId);
+    return getAgreementDetailById(agreementId, request);
   };
 
   export const createRentalAgreement = async (request: any) => {
@@ -739,6 +766,7 @@ export module rentalAgreementService {
       const contractRows = await getAgreementContextRows(client, {
         customerId: null,
         uniqueOrderId,
+        request,
       });
 
       if (contractRows.length === 0) {
@@ -932,7 +960,7 @@ export module rentalAgreementService {
           ? "Rental agreement created with PDF warning."
           : "Rental agreement created successfully.",
         warning: pdfWarning,
-        agreement: await getAgreementDetailById(persistedAgreement.id),
+        agreement: await getAgreementDetailById(persistedAgreement.id, request),
       };
     } catch (error: any) {
       if (transactionStarted) {
@@ -947,6 +975,7 @@ export module rentalAgreementService {
 
   export const regenerateRentalAgreementPdf = async (request: any) => {
     const agreementId = toPositiveInteger(request.params?.id, "agreement id");
+    await getAgreementDetailById(agreementId, request);
     const result = await attachAgreementPdf(
       agreementId,
       getDocumentOptionPayload(request.body, request.session?.id ?? null)
@@ -954,7 +983,7 @@ export module rentalAgreementService {
 
     return {
       message: "Rental agreement PDF generated successfully.",
-      agreement: await getAgreementDetailById(Number(result.agreement.id)),
+      agreement: await getAgreementDetailById(Number(result.agreement.id), request),
       pdf: result.pdf,
     };
   };

@@ -91,10 +91,8 @@ export const revoinvoiceSchema = {
         },
         invoiceurl: {
             type: ['string', 'null'],
-            maxLength: 100,
             errorMessage: {
-                type: "Invoice URL should be a string",
-                maxLength: "Invoice URL should be at most 100 characters long"
+                type: "Invoice URL should be a string"
             }
         },
         // invoicedata: {

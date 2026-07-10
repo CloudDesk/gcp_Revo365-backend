@@ -4,6 +4,7 @@ import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+import { accessScopeService } from "./accessScope.service.js";
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 const replaceTemplateTokens = (input, replacements) => {
     let output = input || "";
@@ -368,6 +369,7 @@ export var ticketService;
                     }
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "tickets", customerColumn: "userid" });
             if (pageNumber && recordCount) {
                 offset = (pageNumber - 1) * recordCount;
             }
@@ -450,11 +452,13 @@ export var ticketService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "t", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `
       (isarchive = FALSE OR isarchive IS NULL) AND 
       (isdeleted = FALSE OR isdeleted IS NULL) AND  
       (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+            whereClauses.push(baseConditions);
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
@@ -525,8 +529,10 @@ export var ticketService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "t", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+            whereClauses.push(baseConditions);
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
@@ -547,7 +553,7 @@ export var ticketService;
             return ErrorData;
         }
     };
-    ticketService.upsertTickets = async (ticketData, files, host) => {
+    ticketService.upsertTickets = async (ticketData, files, host, request) => {
         try {
             let querydata;
             let params;
@@ -559,6 +565,27 @@ export var ticketService;
             if (id) {
                 const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
                 previousTicket = prevResult.rows[0] ?? null;
+            }
+            if (request && await accessScopeService.isVendorRequest(request)) {
+                if (id && !(await accessScopeService.canVendorAccessTicket(request, id))) {
+                    return {
+                        errorMessage: "Vendor users can update only assigned business customer rental service requests.",
+                        statusCode: 403,
+                    };
+                }
+                const mergedTicket = { ...(previousTicket || {}), ...upsertFields };
+                if (!(await accessScopeService.canVendorAccessCustomer(request, mergedTicket.userid))) {
+                    return {
+                        errorMessage: "Vendor users can raise tickets only for assigned business customers.",
+                        statusCode: 403,
+                    };
+                }
+                if (!(await accessScopeService.isRentalTicketPayload(mergedTicket))) {
+                    return {
+                        errorMessage: "Vendor users can manage only rental service requests.",
+                        statusCode: 403,
+                    };
+                }
             }
             if (files && files.length > 0) {
                 for (const file of files) {

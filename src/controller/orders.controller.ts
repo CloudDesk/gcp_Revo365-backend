@@ -146,6 +146,11 @@ export module ordersController {
     export const getInvoiceDataForOrderid = async (request: any, reply: any) => {
         try {
             let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request)
+            if (getInvoiceDataResult?.errorMessage) {
+                return reply.status(getInvoiceDataResult.statusCode || 400).send({
+                    message: getInvoiceDataResult.errorMessage,
+                });
+            }
             reply.send(getInvoiceDataResult)
         } catch (error) {
             console.error("Error IN Controller getInvoiceDataForOrderid", error);

@@ -8,6 +8,10 @@ const normalizeStorageUrls = (value: any): any => {
     return value.split(STORAGE_CONSOLE_URL).join(STORAGE_PUBLIC_URL);
   }
 
+  if (value instanceof Date) {
+    return value;
+  }
+
   if (Array.isArray(value)) {
     return value.map((entry) => normalizeStorageUrls(entry));
   }

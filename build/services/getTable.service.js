@@ -1,5 +1,6 @@
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
+import { accessScopeService } from "./accessScope.service.js";
 export var getTables;
 (function (getTables) {
     getTables.getTable = async (request) => {
@@ -25,7 +26,8 @@ export var getTables;
                 permissions: "Permissions",
                 kubb_tickets: "KUBB Enquires",
                 buyback_enquiries: "Buyback Enquiries",
-                service_enquiries: "Service Enquiries"
+                service_enquiries: "Service Enquiries",
+                rental_agreement: "Rental Agreements"
             };
             result.rows.unshift({ table: 'home' });
             result = result.rows
@@ -45,9 +47,15 @@ export var getTables;
         try {
             let allowedTables = [];
             let notALlowedTables = [];
-            let getPermissions = await query("select * from permissions where role = $1", [request.params.role]);
+            const sessionRole = String(request.session?.role || "").toLowerCase();
+            const requestedRole = request.params.role;
+            const effectiveRole = sessionRole && sessionRole !== "admin"
+                ? request.session.role
+                : requestedRole;
+            let getPermissions = await query("select * from permissions where role = $1", [effectiveRole]);
             getPermissions.rows.forEach(element => {
-                element.permissionset.forEach((e) => {
+                const permissionset = accessScopeService.applyRoleScopes(element.role, element.permissionset);
+                permissionset.forEach((e) => {
                     if (e.permissions.read) {
                         allowedTables.push(e);
                     }

@@ -2,13 +2,24 @@ import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { QueryResult } from "pg";
+import { accessScopeService } from "./accessScope.service.js";
 
 export module addressService {
 
     export const getAddressData = async (request: any) => {
         try {
-            const queryText = `SELECT * FROM address ORDER BY modifieddate DESC`;
-            const result: QueryResult = await query(queryText, []);
+            const whereClauses: string[] = [];
+            const queryParams: any[] = [];
+            await accessScopeService.appendVendorCustomerColumnScope(
+                request,
+                whereClauses,
+                queryParams,
+                1,
+                { tableAlias: "address", customerColumn: "userid" }
+            );
+            const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+            const queryText = `SELECT * FROM address ${whereSql} ORDER BY modifieddate DESC`;
+            const result: QueryResult = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {
@@ -21,8 +32,17 @@ export module addressService {
         try {
 
             const { userId } = request.params
-            const queryText = `SELECT * FROM address where userId =${userId} ORDER BY modifieddate DESC`;
-            const result: QueryResult = await query(queryText, []);
+            const whereClauses = [`address.userid = $1`];
+            const queryParams: any[] = [Number(userId)];
+            await accessScopeService.appendVendorCustomerColumnScope(
+                request,
+                whereClauses,
+                queryParams,
+                2,
+                { tableAlias: "address", customerColumn: "userid" }
+            );
+            const queryText = `SELECT * FROM address where ${whereClauses.join(" AND ")} ORDER BY modifieddate DESC`;
+            const result: QueryResult = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         } catch (error) {

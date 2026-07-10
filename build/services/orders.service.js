@@ -7,6 +7,7 @@ import { inventoryReservationService } from "./inventoryReservation.service.js";
 import { cancelShiprocketOrderForMerchant } from "./shiprocket.service.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+import { accessScopeService } from "./accessScope.service.js";
 export var ordersService;
 (function (ordersService) {
     let orderlineColumnCache = null;
@@ -947,6 +948,7 @@ export var ordersService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(request, whereClauses, queryParams, parameterIndex, { tableAlias: "orderline", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' AND (orderline.ordertype IS NULL OR orderline.ordertype != 'Third Party Orders' OR orderline.thirdpartyorderid IS NULL) `;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
@@ -1193,6 +1195,7 @@ ${whereClause} ${orderByClause}`;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(request, whereClauses, queryParams, parameterIndex, { tableAlias: "orderline", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `orderline.orderstatus != 'payment_failed' AND orderline.orderstatus != 'order_processing' AND (orderline.ordertype IS NULL OR orderline.ordertype != 'Third Party Orders' OR orderline.thirdpartyorderid IS NULL)`;
             const whereClause = whereClauses.length > 0
@@ -2339,6 +2342,12 @@ Thank You!`,
     ordersService.getInvoiceDataForOrderid = async (orderid) => {
         try {
             const customerId = orderid.body;
+            if (!(await accessScopeService.canVendorAccessCustomer(orderid, customerId))) {
+                return {
+                    errorMessage: "Vendor users can view invoices only for assigned business customers.",
+                    statusCode: 403,
+                };
+            }
             // const uniqueOrderIds = [...new Set(orderid.body)];
             // console.log("Unique orderIds:", uniqueOrderIds);
             // const placeholders = uniqueOrderIds.map((_, index) => `$${index + 1}`).join(", ");

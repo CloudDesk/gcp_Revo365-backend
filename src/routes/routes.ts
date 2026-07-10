@@ -69,6 +69,9 @@ import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnical
 import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
 import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
 import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
+import { rentalInvoiceDocumentController } from "../controller/rentalInvoiceDocument.controller.js";
+import { vendorCustomerAssignmentController } from "../controller/vendorCustomerAssignment.controller.js";
+import { accessController } from "../controller/access.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -235,6 +238,9 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
     fastify.get('/inventoryusers/logout', InventoryuserController.userlogout);
+    fastify.get('/me/access', { preHandler: [getSession] }, accessController.getMyAccess);
+    fastify.get('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.getAssignments);
+    fastify.post('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.replaceAssignments);
 
 
 
@@ -505,6 +511,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);
     fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
     fastify.post('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.upsertRevoInvoice);
+    fastify.post('/revo-invoice/:id/rental-documents', { preHandler: [getSession] }, rentalInvoiceDocumentController.generateRentalInvoiceDocuments);
 
 
     //Query Table
@@ -590,4 +597,3 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 }
 
 export default Revo365Routes
-
