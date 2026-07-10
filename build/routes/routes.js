@@ -185,6 +185,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/whatsapp/users', userController.getUsersData);
     fastify.get('/users/:useremail/:userpassword', userController.getLoggedInUsersData);
     fastify.post('/users/login', userController.getLoggedInUsersData);
+    fastify.post('/users/google-login', userController.getGoogleLoggedInUserData);
     fastify.post('/users', userController.upsertUser);
     fastify.post('/users/fcmid', userController.upsertFcmidUser);
     fastify.get('/users/logout', userController.userlogout);

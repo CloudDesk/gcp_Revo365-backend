@@ -43,13 +43,13 @@ export module purchaseOrderController {
                 let message: any = {}
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message)
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin')
+                reply.status(404).send('Error when uploading Bill please contact Admin')
             }
         } catch (error) {
             console.error("Error in upsertInvoice", error);
@@ -64,13 +64,13 @@ export module purchaseOrderController {
                 let message: any = {}
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message)
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin')
+                reply.status(404).send('Error when uploading Bill please contact Admin')
             }
         } catch (error) {
             console.error("Error in upsertGcpInvoice", error);
@@ -84,13 +84,13 @@ export module purchaseOrderController {
                 let message: any = {}
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Removed Successfully`
-                        : `Inovice Removed Successfully`
+                        ? `Bill Removed Successfully`
+                        : `Bill Removed Successfully`
                 };
                 reply.status(200).send(message)
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin')
+                reply.status(404).send('Error when uploading Bill please contact Admin')
             }
         } catch (error) {
             console.error("Error in deleteUrl", error);

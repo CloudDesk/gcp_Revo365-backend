@@ -170,6 +170,12 @@ export var stockRevoController;
                 };
                 reply.status(200).send(message);
             }
+            else if (upsertStockResult?.status) {
+                reply.status(upsertStockResult.status).send({
+                    message: upsertStockResult.message,
+                    errorDetails: upsertStockResult.errorDetails,
+                });
+            }
             else {
                 reply.status(404).send({ error: [upsertStockResult] });
             }
@@ -191,6 +197,12 @@ export var stockRevoController;
                         : `Stock Inserted successfully`,
                 };
                 reply.status(200).send(message);
+            }
+            else if (upsertStockResult?.status) {
+                reply.status(upsertStockResult.status).send({
+                    message: upsertStockResult.message,
+                    errorDetails: upsertStockResult.errorDetails,
+                });
             }
             else {
                 reply.status(404).send({ error: [upsertStockResult] });

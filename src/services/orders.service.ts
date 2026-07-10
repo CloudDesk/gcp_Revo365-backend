@@ -41,6 +41,22 @@ export module ordersService {
         return orderlineColumnCache;
     };
 
+    const toSafeNumber = (value: any, fallback = 0): number => {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) ? numberValue : fallback;
+    };
+
+    const roundCurrency = (value: any): number =>
+        Math.round((toSafeNumber(value, 0) + Number.EPSILON) * 100) / 100;
+
+    const roundPayableAmount = (value: any): number =>
+        Math.round(roundCurrency(value));
+
+    const normalizeTaxCalculationMode = (value: any): 'inclusive' | 'exclusive' => {
+        const normalizedValue = String(value || '').trim().toLowerCase();
+        return normalizedValue === 'exclusive' ? 'exclusive' : 'inclusive';
+    };
+
     const ORDER_STATUS_RANK: Record<string, number> = {
         payment_failed: 0,
         ordered: 10,
@@ -547,6 +563,11 @@ export module ordersService {
                 o.orderid,
                 o.sgst,
                 o.cgst,
+                o.igst,
+                o.taxmode,
+                o.taxcalculationmode,
+                o.customertaxstate,
+                o.customertaxpincode,
                 invoice as invoiceurl,
                 invoicecreateddate,
                 a.name, 
@@ -717,6 +738,13 @@ export module ordersService {
                 o.quantity,
                 o.productamount,
                 o.discountamount,
+                o.sgst,
+                o.cgst,
+                o.igst,
+                o.taxmode,
+                o.taxcalculationmode,
+                o.customertaxstate,
+                o.customertaxpincode,
                 o.orderid,
                 ri.invoiceurl AS invoiceurl,
                 r.starrating AS rating_starrating,
@@ -2196,8 +2224,15 @@ ${whereClause} ${orderByClause}`;
             transactionData?.userid ??
             null;
 
-        const cgst = transactionData?.cgst;
-        const sgst = transactionData?.sgst;
+        const cgst = transactionData?.cgst ?? 0;
+        const sgst = transactionData?.sgst ?? 0;
+        const igst = transactionData?.igst ?? 0;
+        const taxmode = transactionData?.taxmode ?? (Number(igst) > 0 ? 'igst' : 'cgst_sgst');
+        const taxcalculationmode = normalizeTaxCalculationMode(
+            transactionData?.taxcalculationmode
+        );
+        const customertaxstate = transactionData?.customertaxstate ?? null;
+        const customertaxpincode = transactionData?.customertaxpincode ?? null;
 
         const storelocation =
             transactionData?.storelocation ??
@@ -2260,7 +2295,29 @@ ${whereClause} ${orderByClause}`;
             if (ordersToInsert.length > 0) {
 
                 const orderQuantity = ordersToInsert.reduce((acc: number, e: any) => acc + e.quantity, 0);
-                const orderAmount = ordersToInsert.reduce((acc: number, e: any) => acc + (e.productamount * e.quantity), 0);
+                const taxRate = toSafeNumber(cgst, 0) + toSafeNumber(sgst, 0) + toSafeNumber(igst, 0);
+                const transactionAmount = roundPayableAmount(transactionData?.amount);
+                const computedOrderAmount = ordersToInsert.reduce((acc: number, e: any) => {
+                    const quantity = toSafeNumber(e.quantity, 0);
+                    const productAmount = toSafeNumber(e.productamount, 0);
+                    const discountAmount = Math.max(0, toSafeNumber(e.discountamount, 0));
+                    const lineOrderAmount = toSafeNumber(e.orderamount, 0);
+
+                    if (taxcalculationmode === 'exclusive') {
+                        const taxableAmount = Math.max(0, productAmount * quantity - discountAmount);
+                        return acc + (
+                            lineOrderAmount > 0
+                                ? lineOrderAmount
+                                : taxableAmount * (1 + taxRate / 100)
+                        );
+                    }
+
+                    return acc + Math.max(0, productAmount * quantity - discountAmount);
+                }, 0);
+                const orderAmount =
+                    taxcalculationmode === 'exclusive' && transactionAmount > 0
+                        ? transactionAmount
+                        : roundPayableAmount(computedOrderAmount);
                 const orderProductIds = ordersToInsert.map((e: any) => e.productid);
 
                 const normalizedStoreLocation =
@@ -2283,13 +2340,14 @@ ${whereClause} ${orderByClause}`;
                     INSERT INTO orders (
                         orderamount, userid, addressid, merchanttransactionid,
                         quantity, productid, ordername, paymentmethod,
-                        totalrentalamount, sgst, cgst, storelocation,
+                        totalrentalamount, sgst, cgst, igst, taxmode,
+                        taxcalculationmode, customertaxstate, customertaxpincode, storelocation,
                         assetnumber, location, vendorname, empid,
                         deliverydate, brand, invoicefor
                     )
                     VALUES (
                         $1,$2,$3,$4,$5,$6,$7,$8,$9,
-                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
                     )
                     RETURNING *
                 `;
@@ -2306,6 +2364,11 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].totalrentalamount,
                     sgst,
                     cgst,
+                    igst,
+                    taxmode,
+                    taxcalculationmode,
+                    customertaxstate,
+                    customertaxpincode,
                     resolvedStoreLocation,
                     ordersToInsert[0].assetnumber,
                     ordersToInsert[0].location,
@@ -2347,7 +2410,19 @@ ${whereClause} ${orderByClause}`;
             if (thirdPartyOrdersToInsert.length > 0) {
 
                 const quantity = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => acc + e.quantity, 0);
-                const amount = thirdPartyOrdersToInsert.reduce((acc: number, e: any) => acc + (e.productamount * e.quantity), 0);
+                const amount = roundPayableAmount(
+                    thirdPartyOrdersToInsert.reduce((acc: number, e: any) => {
+                        const lineOrderAmount = toSafeNumber(e.orderamount, 0);
+                        if (lineOrderAmount > 0) {
+                            return acc + lineOrderAmount;
+                        }
+
+                        const quantity = toSafeNumber(e.quantity, 0);
+                        const productAmount = toSafeNumber(e.productamount, 0);
+                        const discountAmount = Math.max(0, toSafeNumber(e.discountamount, 0));
+                        return acc + Math.max(0, productAmount * quantity - discountAmount);
+                    }, 0)
+                );
                 const productIds = thirdPartyOrdersToInsert.map((e: any) => e.productid);
 
                 const insertThirdPartyQuery = `

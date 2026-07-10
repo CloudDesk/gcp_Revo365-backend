@@ -20,7 +20,7 @@ export module getTables {
                 product_revo: "Products",
                 tickets: "Service Requests",
                 orders: "Orders",
-                poinvoice: "Supplier Invoice",
+                poinvoice: "Supplier Bill",
                 purchaserequest: "Purchase Request",
                 transaction: "Transaction",
                 quotes: "Quotes",

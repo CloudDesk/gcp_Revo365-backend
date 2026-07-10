@@ -39,6 +39,8 @@ const toSafeNumber = (value, defaultValue = 0) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : defaultValue;
 };
+const roundCurrency = (value) => Math.round((toSafeNumber(value, 0) + Number.EPSILON) * 100) / 100;
+const roundPayableAmount = (value) => Math.round(roundCurrency(value));
 const normalizeOptionalLocation = (value) => {
     if (value === null || value === undefined)
         return null;
@@ -163,23 +165,35 @@ const resolveTransactionStoreLocation = (orderItems = []) => {
 const computePayableAmountFromOrderInput = (orderItems, fallbackAmount) => {
     const fallback = toSafeNumber(fallbackAmount, 0);
     if (!Array.isArray(orderItems) || orderItems.length === 0) {
-        return fallback;
+        return roundPayableAmount(fallback);
     }
     const computed = orderItems.reduce((total, item) => {
         const quantity = toSafeNumber(item?.quantity, 0);
         const productAmount = toSafeNumber(item?.productamount, 0);
+        const discountAmount = Math.max(0, toSafeNumber(item?.discountamount, 0));
         const lineOrderAmount = toSafeNumber(item?.orderamount, 0);
         if (lineOrderAmount > 0) {
             return total + lineOrderAmount;
         }
         if (productAmount > 0 && quantity > 0) {
-            return total + productAmount * quantity;
+            const taxRate = toSafeNumber(item?.cgst, 0) +
+                toSafeNumber(item?.sgst, 0) +
+                toSafeNumber(item?.igst, 0);
+            const taxCalculationMode = String(item?.taxcalculationmode || "")
+                .trim()
+                .toLowerCase();
+            const baseAmount = productAmount * quantity;
+            const taxableAmount = Math.max(0, baseAmount - discountAmount);
+            const payableAmount = taxCalculationMode === "exclusive"
+                ? taxableAmount * (1 + taxRate / 100)
+                : taxableAmount;
+            return total + roundCurrency(payableAmount);
         }
         return total;
     }, 0);
     // Frontend total may include shipping/tax not represented in order lines.
-    // Use the higher value so Razorpay amount stays aligned with checkout summary.
-    return Math.max(computed, fallback);
+    // Use the higher value, then round the payable total to the nearest rupee.
+    return roundPayableAmount(Math.max(computed, fallback));
 };
 const groupOrderQuantities = (orderItems = []) => {
     const grouped = new Map();
@@ -1766,11 +1780,14 @@ export var transactionService;
                     message: "One or more products are out of stock. Please try again later.",
                 };
             }
+            const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
+            amount = authoritativeAmount;
+            request.body.transaction.amount = authoritativeAmount;
             const data = {
                 merchantId: MERCHANT_ID,
                 merchantTransactionId: merchanttransactionId,
                 name: name,
-                amount: Number(amount) * 100,
+                amount: authoritativeAmount * 100,
                 redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}&token=${request.headers.authorization}`,
                 redirectMode: "POST",
                 mobileNumber: mobilenumber,
@@ -2076,6 +2093,9 @@ export var transactionService;
                     errorDetails: fulfillmentBuckets.validationErrors,
                 };
             }
+            const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
+            amount = authoritativeAmount;
+            request.body.transaction.amount = authoritativeAmount;
             // ✅ Refresh rental quantities
             if (request.body?.order?.[0]?.invoicefor === "product rental") {
                 try {
@@ -2123,7 +2143,7 @@ export var transactionService;
                     transaction: {
                         merchanttransactionId,
                         name,
-                        amount: toSafeNumber(amount, 0),
+                        amount: authoritativeAmount,
                         mobilenumber: mobilenumber === "" ? null : mobilenumber,
                         productid,
                         transactionfor,
@@ -2131,7 +2151,7 @@ export var transactionService;
                         transactiondata: {
                             status: "Cash Paid",
                             provider: "offline_cash",
-                            amount: toSafeNumber(amount, 0),
+                            amount: authoritativeAmount,
                         },
                         razorpay_signature: "",
                     },
@@ -2152,7 +2172,7 @@ export var transactionService;
                 await deletePurchasedCartEntries(context.userId, orderdata);
                 await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
                     name,
-                    amount,
+                    amount: authoritativeAmount,
                     mobilenumber,
                 });
                 return {
@@ -2177,9 +2197,8 @@ export var transactionService;
                     message: "One or more products are out of stock. Please try again later.",
                 };
             }
-            const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
             const order = await razorpay.orders.create({
-                amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
+                amount: authoritativeAmount * 100,
                 currency: "INR",
                 receipt: merchanttransactionId,
                 notes: {

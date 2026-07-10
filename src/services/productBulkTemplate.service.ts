@@ -133,6 +133,14 @@ const FIELD_OVERRIDES: Record<string, FieldOverride> = {
   serialnumber: {
     example: "SN-T14-0001",
   },
+  hsncode: {
+    example: "84713010",
+    notes: "Required when adding non-rental stock for this product.",
+  },
+  saccode: {
+    example: "997315",
+    notes: "Required when adding rental stock for this product.",
+  },
 };
 
 const getTypeList = (property: SchemaProperty): string[] => {

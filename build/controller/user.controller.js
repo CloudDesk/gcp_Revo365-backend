@@ -50,6 +50,24 @@ export var userController;
             reply.send(error.message);
         }
     };
+    userController.getGoogleLoggedInUserData = async (request, reply) => {
+        try {
+            let getUsersDataResult = await userService.getGoogleLoggedInUserData(request);
+            if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
+                reply.status(401).send({ error: getUsersDataResult });
+            }
+            else if (getUsersDataResult?.sessionId && Array.isArray(getUsersDataResult?.userdata)) {
+                reply.send(getUsersDataResult);
+            }
+            else {
+                reply.status(401).send(getUsersDataResult);
+            }
+        }
+        catch (error) {
+            console.error("Error in getGoogleLoggedInUserData", error);
+            reply.send(error.message);
+        }
+    };
     userController.deleteUserData = async (request, reply) => {
         try {
             const { id } = request.params;
