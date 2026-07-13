@@ -32,9 +32,7 @@ const validatePayload = (payload: ReturnType<typeof normalizePayload>) => {
   if (!payload.phone || payload.phone.length !== 10) {
     return "Phone number must be exactly 10 digits";
   }
-  if (!payload.email || !emailRegex.test(payload.email)) return "Valid email is required";
-  if (!payload.device_type) return "Device type is required";
-  //if (!payload.device_model) return "Device model is required";
+  if (payload.email && !emailRegex.test(payload.email)) return "Valid email is required";
   return null;
 };
 
