@@ -4,6 +4,10 @@ import { fileURLToPath } from "url";
 import { query } from "../database/postgres.js";
 import { admin } from "../firebase/firebaseAdmin.js";
 import {
+  calculateRentalInvoiceSnapshot,
+  RentalInvoiceSnapshot,
+} from "../utils/invoice/rentalInvoiceCalculation.js";
+import {
   getRentalSummaryInvoiceHtml,
   RentalSummaryInvoiceTemplateData,
 } from "../utils/invoice/rentalSummaryInvoiceTemplate.js";
@@ -17,7 +21,7 @@ const RENTAL_BILLING_TIMEZONE = "Asia/Kolkata";
 const DOCUMENT_TYPE = "rental_summary_with_supporting_document";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_yellow.png");
+const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_logo.jpeg");
 let cachedDefaultLogoDataUrl: string | null | undefined;
 
 const COMPANY_DETAILS = {
@@ -26,9 +30,11 @@ const COMPANY_DETAILS = {
   companyAddressLine2: "Chennai-600096",
   gstin: "33AAMCR5393J1ZV",
   pan: "AAMCR5393J",
+  phoneNumber: "+91 7567386365",
   bankName: "Rev0365 Global Private Limited",
   accountNumber: "00000044015545872",
   ifsc: "SBIN0013241",
+  branch: "SBI Egmore",
 };
 
 type GenerateRentalInvoiceDocumentOptions = {
@@ -39,51 +45,38 @@ type GenerateRentalInvoiceDocumentOptions = {
   placeOfSupply?: string | null;
 };
 
-const normalizeText = (value: any) => {
+const normalizeText = (value: unknown) => {
   const text = String(value ?? "").trim();
   return text || null;
 };
 
-const parseJsonValue = <T>(value: any, fallback: T): T => {
-  if (value == null) {
-    return fallback;
-  }
-
-  if (typeof value === "object") {
-    return value as T;
-  }
+const parseJsonValue = <T>(value: unknown, fallback: T): T => {
+  if (value == null) return fallback;
+  if (typeof value === "object") return value as T;
 
   try {
-    return JSON.parse(value) as T;
+    return JSON.parse(String(value)) as T;
   } catch {
     return fallback;
   }
 };
 
-const sanitizeFileName = (value: any) =>
+const sanitizeFileName = (value: unknown) =>
   String(value ?? "rental-invoice")
     .trim()
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "rental-invoice";
 
-const toNumber = (value: any) => {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
+const toNumber = (value: unknown) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const numericValue = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
   return Number.isFinite(numericValue) ? numericValue : 0;
 };
 
-const parseDateValue = (value: any): Date | null => {
-  if (value == null || value === "") {
-    return null;
-  }
-
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
+const parseDateValue = (value: unknown): Date | null => {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
 
   const numericValue = Number(value);
   if (Number.isFinite(numericValue) && numericValue > 0) {
@@ -94,7 +87,7 @@ const parseDateValue = (value: any): Date | null => {
     );
   }
 
-  const parsedDate = new Date(value);
+  const parsedDate = new Date(String(value));
   return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
 };
 
@@ -108,19 +101,11 @@ const getDatePart = (date: Date, part: Intl.DateTimeFormatPartTypes) =>
     .formatToParts(date)
     .find((entry) => entry.type === part)?.value || "";
 
-const formatDateKey = (date: Date) => {
-  const year = getDatePart(date, "year");
-  const month = getDatePart(date, "month");
-  const day = getDatePart(date, "day");
-  return `${year}-${month}-${day}`;
-};
+const formatDateKey = (date: Date) =>
+  `${getDatePart(date, "year")}-${getDatePart(date, "month")}-${getDatePart(date, "day")}`;
 
-const formatInvoiceDate = (date: Date) => {
-  const day = getDatePart(date, "day");
-  const month = getDatePart(date, "month");
-  const year = getDatePart(date, "year");
-  return `${day}-${month}-${year}`;
-};
+const formatInvoiceDate = (date: Date) =>
+  `${getDatePart(date, "day")}-${getDatePart(date, "month")}-${getDatePart(date, "year")}`;
 
 const formatBillingPeriodLabel = (date: Date) =>
   new Intl.DateTimeFormat("en-GB", {
@@ -133,46 +118,43 @@ const shiftDateByMonths = (baseDate: Date, months: number) => {
   const shiftedDate = new Date(baseDate);
   const originalDay = shiftedDate.getDate();
   shiftedDate.setMonth(shiftedDate.getMonth() + months);
-  if (shiftedDate.getDate() < originalDay) {
-    shiftedDate.setDate(0);
-  }
+  if (shiftedDate.getDate() < originalDay) shiftedDate.setDate(0);
   return shiftedDate;
 };
 
-const formatAmount = (value: any) =>
+const formatAmount = (value: unknown) =>
   new Intl.NumberFormat("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(toNumber(value));
 
-const firstPresentText = (...values: any[]) => {
+const formatTaxRate = (value: unknown) =>
+  new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(toNumber(value));
+
+const firstPresentText = (...values: unknown[]) => {
   for (const value of values) {
     const normalized = normalizeText(value);
-    if (normalized) {
-      return normalized;
-    }
+    if (normalized) return normalized;
   }
   return "";
 };
-
-const sumQuantities = (items: any[]) =>
-  items.reduce((total, item) => total + Math.max(toNumber(item?.quantity), 0), 0);
 
 const buildCustomerAddress = (invoice: any) =>
   firstPresentText(invoice?.customeraddress, invoice?.address);
 
 const getDefaultLogoDataUrl = async () => {
-  if (cachedDefaultLogoDataUrl !== undefined) {
-    return cachedDefaultLogoDataUrl;
-  }
+  if (cachedDefaultLogoDataUrl !== undefined) return cachedDefaultLogoDataUrl;
 
   try {
     const logoBuffer = await readFile(DEFAULT_LOGO_PATH);
-    cachedDefaultLogoDataUrl = `data:image/png;base64,${logoBuffer.toString("base64")}`;
+    cachedDefaultLogoDataUrl = `data:image/jpeg;base64,${logoBuffer.toString("base64")}`;
   } catch (error: any) {
     cachedDefaultLogoDataUrl = null;
     console.warn(
-      `Rental summary invoice logo not found at ${DEFAULT_LOGO_PATH}: ${error?.message || error}`
+      `Rental invoice logo not found at ${DEFAULT_LOGO_PATH}: ${error?.message || error}`
     );
   }
 
@@ -200,25 +182,52 @@ const uploadPdf = async (
 };
 
 const fetchInvoice = async (invoiceId: number) => {
-  const result = await query(`SELECT * FROM revoinvoice WHERE id = $1`, [
-    invoiceId,
-  ]);
+  const result = await query(`SELECT * FROM revoinvoice WHERE id = $1`, [invoiceId]);
   return result.rows[0] || null;
 };
 
-const fetchRentalOrderLines = async (uniqueOrderId: string) => {
-  if (!uniqueOrderId) {
-    return [];
-  }
+const getSelectedOrderLineIds = (invoice: any): number[] => {
+  const invoiceData = parseJsonValue<any>(invoice?.invoicedata, {});
+  const items = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
+  return Array.from(
+    new Set<number>(
+      items
+        .map((item: any) => Number(item?.orderLineId ?? item?.orderlineid))
+        .filter((id: number) => Number.isFinite(id) && id > 0)
+        .map((id: number) => Math.trunc(id))
+    )
+  );
+};
+
+const fetchRentalOrderLines = async (
+  uniqueOrderId: string,
+  selectedOrderLineIds: number[]
+) => {
+  if (!uniqueOrderId) return [];
+
+  const queryParams: any[] = [uniqueOrderId];
+  const selectedLineClause = selectedOrderLineIds.length
+    ? `AND id = ANY($2::int[])`
+    : "";
+  if (selectedOrderLineIds.length) queryParams.push(selectedOrderLineIds);
 
   const result = await query(
     `
     SELECT
       id,
+      orderlinenumber,
       productname,
+      productamount,
+      discountamount,
+      orderamount,
       quantity,
       saccode,
       hsncode,
+      cgst,
+      sgst,
+      igst,
+      taxmode,
+      taxcalculationmode,
       customertaxstate,
       customertaxpincode,
       rentstartdate,
@@ -227,30 +236,80 @@ const fetchRentalOrderLines = async (uniqueOrderId: string) => {
     WHERE uniqueorderid = $1
       AND LOWER(COALESCE(ordername, '')) = 'rental'
       AND COALESCE(isactivebillingline, TRUE) = TRUE
+      ${selectedLineClause}
     ORDER BY id
     `,
-    [uniqueOrderId]
+    queryParams
   );
+
+  if (selectedOrderLineIds.length && result.rows.length !== selectedOrderLineIds.length) {
+    throw new Error("One or more selected rental order lines are unavailable for invoicing.");
+  }
 
   return result.rows;
 };
 
-const buildSummaryData = (
+const buildCanonicalInvoiceData = (snapshot: RentalInvoiceSnapshot) => ({
+  version: snapshot.version,
+  currency: snapshot.currency,
+  ordername: "rental",
+  taxmode: snapshot.taxMode,
+  taxcalculationmode: "exclusive",
+  subtotalamount: snapshot.subtotalAmount,
+  discountamount: snapshot.discountAmount,
+  taxableamount: snapshot.taxableAmount,
+  cgstrate: snapshot.cgstRate,
+  sgstrate: snapshot.sgstRate,
+  igstrate: snapshot.igstRate,
+  cgstamount: snapshot.cgstAmount,
+  sgstamount: snapshot.sgstAmount,
+  igstamount: snapshot.igstAmount,
+  taxamount: snapshot.taxAmount,
+  totalbeforeroundoff: snapshot.totalBeforeRoundOff,
+  roundoffamount: snapshot.roundOffAmount,
+  payableamount: snapshot.payableAmount,
+  items: snapshot.items.map((item, index) => ({
+    id: index + 1,
+    orderlineid: item.orderLineId,
+    orderlinenumber: item.orderLineNumber,
+    name: item.productName,
+    quantity: item.quantity,
+    unitrate: item.unitRate,
+    grossamount: item.grossAmount,
+    discountamount: item.discountAmount,
+    taxableamount: item.taxableAmount,
+    taxmode: item.taxMode,
+    cgstrate: item.cgstRate,
+    sgstrate: item.sgstRate,
+    igstrate: item.igstRate,
+    cgstamount: item.cgstAmount,
+    sgstamount: item.sgstAmount,
+    igstamount: item.igstAmount,
+    taxamount: item.taxAmount,
+    totalamount: item.totalAmount,
+    saccode: item.sacCode,
+    rentstartdate: item.rentStartDate,
+    rentenddate: item.rentEndDate,
+  })),
+});
+
+const buildDocumentData = (
   invoice: any,
   orderLines: any[],
+  snapshot: RentalInvoiceSnapshot,
   options: GenerateRentalInvoiceDocumentOptions
 ) => {
-  const invoiceData = parseJsonValue<any>(invoice?.invoicedata, {});
-  const invoiceItems = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
-  const itemsForQuantity = invoiceItems.length > 0 ? invoiceItems : orderLines;
-  const rentalDeviceCount = Math.max(sumQuantities(itemsForQuantity), 1);
+  const rentalDeviceCount = Math.max(
+    snapshot.items.reduce((total, item) => total + item.quantity, 0),
+    1
+  );
   const billingStart =
     parseDateValue(invoice?.invoicedate) ||
     parseDateValue(orderLines[0]?.rentstartdate) ||
     parseDateValue(invoice?.createddate);
   const invoiceCreatedDate =
-    parseDateValue(invoice?.createddate) || parseDateValue(Date.now());
-  const billingPeriodStart = billingStart || invoiceCreatedDate || new Date();
+    parseDateValue(invoice?.createddate) || parseDateValue(Date.now()) || new Date();
+  const billingPeriodStart = billingStart || invoiceCreatedDate;
   const billingPeriodEnd = shiftDateByMonths(billingPeriodStart, 1);
   billingPeriodEnd.setDate(billingPeriodEnd.getDate() - 1);
 
@@ -258,28 +317,21 @@ const buildSummaryData = (
   const itemLabel = firstPresentText(options.summaryitemlabel, "Laptop Rental");
   const deviceLabel = rentalDeviceCount === 1 ? "Device" : "Devices";
   const summaryDescription = `${itemLabel}(${rentalDeviceCount} ${deviceLabel} for ${billingPeriodLabel})`;
-  const firstInvoiceItem = invoiceItems[0] || {};
   const firstOrderLine = orderLines[0] || {};
-  const sacCode = firstPresentText(
-    firstInvoiceItem?.saccode,
-    firstInvoiceItem?.hsncode,
-    firstOrderLine?.saccode,
-    firstOrderLine?.hsncode,
-    "997315"
-  );
-  const cgstAmount = toNumber(invoiceData?.cgst);
-  const sgstAmount = toNumber(invoiceData?.sgst);
-  const igstAmount = toNumber(invoiceData?.igst);
-  const taxableValue = toNumber(invoiceData?.subtotal);
-  const totalAmount =
-    toNumber(invoiceData?.total) ||
-    taxableValue + cgstAmount + sgstAmount + igstAmount;
+  const firstItem = snapshot.items[0];
+  const sacCode = firstPresentText(firstItem?.sacCode, "997315");
   const companyAccountNumber = firstPresentText(
     invoice?.odaccountnumber,
     COMPANY_DETAILS.accountNumber
   );
   const companyIfsc = firstPresentText(invoice?.ifsc, COMPANY_DETAILS.ifsc);
-  const placeOfSupply = firstPresentText(options.placeOfSupply, "same as billing");
+  const placeOfSupply = firstPresentText(
+    options.placeOfSupply,
+    firstOrderLine?.customertaxstate,
+    firstOrderLine?.customertaxpincode,
+    "same as billing"
+  );
+  const roundOffSign: "+" | "-" = snapshot.roundOffAmount >= 0 ? "+" : "-";
 
   const summaryInvoiceData = {
     companyname: COMPANY_DETAILS.companyName,
@@ -291,14 +343,22 @@ const buildSummaryData = (
     customergstnumber: firstPresentText(invoice?.customergstnumber, "-"),
     placeofsupply: placeOfSupply,
     invoicenumber: firstPresentText(invoice?.invoicenumber),
-    invoicedate: formatInvoiceDate(invoiceCreatedDate || new Date()),
+    invoicedate: formatInvoiceDate(invoiceCreatedDate),
     summarydescription: summaryDescription,
     saccode: sacCode,
-    taxablevalue: formatAmount(taxableValue),
-    cgstamount: formatAmount(cgstAmount),
-    sgstamount: formatAmount(sgstAmount),
-    igstamount: formatAmount(igstAmount),
-    totalamount: formatAmount(totalAmount),
+    grossamount: formatAmount(snapshot.subtotalAmount),
+    discountamount: formatAmount(snapshot.discountAmount),
+    taxablevalue: formatAmount(snapshot.taxableAmount),
+    taxmode: snapshot.taxMode,
+    cgstrate: formatTaxRate(snapshot.cgstRate),
+    sgstrate: formatTaxRate(snapshot.sgstRate),
+    igstrate: formatTaxRate(snapshot.igstRate),
+    cgstamount: formatAmount(snapshot.cgstAmount),
+    sgstamount: formatAmount(snapshot.sgstAmount),
+    igstamount: formatAmount(snapshot.igstAmount),
+    roundoffamount: formatAmount(Math.abs(snapshot.roundOffAmount)),
+    roundoffsign: roundOffSign,
+    totalamount: formatAmount(snapshot.payableAmount),
     companypan: COMPANY_DETAILS.pan,
     companybankname: COMPANY_DETAILS.bankName,
     companyaccountnumber: companyAccountNumber,
@@ -309,7 +369,7 @@ const buildSummaryData = (
     rentaldevicecount: rentalDeviceCount,
   };
 
-  const templateData: RentalSummaryInvoiceTemplateData = {
+  const summaryTemplateData: RentalSummaryInvoiceTemplateData = {
     companyName: summaryInvoiceData.companyname,
     companyAddressLine1: summaryInvoiceData.companyaddressline1,
     companyAddressLine2: summaryInvoiceData.companyaddressline2,
@@ -322,10 +382,18 @@ const buildSummaryData = (
     invoiceDate: summaryInvoiceData.invoicedate,
     summaryDescription: summaryInvoiceData.summarydescription,
     sacCode: summaryInvoiceData.saccode,
+    grossAmount: summaryInvoiceData.grossamount,
+    discountAmount: summaryInvoiceData.discountamount,
     taxableValue: summaryInvoiceData.taxablevalue,
+    taxMode: summaryInvoiceData.taxmode,
+    cgstRate: summaryInvoiceData.cgstrate,
+    sgstRate: summaryInvoiceData.sgstrate,
+    igstRate: summaryInvoiceData.igstrate,
     cgstAmount: summaryInvoiceData.cgstamount,
     sgstAmount: summaryInvoiceData.sgstamount,
     igstAmount: summaryInvoiceData.igstamount,
+    roundOffAmount: summaryInvoiceData.roundoffamount,
+    roundOffSign: summaryInvoiceData.roundoffsign,
     totalAmount: summaryInvoiceData.totalamount,
     companyPan: summaryInvoiceData.companypan,
     companyBankName: summaryInvoiceData.companybankname,
@@ -335,11 +403,7 @@ const buildSummaryData = (
     signatureUrl: options.signatureUrl,
   };
 
-  return {
-    summaryInvoiceData,
-    supportingDocumentData: invoiceData,
-    templateData,
-  };
+  return { summaryInvoiceData, summaryTemplateData };
 };
 
 export module rentalInvoiceDocumentService {
@@ -352,14 +416,19 @@ export module rentalInvoiceDocumentService {
     }
 
     const invoice = await fetchInvoice(invoiceId);
-    if (!invoice) {
-      throw new Error("Rental invoice record not found.");
-    }
-
+    if (!invoice) throw new Error("Rental invoice record not found.");
     if (String(invoice.invoicefor || "").toLowerCase() !== "rental") {
-      throw new Error("Rental summary invoice can only be generated for rental invoices.");
+      throw new Error("Rental invoice documents can only be generated for rental invoices.");
     }
 
+    const selectedOrderLineIds = getSelectedOrderLineIds(invoice);
+    const orderLines = await fetchRentalOrderLines(
+      String(invoice.orderid || ""),
+      selectedOrderLineIds
+    );
+    const snapshot = calculateRentalInvoiceSnapshot(orderLines);
+    const canonicalInvoiceData = buildCanonicalInvoiceData(snapshot);
+    const logoUrl = firstPresentText(options.logoUrl, await getDefaultLogoDataUrl());
     const supportingDocumentUrl = firstPresentText(
       options.supportingdocumenturl,
       invoice.supportingdocumenturl,
@@ -370,18 +439,21 @@ export module rentalInvoiceDocumentService {
       throw new Error("Supporting document URL is required before generating rental summary invoice.");
     }
 
-    const orderLines = await fetchRentalOrderLines(String(invoice.orderid || ""));
-    const logoUrl = firstPresentText(options.logoUrl, await getDefaultLogoDataUrl());
-    const { summaryInvoiceData, supportingDocumentData, templateData } =
-      buildSummaryData(invoice, orderLines, { ...options, logoUrl });
-    const html = getRentalSummaryInvoiceHtml(templateData);
-    const pdfBuffer = await renderHtmlToPdf(html);
+    const { summaryInvoiceData, summaryTemplateData } =
+      buildDocumentData(invoice, orderLines, snapshot, { ...options, logoUrl });
+
+    const summaryHtml = getRentalSummaryInvoiceHtml(summaryTemplateData);
+    const summaryPdfBuffer = await renderHtmlToPdf(summaryHtml);
+
     const safeInvoiceNumber = sanitizeFileName(
       invoice.invoicenumber || `rental-invoice-${invoice.id}`
     );
-    const fileName = `${safeInvoiceNumber}-summary.pdf`;
-    const destination = `${RENTAL_SUMMARY_INVOICE_FOLDER}/${fileName}`;
-    const summaryInvoiceUrl = await uploadPdf(pdfBuffer, destination, fileName);
+    const summaryFileName = `${safeInvoiceNumber}-summary.pdf`;
+    const summaryInvoiceUrl = await uploadPdf(
+      summaryPdfBuffer,
+      `${RENTAL_SUMMARY_INVOICE_FOLDER}/${summaryFileName}`,
+      summaryFileName
+    );
 
     const updateResult = await query(
       `
@@ -389,27 +461,34 @@ export module rentalInvoiceDocumentService {
       SET
         invoiceurl = $1,
         supportingdocumenturl = $2,
-        summaryinvoicedata = $3,
-        supportingdocumentdata = $4,
+        invoicedata = $3,
+        summaryinvoicedata = $4,
+        supportingdocumentdata = $3,
         billingperiodstart = $5,
         billingperiodend = $6,
         billingperiodlabel = $7,
         rentaldevicecount = $8,
         invoicedocumenttype = $9,
+        taxamount = $10,
+        discount = $11,
+        totalorderamount = $12,
         modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
-      WHERE id = $10
+      WHERE id = $13
       RETURNING *
       `,
       [
         summaryInvoiceUrl,
         supportingDocumentUrl,
+        canonicalInvoiceData,
         summaryInvoiceData,
-        supportingDocumentData,
         summaryInvoiceData.billingperiodstart,
         summaryInvoiceData.billingperiodend,
         summaryInvoiceData.billingperiodlabel,
         summaryInvoiceData.rentaldevicecount,
         DOCUMENT_TYPE,
+        snapshot.taxAmount,
+        snapshot.discountAmount,
+        snapshot.payableAmount,
         invoiceId,
       ]
     );
@@ -418,6 +497,7 @@ export module rentalInvoiceDocumentService {
       invoice: updateResult.rows[0],
       invoiceurl: summaryInvoiceUrl,
       supportingdocumenturl: supportingDocumentUrl,
+      invoicedata: canonicalInvoiceData,
       summaryinvoicedata: summaryInvoiceData,
     };
   };

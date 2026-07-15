@@ -21,6 +21,23 @@ const renderSignature = (data) => {
     }
     return `<img class="signature-img" src="${escapeHtml(data.signatureUrl)}" alt="Authorised signature" />`;
 };
+const renderTaxLabels = (data) => data.taxMode === "igst"
+    ? `<div>IGST ${escapeHtml(data.igstRate)}%</div>`
+    : `<div>CGST ${escapeHtml(data.cgstRate)}%</div>
+                <div>SGST ${escapeHtml(data.sgstRate)}%</div>`;
+const renderTaxAmounts = (data) => data.taxMode === "igst"
+    ? `<div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(data.igstAmount)}</span>
+                </div>`
+    : `<div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(data.cgstAmount)}</span>
+                </div>
+                <div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(data.sgstAmount)}</span>
+                </div>`;
 export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
 <html lang="en">
   <head>
@@ -156,7 +173,7 @@ export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
         padding-right: 1.2mm;
       }
       .description-row td {
-        height: 77mm;
+        height: 69mm;
         font-size: 15px;
         line-height: 1.1;
       }
@@ -183,7 +200,7 @@ export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
         white-space: nowrap;
       }
       .tax-row td {
-        height: 38mm;
+        height: 46mm;
         font-size: 15px;
       }
       .tax-labels {
@@ -194,7 +211,7 @@ export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        gap: 1mm;
+        gap: 1.2mm;
       }
       .tax-amounts {
         padding: 2mm 1mm;
@@ -204,7 +221,7 @@ export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        gap: 1mm;
+        gap: 1.2mm;
       }
       .total-row td {
         height: 7mm;
@@ -291,32 +308,39 @@ export const getRentalSummaryInvoiceHtml = (data) => `<!doctype html>
             <td class="amount-cell" colspan="2">
               <div class="money-row">
                 <span class="currency">&#8377;</span>
-                <span class="money">${escapeHtml(data.taxableValue)}</span>
+                <span class="money">${escapeHtml(data.grossAmount)}</span>
               </div>
             </td>
           </tr>
           <tr class="tax-row">
             <td class="tax-labels">
               <div class="tax-label-inner">
+                <div>Gross Rental Charges</div>
+                <div>Less: Discount</div>
                 <div>Taxable Value</div>
-                <div style="margin-top: 20mm">ADD CGST 9 %</div>
-                <div>ADD SGST 9%</div>
+                ${renderTaxLabels(data)}
+                <div>Round Off</div>
               </div>
             </td>
             <td></td>
             <td class="tax-amounts" colspan="2">
               <div class="tax-amount-inner">
-                <div class="money-row" style="margin-bottom: 20mm">
+                <div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(data.grossAmount)}</span>
+                </div>
+                <div class="money-row">
+                  <span class="currency">-&#8377;</span>
+                  <span class="money">${escapeHtml(data.discountAmount)}</span>
+                </div>
+                <div class="money-row">
                   <span class="currency">&#8377;</span>
                   <span class="money">${escapeHtml(data.taxableValue)}</span>
                 </div>
+                ${renderTaxAmounts(data)}
                 <div class="money-row">
-                  <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.cgstAmount)}</span>
-                </div>
-                <div class="money-row">
-                  <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.sgstAmount)}</span>
+                  <span class="currency">${escapeHtml(data.roundOffSign)}&#8377;</span>
+                  <span class="money">${escapeHtml(data.roundOffAmount)}</span>
                 </div>
               </div>
             </td>

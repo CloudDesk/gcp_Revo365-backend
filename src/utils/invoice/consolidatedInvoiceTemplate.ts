@@ -1,38 +1,55 @@
-export type RentalSummaryInvoiceTemplateData = {
+export type ConsolidatedInvoiceTemplateRow = {
+  sourceInvoiceId: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceTypeLabel: string;
+  description: string;
+  quantityLabel: string;
+  sacCode?: string;
+  taxableAmount: string;
+  taxAmount: string;
+  totalAmount: string;
+  invoiceUrl?: string | null;
+  supportingDocumentUrl?: string | null;
+};
+
+export type ConsolidatedInvoiceTemplateData = {
   companyName: string;
-  companyAddressLine1: string;
-  companyAddressLine2: string;
+  companyAddress: string;
+  companyAddressLine1?: string;
+  companyAddressLine2?: string;
   companyGstin: string;
+  companyPan?: string;
+  companyBankName?: string;
+  companyAccountNumber?: string;
+  companyIfsc?: string;
+  documentNumber: string;
+  generatedDate: string;
+  periodLabel: string;
+  versionLabel?: string;
   customerName: string;
   customerAddress: string;
   customerGstin: string;
-  placeOfSupply: string;
-  invoiceNumber: string;
-  invoiceDate: string;
-  summaryDescription: string;
-  sacCode: string;
-  grossAmount: string;
-  discountAmount: string;
-  taxableValue: string;
-  taxMode: "cgst_sgst" | "igst";
-  cgstRate: string;
-  sgstRate: string;
-  igstRate: string;
-  cgstAmount: string;
-  sgstAmount: string;
-  igstAmount: string;
-  roundOffAmount: string;
-  roundOffSign: "+" | "-";
+  customerPhone: string;
+  placeOfSupply?: string;
+  summaryDescription?: string;
+  sacCode?: string;
+  taxMode?: "cgst_sgst" | "igst";
+  cgstRate?: string;
+  sgstRate?: string;
+  igstRate?: string;
+  cgstAmount?: string;
+  sgstAmount?: string;
+  igstAmount?: string;
+  rows: ConsolidatedInvoiceTemplateRow[];
+  subtotalAmount: string;
+  taxAmount: string;
   totalAmount: string;
-  companyPan: string;
-  companyBankName: string;
-  companyAccountNumber: string;
-  companyIfsc: string;
   logoUrl?: string | null;
   signatureUrl?: string | null;
 };
 
-const escapeHtml = (value: any) =>
+const escapeHtml = (value: unknown) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -40,14 +57,37 @@ const escapeHtml = (value: any) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-const multiline = (value: any) =>
+const multiline = (value: unknown) =>
   escapeHtml(value)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .join("<br />");
 
-const renderImageOrLogoSlot = (data: RentalSummaryInvoiceTemplateData) => {
+const parseAmount = (value: unknown) => {
+  const numeric = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const formatAmount = (value: unknown) =>
+  new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(parseAmount(value));
+
+const splitCompanyAddress = (data: ConsolidatedInvoiceTemplateData) => {
+  const addressLines = String(data.companyAddress || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return {
+    line1: data.companyAddressLine1 || addressLines[0] || "",
+    line2: data.companyAddressLine2 || addressLines.slice(1).join(", ") || "",
+  };
+};
+
+const renderLogo = (data: ConsolidatedInvoiceTemplateData) => {
   if (data.logoUrl) {
     return `<img class="logo-img" src="${escapeHtml(data.logoUrl)}" alt="TEQIT logo" />`;
   }
@@ -55,42 +95,116 @@ const renderImageOrLogoSlot = (data: RentalSummaryInvoiceTemplateData) => {
   return `<div class="logo-slot">TEQIT!</div>`;
 };
 
-const renderSignature = (data: RentalSummaryInvoiceTemplateData) => {
-  if (!data.signatureUrl) {
-    return `<div class="signature-placeholder"></div>`;
-  }
-
+const renderSignature = (data: ConsolidatedInvoiceTemplateData) => {
+  if (!data.signatureUrl) return `<div class="signature-placeholder"></div>`;
   return `<img class="signature-img" src="${escapeHtml(data.signatureUrl)}" alt="Authorised signature" />`;
 };
 
-const renderTaxLabels = (data: RentalSummaryInvoiceTemplateData) =>
-  data.taxMode === "igst"
-    ? `<div>IGST ${escapeHtml(data.igstRate)}%</div>`
-    : `<div>CGST ${escapeHtml(data.cgstRate)}%</div>
-                <div>SGST ${escapeHtml(data.sgstRate)}%</div>`;
+const getTaxMode = (data: ConsolidatedInvoiceTemplateData) =>
+  data.taxMode === "igst" ? "igst" : "cgst_sgst";
 
-const renderTaxAmounts = (data: RentalSummaryInvoiceTemplateData) =>
-  data.taxMode === "igst"
+const getCgstAmount = (data: ConsolidatedInvoiceTemplateData) =>
+  data.cgstAmount || formatAmount(parseAmount(data.taxAmount) / 2);
+
+const getSgstAmount = (data: ConsolidatedInvoiceTemplateData) =>
+  data.sgstAmount || formatAmount(parseAmount(data.taxAmount) / 2);
+
+const getIgstAmount = (data: ConsolidatedInvoiceTemplateData) =>
+  data.igstAmount || data.taxAmount;
+
+const renderTaxLabels = (data: ConsolidatedInvoiceTemplateData) =>
+  getTaxMode(data) === "igst"
+    ? `<div>ADD IGST ${escapeHtml(data.igstRate || "18")} %</div>`
+    : `<div>ADD CGST ${escapeHtml(data.cgstRate || "9")} %</div>
+                <div>ADD SGST ${escapeHtml(data.sgstRate || "9")} %</div>`;
+
+const renderTaxAmounts = (data: ConsolidatedInvoiceTemplateData) =>
+  getTaxMode(data) === "igst"
     ? `<div class="money-row">
                   <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.igstAmount)}</span>
+                  <span class="money">${escapeHtml(getIgstAmount(data))}</span>
                 </div>`
     : `<div class="money-row">
                   <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.cgstAmount)}</span>
+                  <span class="money">${escapeHtml(getCgstAmount(data))}</span>
                 </div>
                 <div class="money-row">
                   <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.sgstAmount)}</span>
+                  <span class="money">${escapeHtml(getSgstAmount(data))}</span>
                 </div>`;
 
-export const getRentalSummaryInvoiceHtml = (
-  data: RentalSummaryInvoiceTemplateData
-) => `<!doctype html>
+const renderDocumentReference = (
+  url: string | null | undefined,
+  label: string
+) => {
+  if (!url) return "";
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+};
+
+const renderLineItems = (data: ConsolidatedInvoiceTemplateData) => {
+  const rows = data.rows.length > 0
+    ? data.rows
+    : [{
+        sourceInvoiceId: 0,
+        invoiceNumber: "",
+        invoiceDate: "",
+        invoiceTypeLabel: "Rental",
+        description: data.summaryDescription || `Laptop Rental for ${data.periodLabel}`,
+        quantityLabel: "",
+        sacCode: data.sacCode || "997315",
+        taxableAmount: data.subtotalAmount,
+        taxAmount: data.taxAmount,
+        totalAmount: data.totalAmount,
+      }];
+
+  const itemHeight = rows.length > 5 ? 10 : 13;
+  const fillerHeight = Math.max(14, 72 - rows.length * itemHeight);
+  const renderedRows = rows
+    .map((row) => {
+      const invoiceLink = renderDocumentReference(row.invoiceUrl, "Invoice");
+      const supportingLink = renderDocumentReference(row.supportingDocumentUrl, "Supporting");
+      const linkSeparator = invoiceLink && supportingLink ? " | " : "";
+      const hasMeta = row.invoiceNumber || row.invoiceDate || invoiceLink || supportingLink;
+
+      return `<tr class="line-item-row" style="height: ${itemHeight}mm;">
+        <td class="line-item-description">
+          <div class="line-item-title">${escapeHtml(row.description)}</div>
+          ${hasMeta ? `<div class="line-item-meta">
+            ${row.invoiceNumber ? `Ref: ${escapeHtml(row.invoiceNumber)}` : ""}
+            ${row.invoiceDate ? ` ${escapeHtml(row.invoiceDate)}` : ""}
+            ${(invoiceLink || supportingLink) ? `<span class="line-item-links">${invoiceLink}${linkSeparator}${supportingLink}</span>` : ""}
+          </div>` : ""}
+        </td>
+        <td class="line-item-sac">${escapeHtml(row.sacCode || data.sacCode || "997315")}</td>
+        <td class="line-item-amount" colspan="2">
+          <div class="money-row">
+            <span class="currency">&#8377;</span>
+            <span class="money">${escapeHtml(row.taxableAmount)}</span>
+          </div>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  return `${renderedRows}
+          <tr class="description-filler-row" style="height: ${fillerHeight}mm;">
+            <td></td>
+            <td></td>
+            <td colspan="2"></td>
+          </tr>`;
+};
+
+export const getConsolidatedInvoiceHtml = (
+  data: ConsolidatedInvoiceTemplateData
+) => {
+  const companyAddress = splitCompanyAddress(data);
+  const bankName = data.companyBankName || data.companyName;
+
+  return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>${escapeHtml(data.invoiceNumber || "Rental Invoice")}</title>
+    <title>${escapeHtml(data.documentNumber || "Consolidated Invoice")}</title>
     <style>
       @page { size: A4; margin: 12mm; }
       * { box-sizing: border-box; }
@@ -199,8 +313,9 @@ export const getRentalSummaryInvoiceHtml = (
       .center-value {
         text-align: center;
         vertical-align: middle;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 700;
+        overflow-wrap: anywhere;
       }
       .normal-center {
         text-align: center;
@@ -220,20 +335,41 @@ export const getRentalSummaryInvoiceHtml = (
         text-decoration: none;
         padding-right: 1.2mm;
       }
-      .description-row td {
-        height: 69mm;
-        font-size: 15px;
-        line-height: 1.1;
+      .line-item-row td {
+        font-size: 13px;
+        line-height: 1.15;
       }
-      .description {
+      .line-item-description {
         padding: 2mm 1.4mm;
       }
-      .sac {
+      .line-item-title {
+        font-size: 13px;
+      }
+      .line-item-meta {
+        margin-top: 1.2mm;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 8.5px;
+        color: #374151;
+        line-height: 1.25;
+      }
+      .line-item-links {
+        display: inline-block;
+        margin-left: 2mm;
+      }
+      .line-item-links a {
+        color: #1d4ed8;
+        text-decoration: underline;
+      }
+      .line-item-sac {
         padding: 2mm 1.4mm;
         text-align: right;
       }
+      .line-item-amount,
       .amount-cell {
         padding: 2mm 1mm;
+      }
+      .description-filler-row td {
+        border-top: 0;
       }
       .money-row {
         display: grid;
@@ -322,10 +458,10 @@ export const getRentalSummaryInvoiceHtml = (
           </tr>
           <tr>
             <td class="company" colspan="4">
-              ${renderImageOrLogoSlot(data)}
+              ${renderLogo(data)}
               <div>${escapeHtml(data.companyName)}</div>
-              <div class="address">${escapeHtml(data.companyAddressLine1)}</div>
-              <div class="address">${escapeHtml(data.companyAddressLine2)}</div>
+              <div class="address">${escapeHtml(companyAddress.line1)}</div>
+              <div class="address">${escapeHtml(companyAddress.line2)}</div>
               <div>GSTIN No :${escapeHtml(data.companyGstin)}</div>
             </td>
           </tr>
@@ -341,33 +477,21 @@ export const getRentalSummaryInvoiceHtml = (
               <div class="customer-address">${multiline(data.customerAddress)}</div>
               <div class="customer-gstin"><strong>GSTIN NO</strong> ${escapeHtml(data.customerGstin)}</div>
             </td>
-            <td class="normal-center">${escapeHtml(data.placeOfSupply)}</td>
-            <td class="center-value">${escapeHtml(data.invoiceNumber)}</td>
-            <td class="center-value">${escapeHtml(data.invoiceDate)}</td>
+            <td class="normal-center">${escapeHtml(data.placeOfSupply || "same as billing")}</td>
+            <td class="center-value">${escapeHtml(data.documentNumber)}</td>
+            <td class="center-value">${escapeHtml(data.generatedDate)}</td>
           </tr>
           <tr>
             <td class="section-label">DESCRIPTION</td>
             <td class="section-label right">SAC CODE</td>
             <td class="section-label right" colspan="2">AMOUNT</td>
           </tr>
-          <tr class="description-row">
-            <td class="description">${escapeHtml(data.summaryDescription)}</td>
-            <td class="sac">${escapeHtml(data.sacCode)}</td>
-            <td class="amount-cell" colspan="2">
-              <div class="money-row">
-                <span class="currency">&#8377;</span>
-                <span class="money">${escapeHtml(data.grossAmount)}</span>
-              </div>
-            </td>
-          </tr>
+          ${renderLineItems(data)}
           <tr class="tax-row">
             <td class="tax-labels">
               <div class="tax-label-inner">
-                <div>Gross Rental Charges</div>
-                <div>Less: Discount</div>
                 <div>Taxable Value</div>
                 ${renderTaxLabels(data)}
-                <div>Round Off</div>
               </div>
             </td>
             <td></td>
@@ -375,21 +499,9 @@ export const getRentalSummaryInvoiceHtml = (
               <div class="tax-amount-inner">
                 <div class="money-row">
                   <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.grossAmount)}</span>
-                </div>
-                <div class="money-row">
-                  <span class="currency">-&#8377;</span>
-                  <span class="money">${escapeHtml(data.discountAmount)}</span>
-                </div>
-                <div class="money-row">
-                  <span class="currency">&#8377;</span>
-                  <span class="money">${escapeHtml(data.taxableValue)}</span>
+                  <span class="money">${escapeHtml(data.subtotalAmount)}</span>
                 </div>
                 ${renderTaxAmounts(data)}
-                <div class="money-row">
-                  <span class="currency">${escapeHtml(data.roundOffSign)}&#8377;</span>
-                  <span class="money">${escapeHtml(data.roundOffAmount)}</span>
-                </div>
               </div>
             </td>
           </tr>
@@ -404,13 +516,13 @@ export const getRentalSummaryInvoiceHtml = (
           </tr>
           <tr class="footer">
             <td class="bank" colspan="2">
-              Company's PAN: ${escapeHtml(data.companyPan)}<br />
-              ${escapeHtml(data.companyBankName)}<br />
-              OD Acc:${escapeHtml(data.companyAccountNumber)}<br />
-              IFSC Code:${escapeHtml(data.companyIfsc)}
+              Company's PAN: ${escapeHtml(data.companyPan || "")}<br />
+              ${escapeHtml(bankName)}<br />
+              OD Acc:${escapeHtml(data.companyAccountNumber || "")}<br />
+              IFSC Code:${escapeHtml(data.companyIfsc || "")}
             </td>
             <td class="signature" colspan="2">
-              For ${escapeHtml(data.companyBankName)}
+              For ${escapeHtml(data.companyName)}
               ${renderSignature(data)}
             </td>
           </tr>
@@ -419,3 +531,4 @@ export const getRentalSummaryInvoiceHtml = (
     </div>
   </body>
 </html>`;
+};
