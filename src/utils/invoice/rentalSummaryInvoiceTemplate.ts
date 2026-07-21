@@ -244,6 +244,7 @@ export const getRentalSummaryInvoiceHtml = (
         align-items: start;
       }
       .currency {
+        font-family: "Noto Sans", "DejaVu Sans", "Arial Unicode MS", Arial, sans-serif;
         text-align: left;
       }
       .money {
@@ -381,8 +382,8 @@ export const getRentalSummaryInvoiceHtml = (
                   <span class="money">${escapeHtml(data.grossAmount)}</span>
                 </div>
                 <div class="money-row">
-                  <span class="currency">-&#8377;</span>
-                  <span class="money">${escapeHtml(data.discountAmount)}</span>
+                  <span class="currency">&#8377;</span>
+                  <span class="money">-${escapeHtml(data.discountAmount)}</span>
                 </div>
                 <div class="money-row">
                   <span class="currency">&#8377;</span>

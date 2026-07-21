@@ -413,6 +413,7 @@ export const getConsolidatedInvoiceHtml = (
         align-items: start;
       }
       .currency {
+        font-family: "Noto Sans", "DejaVu Sans", "Arial Unicode MS", Arial, sans-serif;
         text-align: left;
       }
       .money {
