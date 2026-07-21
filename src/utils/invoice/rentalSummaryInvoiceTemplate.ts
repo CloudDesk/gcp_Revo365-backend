@@ -84,6 +84,9 @@ const renderTaxAmounts = (data: RentalSummaryInvoiceTemplateData) =>
                   <span class="money">${escapeHtml(data.sgstAmount)}</span>
                 </div>`;
 
+const getSignedRoundOffAmount = (data: RentalSummaryInvoiceTemplateData) =>
+  `${data.roundOffSign}${data.roundOffAmount}`;
+
 export const getRentalSummaryInvoiceHtml = (
   data: RentalSummaryInvoiceTemplateData
 ) => `<!doctype html>
@@ -387,8 +390,8 @@ export const getRentalSummaryInvoiceHtml = (
                 </div>
                 ${renderTaxAmounts(data)}
                 <div class="money-row">
-                  <span class="currency">${escapeHtml(data.roundOffSign)}&#8377;</span>
-                  <span class="money">${escapeHtml(data.roundOffAmount)}</span>
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(getSignedRoundOffAmount(data))}</span>
                 </div>
               </div>
             </td>

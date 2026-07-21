@@ -5,6 +5,10 @@ export type ConsolidatedInvoiceTemplateRow = {
   invoiceTypeLabel: string;
   description: string;
   quantityLabel: string;
+  billingRangeLabel?: string;
+  billingDaysLabel?: string;
+  monthlyTaxableAmount?: string;
+  dailyTaxableAmount?: string;
   sacCode?: string;
   taxableAmount: string;
   taxAmount: string;
@@ -26,6 +30,8 @@ export type ConsolidatedInvoiceTemplateData = {
   documentNumber: string;
   generatedDate: string;
   periodLabel: string;
+  billingRangeLabel?: string;
+  billingThroughDate?: string;
   versionLabel?: string;
   customerName: string;
   customerAddress: string;
@@ -44,6 +50,8 @@ export type ConsolidatedInvoiceTemplateData = {
   rows: ConsolidatedInvoiceTemplateRow[];
   subtotalAmount: string;
   taxAmount: string;
+  roundOffAmount?: string;
+  roundOffSign?: "+" | "-";
   totalAmount: string;
   logoUrl?: string | null;
   signatureUrl?: string | null;
@@ -112,17 +120,32 @@ const getSgstAmount = (data: ConsolidatedInvoiceTemplateData) =>
 const getIgstAmount = (data: ConsolidatedInvoiceTemplateData) =>
   data.igstAmount || data.taxAmount;
 
+const getRoundOffSign = (data: ConsolidatedInvoiceTemplateData) =>
+  data.roundOffSign === "-" ? "-" : "+";
+
+const getRoundOffAmount = (data: ConsolidatedInvoiceTemplateData) =>
+  data.roundOffAmount || "0.00";
+
+const getSignedRoundOffAmount = (data: ConsolidatedInvoiceTemplateData) =>
+  `${getRoundOffSign(data)}${getRoundOffAmount(data)}`;
+
 const renderTaxLabels = (data: ConsolidatedInvoiceTemplateData) =>
   getTaxMode(data) === "igst"
-    ? `<div>ADD IGST ${escapeHtml(data.igstRate || "18")} %</div>`
+    ? `<div>ADD IGST ${escapeHtml(data.igstRate || "18")} %</div>
+                <div>Round Off</div>`
     : `<div>ADD CGST ${escapeHtml(data.cgstRate || "9")} %</div>
-                <div>ADD SGST ${escapeHtml(data.sgstRate || "9")} %</div>`;
+                <div>ADD SGST ${escapeHtml(data.sgstRate || "9")} %</div>
+                <div>Round Off</div>`;
 
 const renderTaxAmounts = (data: ConsolidatedInvoiceTemplateData) =>
   getTaxMode(data) === "igst"
     ? `<div class="money-row">
                   <span class="currency">&#8377;</span>
                   <span class="money">${escapeHtml(getIgstAmount(data))}</span>
+                </div>
+                <div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(getSignedRoundOffAmount(data))}</span>
                 </div>`
     : `<div class="money-row">
                   <span class="currency">&#8377;</span>
@@ -131,6 +154,10 @@ const renderTaxAmounts = (data: ConsolidatedInvoiceTemplateData) =>
                 <div class="money-row">
                   <span class="currency">&#8377;</span>
                   <span class="money">${escapeHtml(getSgstAmount(data))}</span>
+                </div>
+                <div class="money-row">
+                  <span class="currency">&#8377;</span>
+                  <span class="money">${escapeHtml(getSignedRoundOffAmount(data))}</span>
                 </div>`;
 
 const renderDocumentReference = (
@@ -165,10 +192,19 @@ const renderLineItems = (data: ConsolidatedInvoiceTemplateData) => {
       const supportingLink = renderDocumentReference(row.supportingDocumentUrl, "Supporting");
       const linkSeparator = invoiceLink && supportingLink ? " | " : "";
       const hasMeta = row.invoiceNumber || row.invoiceDate || invoiceLink || supportingLink;
+      const billingMeta = [
+        row.billingRangeLabel ? `Billing: ${row.billingRangeLabel}` : "",
+        row.billingDaysLabel ? `Days: ${row.billingDaysLabel}` : "",
+        row.monthlyTaxableAmount ? `Monthly taxable: Rs. ${row.monthlyTaxableAmount}` : "",
+        row.dailyTaxableAmount ? `Daily taxable: Rs. ${row.dailyTaxableAmount}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ");
 
       return `<tr class="line-item-row" style="height: ${itemHeight}mm;">
         <td class="line-item-description">
           <div class="line-item-title">${escapeHtml(row.description)}</div>
+          ${billingMeta ? `<div class="line-item-meta">${escapeHtml(billingMeta)}</div>` : ""}
           ${hasMeta ? `<div class="line-item-meta">
             ${row.invoiceNumber ? `Ref: ${escapeHtml(row.invoiceNumber)}` : ""}
             ${row.invoiceDate ? ` ${escapeHtml(row.invoiceDate)}` : ""}

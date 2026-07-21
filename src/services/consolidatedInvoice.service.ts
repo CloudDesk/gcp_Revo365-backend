@@ -15,8 +15,10 @@ const CONSOLIDATED_INVOICE_BUCKET =
   "revo_product_invoice-dev";
 const CONSOLIDATED_INVOICE_FOLDER =
   process.env.CONSOLIDATED_INVOICE_FOLDER || "consolidated-invoices";
+const CONSOLIDATED_INVOICE_CALCULATION_VERSION = 2;
 const BILLING_TIMEZONE = "Asia/Kolkata";
 const DEFAULT_INVOICE_FOR = ["rental"];
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_logo.jpeg");
@@ -58,6 +60,19 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(numericValue) ? numericValue : 0;
 };
 
+const toPaise = (value: unknown) => Math.round(toNumber(value) * 100);
+const fromPaise = (value: number) => value / 100;
+const roundToNearestRupeePaise = (value: unknown) =>
+  Math.round(toPaise(value) / 100) * 100;
+
+const prorateAmount = (value: unknown, billableDays: number, cycleDays: number) => {
+  if (!Number.isFinite(billableDays) || !Number.isFinite(cycleDays) || cycleDays <= 0) {
+    return 0;
+  }
+
+  return fromPaise(Math.round((toPaise(value) * billableDays) / cycleDays));
+};
+
 const formatAmount = (value: unknown) =>
   new Intl.NumberFormat("en-IN", {
     minimumFractionDigits: 2,
@@ -90,6 +105,47 @@ const getDatePart = (date: Date, part: Intl.DateTimeFormatPartTypes) =>
 
 const formatDateKey = (date: Date) =>
   `${getDatePart(date, "year")}-${getDatePart(date, "month")}-${getDatePart(date, "day")}`;
+
+const dateKeyToUtcDate = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+};
+
+const normalizeDate = (date: Date) => dateKeyToUtcDate(formatDateKey(date));
+
+const addDays = (date: Date, days: number) => {
+  const shiftedDate = normalizeDate(date);
+  shiftedDate.setUTCDate(shiftedDate.getUTCDate() + days);
+  return shiftedDate;
+};
+
+const shiftDateByMonths = (baseDate: Date, months: number) => {
+  const shiftedDate = normalizeDate(baseDate);
+  const originalDay = shiftedDate.getUTCDate();
+  shiftedDate.setUTCMonth(shiftedDate.getUTCMonth() + months);
+  if (shiftedDate.getUTCDate() < originalDay) shiftedDate.setUTCDate(0);
+  return shiftedDate;
+};
+
+const getDefaultBillingPeriodEnd = (billingPeriodStart: Date) =>
+  addDays(shiftDateByMonths(billingPeriodStart, 1), -1);
+
+const compareDateKeys = (left: Date, right: Date) =>
+  formatDateKey(left).localeCompare(formatDateKey(right));
+
+const maxDate = (...dates: Date[]) =>
+  dates.reduce((latest, date) => (compareDateKeys(date, latest) > 0 ? date : latest));
+
+const minDate = (...dates: Date[]) =>
+  dates.reduce((earliest, date) => (compareDateKeys(date, earliest) < 0 ? date : earliest));
+
+const daysBetweenInclusive = (startDate: Date, endDate: Date) => {
+  const start = normalizeDate(startDate);
+  const end = normalizeDate(endDate);
+  return Math.floor((end.getTime() - start.getTime()) / DAY_IN_MS) + 1;
+};
+
+const isAfterDate = (left: Date, right: Date) => compareDateKeys(left, right) > 0;
 
 const formatDisplayDate = (date: Date | null) => {
   if (!date) return "-";
@@ -174,6 +230,26 @@ const getPeriodFromInput = (requestBody: any) => {
   };
 };
 
+const getBillingThroughDate = (requestBody: any) => {
+  const rawBillingThroughDate =
+    normalizeText(requestBody?.billingthroughdate) ||
+    normalizeText(requestBody?.billingThroughDate) ||
+    normalizeText(requestBody?.billingthrough);
+  const parsedBillingThroughDate = rawBillingThroughDate
+    ? parseDateValue(rawBillingThroughDate)
+    : new Date();
+
+  if (!parsedBillingThroughDate) {
+    throw new Error("A valid billing through date is required.");
+  }
+
+  return {
+    date: normalizeDate(parsedBillingThroughDate),
+    key: formatDateKey(parsedBillingThroughDate),
+    display: formatDisplayDate(parsedBillingThroughDate),
+  };
+};
+
 const normalizeInvoiceForValues = (value: unknown) => {
   const rawValues = Array.isArray(value)
     ? value
@@ -211,6 +287,34 @@ const getEffectiveInvoiceDate = (invoice: any, invoiceFor: string) => {
   }
 
   return parseDateValue(invoice?.invoicedate) || parseDateValue(invoice?.createddate);
+};
+
+const getRentalBillingPeriod = (invoice: any) => {
+  const summaryInvoiceData = parseJsonValue<any>(invoice?.summaryinvoicedata, {});
+  const startDate =
+    parseDateValue(invoice?.billingperiodstart) ||
+    parseDateValue(summaryInvoiceData?.billingperiodstart) ||
+    getEffectiveInvoiceDate(invoice, "rental");
+
+  if (!startDate) {
+    return null;
+  }
+
+  const endDate =
+    parseDateValue(invoice?.billingperiodend) ||
+    parseDateValue(summaryInvoiceData?.billingperiodend) ||
+    getDefaultBillingPeriodEnd(startDate);
+
+  return {
+    startDate: normalizeDate(startDate),
+    endDate: normalizeDate(endDate),
+    startKey: formatDateKey(startDate),
+    endKey: formatDateKey(endDate),
+    label:
+      normalizeText(invoice?.billingperiodlabel) ||
+      normalizeText(summaryInvoiceData?.billingperiodlabel) ||
+      `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`,
+  };
 };
 
 const getCustomerName = (customer: any, fallbackName = "") => {
@@ -423,9 +527,146 @@ const fetchCandidateInvoices = async (
   return result.rows;
 };
 
+const fetchPreviousBillingProgress = async (
+  customerId: number,
+  period: ReturnType<typeof getPeriodFromInput>,
+  invoiceForValues: string[]
+) => {
+  const result = await query(
+    `
+    SELECT
+      cis.revoinvoiceid,
+      MAX(COALESCE(cis.billingthroughdate, ci.billingthroughdate, ri.billingperiodend)) AS lastbilledthroughdate
+    FROM consolidated_invoice_sources cis
+    INNER JOIN consolidated_invoices ci
+      ON ci.id = cis.consolidatedinvoiceid
+    LEFT JOIN revoinvoice ri
+      ON ri.id = cis.revoinvoiceid
+    WHERE ci.customerid = $1
+      AND ci.status = 'generated'
+      AND COALESCE(ci.iscurrent, TRUE) = TRUE
+      AND ci.periodstart < $2
+      AND LOWER(COALESCE(cis.invoicefor, '')) = ANY($3::text[])
+    GROUP BY cis.revoinvoiceid
+    `,
+    [customerId, period.periodstart, invoiceForValues]
+  );
+
+  const entries = result.rows
+    .map((row: any): [number, Date | null] => [
+      Number(row.revoinvoiceid),
+      parseDateValue(row.lastbilledthroughdate),
+    ])
+    .filter((entry: [number, Date | null]): entry is [number, Date] =>
+      Number.isFinite(entry[0]) && Boolean(entry[1])
+    );
+
+  return new Map<number, Date>(entries);
+};
+
+const buildProratedRentalRow = (
+  invoice: any,
+  period: ReturnType<typeof getPeriodFromInput>,
+  billingThroughDate: ReturnType<typeof getBillingThroughDate>,
+  previousBillingProgress: Map<number, Date>
+) => {
+  const billingPeriod = getRentalBillingPeriod(invoice);
+  if (!billingPeriod) {
+    return null;
+  }
+
+  const sourceInvoiceId = Number(invoice?.id);
+  const previousBilledThrough = previousBillingProgress.get(sourceInvoiceId) || null;
+  const nextUnbilledStart = previousBilledThrough
+    ? addDays(previousBilledThrough, 1)
+    : billingPeriod.startDate;
+  const requestedPeriodStart = dateKeyToUtcDate(period.periodstart);
+  const requestedPeriodEnd = dateKeyToUtcDate(period.periodend);
+  if (
+    isAfterDate(billingPeriod.startDate, requestedPeriodEnd) ||
+    isAfterDate(requestedPeriodStart, billingPeriod.endDate)
+  ) {
+    return null;
+  }
+
+  const billingStartDate = maxDate(
+    billingPeriod.startDate,
+    requestedPeriodStart,
+    nextUnbilledStart
+  );
+  const billingEndDate = minDate(billingPeriod.endDate, billingThroughDate.date);
+
+  if (isAfterDate(billingStartDate, billingEndDate)) {
+    return null;
+  }
+
+  const cycleDays = daysBetweenInclusive(billingPeriod.startDate, billingPeriod.endDate);
+  const billableDays = daysBetweenInclusive(billingStartDate, billingEndDate);
+  if (cycleDays <= 0 || billableDays <= 0) {
+    return null;
+  }
+
+  const amounts = getInvoiceAmounts(invoice);
+  const taxableAmount = prorateAmount(amounts.taxableAmount, billableDays, cycleDays);
+  const taxAmount = prorateAmount(amounts.taxAmount, billableDays, cycleDays);
+  const cgstAmount = prorateAmount(amounts.cgstAmount, billableDays, cycleDays);
+  const sgstAmount = prorateAmount(amounts.sgstAmount, billableDays, cycleDays);
+  const igstAmount = prorateAmount(amounts.igstAmount, billableDays, cycleDays);
+  const totalAmount = fromPaise(toPaise(taxableAmount) + toPaise(taxAmount));
+  const billingStartKey = formatDateKey(billingStartDate);
+  const billingThroughKey = formatDateKey(billingEndDate);
+  const billingRangeLabel = `${formatDisplayDate(billingStartDate)} - ${formatDisplayDate(billingEndDate)}`;
+  const cycleRangeLabel = `${formatDisplayDate(billingPeriod.startDate)} - ${formatDisplayDate(billingPeriod.endDate)}`;
+  const billingDaysLabel = `${billableDays}/${cycleDays} days`;
+
+  return {
+    sourceinvoiceid: sourceInvoiceId,
+    invoicenumber: normalizeText(invoice.invoicenumber) || `Invoice #${invoice.id}`,
+    invoicefor: "rental",
+    invoiceTypeLabel: getInvoiceTypeLabel("rental"),
+    invoicedate: formatDisplayDate(
+      parseDateValue(invoice?.invoicedate) ||
+        getEffectiveInvoiceDate(invoice, "rental")
+    ),
+    billingperiodlabel: billingPeriod.label,
+    billingperiodstart: billingPeriod.startKey,
+    billingperiodend: billingPeriod.endKey,
+    billingstartdate: billingStartKey,
+    billingthroughdate: billingThroughKey,
+    billingRangeLabel,
+    cycleRangeLabel,
+    billingDaysLabel,
+    billabledays: billableDays,
+    cycledays: cycleDays,
+    prorationfactor: billableDays / cycleDays,
+    description: getDescription(invoice, "rental", period.periodlabel),
+    quantityLabel: getQuantityLabel(invoice, "rental"),
+    monthlytaxableamount: amounts.taxableAmount,
+    monthlytaxamount: amounts.taxAmount,
+    monthlytotalamount: amounts.totalAmount,
+    dailytaxableamount: fromPaise(Math.round(toPaise(amounts.taxableAmount) / cycleDays)),
+    taxableamount: taxableAmount,
+    taxamount: taxAmount,
+    totalamount: totalAmount,
+    cgstamount: cgstAmount,
+    sgstamount: sgstAmount,
+    igstamount: igstAmount,
+    taxmode: amounts.taxMode,
+    cgstrate: amounts.cgstRate,
+    sgstrate: amounts.sgstRate,
+    igstrate: amounts.igstRate,
+    saccode: getSacCode(invoice),
+    invoiceurl: normalizeText(invoice.invoiceurl) || null,
+    supportingdocumenturl: normalizeText(invoice.supportingdocumenturl) || null,
+    hasSupportingDocument: Boolean(normalizeText(invoice.supportingdocumenturl)),
+  };
+};
+
 const buildPreviewRows = (
   invoiceRows: any[],
   period: ReturnType<typeof getPeriodFromInput>,
+  billingThroughDate: ReturnType<typeof getBillingThroughDate>,
+  previousBillingProgress: Map<number, Date>,
   sourceInvoiceIds?: number[]
 ) => {
   const sourceIdSet =
@@ -447,6 +688,17 @@ const buildPreviewRows = (
 
       if (sourceIdSet && !sourceIdSet.has(Number(invoice?.id))) {
         return null;
+      }
+
+      if (invoiceFor === "rental") {
+        const rentalRow = buildProratedRentalRow(
+          invoice,
+          period,
+          billingThroughDate,
+          previousBillingProgress
+        );
+        if (!rentalRow) return null;
+        return rentalRow;
       }
 
       const effectiveDate = getEffectiveInvoiceDate(invoice, invoiceFor);
@@ -488,14 +740,48 @@ const buildPreviewRows = (
   return { rows, warnings };
 };
 
-const buildTotals = (rows: any[]) => ({
-  taxableamount: rows.reduce((total, row) => total + toNumber(row.taxableamount), 0),
-  taxamount: rows.reduce((total, row) => total + toNumber(row.taxamount), 0),
-  totalamount: rows.reduce((total, row) => total + toNumber(row.totalamount), 0),
-  cgstamount: rows.reduce((total, row) => total + toNumber(row.cgstamount), 0),
-  sgstamount: rows.reduce((total, row) => total + toNumber(row.sgstamount), 0),
-  igstamount: rows.reduce((total, row) => total + toNumber(row.igstamount), 0),
-});
+const sumRowAmounts = (rows: any[], fieldName: string) =>
+  fromPaise(rows.reduce((total, row) => total + toPaise(row?.[fieldName]), 0));
+
+const buildTotals = (rows: any[]) => {
+  const taxableAmount = sumRowAmounts(rows, "taxableamount");
+  const taxAmount = sumRowAmounts(rows, "taxamount");
+  const totalBeforeRoundOff = sumRowAmounts(rows, "totalamount");
+  const payablePaise = roundToNearestRupeePaise(totalBeforeRoundOff);
+  const roundOffAmount = fromPaise(payablePaise - toPaise(totalBeforeRoundOff));
+
+  return {
+    taxableamount: taxableAmount,
+    taxamount: taxAmount,
+    totalbeforeroundoff: totalBeforeRoundOff,
+    roundoffamount: roundOffAmount,
+    payableamount: fromPaise(payablePaise),
+    totalamount: fromPaise(payablePaise),
+    cgstamount: sumRowAmounts(rows, "cgstamount"),
+    sgstamount: sumRowAmounts(rows, "sgstamount"),
+    igstamount: sumRowAmounts(rows, "igstamount"),
+  };
+};
+
+const getRowsBillingRangeLabel = (rows: any[], fallbackLabel: string) => {
+  const rangeLabels = Array.from(
+    new Set(rows.map((row) => normalizeText(row.billingRangeLabel)).filter(Boolean))
+  );
+  if (rangeLabels.length === 1) return rangeLabels[0];
+
+  const startDates = rows
+    .map((row) => parseDateValue(row.billingstartdate))
+    .filter(Boolean) as Date[];
+  const throughDates = rows
+    .map((row) => parseDateValue(row.billingthroughdate))
+    .filter(Boolean) as Date[];
+
+  if (startDates.length > 0 && throughDates.length > 0) {
+    return `${formatDisplayDate(minDate(...startDates))} - ${formatDisplayDate(maxDate(...throughDates))}`;
+  }
+
+  return fallbackLabel;
+};
 
 const getConsolidatedSummaryDescription = (rows: any[], periodLabel: string) => {
   const firstRentalRow = rows.find((row) => row.invoicefor === "rental") || rows[0];
@@ -512,7 +798,7 @@ const getConsolidatedSummaryDescription = (rows: any[], periodLabel: string) => 
   );
   const deviceLabel = deviceCount === 1 ? "Device" : "Devices";
 
-  return `${itemLabel}(${deviceCount} ${deviceLabel} for ${periodLabel})`;
+  return `${itemLabel}(${deviceCount} ${deviceLabel} for ${getRowsBillingRangeLabel(rows, periodLabel)})`;
 };
 
 const getFirstSacCode = (rows: any[]) =>
@@ -528,9 +814,19 @@ const getTemplateTaxMode = (
 
 const getSourceInvoiceKey = (rows: any[]) =>
   rows
-    .map((row) => Number(row.sourceinvoiceid))
-    .filter((id) => Number.isFinite(id) && id > 0)
-    .sort((a, b) => a - b)
+    .map((row) => {
+      const sourceInvoiceId = Number(row.sourceinvoiceid);
+      if (!Number.isFinite(sourceInvoiceId) || sourceInvoiceId <= 0) return "";
+      return [
+        sourceInvoiceId,
+        normalizeText(row.billingstartdate),
+        normalizeText(row.billingthroughdate),
+        normalizeText(row.billabledays),
+        normalizeText(row.cycledays),
+      ].join(":");
+    })
+    .filter(Boolean)
+    .sort()
     .join(",");
 
 const toVersionNumber = (record: any) => {
@@ -545,6 +841,15 @@ const getCurrentConsolidatedInvoice = (records: any[]) =>
 
 const getNextVersionNumber = (records: any[]) =>
   Math.max(0, ...records.map((record) => toVersionNumber(record))) + 1;
+
+const isRoundOffReadyConsolidatedInvoice = (record: any) => {
+  const metadata = parseJsonValue<any>(record?.metadatajson, {});
+  return (
+    toNumber(metadata?.calculationVersion) >= CONSOLIDATED_INVOICE_CALCULATION_VERSION ||
+    metadata?.templateData?.roundOffAmount != null ||
+    metadata?.preview?.totals?.payableamount != null
+  );
+};
 
 const fetchExistingConsolidatedInvoices = async (
   customerId: number,
@@ -648,6 +953,9 @@ const buildTemplateData = async (
 ): Promise<ConsolidatedInvoiceTemplateData> => {
   const taxMode = getTemplateTaxMode(rows, totals);
   const firstTaxRow = rows.find((row) => row.taxmode === taxMode) || rows[0] || {};
+  const billingThroughDates = rows
+    .map((row) => parseDateValue(row.billingthroughdate))
+    .filter(Boolean) as Date[];
 
   return {
     companyName: COMPANY_DETAILS.companyName,
@@ -662,6 +970,10 @@ const buildTemplateData = async (
     documentNumber,
     generatedDate: formatInvoiceDate(new Date()),
     periodLabel: period.periodlabel,
+    billingRangeLabel: getRowsBillingRangeLabel(rows, period.periodlabel),
+    billingThroughDate: billingThroughDates.length
+      ? formatDisplayDate(maxDate(...billingThroughDates))
+      : undefined,
     versionLabel: `Version ${versionNumber}`,
     customerName: normalizeText(customer?.name) || getCustomerName(customer),
     customerAddress,
@@ -688,6 +1000,14 @@ const buildTemplateData = async (
       invoiceTypeLabel: row.invoiceTypeLabel,
       description: row.description,
       quantityLabel: row.quantityLabel,
+      billingRangeLabel: row.billingRangeLabel,
+      billingDaysLabel: row.billingDaysLabel,
+      monthlyTaxableAmount: row.monthlytaxableamount != null
+        ? formatAmount(row.monthlytaxableamount)
+        : undefined,
+      dailyTaxableAmount: row.dailytaxableamount != null
+        ? formatAmount(row.dailytaxableamount)
+        : undefined,
       sacCode: row.saccode,
       taxableAmount: formatAmount(row.taxableamount),
       taxAmount: formatAmount(row.taxamount),
@@ -697,7 +1017,9 @@ const buildTemplateData = async (
     })),
     subtotalAmount: formatAmount(totals.taxableamount),
     taxAmount: formatAmount(totals.taxamount),
-    totalAmount: formatAmount(totals.totalamount),
+    roundOffAmount: formatAmount(Math.abs(totals.roundoffamount)),
+    roundOffSign: totals.roundoffamount >= 0 ? "+" : "-",
+    totalAmount: formatAmount(totals.payableamount),
     logoUrl: await getDefaultLogoDataUrl(),
   };
 };
@@ -709,6 +1031,7 @@ const buildPreview = async (requestBody: any) => {
   }
 
   const period = getPeriodFromInput(requestBody);
+  const billingThroughDate = getBillingThroughDate(requestBody);
   const invoiceForValues = normalizeInvoiceForValues(requestBody?.invoicefor);
   const invoiceForKey = getInvoiceForKey(invoiceForValues);
   const sourceInvoiceIds = Array.isArray(requestBody?.sourceinvoiceids)
@@ -723,7 +1046,18 @@ const buildPreview = async (requestBody: any) => {
   }
 
   const invoiceRows = await fetchCandidateInvoices(customerId, invoiceForValues);
-  const { rows, warnings } = buildPreviewRows(invoiceRows, period, sourceInvoiceIds);
+  const previousBillingProgress = await fetchPreviousBillingProgress(
+    customerId,
+    period,
+    invoiceForValues
+  );
+  const { rows, warnings } = buildPreviewRows(
+    invoiceRows,
+    period,
+    billingThroughDate,
+    previousBillingProgress,
+    sourceInvoiceIds
+  );
   const totals = buildTotals(rows);
   const sourceInvoiceKey = getSourceInvoiceKey(rows);
   const existingConsolidatedInvoices = await fetchExistingConsolidatedInvoices(
@@ -736,7 +1070,9 @@ const buildPreview = async (requestBody: any) => {
   );
   const matchingConsolidatedInvoice =
     existingConsolidatedInvoices.find(
-      (record: any) => normalizeText(record?.sourceinvoicekey) === sourceInvoiceKey
+      (record: any) =>
+        normalizeText(record?.sourceinvoicekey) === sourceInvoiceKey &&
+        isRoundOffReadyConsolidatedInvoice(record)
     ) || null;
   const hasCurrentDifferentSources = Boolean(
     rows.length > 0 &&
@@ -748,7 +1084,7 @@ const buildPreview = async (requestBody: any) => {
   const customerAddress = buildCustomerAddress(customer, invoiceRows);
 
   if (rows.length === 0) {
-    warnings.push("No generated invoices were found for the selected customer, period, and invoice type.");
+    warnings.push("No unbilled generated invoice days were found for the selected customer, period, billing-through date, and invoice type.");
   }
 
   return {
@@ -767,6 +1103,8 @@ const buildPreview = async (requestBody: any) => {
       start: period.periodstart,
       end: period.periodend,
       label: period.periodlabel,
+      billingthroughdate: billingThroughDate.key,
+      billingthroughdisplay: billingThroughDate.display,
     },
     invoicefor: invoiceForValues,
     invoiceforkey: invoiceForKey,
@@ -776,6 +1114,10 @@ const buildPreview = async (requestBody: any) => {
     totalsformatted: {
       taxableamount: formatAmount(totals.taxableamount),
       taxamount: formatAmount(totals.taxamount),
+      totalbeforeroundoff: formatAmount(totals.totalbeforeroundoff),
+      roundoffamount: formatAmount(Math.abs(totals.roundoffamount)),
+      roundoffsign: totals.roundoffamount >= 0 ? "+" : "-",
+      payableamount: formatAmount(totals.payableamount),
       totalamount: formatAmount(totals.totalamount),
     },
     existingConsolidatedInvoices,
@@ -814,6 +1156,7 @@ export module consolidatedInvoiceService {
         ci.customerid,
         ci.periodstart,
         ci.periodend,
+        ci.billingthroughdate,
         TO_CHAR(ci.periodstart, 'YYYY-MM') AS periodvalue,
         ci.periodlabel,
         ci.includedinvoicefor,
@@ -825,7 +1168,10 @@ export module consolidatedInvoiceService {
         ci.status,
         ci.subtotal,
         ci.taxamount,
-        ci.totalamount,
+        COALESCE(ci.totalbeforeroundoff, ci.totalamount, 0) AS totalbeforeroundoff,
+        COALESCE(ci.roundoffamount, ROUND(COALESCE(ci.totalamount, 0)) - COALESCE(ci.totalamount, 0), 0) AS roundoffamount,
+        COALESCE(ci.payableamount, ROUND(COALESCE(ci.totalamount, 0)), COALESCE(ci.totalamount, 0)) AS payableamount,
+        COALESCE(ci.payableamount, ROUND(COALESCE(ci.totalamount, 0)), COALESCE(ci.totalamount, 0)) AS totalamount,
         ci.generatedby,
         ci.versionnumber,
         ci.iscurrent,
@@ -880,7 +1226,11 @@ export module consolidatedInvoiceService {
       preview.sourceinvoicekey
     );
 
-    if (exactExisting && !forceRegenerate) {
+    const shouldRegenerateLegacyRoundOff = Boolean(
+      exactExisting && !isRoundOffReadyConsolidatedInvoice(exactExisting)
+    );
+
+    if (exactExisting && !forceRegenerate && !shouldRegenerateLegacyRoundOff) {
       return {
         reusedExisting: true,
         consolidatedInvoice: exactExisting,
@@ -915,10 +1265,12 @@ export module consolidatedInvoiceService {
     const revisionReason =
       normalizeText(request.body?.revisionreason) ||
       (hasCurrentDifferentSources
-        ? "Source invoices changed for this billing period."
+        ? "Source invoices or billing window changed for this billing period."
         : forceRegenerate
           ? "Regenerated by admin."
-          : "Initial consolidated invoice.");
+          : shouldRegenerateLegacyRoundOff
+            ? "Regenerated with round-off calculation."
+            : "Initial consolidated invoice.");
 
     const insertResult = await query(
       `
@@ -926,6 +1278,7 @@ export module consolidatedInvoiceService {
         customerid,
         periodstart,
         periodend,
+        billingthroughdate,
         periodlabel,
         includedinvoicefor,
         invoiceforkey,
@@ -934,6 +1287,9 @@ export module consolidatedInvoiceService {
         status,
         subtotal,
         taxamount,
+        totalbeforeroundoff,
+        roundoffamount,
+        payableamount,
         totalamount,
         generatedby,
         metadatajson,
@@ -945,9 +1301,9 @@ export module consolidatedInvoiceService {
         modifieddate
       )
       VALUES (
-        $1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9,
-        $10, $11, $12, $13, $14::jsonb,
-        $15, FALSE, $16, $17,
+        $1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18::jsonb,
+        $19, FALSE, $20, $21,
         EXTRACT(EPOCH FROM NOW())::BIGINT,
         EXTRACT(EPOCH FROM NOW())::BIGINT
       )
@@ -957,6 +1313,7 @@ export module consolidatedInvoiceService {
         customerId,
         preview.period.start,
         preview.period.end,
+        preview.period.billingthroughdate,
         preview.period.label,
         JSON.stringify(preview.invoicefor),
         preview.invoiceforkey,
@@ -965,9 +1322,15 @@ export module consolidatedInvoiceService {
         "generating",
         preview.totals.taxableamount,
         preview.totals.taxamount,
+        preview.totals.totalbeforeroundoff,
+        preview.totals.roundoffamount,
+        preview.totals.payableamount,
         preview.totals.totalamount,
         request?.session?.id || null,
-        JSON.stringify({ preview }),
+        JSON.stringify({
+          calculationVersion: CONSOLIDATED_INVOICE_CALCULATION_VERSION,
+          preview,
+        }),
         versionNumber,
         supersedesId,
         revisionReason,
@@ -1031,6 +1394,7 @@ export module consolidatedInvoiceService {
           documentNumber,
           documentUrl,
           JSON.stringify({
+            calculationVersion: CONSOLIDATED_INVOICE_CALCULATION_VERSION,
             preview,
             templateData,
             version: {
@@ -1044,7 +1408,7 @@ export module consolidatedInvoiceService {
       );
       generatedRecord = updateResult.rows[0];
 
-      for (const row of preview.rows) {
+      for (const row of preview.rows as any[]) {
         await client.query(
           `
           INSERT INTO consolidated_invoice_sources (
@@ -1053,9 +1417,20 @@ export module consolidatedInvoiceService {
             invoicefor,
             invoicenumber,
             invoiceamount,
-            billingperiodlabel
+            billingperiodlabel,
+            billingperiodstart,
+            billingperiodend,
+            billingstartdate,
+            billingthroughdate,
+            billabledays,
+            cycledays,
+            prorationfactor,
+            monthlyinvoiceamount,
+            proratedtaxableamount,
+            proratedtaxamount,
+            proratedtotalamount
           )
-          VALUES ($1, $2, $3, $4, $5, $6)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
           `,
           [
             consolidatedRecord.id,
@@ -1064,6 +1439,17 @@ export module consolidatedInvoiceService {
             row.invoicenumber,
             row.totalamount,
             row.billingperiodlabel,
+            row.billingperiodstart ?? null,
+            row.billingperiodend ?? null,
+            row.billingstartdate ?? null,
+            row.billingthroughdate ?? null,
+            row.billabledays ?? null,
+            row.cycledays ?? null,
+            row.prorationfactor ?? null,
+            row.monthlytotalamount ?? null,
+            row.taxableamount ?? null,
+            row.taxamount ?? null,
+            row.totalamount ?? null,
           ]
         );
       }
