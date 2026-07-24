@@ -63,6 +63,7 @@ import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
 import { rentalInvoiceDocumentController } from "../controller/rentalInvoiceDocument.controller.js";
 import { vendorCustomerAssignmentController } from "../controller/vendorCustomerAssignment.controller.js";
 import { accessController } from "../controller/access.controller.js";
+import { consolidatedInvoiceController } from "../controller/consolidatedInvoice.controller.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
         const taskSecretHeader = request.headers["x-task-secret"];
@@ -435,6 +436,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
     fastify.post('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.upsertRevoInvoice);
     fastify.post('/revo-invoice/:id/rental-documents', { preHandler: [getSession] }, rentalInvoiceDocumentController.generateRentalInvoiceDocuments);
+    fastify.post('/consolidated-invoice/list', { preHandler: [getSession] }, consolidatedInvoiceController.listConsolidatedInvoices);
+    fastify.post('/consolidated-invoice/preview', { preHandler: [getSession] }, consolidatedInvoiceController.previewConsolidatedInvoice);
+    fastify.post('/consolidated-invoice/generate', { preHandler: [getSession] }, consolidatedInvoiceController.generateConsolidatedInvoice);
     //Query Table
     fastify.get('/table', { preHandler: [getSession] }, tablecontoller.getTable);
     //userbased tables

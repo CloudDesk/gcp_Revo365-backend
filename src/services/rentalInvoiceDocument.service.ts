@@ -142,8 +142,29 @@ const firstPresentText = (...values: unknown[]) => {
   return "";
 };
 
+const formatAddressSnapshot = (value: unknown) => {
+  const snapshot = parseJsonValue<Record<string, unknown> | null>(value, null);
+  if (!snapshot) return "";
+
+  return [
+    snapshot.doornumber,
+    snapshot.address,
+    snapshot.landmark,
+    snapshot.city,
+    snapshot.state,
+    snapshot.pincode,
+  ]
+    .map((item) => normalizeText(item))
+    .filter(Boolean)
+    .join(", ");
+};
+
 const buildCustomerAddress = (invoice: any) =>
-  firstPresentText(invoice?.customeraddress, invoice?.address);
+  firstPresentText(
+    formatAddressSnapshot(invoice?.billingaddresssnapshot),
+    invoice?.customeraddress,
+    invoice?.address
+  );
 
 const getDefaultLogoDataUrl = async () => {
   if (cachedDefaultLogoDataUrl !== undefined) return cachedDefaultLogoDataUrl;

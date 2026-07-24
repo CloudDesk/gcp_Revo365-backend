@@ -58,6 +58,22 @@ export module ordersService {
         return normalizedValue === 'exclusive' ? 'exclusive' : 'inclusive';
     };
 
+    const normalizeAddressSnapshot = (value: any) => {
+        if (!value) return null;
+        if (typeof value === 'object' && !Array.isArray(value)) return value;
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                    ? parsed
+                    : null;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    };
+
     const ORDER_STATUS_RANK: Record<string, number> = {
         payment_failed: 0,
         ordered: 10,
@@ -569,6 +585,8 @@ export module ordersService {
                 o.taxcalculationmode,
                 o.customertaxstate,
                 o.customertaxpincode,
+                o.billingaddresssnapshot,
+                o.shippingaddresssnapshot,
                 invoice as invoiceurl,
                 invoicecreateddate,
                 a.name, 
@@ -746,6 +764,8 @@ export module ordersService {
                 o.taxcalculationmode,
                 o.customertaxstate,
                 o.customertaxpincode,
+                o.billingaddresssnapshot,
+                o.shippingaddresssnapshot,
                 o.orderid,
                 ri.invoiceurl AS invoiceurl,
                 r.starrating AS rating_starrating,
@@ -2250,6 +2270,12 @@ ${whereClause} ${orderByClause}`;
         );
         const customertaxstate = transactionData?.customertaxstate ?? null;
         const customertaxpincode = transactionData?.customertaxpincode ?? null;
+        const billingAddressSnapshot = normalizeAddressSnapshot(
+            orderData?.[0]?.billingaddresssnapshot ?? transactionData?.billingaddresssnapshot
+        );
+        const shippingAddressSnapshot = normalizeAddressSnapshot(
+            orderData?.[0]?.shippingaddresssnapshot ?? transactionData?.shippingaddresssnapshot
+        );
 
         const storelocation =
             transactionData?.storelocation ??
@@ -2360,11 +2386,12 @@ ${whereClause} ${orderByClause}`;
                         totalrentalamount, sgst, cgst, igst, taxmode,
                         taxcalculationmode, customertaxstate, customertaxpincode, storelocation,
                         assetnumber, location, vendorname, empid,
-                        deliverydate, brand, invoicefor
+                        deliverydate, brand, invoicefor,
+                        billingaddresssnapshot, shippingaddresssnapshot
                     )
                     VALUES (
                         $1,$2,$3,$4,$5,$6,$7,$8,$9,
-                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
                     )
                     RETURNING *
                 `;
@@ -2393,7 +2420,9 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].empid,
                     ordersToInsert[0].deliverydate,
                     ordersToInsert[0].brand,
-                    ordersToInsert[0].invoicefor
+                    ordersToInsert[0].invoicefor,
+                    normalizeAddressSnapshot(ordersToInsert[0].billingaddresssnapshot) ?? billingAddressSnapshot,
+                    normalizeAddressSnapshot(ordersToInsert[0].shippingaddresssnapshot) ?? shippingAddressSnapshot
                 ];
 
                 const orderResult = await client.query(insertOrderQuery, insertOrderValues);

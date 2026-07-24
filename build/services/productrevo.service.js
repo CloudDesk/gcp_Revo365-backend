@@ -26,6 +26,8 @@ export var productrevoService;
     const MIGRATION_TABLE_MISSING_CODE = "42P01";
     const MIGRATION_COLUMN_MISSING_CODE = "42703";
     const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
+    const DEFAULT_LAPTOP_HSN_CODE = "84713010";
+    const DEFAULT_RENTAL_SAC_CODE = "997315";
     const isRentalOrderItem = (item) => {
         const orderName = String(item?.ordername ?? "").trim().toLowerCase();
         const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
@@ -1298,6 +1300,22 @@ export var productrevoService;
                 - COALESCE(stock_counts.live_rentalsoldquantity, 0)
                 - COALESCE(stock_counts.reservedforrentalquantity, 0)
             ) AS rentalavailablequantity,
+            COALESCE(
+              NULLIF(BTRIM(p.hsncode), ''),
+              CASE
+                WHEN LOWER(COALESCE(p.subcategory, '')) = 'laptop'
+                  THEN '${DEFAULT_LAPTOP_HSN_CODE}'
+                ELSE NULL
+              END
+            ) AS hsncode,
+            COALESCE(
+              NULLIF(BTRIM(p.saccode), ''),
+              CASE
+                WHEN COALESCE(stock_counts.has_rental_stock, false)
+                  THEN '${DEFAULT_RENTAL_SAC_CODE}'
+                ELSE NULL
+              END
+            ) AS saccode,
             -- Keep p.* after the live overrides because pg's row parser keeps the
             -- first duplicate field name it sees in the result set.
             p.*
@@ -1333,7 +1351,11 @@ export var productrevoService;
                 WHERE ${PRODUCT_ACTIVE_STOCK_FILTERS}
                   AND stocktype = 'rental_product'
                   AND stockstatus = 'Rental Sold'
-              ) AS live_rentalsoldquantity
+              ) AS live_rentalsoldquantity,
+              BOOL_OR(
+                stocktype = 'rental_product'
+                AND ${PRODUCT_ACTIVE_STOCK_FILTERS}
+              ) AS has_rental_stock
             FROM stock_revo
             WHERE puc = p.puc
           ) stock_counts ON TRUE

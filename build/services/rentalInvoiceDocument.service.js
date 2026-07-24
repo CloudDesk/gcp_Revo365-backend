@@ -12,7 +12,7 @@ const RENTAL_BILLING_TIMEZONE = "Asia/Kolkata";
 const DOCUMENT_TYPE = "rental_summary_with_supporting_document";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_yellow.png");
+const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_logo.jpeg");
 let cachedDefaultLogoDataUrl;
 const COMPANY_DETAILS = {
     companyName: "Rev0365Global Private Limited",
@@ -106,13 +106,29 @@ const firstPresentText = (...values) => {
     }
     return "";
 };
-const buildCustomerAddress = (invoice) => firstPresentText(invoice?.customeraddress, invoice?.address);
+const formatAddressSnapshot = (value) => {
+    const snapshot = parseJsonValue(value, null);
+    if (!snapshot)
+        return "";
+    return [
+        snapshot.doornumber,
+        snapshot.address,
+        snapshot.landmark,
+        snapshot.city,
+        snapshot.state,
+        snapshot.pincode,
+    ]
+        .map((item) => normalizeText(item))
+        .filter(Boolean)
+        .join(", ");
+};
+const buildCustomerAddress = (invoice) => firstPresentText(formatAddressSnapshot(invoice?.billingaddresssnapshot), invoice?.customeraddress, invoice?.address);
 const getDefaultLogoDataUrl = async () => {
     if (cachedDefaultLogoDataUrl !== undefined)
         return cachedDefaultLogoDataUrl;
     try {
         const logoBuffer = await readFile(DEFAULT_LOGO_PATH);
-        cachedDefaultLogoDataUrl = `data:image/png;base64,${logoBuffer.toString("base64")}`;
+        cachedDefaultLogoDataUrl = `data:image/jpeg;base64,${logoBuffer.toString("base64")}`;
     }
     catch (error) {
         cachedDefaultLogoDataUrl = null;
