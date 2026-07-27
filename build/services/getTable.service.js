@@ -27,7 +27,9 @@ export var getTables;
                 kubb_tickets: "KUBB Enquires",
                 buyback_enquiries: "Buyback Enquiries",
                 service_enquiries: "Service Enquiries",
-                rental_agreement: "Rental Agreements"
+                rental_agreement: "Rental Agreements",
+                store_quotations: "Store Quotations",
+                store_quotation_versions: "Store Quotation Versions"
             };
             result.rows.unshift({ table: 'home' });
             result = result.rows

@@ -117,6 +117,26 @@ export const revoinvoiceSchema = {
                 maxLength: "Order ID should be at most 500 characters long"
             }
         },
+        quotationid: {
+            type: ['number', 'integer', 'null'],
+            errorMessage: {
+                type: "Quotation ID should be a number"
+            }
+        },
+        quotationversionid: {
+            type: ['number', 'integer', 'null'],
+            errorMessage: {
+                type: "Quotation Version ID should be a number"
+            }
+        },
+        quotationnumber: {
+            type: ['string', 'null'],
+            maxLength: 80,
+            errorMessage: {
+                type: "Quotation Number should be a string",
+                maxLength: "Quotation Number should be at most 80 characters long"
+            }
+        },
         // servicedata: {
         //     type: ['object', 'null'],
         //     errorMessage: {
@@ -147,6 +167,38 @@ export const revoinvoiceSchema = {
             type: ['number', 'null'],
             errorMessage: {
                 type: "Total Order Amount should be a number"
+            }
+        },
+        paidamount: {
+            type: ['number', 'null'],
+            errorMessage: {
+                type: "Paid Amount should be a number"
+            }
+        },
+        balanceamount: {
+            type: ['number', 'null'],
+            errorMessage: {
+                type: "Balance Amount should be a number"
+            }
+        },
+        paymentstatus: {
+            type: ['string', 'null'],
+            enum: ['pending', 'partially_paid', 'paid', null],
+            errorMessage: {
+                type: "Payment Status should be a string",
+                enum: "Payment Status should be pending, partially_paid, or paid"
+            }
+        },
+        paymentdata: {
+            type: ['array', 'null'],
+            errorMessage: {
+                type: "Payment Data should be an array"
+            }
+        },
+        lastpaymentdate: {
+            type: ['number', 'null'],
+            errorMessage: {
+                type: "Last Payment Date should be a number"
             }
         },
         ticketnumber: {

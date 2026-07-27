@@ -2387,11 +2387,13 @@ ${whereClause} ${orderByClause}`;
                         taxcalculationmode, customertaxstate, customertaxpincode, storelocation,
                         assetnumber, location, vendorname, empid,
                         deliverydate, brand, invoicefor,
-                        billingaddresssnapshot, shippingaddresssnapshot
+                        billingaddresssnapshot, shippingaddresssnapshot,
+                        quotationid, quotationversionid, quotationnumber
                     )
                     VALUES (
                         $1,$2,$3,$4,$5,$6,$7,$8,$9,
-                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+                        $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+                        $27,$28,$29
                     )
                     RETURNING *
                 `;
@@ -2422,7 +2424,10 @@ ${whereClause} ${orderByClause}`;
                     ordersToInsert[0].brand,
                     ordersToInsert[0].invoicefor,
                     normalizeAddressSnapshot(ordersToInsert[0].billingaddresssnapshot) ?? billingAddressSnapshot,
-                    normalizeAddressSnapshot(ordersToInsert[0].shippingaddresssnapshot) ?? shippingAddressSnapshot
+                    normalizeAddressSnapshot(ordersToInsert[0].shippingaddresssnapshot) ?? shippingAddressSnapshot,
+                    ordersToInsert[0].quotationid ?? transactionData?.quotationid ?? null,
+                    ordersToInsert[0].quotationversionid ?? transactionData?.quotationversionid ?? null,
+                    ordersToInsert[0].quotationnumber ?? transactionData?.quotationnumber ?? null
                 ];
 
                 const orderResult = await client.query(insertOrderQuery, insertOrderValues);

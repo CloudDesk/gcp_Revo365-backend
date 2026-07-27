@@ -73,6 +73,7 @@ import { rentalInvoiceDocumentController } from "../controller/rentalInvoiceDocu
 import { vendorCustomerAssignmentController } from "../controller/vendorCustomerAssignment.controller.js";
 import { accessController } from "../controller/access.controller.js";
 import { consolidatedInvoiceController } from "../controller/consolidatedInvoice.controller.js";
+import { storeQuotationController } from "../controller/storeQuotation.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -387,6 +388,13 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //quote
     fastify.get('/quote', { preHandler: [getSession] }, quoteController.getQuotes);
     fastify.post('/quote', { preHandler: [getSession] }, quoteController.upsertQuotes);
+
+    //in-store customer quotations
+    fastify.get('/store-quotation', { preHandler: [getSession] }, storeQuotationController.getStoreQuotations);
+    fastify.post('/store-quotation', { preHandler: [getSession] }, storeQuotationController.upsertStoreQuotation);
+    fastify.get('/store-quotation/:id/versions', { preHandler: [getSession] }, storeQuotationController.getStoreQuotationVersions);
+    fastify.post('/store-quotation/:id/finalize', { preHandler: [getSession] }, storeQuotationController.finalizeStoreQuotation);
+    fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
 
     //notes
     fastify.get('/note', { preHandler: [getSession] }, notesController.getnotes);
