@@ -496,6 +496,10 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/rental-invoice', { preHandler: [getSession] }, ordersController.updateInvoiceGeneratedData)
 
     //service estimation
+    fastify.get('/service-estimation/products', { preHandler: [getSession] }, constEstimationController.getEstimationProducts);
+    fastify.get('/service-estimation/product-assets', { preHandler: [getSession] }, constEstimationController.getEstimationProductAssets);
+    fastify.get('/service-estimation/:id/stock-restoration', { preHandler: [getSession] }, constEstimationController.getStockRestorationStatus);
+    fastify.post('/service-estimation/:id/restore-stock', { preHandler: [getSession] }, constEstimationController.restoreApprovedEstimationStock);
     fastify.get('/service-estimation', { preHandler: [getSession] }, constEstimationController.getCostEstimationData);
     fastify.post('/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertCostEstimation);
     fastify.post('/v2/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);

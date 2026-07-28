@@ -555,6 +555,16 @@ export module stockRevoService {
                     status: 400,
                 };
             }
+            if (
+                normalizeComparableText(currentStock.holdreason) ===
+                "cost_estimation"
+            ) {
+                return {
+                    message:
+                        "Use the service estimation workflow to release this stock.",
+                    status: 400,
+                };
+            }
 
             const result = await query(
                 `

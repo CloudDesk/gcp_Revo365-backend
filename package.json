@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx src/index",
-    "test": "npm run test",
+    "test": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts",
+    "test:service-estimation-stock": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts",
     "build": "tsc",
     "migrate": "node build/scripts/runMigrations.js",
     "migrate:dev": "npx tsx src/scripts/runMigrations.ts",
