@@ -28,6 +28,19 @@ export var productrevoService;
     const PRODUCT_ACTIVE_STOCK_FILTERS = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
     const DEFAULT_LAPTOP_HSN_CODE = "84713010";
     const DEFAULT_RENTAL_SAC_CODE = "997315";
+    const COMPUTER_PACKAGE_TYPES = new Set(["computer_full_set", "single_computer"]);
+    const COMPUTER_BUILD_TYPES = new Set(["oem_prebuilt", "custom_assembled"]);
+    const COMPUTER_FULFILLMENT_TYPES = new Set([
+        "prepacked",
+        "assemble_to_stock",
+        "assemble_to_order",
+        "virtual_kit",
+    ]);
+    const ASSEMBLY_FULFILLMENT_TYPES = new Set([
+        "assemble_to_stock",
+        "assemble_to_order",
+        "virtual_kit",
+    ]);
     const isRentalOrderItem = (item) => {
         const orderName = String(item?.ordername ?? "").trim().toLowerCase();
         const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();
@@ -953,31 +966,325 @@ export var productrevoService;
         }
     };
     productrevoService.upsertProductrevo = async (productrevoData) => {
+        const client = await pool.connect();
         try {
-            let querydata;
-            let params;
-            const { id, ...upsertFields } = productrevoData;
+            await client.query("BEGIN");
+            const { id, bomcomponents, bomComponents, configurationmetadata, configurationMetadata, ...upsertFields } = productrevoData;
+            const components = Array.isArray(bomcomponents)
+                ? bomcomponents
+                : Array.isArray(bomComponents)
+                    ? bomComponents
+                    : [];
+            const metadata = configurationmetadata ?? configurationMetadata ?? {};
+            await validateComputerProductConfiguration(client, {
+                ...upsertFields,
+                id,
+                bomcomponents: components,
+            });
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
+            let result;
             if (id) {
-                querydata = `UPDATE product_revo SET ${fieldNames
+                const querydata = `UPDATE product_revo SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-                params = [...fieldValues, id];
+                result = await client.query(querydata, [...fieldValues, id]);
             }
             else {
-                querydata = `INSERT INTO product_revo (${fieldNames.join(", ")}) VALUES (${fieldNames
+                const querydata = `INSERT INTO product_revo (${fieldNames.join(", ")}) VALUES (${fieldNames
                     .map((_, index) => `$${index + 1}`)
                     .join(", ")}) RETURNING *`;
-                params = fieldValues;
+                result = await client.query(querydata, fieldValues);
             }
-            const result = await query(querydata, params);
+            const productId = Number(result.rows?.[0]?.id ?? id);
+            if (String(upsertFields.subcategory || "").toLowerCase() === "computer") {
+                await upsertProductBom(client, productId, {
+                    packageType: upsertFields.producttype,
+                    buildType: upsertFields.buildtype,
+                    fulfillmentType: upsertFields.fulfillmenttype,
+                    bundleTemplateId: upsertFields.bomtemplateid,
+                    components,
+                    metadata,
+                });
+            }
+            await client.query("COMMIT");
             return result;
         }
         catch (error) {
+            await client.query("ROLLBACK");
             console.error("Query Execution Error: IN upsertProductrevo", error);
-            let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            return ErrorMessage;
+            return ErrorHandler.handleQueryError(error);
+        }
+        finally {
+            client.release();
+        }
+    };
+    const validateComputerProductConfiguration = async (client, productData) => {
+        const subcategory = String(productData?.subcategory || "").toLowerCase();
+        if (subcategory === "spares") {
+            if (!String(productData?.sparetype || "").trim()) {
+                throw new Error("Spare Type is required for products in the Spares family.");
+            }
+            return;
+        }
+        if (subcategory !== "computer")
+            return;
+        const packageType = String(productData?.producttype || "").toLowerCase();
+        const buildType = String(productData?.buildtype || "").toLowerCase();
+        const fulfillmentType = String(productData?.fulfillmenttype || "").toLowerCase();
+        const components = Array.isArray(productData?.bomcomponents)
+            ? productData.bomcomponents
+            : [];
+        if (!COMPUTER_PACKAGE_TYPES.has(packageType)) {
+            throw new Error("Select a valid Computer Package Type.");
+        }
+        if (!COMPUTER_BUILD_TYPES.has(buildType)) {
+            throw new Error("Select a valid Computer Build Type.");
+        }
+        if (!COMPUTER_FULFILLMENT_TYPES.has(fulfillmentType)) {
+            throw new Error("Select a valid Inventory Behaviour.");
+        }
+        if (buildType === "oem_prebuilt" &&
+            !["prepacked", "virtual_kit"].includes(fulfillmentType)) {
+            throw new Error("Branded / OEM products must be stocked complete or sold as a component kit.");
+        }
+        if (buildType === "custom_assembled" &&
+            !["assemble_to_stock", "assemble_to_order"].includes(fulfillmentType)) {
+            throw new Error("Custom assembled products must be assembled to stock or assembled to order.");
+        }
+        for (const component of components) {
+            const roleCode = String(component?.component_role_code || "").trim();
+            const quantity = Number(component?.quantity);
+            if (!roleCode)
+                throw new Error("Every BOM component requires a Component Role.");
+            if (!Number.isFinite(quantity) || quantity <= 0) {
+                throw new Error(`Enter a valid quantity for ${component?.component_label || roleCode}.`);
+            }
+        }
+        if (buildType === "custom_assembled") {
+            const requiredRoles = await getRequiredComputerRoleCodes(client, packageType, buildType);
+            const configuredRoles = new Set(components
+                .filter((component) => Number(component?.component_product_id) > 0)
+                .map((component) => String(component.component_role_code)));
+            const missingRoles = requiredRoles.filter((role) => !configuredRoles.has(role));
+            if (missingRoles.length) {
+                throw new Error(`Select products for all required custom-build components: ${missingRoles
+                    .map((role) => role.replace(/_/g, " "))
+                    .join(", ")}.`);
+            }
+        }
+        if (ASSEMBLY_FULFILLMENT_TYPES.has(fulfillmentType)) {
+            const componentProductIds = components
+                .map((component) => Number(component?.component_product_id))
+                .filter((value) => Number.isInteger(value) && value > 0);
+            if (componentProductIds.length) {
+                const existing = await client.query(`SELECT id
+           FROM product_revo
+           WHERE id = ANY($1::int[])
+             AND (isdeleted = FALSE OR isdeleted IS NULL)
+             AND (isarchive = FALSE OR isarchive IS NULL)`, [componentProductIds]);
+                if (existing.rows.length !== new Set(componentProductIds).size) {
+                    throw new Error("One or more selected BOM component products are unavailable.");
+                }
+                if (productData?.id && componentProductIds.includes(Number(productData.id))) {
+                    throw new Error("A product cannot contain itself as a BOM component.");
+                }
+            }
+        }
+    };
+    const getRequiredComputerRoleCodes = async (client, packageType, buildType) => {
+        const result = await client.query(`SELECT value.code, value.metadata_json
+       FROM picklist_values value
+       JOIN picklist_definitions definition ON definition.id = value.definition_id
+       WHERE definition.code = 'product_revo_component_role'
+         AND definition.is_active = TRUE
+         AND value.is_active = TRUE
+       ORDER BY value.sort_order, value.label`, []);
+        return result.rows
+            .filter((row) => {
+            const rules = Array.isArray(row.metadata_json?.requiredWhen)
+                ? row.metadata_json.requiredWhen
+                : [];
+            return rules.some((rule) => (!rule.packageType || rule.packageType === packageType) &&
+                (!rule.buildType || rule.buildType === buildType));
+        })
+            .map((row) => String(row.code));
+    };
+    const upsertProductBom = async (client, productId, configuration) => {
+        const currentResult = await client.query(`SELECT id, version_number
+       FROM product_boms
+       WHERE product_id = $1
+         AND status = 'active'
+       ORDER BY version_number DESC
+       LIMIT 1
+       FOR UPDATE`, [productId]);
+        let bomId;
+        if (currentResult.rows.length) {
+            bomId = Number(currentResult.rows[0].id);
+            await client.query(`UPDATE product_boms
+         SET bundle_template_id = $1,
+             package_type = $2,
+             build_type = $3,
+             fulfillment_type = $4,
+             metadata_json = $5,
+             updated_at = NOW()
+         WHERE id = $6`, [
+                configuration.bundleTemplateId || null,
+                configuration.packageType,
+                configuration.buildType,
+                configuration.fulfillmentType,
+                configuration.metadata || {},
+                bomId,
+            ]);
+            await client.query(`DELETE FROM product_bom_lines WHERE product_bom_id = $1`, [bomId]);
+        }
+        else {
+            const insertResult = await client.query(`INSERT INTO product_boms (
+           product_id,
+           bundle_template_id,
+           package_type,
+           build_type,
+           fulfillment_type,
+           status,
+           metadata_json
+         )
+         VALUES ($1, $2, $3, $4, $5, 'active', $6)
+         RETURNING id`, [
+                productId,
+                configuration.bundleTemplateId || null,
+                configuration.packageType,
+                configuration.buildType,
+                configuration.fulfillmentType,
+                configuration.metadata || {},
+            ]);
+            bomId = Number(insertResult.rows[0].id);
+        }
+        for (const [index, component] of (configuration.components || []).entries()) {
+            const roleCode = String(component.component_role_code || "").trim();
+            const roleResult = await client.query(`SELECT value.id
+         FROM picklist_values value
+         JOIN picklist_definitions definition ON definition.id = value.definition_id
+         WHERE definition.code = 'product_revo_component_role'
+           AND value.code = $1
+         LIMIT 1`, [roleCode]);
+            await client.query(`INSERT INTO product_bom_lines (
+           product_bom_id,
+           component_role_value_id,
+           component_product_id,
+           component_role_code,
+           component_label,
+           quantity,
+           is_required,
+           is_customer_selected,
+           sort_order,
+           metadata_json
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [
+                bomId,
+                roleResult.rows[0]?.id || null,
+                component.component_product_id || null,
+                roleCode,
+                component.component_label || roleCode.replace(/_/g, " "),
+                Number(component.quantity || 1),
+                component.is_required !== false,
+                Boolean(component.is_customer_selected),
+                Number(component.sort_order ?? index * 10),
+                component.metadata_json || {},
+            ]);
+        }
+    };
+    productrevoService.getProductComponentOptions = async (request) => {
+        try {
+            const search = String(request.query?.search || "").trim();
+            const roleCode = String(request.query?.component_role || "").trim().toLowerCase();
+            const excludeProductId = Number(request.query?.exclude_product_id || 0);
+            const params = [];
+            const conditions = [
+                `(isdeleted = FALSE OR isdeleted IS NULL)`,
+                `(isarchive = FALSE OR isarchive IS NULL)`,
+                `(removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
+            ];
+            if (search) {
+                params.push(`%${search}%`);
+                conditions.push(`(productname ILIKE $${params.length}
+            OR brand ILIKE $${params.length}
+            OR model ILIKE $${params.length}
+            OR puc ILIKE $${params.length})`);
+            }
+            if (excludeProductId > 0) {
+                params.push(excludeProductId);
+                conditions.push(`id <> $${params.length}`);
+            }
+            params.push(roleCode);
+            const roleParameter = `$${params.length}`;
+            params.push(30);
+            const result = await query(`SELECT
+           id,
+           puc,
+           productname,
+           brand,
+           model,
+           category,
+           subcategory,
+           sparetype,
+           accessoriestype,
+           price,
+           availablequantity,
+           CASE
+             WHEN LOWER(COALESCE(sparetype, '')) = ${roleParameter} THEN 0
+             WHEN LOWER(COALESCE(accessoriestype, '')) = ${roleParameter} THEN 1
+             ELSE 2
+           END AS role_match_rank
+         FROM product_revo
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY role_match_rank ASC, productname ASC NULLS LAST, id DESC
+         LIMIT $${params.length}`, params);
+            return result.rows;
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getProductComponentOptions", error);
+            return ErrorHandler.handleQueryError(error);
+        }
+    };
+    productrevoService.getProductBom = async (productId) => {
+        try {
+            const result = await query(`SELECT
+           bom.*,
+           COALESCE(
+             json_agg(
+               json_build_object(
+                 'id', line.id,
+                 'component_role_value_id', line.component_role_value_id,
+                 'component_role_code', line.component_role_code,
+                 'component_label', line.component_label,
+                 'component_product_id', line.component_product_id,
+                 'component_product_name', component.productname,
+                 'component_product_puc', component.puc,
+                 'component_product_brand', component.brand,
+                 'component_price', component.price,
+                 'quantity', line.quantity,
+                 'is_required', line.is_required,
+                 'is_customer_selected', line.is_customer_selected,
+                 'sort_order', line.sort_order,
+                 'metadata_json', line.metadata_json
+               )
+               ORDER BY line.sort_order, line.id
+             ) FILTER (WHERE line.id IS NOT NULL),
+             '[]'
+           ) AS components
+         FROM product_boms bom
+         LEFT JOIN product_bom_lines line ON line.product_bom_id = bom.id
+         LEFT JOIN product_revo component ON component.id = line.component_product_id
+         WHERE bom.product_id = $1
+           AND bom.status = 'active'
+         GROUP BY bom.id
+         ORDER BY bom.version_number DESC
+         LIMIT 1`, [productId]);
+            return result.rows[0] || null;
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN getProductBom", error);
+            return ErrorHandler.handleQueryError(error);
         }
     };
     productrevoService.insertBulkProduct = async (productrevoDataArray, options) => {

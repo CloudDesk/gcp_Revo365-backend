@@ -319,6 +319,30 @@ export const productrevoInsertSchema = {
                 type: "Sub-category should be a string"
             }
         },
+        producttype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Product type should be a string"
+            }
+        },
+        buildtype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Build type should be a string"
+            }
+        },
+        fulfillmenttype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Fulfillment type should be a string"
+            }
+        },
+        sparetype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Spare type should be a string"
+            }
+        },
         location: {
             type: ['string', 'null'],
             errorMessage: {

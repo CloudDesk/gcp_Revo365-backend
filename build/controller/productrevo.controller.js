@@ -80,6 +80,26 @@ export var productrevoController;
             reply.send(`${error.message} error in get Each Products`);
         }
     };
+    productrevoController.getProductComponentOptions = async function (request, reply) {
+        try {
+            const result = await productrevoService.getProductComponentOptions(request);
+            reply.send(result);
+        }
+        catch (error) {
+            console.error('ERROR IN Controller getProductComponentOptions', error);
+            reply.status(500).send(error.message);
+        }
+    };
+    productrevoController.getProductBom = async function (request, reply) {
+        try {
+            const result = await productrevoService.getProductBom(Number(request.params.id));
+            reply.send(result);
+        }
+        catch (error) {
+            console.error('ERROR IN Controller getProductBom', error);
+            reply.status(500).send(error.message);
+        }
+    };
     // Ecom single-product route — always filters ecomvisible = TRUE
     productrevoController.getEachEcomProductsRevo = async function (request, reply) {
         try {
@@ -165,11 +185,14 @@ export var productrevoController;
             const productrevoData = request.body;
             let upsertProductRevoResult = await productrevoService.upsertProductrevo(productrevoData);
             if (upsertProductRevoResult.command === "UPDATE" || upsertProductRevoResult.command === "INSERT") {
-                let message = {};
-                message = {
-                    product: upsertProductRevoResult.command === "UPDATE"
-                        ? `Product Updated successfully`
-                        : `Product Inserted successfully`
+                const responseMessage = upsertProductRevoResult.command === "UPDATE"
+                    ? `Product Updated successfully`
+                    : `Product Inserted successfully`;
+                const message = {
+                    product: responseMessage,
+                    message: responseMessage,
+                    record: upsertProductRevoResult.rows?.[0] || null,
+                    command: upsertProductRevoResult.command,
                 };
                 reply.status(200).send(message);
             }

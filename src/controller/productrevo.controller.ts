@@ -84,6 +84,27 @@ export module productrevoController {
             reply.send(`${error.message} error in get Each Products`)
         }
     }
+    export const getProductComponentOptions = async function (request: FastifyRequest, reply: FastifyReply) {
+        try {
+            const result = await productrevoService.getProductComponentOptions(request);
+            reply.send(result);
+        } catch (error) {
+            console.error('ERROR IN Controller getProductComponentOptions', error);
+            reply.status(500).send(error.message);
+        }
+    }
+    export const getProductBom = async function (
+        request: FastifyRequest<{ Params: idparams }>,
+        reply: FastifyReply
+    ) {
+        try {
+            const result = await productrevoService.getProductBom(Number(request.params.id));
+            reply.send(result);
+        } catch (error) {
+            console.error('ERROR IN Controller getProductBom', error);
+            reply.status(500).send(error.message);
+        }
+    }
     // Ecom single-product route — always filters ecomvisible = TRUE
     export const getEachEcomProductsRevo = async function (request: FastifyRequest<{ Params: idparams }>, reply: FastifyReply) {
         try {
@@ -174,11 +195,14 @@ export module productrevoController {
             const productrevoData = request.body;
             let upsertProductRevoResult = await productrevoService.upsertProductrevo(productrevoData)
             if (upsertProductRevoResult.command === "UPDATE" || upsertProductRevoResult.command === "INSERT") {
-                let message: any = {}
-                message = {
-                    product: upsertProductRevoResult.command === "UPDATE"
-                        ? `Product Updated successfully`
-                        : `Product Inserted successfully`
+                const responseMessage = upsertProductRevoResult.command === "UPDATE"
+                    ? `Product Updated successfully`
+                    : `Product Inserted successfully`;
+                const message = {
+                    product: responseMessage,
+                    message: responseMessage,
+                    record: upsertProductRevoResult.rows?.[0] || null,
+                    command: upsertProductRevoResult.command,
                 };
                 reply.status(200).send(message)
             }

@@ -29,9 +29,13 @@ export var getTables;
                 service_enquiries: "Service Enquiries",
                 rental_agreement: "Rental Agreements",
                 store_quotations: "Store Quotations",
-                store_quotation_versions: "Store Quotation Versions"
+                store_quotation_versions: "Store Quotation Versions",
+                picklist_configuration: "Picklist Configuration"
             };
             result.rows.unshift({ table: 'home' });
+            if (!result.rows.some((element) => element.table === 'picklist_configuration')) {
+                result.rows.push({ table: 'picklist_configuration' });
+            }
             result = result.rows
                 .map((element) => {
                 const label = labels[element.table];
