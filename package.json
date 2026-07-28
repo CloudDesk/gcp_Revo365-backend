@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "npx tsx src/index",
     "test": "npm run test",
+    "verify:product-stock-api": "npx tsx src/scripts/verifyProductStockApi.ts",
     "build": "tsc",
     "migrate": "node build/scripts/runMigrations.js",
     "migrate:dev": "npx tsx src/scripts/runMigrations.ts",

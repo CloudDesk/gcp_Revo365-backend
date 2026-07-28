@@ -1104,7 +1104,8 @@ export module stockRevoService {
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = false AND stockstatus = 'Rental Sold'
+                        AND stockstatus = 'Rental Sold'
+                        AND stocktype = 'rental_product'
                     ) AS rentalsoldquantity,
 
                     COUNT(*) FILTER (
@@ -1160,21 +1161,18 @@ export module stockRevoService {
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'on_catalogue_product'
                     ) AS oncatalogueqty,
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'off_catalogue_product'
                     ) AS offcatalogueqty,
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = false
                         AND (
                             stockstatus = 'Available'
                             OR stockstatus = 'Rental Sold'
@@ -1209,7 +1207,8 @@ export module stockRevoService {
                 const bin_qty = parseInt(quantityResult.rows[0].bin_qty, 10);
                 const archive_qty = parseInt(quantityResult.rows[0].archive_qty, 10);
                 const ewaste_qty = parseInt(quantityResult.rows[0].ewaste_qty, 10);
-                const rentalavailablequantity = rentaltotalquantity - rentalsoldquantity;
+                const rentalavailablequantity =
+                    rentaltotalquantity - rentalsoldquantity - reservedforrentalquantity;
 
                 const quantities = {
                     quantity: totalCount,

@@ -74,6 +74,7 @@ import { vendorCustomerAssignmentController } from "../controller/vendorCustomer
 import { accessController } from "../controller/access.controller.js";
 import { consolidatedInvoiceController } from "../controller/consolidatedInvoice.controller.js";
 import { storeQuotationController } from "../controller/storeQuotation.controller.js";
+import { picklistConfigController } from "../controller/picklistConfig.controller.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -138,6 +139,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getAdminProductsrevoData);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);
     fastify.get('/v2/product/Archieve', { preHandler: [getSession] }, productrevoController.getArcheivedProductsRevo);
+    fastify.get('/v2/product/component-options', { preHandler: [getSession] }, productrevoController.getProductComponentOptions);
+    fastify.get('/v2/product/:id/bom', { preHandler: [getSession] }, productrevoController.getProductBom);
     fastify.get('/v2/product-ecom/:id', productrevoController.getEachEcomProductsRevo);
     fastify.get('/v2/product/:id', { preHandler: [getSession] }, productrevoController.getEachProductsRevo);
     fastify.post('/v2/product', { preHandler: [getSession] },/* { preHandler: [validateRequestBody(productInsertSchema)] } ,*/ productrevoController.upsertProductrevo);
@@ -180,6 +183,19 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //picklistfields
     fastify.get('/picklist/:objectName', picklistControler.getPicklistforobject);
     fastify.get('/picklist', { preHandler: [getSession] }, picklistControler.getAllPicklist);
+    fastify.get('/picklist-config/definitions', { preHandler: [getSession] }, picklistConfigController.getDefinitions);
+    fastify.post('/picklist-config/definitions', { preHandler: [getSession] }, picklistConfigController.upsertDefinition);
+    fastify.get('/picklist-config/values', { preHandler: [getSession] }, picklistConfigController.getValues);
+    fastify.get('/picklist-config/definitions/:definitionCode/values', { preHandler: [getSession] }, picklistConfigController.getValues);
+    fastify.post('/picklist-config/values', { preHandler: [getSession] }, picklistConfigController.upsertValue);
+    fastify.post('/picklist-config/relations', { preHandler: [getSession] }, picklistConfigController.upsertRelation);
+    fastify.delete('/picklist-config/relations/:id', { preHandler: [getSession] }, picklistConfigController.deleteRelation);
+    fastify.get('/picklist-config/field-mappings', { preHandler: [getSession] }, picklistConfigController.getFieldMappings);
+    fastify.post('/picklist-config/field-mappings', { preHandler: [getSession] }, picklistConfigController.upsertFieldMapping);
+    fastify.get('/picklist-config/bundle-templates', { preHandler: [getSession] }, picklistConfigController.getBundleTemplates);
+    fastify.post('/picklist-config/bundle-templates', { preHandler: [getSession] }, picklistConfigController.upsertBundleTemplate);
+    fastify.post('/picklist-config/bundle-items', { preHandler: [getSession] }, picklistConfigController.upsertBundleItem);
+    fastify.get('/picklists/resolve', { preHandler: [getSession] }, picklistConfigController.resolvePicklists);
 
     //count of totalRecord
     fastify.get('/count/:objectName', { preHandler: [getSession] }, recordCount.getRecordCount);
