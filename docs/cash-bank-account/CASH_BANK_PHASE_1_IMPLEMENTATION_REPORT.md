@@ -116,7 +116,7 @@ Phase 1 is a foundation. It will not deliver the complete accounting product.
 - Manual Bank/Cash entry
 - System journal creation
 - Audit and idempotency controls
-- Permissions for Admin, Accounting Team, and Finance Team
+- Permissions restricted to Accountant and Admin roles
 
 ### 4.2 Future compatibility only
 
@@ -314,7 +314,7 @@ The applicable TDS ledger and TDS amount must both be captured.
 
 ### User
 
-Admin, Accounting Team, or Finance Team with create permission.
+Accountant.
 
 ### Input
 
@@ -801,181 +801,35 @@ reversal and reposting to preserve the audit trail.
 
 ## 8.4 TDS Section Master
 
-Phase 1 requires a separate TDS Section Master user interface so statutory
-sections, rates, thresholds, effective dates, and ledger mappings are
-configurable rather than hard-coded in transaction forms.
-
-### Purpose
-
-The master will:
-
-- Maintain old and new Income-tax Act references.
-- Present the applicable section during TDS Receivable or TDS Payable entry.
-- Suggest the configured rate and show threshold information.
-- Link the section to the appropriate TDS ledger.
-- Preserve historical versions when law or Finance configuration changes.
-- Prevent previously posted transactions from changing when a master record is
-  edited later.
+Phase 1 does not include a TDS management UI. The supplied catalogue is seeded
+directly through the baseline database migration and is consumed as a dropdown
+through the GET endpoint.
 
 ### Access
 
-| Action | Admin | Finance configuration user | Accounting user |
+| Action | Accountant | Admin | Other roles |
 | --- | --- | --- | --- |
-| View sections | Yes | Yes | Yes |
-| Add section/version | Yes | Yes | No |
-| Edit unused draft | Yes | Yes | No |
-| Activate/Deactivate | Yes | Yes | No |
-| Select during transaction | Yes | Yes | Yes |
-
-### List page
-
-Columns:
-
-- New Code
-- Old Section
-- Nature of Payment
-- New Section
-- Rate summary
-- Threshold summary
-- Effective From
-- Effective To
-- Applies To
-- Status
-- Actions
-
-Filters:
-
-- Search by code, section, or nature
-- Old Act/New Act
-- Receivable/Payable/Payroll
-- Effective date
-- Active/Inactive
-
-Actions:
-
-- Add TDS Section
-- View
-- Edit
-- Create New Version
-- Activate/Deactivate
-
-A section already referenced by a posted transaction must not be hard-deleted.
-
-### Add/Edit form
-
-#### Identity
-
-- New Code
-- Old Section
-- Nature of Payment
-- Act name
-- New Section
-- Table serial/reference
-
-#### Applicability
-
-- Applies To: Receivable, Payable, Both, or Payroll Only
-- Resident category
-- Payer category
-- Payee constitution/category
-- Effective From
-- Effective To
-- Status
-
-#### Rate
-
-- Rate Type:
-  - Fixed Percentage
-  - Conditional by Payee Type
-  - Rates in Force/Slab
-  - User Entered
-- Default Rate
-- Conditional rate rows
-- Allow authorized override
-- Override reason required
-
-#### Threshold
-
-- Threshold Type:
-  - None
-  - Per Transaction
-  - Monthly
-  - Annual Aggregate
-  - Per Transaction and Annual Aggregate
-  - Amount in Excess of Threshold
-  - Slab/Calculated Externally
-- Threshold Amount
-- Secondary/Aggregate Threshold Amount
-- Threshold period
-- Apply rate to:
-  - Entire amount after threshold is crossed
-  - Amount exceeding threshold only
-
-#### Accounting configuration
-
-- Default TDS Receivable ledger
-- Default TDS Payable ledger
-- Allow ledger override
-
-#### Governance
-
-- Official source/reference
-- Finance approval reference
-- Notes
-- Created/modified/approved audit data
+| View sections | Yes | Yes | No |
+| Select during transaction | Yes | Yes | No |
+| Backend POST/PATCH | Retained | Retained | No |
 
 ### Initial supplied section catalogue
 
-The following values are the initial business-supplied catalogue. They must be
-reviewed and approved by Finance before production activation.
+The database stores only `newcode`, `natureofpayment`, and `rate`, together
+with standard identity, organization, and audit columns. The 12 supplied rows
+are inserted directly by the migration.
 
-| New Code | Old Section | Nature of Payment | New Section (IT Act 2025) | Rate | Threshold |
-| --- | --- | --- | --- | --- | --- |
-| 1002 | 192B (supplied; Finance verification required because the official salary provision is section 192) | Salary | 392(1) | Rates in force/Payroll calculation | No fixed threshold in this master |
-| 1006 | 194H | Commission or Brokerage - others | 393(1), Table Sl. No. 1(ii) | 2% | ₹20,000 |
-| 1008 | 194I(a) | Rent on machinery etc. - specified person | 393(1), Table Sl. No. 2(ii).D(a) | 2% | ₹50,000 per month |
-| 1009 | 194I(b) | Rent on building | 393(1), Table Sl. No. 2(ii).D(b) | 10% | ₹50,000 per month |
-| 1022 | 194A | Interest other than interest on securities | 393(1), Table Sl. No. 5(iii) | 10% | ₹10,000 |
-| 1023 | 194C | Contract in case of Individual and HUF | 393(1), Table Sl. No. 6(i).D(a) | 1% | ₹30,000 per transaction and ₹1,00,000 aggregate |
-| 1024 | 194C | Contract in case of other than Individual and HUF | 393(1), Table Sl. No. 6(i).D(b) | 2% | ₹30,000 per transaction and ₹1,00,000 aggregate |
-| 1026 | 194J(a) | Technical Services | 393(1), Table Sl. No. 6(iii).D(a) | 2% | ₹50,000 |
-| 1027 | 194J(b) | Professional Services | 393(1), Table Sl. No. 6(iii).D(b) | 10% | ₹50,000 |
-| 1028 | 194J(b) | Directors Fees or Remuneration | 393(1), Table Sl. No. 6(iii).D(b) | 10% | Nil |
-| 1031 | 194Q | Purchase of Goods | 393(1), Table Sl. No. 8(ii) | 0.1% | On the amount exceeding ₹50 lakh |
-| 1067 | 194T | Partners Remuneration | 393(3), Table Sl. No. 7 | 10% | ₹20,000 |
+The GET response derives `displayname` using:
 
-### Cash/Bank transaction usage
+```text
+natureofpayment newcode(rate)
+```
 
-The section dropdown must be context-sensitive:
+Example:
 
-- Customer receipt/TDS Receivable shows active sections allowed for
-  Receivable.
-- Vendor payment/TDS Payable shows active sections allowed for Payable.
-- Salary code 1002 is Payroll Only and must not appear in a normal
-  invoice/bill adjustment dropdown.
-- Only a version effective on the transaction’s applicable tax date may be
-  selected.
-
-The statutory transition is based on the earlier of credit or payment:
-
-- On or before 31 March 2026: old Income-tax Act, 1961 reference.
-- On or after 1 April 2026: Income-tax Act, 2025 section/table reference.
-
-### Phase 1 calculation boundary
-
-The BA requirement says the user enters the TDS Amount. Therefore, Phase 1
-should:
-
-1. Let the user select the applicable TDS section.
-2. Show the configured rate and threshold.
-3. Suggest a calculated TDS amount when enough information exists.
-4. Let an authorized user confirm or override the amount.
-5. Require a reason when overriding the suggested amount.
-6. Store a snapshot of the selected code, section, rate, threshold rule, and
-   entered amount with the allocation.
-
-Full year-to-date threshold automation is deferred until the system has an
-approved source for cumulative party payments and credits.
+```text
+Commission or Brokerage - others 1006(2%)
+```
 
 ---
 
@@ -1134,56 +988,18 @@ Sum of Journal Debits = Sum of Journal Credits
 
 ## 9.9 `tds_sections`
 
-Stores the effective-dated TDS Section Master.
+Stores the supplied TDS dropdown catalogue.
 
 | Column | Purpose |
 | --- | --- |
 | `id` | Primary key |
-| `organization_id` | Organization boundary or null for shared statutory master |
-| `new_code` | Business/e-filing code |
-| `old_section` | Income-tax Act, 1961 reference |
-| `nature_of_payment` | Display description |
-| `new_section` | Income-tax Act, 2025 reference |
-| `table_reference` | Table serial/column reference |
-| `act_regime` | 1961 Act/2025 Act |
-| `applicability` | Receivable, Payable, Both, Payroll Only |
-| `rate_type` | Fixed, Conditional, Rates in Force, User Entered |
-| `default_rate` | Default percentage when applicable |
-| `threshold_type` | None, Transaction, Monthly, Aggregate, Excess, etc. |
-| `threshold_amount` | Primary threshold |
-| `aggregate_threshold_amount` | Secondary aggregate threshold |
-| `threshold_period` | Transaction, Month, Tax Year |
-| `apply_on_excess_only` | Whether rate applies only above threshold |
-| `effective_from` | Version start date |
-| `effective_to` | Version end date |
-| `status` | Draft, Active, Inactive |
-| `official_reference` | Source URL/document reference |
-| Audit columns | Created/modified/approved metadata |
+| `organizationid` | Organization boundary |
+| `newcode` | TDS code |
+| `natureofpayment` | Display description |
+| `rate` | Supplied display rate |
+| Audit columns | Created/modified metadata |
 
-Unique-version rule:
-
-```text
-organization_id + new_code + effective_from
-```
-
-## 9.10 `tds_section_rate_rules`
-
-Supports sections such as contractor payments where the rate depends on payee
-constitution.
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Primary key |
-| `tds_section_id` | Parent section version |
-| `payer_category` | Optional payer condition |
-| `payee_category` | Individual, HUF, Other, etc. |
-| `resident_category` | Resident/Non-resident/Any |
-| `rate` | Applicable percentage |
-| `condition_data` | Additional structured conditions |
-| `status` | Active/Inactive |
-
-Each posted allocation must snapshot the selected statutory values so later
-master changes do not rewrite accounting history.
+The unique rule is `organizationid + newcode`.
 
 ---
 
@@ -1397,18 +1213,6 @@ GET  /finance/tds-sections
 POST /finance/tds-sections
 GET  /finance/tds-sections/:sectionId
 PATCH /finance/tds-sections/:sectionId
-POST /finance/tds-sections/:sectionId/versions
-POST /finance/tds-sections/:sectionId/activate
-POST /finance/tds-sections/:sectionId/deactivate
-```
-
-Transaction-context lookup:
-
-```http
-GET /finance/tds-sections/applicable
-    ?direction=receivable
-    &transactionDate=YYYY-MM-DD
-    &partyId=...
 ```
 
 ## 11.4 Internal integration
@@ -1538,14 +1342,14 @@ Posted accounting transactions should not be hard-deleted.
 
 ## 14.1 Proposed permission matrix
 
-| Action | Admin | Accounting | Finance | Other users |
-| --- | --- | --- | --- | --- |
-| View accounts/transactions | Yes | Yes | Yes | No |
-| Create Bank/Cash account | Yes | Configurable | Configurable | No |
-| Post manual entry | Yes | Yes | Yes | No |
-| Allocate invoices/bills | Yes | Yes | Yes | No |
-| Reverse posted entry | Yes | Permission-based | Permission-based | No |
-| Configure payment mapping | Yes | No/Configurable | Configurable | No |
+| Action | Accountant | Admin | Other roles |
+| --- | --- | --- | --- |
+| View accounts/transactions | Yes | Yes | No |
+| Create Bank/Cash account | Yes | Yes | No |
+| Post manual entry | Yes | Yes | No |
+| Allocate invoices/bills | Yes | Yes | No |
+| Reverse posted entry | Yes | Yes | No |
+| Configure payment mapping | Yes | Yes | No |
 
 ## 14.2 Audit data
 
