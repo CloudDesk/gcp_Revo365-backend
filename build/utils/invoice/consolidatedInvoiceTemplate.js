@@ -96,10 +96,31 @@ const renderLineItems = (data) => {
     const fillerHeight = Math.max(14, 72 - rows.length * itemHeight);
     const renderedRows = rows
         .map((row) => {
-        const invoiceLink = renderDocumentReference(row.invoiceUrl, "Invoice");
-        const supportingLink = renderDocumentReference(row.supportingDocumentUrl, "Supporting");
-        const linkSeparator = invoiceLink && supportingLink ? " | " : "";
-        const hasMeta = row.invoiceNumber || row.invoiceDate || invoiceLink || supportingLink;
+        const sourceDocuments = row.sourceDocuments?.length
+            ? row.sourceDocuments
+            : [{
+                    sourceInvoiceId: row.sourceInvoiceId,
+                    invoiceNumber: row.invoiceNumber,
+                    invoiceDate: row.invoiceDate,
+                    invoiceUrl: row.invoiceUrl,
+                    supportingDocumentUrl: row.supportingDocumentUrl,
+                }];
+        const sourceReferenceHtml = sourceDocuments
+            .map((sourceDocument) => {
+            const invoiceLink = renderDocumentReference(sourceDocument.invoiceUrl, "Invoice");
+            const supportingLink = renderDocumentReference(sourceDocument.supportingDocumentUrl, "Supporting");
+            const linkSeparator = invoiceLink && supportingLink ? " | " : "";
+            const referenceText = [
+                sourceDocument.invoiceNumber ? `Ref: ${escapeHtml(sourceDocument.invoiceNumber)}` : "",
+                sourceDocument.invoiceDate ? escapeHtml(sourceDocument.invoiceDate) : "",
+            ].filter(Boolean).join(" ");
+            const links = invoiceLink || supportingLink
+                ? `<span class="line-item-links">${invoiceLink}${linkSeparator}${supportingLink}</span>`
+                : "";
+            return `${referenceText}${links}`;
+        })
+            .filter(Boolean)
+            .join("<br />");
         const billingMeta = [
             row.billingRangeLabel ? `Billing: ${row.billingRangeLabel}` : "",
             row.billingDaysLabel ? `Days: ${row.billingDaysLabel}` : "",
@@ -112,11 +133,7 @@ const renderLineItems = (data) => {
         <td class="line-item-description">
           <div class="line-item-title">${escapeHtml(row.description)}</div>
           ${billingMeta ? `<div class="line-item-meta">${escapeHtml(billingMeta)}</div>` : ""}
-          ${hasMeta ? `<div class="line-item-meta">
-            ${row.invoiceNumber ? `Ref: ${escapeHtml(row.invoiceNumber)}` : ""}
-            ${row.invoiceDate ? ` ${escapeHtml(row.invoiceDate)}` : ""}
-            ${(invoiceLink || supportingLink) ? `<span class="line-item-links">${invoiceLink}${linkSeparator}${supportingLink}</span>` : ""}
-          </div>` : ""}
+          ${sourceReferenceHtml ? `<div class="line-item-meta">${sourceReferenceHtml}</div>` : ""}
         </td>
         <td class="line-item-sac">${escapeHtml(row.sacCode || data.sacCode || "997315")}</td>
         <td class="line-item-amount" colspan="2">

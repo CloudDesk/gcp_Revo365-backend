@@ -9,7 +9,7 @@ const CONSOLIDATED_INVOICE_BUCKET = process.env.CONSOLIDATED_INVOICE_BUCKET ||
     process.env.RENTAL_INVOICE_BUCKET ||
     "revo_product_invoice-dev";
 const CONSOLIDATED_INVOICE_FOLDER = process.env.CONSOLIDATED_INVOICE_FOLDER || "consolidated-invoices";
-const CONSOLIDATED_INVOICE_CALCULATION_VERSION = 2;
+const CONSOLIDATED_INVOICE_CALCULATION_VERSION = 3;
 const BILLING_TIMEZONE = "Asia/Kolkata";
 const DEFAULT_INVOICE_FOR = ["rental"];
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +74,40 @@ const firstPresentText = (...values) => {
         if (normalized)
             return normalized;
     }
+    return "";
+};
+const formatProductSubcategoryLabel = (value) => {
+    const normalized = normalizeComparable(value);
+    const labels = {
+        laptop: "Laptop",
+        mobile: "Mobile",
+        mobile_phone: "Mobile",
+        accessories: "Accessory",
+        accessory: "Accessory",
+        computer: "Computer",
+        spares: "Spares",
+    };
+    if (labels[normalized])
+        return labels[normalized];
+    const text = normalizeText(value).replace(/[_-]+/g, " ");
+    if (!text)
+        return "Rental";
+    return text.replace(/\b\w/g, (match) => match.toUpperCase());
+};
+const inferProductSubcategoryFromText = (value) => {
+    const text = normalizeComparable(value).replace(/[_-]+/g, " ");
+    if (!text)
+        return "";
+    if (/\blaptops?\b/.test(text))
+        return "laptop";
+    if (/\b(mobiles?|phones?|mobile phone)\b/.test(text))
+        return "mobile_phone";
+    if (/\b(accessories|accessory)\b/.test(text))
+        return "accessories";
+    if (/\bcomputers?\b/.test(text))
+        return "computer";
+    if (/\bspares?\b/.test(text))
+        return "spares";
     return "";
 };
 const getDatePart = (date, part) => new Intl.DateTimeFormat("en-CA", {
@@ -254,6 +288,26 @@ const getCustomerName = (customer, fallbackName = "") => {
         .join(" ");
     return fullName || normalizeText(customer?.useremail) || fallbackName || "-";
 };
+const getInvoiceItemOrderLineIds = (invoice) => {
+    const invoiceData = parseJsonValue(invoice?.invoicedata, {});
+    const items = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
+    return Array.from(new Set(items
+        .map((item) => Number(item?.orderlineid ?? item?.orderLineId))
+        .filter((id) => Number.isFinite(id) && id > 0)
+        .map((id) => Math.trunc(id))));
+};
+const getRentalProductSubcategory = (invoice) => {
+    const invoiceData = parseJsonValue(invoice?.invoicedata, {});
+    const summaryInvoiceData = parseJsonValue(invoice?.summaryinvoicedata, {});
+    const items = Array.isArray(invoiceData?.items) ? invoiceData.items : [];
+    const firstItem = items[0] || {};
+    return firstPresentText(invoice?.productsubcategory, invoice?.productsubcategories, summaryInvoiceData?.productsubcategory, summaryInvoiceData?.productsubcategories, summaryInvoiceData?.subcategory, firstItem?.productsubcategory, firstItem?.productSubcategory, firstItem?.subcategory, inferProductSubcategoryFromText(summaryInvoiceData?.summarydescription), inferProductSubcategoryFromText(firstItem?.name || firstItem?.productname), inferProductSubcategoryFromText(invoice?.productname));
+};
+const getRentalProductSubcategoryLabel = (invoice) => firstPresentText(invoice?.productsubcategorylabel, invoice?.productSubcategoryLabel, formatProductSubcategoryLabel(getRentalProductSubcategory(invoice)));
+const getRentalItemLabel = (invoice) => {
+    const subcategoryLabel = getRentalProductSubcategoryLabel(invoice);
+    return subcategoryLabel === "Rental" ? "Rental" : `${subcategoryLabel} Rental`;
+};
 const getDescription = (invoice, invoiceFor, periodLabel) => {
     const invoiceData = parseJsonValue(invoice?.invoicedata, {});
     const summaryInvoiceData = parseJsonValue(invoice?.summaryinvoicedata, {});
@@ -263,7 +317,7 @@ const getDescription = (invoice, invoiceFor, periodLabel) => {
             items.reduce((total, item) => total + Math.max(toNumber(item?.quantity), 1), 0), 1);
         const deviceLabel = deviceCount === 1 ? "Device" : "Devices";
         return (normalizeText(summaryInvoiceData?.summarydescription) ||
-            `Laptop Rental(${deviceCount} ${deviceLabel} for ${normalizeText(invoice?.billingperiodlabel) || periodLabel})`);
+            `${getRentalItemLabel(invoice)}(${deviceCount} ${deviceLabel} for ${normalizeText(invoice?.billingperiodlabel) || periodLabel})`);
     }
     if (invoiceFor === "service") {
         const firstServiceItem = items[0]?.name || items[0]?.description || "";
@@ -387,6 +441,64 @@ const buildCustomerAddress = (customer, invoiceRows) => {
         return addressParts.join(", ");
     return normalizeText(invoiceRows[0]?.customeraddress) || "-";
 };
+const enrichRentalInvoiceProductMetadata = async (invoiceRows) => {
+    const rentalInvoices = invoiceRows.filter((invoice) => normalizeComparable(invoice?.invoicefor) === "rental");
+    const orderIds = Array.from(new Set(rentalInvoices
+        .map((invoice) => normalizeText(invoice?.orderid))
+        .filter(Boolean)));
+    if (rentalInvoices.length === 0 || orderIds.length === 0) {
+        return invoiceRows;
+    }
+    const result = await query(`
+    SELECT
+      ol.id AS orderlineid,
+      ol.uniqueorderid,
+      ol.productname,
+      ol.saccode,
+      ol.hsncode,
+      p.subcategory AS productsubcategory
+    FROM orderline ol
+    LEFT JOIN product_revo p
+      ON p.id = ol.productid
+    WHERE ol.uniqueorderid = ANY($1::text[])
+      AND LOWER(COALESCE(ol.ordername, '')) = 'rental'
+    ORDER BY ol.uniqueorderid, ol.id
+    `, [orderIds]);
+    const linesByOrderId = new Map();
+    result.rows.forEach((line) => {
+        const orderId = normalizeText(line?.uniqueorderid);
+        if (!orderId)
+            return;
+        const lines = linesByOrderId.get(orderId) || [];
+        lines.push(line);
+        linesByOrderId.set(orderId, lines);
+    });
+    return invoiceRows.map((invoice) => {
+        if (normalizeComparable(invoice?.invoicefor) !== "rental")
+            return invoice;
+        const orderLines = linesByOrderId.get(normalizeText(invoice?.orderid)) || [];
+        const selectedOrderLineIds = getInvoiceItemOrderLineIds(invoice);
+        const selectedOrderLineIdSet = new Set(selectedOrderLineIds);
+        const matchingLines = selectedOrderLineIds.length > 0
+            ? orderLines.filter((line) => selectedOrderLineIdSet.has(Number(line?.orderlineid)))
+            : orderLines;
+        const subcategoryValues = Array.from(new Set(matchingLines
+            .map((line) => normalizeComparable(line?.productsubcategory))
+            .filter(Boolean))).sort();
+        const productSubcategory = subcategoryValues.length === 1
+            ? subcategoryValues[0]
+            : subcategoryValues.length > 1
+                ? subcategoryValues.join("+")
+                : getRentalProductSubcategory(invoice);
+        return {
+            ...invoice,
+            productsubcategory: productSubcategory,
+            productsubcategorylabel: subcategoryValues.length > 1
+                ? "Mixed Rental"
+                : formatProductSubcategoryLabel(productSubcategory),
+        };
+    });
+};
 const fetchCandidateInvoices = async (customerId, invoiceForValues) => {
     const result = await query(`
     SELECT *
@@ -399,7 +511,7 @@ const fetchCandidateInvoices = async (customerId, invoiceForValues) => {
       createddate ASC NULLS LAST,
       id ASC
     `, [customerId, invoiceForValues]);
-    return result.rows;
+    return enrichRentalInvoiceProductMetadata(result.rows);
 };
 const fetchPreviousBillingProgress = async (customerId, period, invoiceForValues) => {
     const result = await query(`
@@ -484,6 +596,8 @@ const buildProratedRentalRow = (invoice, period, billingThroughDate, previousBil
         prorationfactor: billableDays / cycleDays,
         description: getDescription(invoice, "rental", period.periodlabel),
         quantityLabel: getQuantityLabel(invoice, "rental"),
+        productsubcategory: getRentalProductSubcategory(invoice),
+        productsubcategorylabel: getRentalProductSubcategoryLabel(invoice),
         monthlytaxableamount: amounts.taxableAmount,
         monthlytaxamount: amounts.taxAmount,
         monthlytotalamount: amounts.totalAmount,
@@ -504,12 +618,132 @@ const buildProratedRentalRow = (invoice, period, billingThroughDate, previousBil
         hasSupportingDocument: Boolean(normalizeText(invoice.supportingdocumenturl)),
     };
 };
+const extractSourceInvoiceEntry = (row) => {
+    const { sourceinvoices, sourceinvoiceids, ...sourceRow } = row;
+    return sourceRow;
+};
+const getRowQuantity = (row) => {
+    const match = normalizeText(row?.quantityLabel).match(/(\d+(?:\.\d+)?)/);
+    if (match)
+        return toNumber(match[1]);
+    return Math.max(toNumber(row?.rentaldevicecount), 1);
+};
+const buildGroupedRentalDescription = (row, quantity, periodLabel) => {
+    const subcategoryLabel = firstPresentText(row?.productsubcategorylabel, "Rental");
+    const itemLabel = /rental$/i.test(subcategoryLabel)
+        ? subcategoryLabel
+        : `${subcategoryLabel} Rental`;
+    const deviceLabel = quantity === 1 ? "Device" : "Devices";
+    return `${itemLabel}(${quantity} ${deviceLabel} for ${periodLabel})`;
+};
+const getGroupDateBoundary = (left, right, picker) => {
+    const dates = [parseDateValue(left), parseDateValue(right)].filter(Boolean);
+    return dates.length ? formatDateKey(picker(...dates)) : firstPresentText(left, right);
+};
+const refreshGroupedRentalLabels = (row, periodLabel) => {
+    const sourceRows = Array.isArray(row.sourceinvoices) && row.sourceinvoices.length
+        ? row.sourceinvoices
+        : [row];
+    const quantity = Math.max(sourceRows.reduce((total, sourceRow) => total + getRowQuantity(sourceRow), 0), 1);
+    const uniqueBillingDays = Array.from(new Set(sourceRows.map((sourceRow) => normalizeText(sourceRow.billingDaysLabel)).filter(Boolean)));
+    const uniqueBillingRanges = Array.from(new Set(sourceRows.map((sourceRow) => normalizeText(sourceRow.billingRangeLabel)).filter(Boolean)));
+    const uniqueCycleRanges = Array.from(new Set(sourceRows.map((sourceRow) => normalizeText(sourceRow.cycleRangeLabel)).filter(Boolean)));
+    row.quantityLabel = `${quantity} ${quantity === 1 ? "Device" : "Devices"}`;
+    row.description = buildGroupedRentalDescription(row, quantity, periodLabel);
+    row.invoicenumber =
+        sourceRows.length === 1
+            ? sourceRows[0].invoicenumber
+            : sourceRows.map((sourceRow) => sourceRow.invoicenumber).join(", ");
+    row.invoicedate = sourceRows.length === 1 ? sourceRows[0].invoicedate : "";
+    row.billingRangeLabel =
+        uniqueBillingRanges.length === 1
+            ? uniqueBillingRanges[0]
+            : getRowsBillingRangeLabel(sourceRows, periodLabel);
+    row.billingDaysLabel =
+        uniqueBillingDays.length === 1 ? uniqueBillingDays[0] : "Multiple billing windows";
+    row.cycleRangeLabel =
+        uniqueCycleRanges.length === 1 ? uniqueCycleRanges[0] : periodLabel;
+    row.billabledays =
+        sourceRows.length === 1 ? sourceRows[0].billabledays : null;
+    row.cycledays =
+        sourceRows.length === 1 ? sourceRows[0].cycledays : null;
+    row.prorationfactor =
+        sourceRows.length === 1 ? sourceRows[0].prorationfactor : null;
+    row.invoiceurl = sourceRows.length === 1 ? sourceRows[0].invoiceurl : null;
+    row.supportingdocumenturl =
+        sourceRows.length === 1 ? sourceRows[0].supportingdocumenturl : null;
+    row.hasSupportingDocument = sourceRows.some((sourceRow) => sourceRow.hasSupportingDocument);
+    return row;
+};
+const mergeRentalRows = (target, source, periodLabel) => {
+    const sumFields = [
+        "taxableamount",
+        "taxamount",
+        "totalamount",
+        "cgstamount",
+        "sgstamount",
+        "igstamount",
+        "monthlytaxableamount",
+        "monthlytaxamount",
+        "monthlytotalamount",
+        "dailytaxableamount",
+    ];
+    sumFields.forEach((fieldName) => {
+        target[fieldName] = fromPaise(toPaise(target[fieldName]) + toPaise(source[fieldName]));
+    });
+    target.billingstartdate = getGroupDateBoundary(target.billingstartdate, source.billingstartdate, minDate);
+    target.billingthroughdate = getGroupDateBoundary(target.billingthroughdate, source.billingthroughdate, maxDate);
+    target.billingperiodstart = getGroupDateBoundary(target.billingperiodstart, source.billingperiodstart, minDate);
+    target.billingperiodend = getGroupDateBoundary(target.billingperiodend, source.billingperiodend, maxDate);
+    target.sourceinvoices.push(extractSourceInvoiceEntry(source));
+    target.sourceinvoiceids = Array.from(new Set([
+        ...(target.sourceinvoiceids || []),
+        Number(source.sourceinvoiceid),
+    ].filter((id) => Number.isFinite(id) && id > 0)));
+    return refreshGroupedRentalLabels(target, periodLabel);
+};
+const consolidatePreviewRows = (rows, period) => {
+    const groupedRows = [];
+    const rentalGroups = new Map();
+    rows.forEach((row) => {
+        if (row?.invoicefor !== "rental") {
+            groupedRows.push(row);
+            return;
+        }
+        const productSubcategory = normalizeComparable(row.productsubcategory) ||
+            inferProductSubcategoryFromText(row.description) ||
+            "rental";
+        const groupKey = [
+            row.invoicefor,
+            period.period,
+            productSubcategory,
+            normalizeComparable(row.saccode),
+            normalizeComparable(row.taxmode),
+            normalizeComparable(row.cgstrate),
+            normalizeComparable(row.sgstrate),
+            normalizeComparable(row.igstrate),
+        ].join("|");
+        const existingRow = rentalGroups.get(groupKey);
+        if (!existingRow) {
+            const groupedRow = {
+                ...row,
+                sourceinvoices: [extractSourceInvoiceEntry(row)],
+                sourceinvoiceids: [Number(row.sourceinvoiceid)].filter((id) => Number.isFinite(id) && id > 0),
+            };
+            rentalGroups.set(groupKey, refreshGroupedRentalLabels(groupedRow, period.periodlabel));
+            groupedRows.push(groupedRow);
+            return;
+        }
+        mergeRentalRows(existingRow, row, period.periodlabel);
+    });
+    return groupedRows;
+};
 const buildPreviewRows = (invoiceRows, period, billingThroughDate, previousBillingProgress, sourceInvoiceIds) => {
     const sourceIdSet = sourceInvoiceIds && sourceInvoiceIds.length > 0
         ? new Set(sourceInvoiceIds)
         : null;
     const warnings = [];
-    const rows = invoiceRows
+    const rawRows = invoiceRows
         .map((invoice) => {
         const invoiceFor = normalizeComparable(invoice?.invoicefor);
         const documentType = normalizeComparable(invoice?.invoicedocumenttype);
@@ -558,6 +792,7 @@ const buildPreviewRows = (invoiceRows, period, billingThroughDate, previousBilli
         };
     })
         .filter(Boolean);
+    const rows = consolidatePreviewRows(rawRows, period);
     return { rows, warnings };
 };
 const sumRowAmounts = (rows, fieldName) => fromPaise(rows.reduce((total, row) => total + toPaise(row?.[fieldName]), 0));
@@ -611,7 +846,13 @@ const getFirstSacCode = (rows) => firstPresentText(...rows.map((row) => row.sacc
 const getTemplateTaxMode = (rows, totals) => totals.igstamount > 0 || rows.some((row) => row.taxmode === "igst")
     ? "igst"
     : "cgst_sgst";
-const getSourceInvoiceKey = (rows) => rows
+const getSourceInvoiceRows = (rows) => rows.flatMap((row) => Array.isArray(row?.sourceinvoices) && row.sourceinvoices.length > 0
+    ? row.sourceinvoices
+    : [row]);
+const getSourceInvoiceIds = (rows) => Array.from(new Set(getSourceInvoiceRows(rows)
+    .map((row) => Number(row.sourceinvoiceid))
+    .filter((id) => Number.isFinite(id) && id > 0)));
+const getSourceInvoiceKey = (rows) => getSourceInvoiceRows(rows)
     .map((row) => {
     const sourceInvoiceId = Number(row.sourceinvoiceid);
     if (!Number.isFinite(sourceInvoiceId) || sourceInvoiceId <= 0)
@@ -750,6 +991,15 @@ const buildTemplateData = async (documentNumber, versionNumber, customer, custom
         igstAmount: formatAmount(totals.igstamount || totals.taxamount),
         rows: rows.map((row) => ({
             sourceInvoiceId: row.sourceinvoiceid,
+            sourceDocuments: (Array.isArray(row.sourceinvoices) && row.sourceinvoices.length > 0
+                ? row.sourceinvoices
+                : [row]).map((sourceRow) => ({
+                sourceInvoiceId: sourceRow.sourceinvoiceid,
+                invoiceNumber: sourceRow.invoicenumber,
+                invoiceDate: sourceRow.invoicedate,
+                invoiceUrl: sourceRow.invoiceurl,
+                supportingDocumentUrl: sourceRow.supportingdocumenturl,
+            })),
             invoiceNumber: row.invoicenumber,
             invoiceDate: row.invoicedate,
             invoiceTypeLabel: row.invoiceTypeLabel,
@@ -1015,7 +1265,7 @@ export var consolidatedInvoiceService;
             preview.period.label,
             JSON.stringify(preview.invoicefor),
             preview.invoiceforkey,
-            JSON.stringify(preview.rows.map((row) => row.sourceinvoiceid)),
+            JSON.stringify(getSourceInvoiceIds(preview.rows)),
             preview.sourceinvoicekey,
             "generating",
             preview.totals.taxableamount,
@@ -1083,7 +1333,7 @@ export var consolidatedInvoiceService;
                 consolidatedRecord.id,
             ]);
             generatedRecord = updateResult.rows[0];
-            for (const row of preview.rows) {
+            for (const row of getSourceInvoiceRows(preview.rows)) {
                 await client.query(`
           INSERT INTO consolidated_invoice_sources (
             consolidatedinvoiceid,
