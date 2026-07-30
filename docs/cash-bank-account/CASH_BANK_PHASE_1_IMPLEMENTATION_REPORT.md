@@ -1631,6 +1631,146 @@ Starting balance: ₹10,000.
 - Enable access for limited Finance users.
 - Monitor duplicates, unmatched payments, and balance differences.
 
+### Database deployment and change-control plan
+
+The database process must not require a person to open and execute every SQL
+file individually. Incremental files remain the audit history, while deployment
+is performed through one migration command per environment.
+
+#### Current frozen Phase 1 baseline
+
+The final database state completed on 30 July 2026 is stored in:
+
+```text
+src/database/releases/20260730_cash_bank_phase1_release.sql
+```
+
+This release contains the complete Phase 1 foundation completed on that date:
+
+- Finance, Cash/Bank, journal, transaction, allocation, TDS, audit, payment
+  mapping, and e-commerce event tables
+- Final indexes and duplicate account-name handling
+- One active Bank-only e-commerce default account per organization
+- Seven system finance accounts
+- Twelve TDS sections
+- Admin and Accountant Cash/Bank permissions
+- Compatible incremental and frozen-release version records
+
+The release file is a manual baseline artifact and is intentionally stored
+under `src/database/releases`. The automatic migration runner does not execute
+files from that directory.
+
+Once this frozen file has been applied to an environment, it must not be
+edited. A later database change must be recorded in a new dated migration.
+
+#### Future database changes
+
+Each approved database change must have a dated, immutable, idempotent file
+under:
+
+```text
+src/database/migrations/
+```
+
+Example:
+
+```text
+20260731_cash_bank_add_settlement_reference.sql
+```
+
+Each migration must:
+
+- Contain only the new change required after the previous release
+- Be safe to execute more than once where practical
+- Insert its unique version into `finance_schema_versions`
+- Preserve existing data
+- Include explicit handling and review for destructive changes
+- Never modify a migration that has already been applied to any environment
+
+Having many migration files is expected. Users must not execute 20 or more
+files manually; the migration runner is responsible for ordering them.
+
+#### Migration commands and ordering
+
+The migration runner is implemented in:
+
+```text
+src/database/runMigrations.ts
+src/scripts/runMigrations.ts
+```
+
+It reads `.sql` files from `src/database/migrations`, sorts them by filename,
+and executes them in chronological filename order.
+
+For a source-based/local deployment using the currently configured database:
+
+```bash
+npm run migrate:dev
+```
+
+For a compiled deployment:
+
+```bash
+npm run build
+npm run migrate
+```
+
+The database connection comes from the active environment configuration.
+Running the command once does not update DEV, UAT, and PROD together. The same
+deployment workflow must be executed separately with each environment's
+approved configuration.
+
+The current runner re-executes all migration files and therefore requires every
+migration to be idempotent. Before relying on it for long-term Production
+deployment, enhance the runner to consult `finance_schema_versions` and a stored
+checksum so that it:
+
+1. Skips migrations already applied successfully.
+2. Executes only missing migrations in filename order.
+3. Rejects an applied migration whose checksum has changed.
+4. Records the version, checksum, execution time, and result atomically.
+
+This runner improvement is a deployment-control task and does not change the
+approved accounting requirements.
+
+#### Verification
+
+The verification script is:
+
+```text
+src/scripts/verifyFinanceFoundation.ts
+```
+
+Run it after migration in every environment:
+
+```bash
+npm run verify:finance-foundation
+```
+
+Verification is read-only. It does not create tables, execute migration files,
+or update another environment. It checks only the database selected by the
+current environment configuration.
+
+The controlled environment sequence is:
+
+```text
+Select target environment
+  -> apply the baseline or run migrations
+  -> run finance verification
+  -> perform Cash/Bank smoke tests
+  -> record the deployed version
+```
+
+For the initial rollout:
+
+- DEV, UAT, and PROD may use the frozen Phase 1 baseline once.
+- After the baseline, all environments use the same incremental migrations in
+  the same filename order.
+- An environment that is several migrations behind is updated with one
+  migration command, not by manually executing each file.
+- The verification command must pass before the environment is considered
+  successfully updated.
+
 ---
 
 ## 20. Recommended Delivery Slices

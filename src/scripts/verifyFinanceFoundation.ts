@@ -146,15 +146,17 @@ const verify = async () => {
     [
       [
         "20260730_cash_bank_account_foundation_v1",
+        "20260730_cash_bank_duplicate_account_names_v1",
         "20260730_cash_bank_ecommerce_payments_v1",
         "20260730_cash_bank_standard_permissions_v1",
         "20260730_cash_bank_ecommerce_default_account_v1",
+        "20260730_cash_bank_phase1_release_v1",
       ],
     ]
   );
-  if (versionResult.rows.length !== 4) {
+  if (versionResult.rows.length !== 6) {
     failures.push(
-      "Missing one or more Cash and Bank foundation schema versions."
+      "Missing the frozen Cash and Bank Phase 1 release or one of its schema versions."
     );
   }
 
@@ -269,6 +271,27 @@ const verify = async () => {
     );
   }
 
+  const ecommerceDefaultConstraintResult = await query(
+    `
+    SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint
+    WHERE conrelid = 'bank_cash_accounts'::regclass
+      AND conname = 'chk_bank_cash_accounts_ecommerce_default_active'
+    LIMIT 1
+    `
+  );
+  const ecommerceDefaultConstraint = String(
+    ecommerceDefaultConstraintResult.rows[0]?.definition || ""
+  ).toLowerCase();
+  if (
+    !ecommerceDefaultConstraint.includes("accounttype") ||
+    !ecommerceDefaultConstraint.includes("'bank'")
+  ) {
+    failures.push(
+      "The e-commerce default must be restricted to an active Bank account."
+    );
+  }
+
   if (failures.length > 0) {
     throw new Error(
       `[Finance Foundation Verification]\n${failures
@@ -278,7 +301,7 @@ const verify = async () => {
   }
 
   console.log(
-    `[Finance Foundation Verification] Passed: ${Object.keys(expectedColumns).length} tables, 7 system accounts, 12 TDS sections, and Admin/Accountant permissions.`
+    `[Finance Foundation Verification] Passed: frozen Phase 1 release, ${Object.keys(expectedColumns).length} tables, 7 system accounts, 12 TDS sections, and Admin/Accountant permissions.`
   );
 };
 
