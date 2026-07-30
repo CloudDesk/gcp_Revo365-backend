@@ -2,7 +2,7 @@
 
 ## Phase 1 Functional and Technical Implementation Report
 
-**Status:** Proposed implementation baseline  
+**Status:** Backend foundation and e-commerce payment-ingestion slice implemented locally
 **Scope:** Accounting foundation, E-commerce Order receipts, Retail In-store
 Sales receipts, and Manual Bank/Cash entries  
 **Deferred:** Rental and all Repair/Service Request payment flows  
@@ -88,6 +88,25 @@ Phase 1 will establish a reliable accounting base and support these flows:
 11. Produce balanced journal lines required by future accounting reports.
 
 Phase 1 is a foundation. It will not deliver the complete accounting product.
+
+### 3.1 Current implementation progress
+
+Implemented:
+
+- Common Finance, Bank/Cash, journal, transaction, advance, audit, and TDS
+  foundation
+- Admin and Accountant read/create/edit permissions
+- Successful online Product payment ingestion from the existing checkout and
+  webhook paths
+- Idempotent system Debit posting to a configured Bank/Cash account
+- Credit posting to Customer Advances with an open unapplied amount
+- Durable pending events when the payment-account mapping is unavailable
+
+Next:
+
+- Existing/deferred sales-invoice allocation and invoice payment-status update
+- Retail In-store receipt allocation
+- TDS adjustment posting
 
 ---
 

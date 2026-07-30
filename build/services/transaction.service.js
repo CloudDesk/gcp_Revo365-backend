@@ -16,6 +16,7 @@ import loginShiprocket from "../shiprocket/shiprocketAuth.js";
 import { redisClient } from "../database/redis.session.js";
 import { resolveFulfillmentLocation } from "../config/fulfillment.config.js";
 import { cancelShiprocketOrderForMerchant, getShiprocketSettings as getPersistedShiprocketSettings, listShiprocketPickupLocations, upsertShiprocketSettings, } from "./shiprocket.service.js";
+import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -1407,6 +1408,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     if (!lock.acquired) {
         const existingTransaction = await query(`SELECT transactionid FROM transaction WHERE razorpay_payment_id = $1 OR razorpay_order_id = $2 OR merchanttransactionid = $3 LIMIT 1`, [razorpayPaymentId, razorpayOrderId, merchantTransactionId]);
         if (existingTransaction.rows.length > 0) {
+            const existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
+            if (existingTransactionRecord) {
+                await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(existingTransactionRecord);
+            }
             const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -1434,6 +1439,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
     try {
         let existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
         if (existingTransactionRecord) {
+            await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(existingTransactionRecord);
             const existingContext = await getOrderContextByMerchantTransactionId(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -1630,6 +1636,7 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
                 (await syncSuccessfulPaymentStateFromTransaction(context, existingTransactionRecord)) || context;
         }
         if (!hasHeldReservations && context.combinedOrderRows.every((row) => isTruthyFlag(row?.ispaymentsucceed))) {
+            await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(existingTransactionRecord);
             const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
             logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                 merchantTransactionId,
@@ -1681,6 +1688,10 @@ const finalizeCapturedRazorpayPayment = async ({ razorpayPaymentId, razorpayOrde
         }
         catch (error) {
             if (error?.code === "23505") {
+                const existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(merchantTransactionId);
+                if (existingTransactionRecord) {
+                    await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(existingTransactionRecord);
+                }
                 const duplicateSnapshot = await getMerchantTransactionStateSnapshot(merchantTransactionId);
                 logWebhookStep(resolvedTraceId, "FINALIZE_EXIT", {
                     merchantTransactionId,
@@ -2116,6 +2127,7 @@ export var transactionService;
                 console.log("Is Third Party Update Success:", isThirdPartyUpdateSuccess);
                 console.log("end");
                 if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
+                    await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(insertedTransaction);
                     return {
                         orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
                         transactionData: [finalResult.transactiondata],

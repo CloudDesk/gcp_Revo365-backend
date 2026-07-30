@@ -19,6 +19,31 @@ Current schema version:
 20260730_cash_bank_account_foundation_v1
 ```
 
+The foundation has now been applied to an environment. The baseline is
+therefore immutable. The standard Admin/Accountant permission correction is:
+
+```text
+src/database/migrations/20260730_cash_bank_standard_permissions.sql
+```
+
+Permission schema version:
+
+```text
+20260730_cash_bank_standard_permissions_v1
+```
+
+The e-commerce automatic-payment event migration is:
+
+```text
+src/database/migrations/20260730_cash_bank_ecommerce_payment_events.sql
+```
+
+E-commerce payment schema version:
+
+```text
+20260730_cash_bank_ecommerce_payments_v1
+```
+
 The baseline contains the complete initial definitions for:
 
 - Finance accounts
@@ -29,6 +54,7 @@ The baseline contains the complete initial definitions for:
 - Journal entries and journal lines
 - Payment-provider account mappings
 - Simplified TDS section dropdown catalogue
+- Durable e-commerce payment finance events
 - Finance audit events
 - Required system ledgers
 
@@ -133,6 +159,7 @@ Verification fails if:
 - The foundation schema version is missing.
 - Required system accounts are missing.
 - The 12 supplied TDS section rows are missing.
+- Admin or Accountant is missing standard read/create/edit permissions.
 
 ### 5. Record deployment evidence
 

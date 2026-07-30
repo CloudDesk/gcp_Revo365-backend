@@ -2269,7 +2269,7 @@ export var productrevoService;
         }
     }
     productrevoService.updateOrderedQuantityarray = updateOrderedQuantityarray;
-    async function updateCatalogueQuantities(puc) {
+    async function updateCatalogueQuantities(puc, dbClient) {
         console.log('puc:', puc);
         // Standard filter for active/live stock
         const activeFilters = `(isdeleted = false OR isdeleted IS NULL) AND (isarchive = false OR isarchive IS NULL) AND (removefromrecyclebin = false OR removefromrecyclebin IS NULL) AND (ewaste = false OR ewaste IS NULL)`;
@@ -2439,7 +2439,9 @@ COALESCE(SUM(
                   counts.overall_available_qty, counts.ecom_published_qty, counts.total_quantity_count, counts.available_quantity_count;
     `;
         console.log('queryText:', queryText);
-        let result = await query(queryText, [puc]);
+        let result = dbClient
+            ? await dbClient.query(queryText, [puc])
+            : await query(queryText, [puc]);
         console.log('result:', result.rows);
         if (result.rows.length > 0) {
             return {
