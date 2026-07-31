@@ -138,6 +138,28 @@ const normalizePaymentEntries = (paymentData: any) =>
         })
         .filter((payment: any) => payment.paymentamount > 0 && payment.status !== "failed");
 
+const revoInvoiceJsonFields = new Set([
+    "invoicedata",
+    "servicedata",
+    "product",
+    "paymentdata",
+    "summaryinvoicedata",
+    "supportingdocumentdata",
+    "billingaddresssnapshot",
+    "shippingaddresssnapshot",
+]);
+
+const serializeRevoInvoiceJsonFields = (upsertFields: any) => {
+    revoInvoiceJsonFields.forEach((fieldName) => {
+        if (!Object.prototype.hasOwnProperty.call(upsertFields, fieldName)) return;
+
+        const fieldValue = upsertFields[fieldName];
+        if (fieldValue == null || typeof fieldValue === "string") return;
+
+        upsertFields[fieldName] = JSON.stringify(fieldValue);
+    });
+};
+
 const summarizeInvoicePayments = (invoiceAmount: number, paymentEntries: any[]) => {
     const paidAmount = Number(
         paymentEntries
@@ -615,6 +637,7 @@ export module revoinvoiceservice {
                 upsertFields.product = JSON.stringify(product);
             }
             await applyInvoicePaymentSummary(upsertFields, id);
+            serializeRevoInvoiceJsonFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             console.log('-->',fieldNames)

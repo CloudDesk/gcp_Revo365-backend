@@ -486,6 +486,17 @@ export module recordCountService {
           if (key === "ewaste") ewaste = true;
         }
       });
+
+      if (targetObj === "orders") {
+        parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(
+          request,
+          whereClauses,
+          queryParamsList,
+          parameterIndex,
+          { tableAlias: "orders", customerColumn: "userid" }
+        );
+      }
+
       console.log(archieveCount, "archive count");
       console.log(productecom, "PRoduct ecom is");
       whereClause = whereClauses.length > 0 ? whereClauses.join(" AND ") : "";

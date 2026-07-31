@@ -454,6 +454,7 @@ export var ordersService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(request, whereClauses, queryParams, parameterIndex, { tableAlias: "o", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} ` : ``;

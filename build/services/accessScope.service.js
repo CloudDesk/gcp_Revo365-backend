@@ -31,7 +31,7 @@ const vendorPermissionScopes = {
         assignment: "assigned_to_me",
         customerType: "business",
         invoiceFor: ["rental", "service"],
-        allowedPaths: [],
+        allowedPaths: ["/manual-invoice"],
     },
     rental_agreement: {
         assignment: "assigned_to_me",
@@ -41,7 +41,6 @@ const vendorPermissionScopes = {
     orders: {
         assignment: "assigned_to_me",
         customerType: "business",
-        allowedPaths: [],
     },
 };
 const normalizeText = (value) => String(value ?? "")
@@ -88,11 +87,17 @@ export var accessScopeService;
             if (!defaultScope) {
                 return permission;
             }
+            const storedScope = { ...(permission?.scope || {}) };
+            ["allowedPaths", "menuLabels", "moduleLabel"].forEach((navigationKey) => {
+                if (!Object.prototype.hasOwnProperty.call(defaultScope, navigationKey)) {
+                    delete storedScope[navigationKey];
+                }
+            });
             return {
                 ...permission,
                 scope: {
+                    ...storedScope,
                     ...defaultScope,
-                    ...(permission?.scope || {}),
                 },
             };
         });
