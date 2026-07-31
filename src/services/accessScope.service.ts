@@ -43,7 +43,6 @@ const vendorPermissionScopes: Record<string, any> = {
   orders: {
     assignment: "assigned_to_me",
     customerType: "business",
-    allowedPaths: [],
   },
 };
 
@@ -107,11 +106,18 @@ export module accessScopeService {
         return permission;
       }
 
+      const storedScope = { ...(permission?.scope || {}) };
+      ["allowedPaths", "menuLabels", "moduleLabel"].forEach((navigationKey) => {
+        if (!Object.prototype.hasOwnProperty.call(defaultScope, navigationKey)) {
+          delete storedScope[navigationKey];
+        }
+      });
+
       return {
         ...permission,
         scope: {
+          ...storedScope,
           ...defaultScope,
-          ...(permission?.scope || {}),
         },
       };
     });
