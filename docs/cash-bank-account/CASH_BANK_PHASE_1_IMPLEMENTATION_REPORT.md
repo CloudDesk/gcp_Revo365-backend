@@ -2,7 +2,8 @@
 
 ## Phase 1 Functional and Technical Implementation Report
 
-**Status:** Backend foundation and e-commerce payment-ingestion slice implemented locally
+**Status:** Bank/Cash foundation, e-commerce payment ingestion, and Retail
+In-store receipt allocation implemented locally
 **Scope:** Accounting foundation, E-commerce Order receipts, Retail In-store
 Sales receipts, and Manual Bank/Cash entries  
 **Deferred:** Rental and all Repair/Service Request payment flows  
@@ -100,12 +101,17 @@ Implemented:
   webhook paths
 - Idempotent system Debit posting to a configured Bank/Cash account
 - Credit posting to Customer Advances with an open unapplied amount
-- Durable pending events when the payment-account mapping is unavailable
+- Durable pending events when the e-commerce default Bank account is unavailable
+- Retail customer lookup restricted to customers with outstanding Store
+  Purchase invoices
+- Manual allocation of one receipt across one or more Retail In-store invoices
+- Bank/Cash Debit, Accounts Receivable journal credit, running-balance update,
+  invoice payment-status update, and audit trail in one database transaction
+- Idempotent retail receipt request references
 
 Next:
 
 - Existing/deferred sales-invoice allocation and invoice payment-status update
-- Retail In-store receipt allocation
 - TDS adjustment posting
 
 ---
@@ -501,21 +507,18 @@ Recommended unique keys:
 The existing Razorpay webhook-event and payment uniqueness controls should be
 reused.
 
-### Payment account mapping
+### E-commerce default Bank account
 
-The system must know which account receives the e-commerce payment.
+The implemented Phase 1 decision is one organization-level Bank account marked
+as the **E-commerce default account**.
 
-**Proposed configuration:**
-
-| Provider/method | Destination account |
-| --- | --- |
-| Razorpay | Configured Razorpay clearing or bank account |
-| Offline cash | Configured Cash account |
-| Other online provider | Provider-specific configured account |
-
-**Needs confirmation:** Whether Phase 1 posts captured payments directly to the
-final Bank account or to a payment-gateway clearing account. A clearing account
-is more accurate when gateway fees and settlement delays exist.
+- Only an active Bank account can be selected.
+- Only one default can exist per organization.
+- Replacing the current default requires user confirmation.
+- Razorpay and PhonePe product-order receipts post to this account.
+- Provider/payment-method mapping remains in the database as future foundation
+  and does not override the Phase 1 default.
+- Gateway clearing and settlement-fee accounting remain future enhancements.
 
 ---
 
@@ -1306,7 +1309,7 @@ Any error must roll back all changes.
 ## 12.2 Automatic e-commerce posting
 
 1. Verify successful captured payment.
-2. Resolve order, customer, and account mapping.
+2. Resolve the order, customer, and active e-commerce default Bank account.
 3. Begin database transaction.
 4. Acquire idempotency protection for source payment.
 5. Return existing result if already posted.
@@ -1425,7 +1428,7 @@ responses or logs.
 
 - Payment must be verified successful/captured.
 - Source customer must resolve to an existing customer.
-- Destination account mapping must exist.
+- An active e-commerce default Bank account must exist.
 - Duplicate source payment must return the prior result, not create a new
   posting.
 
@@ -1580,7 +1583,7 @@ Starting balance: ₹10,000.
 - Add Bank/Cash tables.
 - Add allocations and journals.
 - Add indexes and constraints.
-- Add payment-account mapping.
+- Add the e-commerce default Bank-account control.
 
 ### Step 2: Configuration
 
@@ -1592,7 +1595,7 @@ Starting balance: ₹10,000.
   - TDS Receivable
   - TDS Payable
 - Create Bank/Cash accounts.
-- Configure provider-to-account mappings.
+- Mark one active Bank account as the e-commerce default.
 
 ### Step 3: Backend foundation
 

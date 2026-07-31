@@ -12,6 +12,7 @@ import {
   requireIsoDate,
   requirePositiveMoney,
   resolveFinanceContext,
+  toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
 
@@ -50,6 +51,8 @@ const sanitizeAccount = (row: any) => {
   } = row;
   return {
     ...safe,
+    openingbalancedate:
+      toFinanceDateOnly(row.openingbalancedate) ?? row.openingbalancedate,
     maskedaccountnumber: maskAccountNumber(row.accountnumberlast4),
   };
 };
@@ -849,7 +852,7 @@ export module financeAccountService {
       if (
         latestResult.rows[0]?.transactiondate &&
         transactionDate <
-          new Date(latestResult.rows[0].transactiondate).toISOString().slice(0, 10)
+          (toFinanceDateOnly(latestResult.rows[0].transactiondate) || "")
       ) {
         throw new FinanceValidationError(
           "Backdated transactions are not enabled in the foundation release."
@@ -1027,6 +1030,9 @@ export module financeAccountService {
       await client.query("COMMIT");
       return {
         ...bankTransaction,
+        transactiondate:
+          toFinanceDateOnly(bankTransaction.transactiondate) ??
+          bankTransaction.transactiondate,
         transactionnumber: transactionNumber,
         journalentryid: journalEntry.id,
         journalnumber: journalNumber,
@@ -1100,7 +1106,25 @@ export module financeAccountService {
         t.*,
         j.journalnumber,
         f.accountname AS counterpartyaccountname,
-        f.accountcode AS counterpartyaccountcode
+        f.accountcode AS counterpartyaccountcode,
+        COALESCE(
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', a.id,
+                'invoiceid', a.documentid,
+                'invoicenumber', a.documentnumber,
+                'allocationamount', a.allocationamount,
+                'status', a.status
+              )
+              ORDER BY a.id
+            )
+            FROM bank_transaction_allocations a
+            WHERE a.banktransactionid = t.id
+              AND a.status = 'applied'
+          ),
+          '[]'::jsonb
+        ) AS allocations
       FROM bank_transactions t
       LEFT JOIN journal_entries j ON j.id = t.journalentryid
       LEFT JOIN finance_accounts f ON f.id = t.counterpartyaccountid
@@ -1111,7 +1135,11 @@ export module financeAccountService {
       params
     );
     return {
-      records: result.rows,
+      records: result.rows.map((row: any) => ({
+        ...row,
+        transactiondate:
+          toFinanceDateOnly(row.transactiondate) ?? row.transactiondate,
+      })),
       total: Number(summaryResult.rows[0]?.total || 0),
       page,
       count,

@@ -4,6 +4,7 @@ import {
   calculateAvailableBalance,
   nowEpoch,
   requirePositiveMoney,
+  toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
 import {
@@ -150,66 +151,33 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       return { status: "posted", eventId, bankTransactionId };
     }
 
-    const mappingResult = await client.query(
+    const defaultAccountResult = await client.query(
       `
-      SELECT m.bankcashaccountid
-      FROM payment_account_mappings m
-      JOIN bank_cash_accounts b
-        ON b.id = m.bankcashaccountid
-       AND b.organizationid = m.organizationid
-       AND b.status = 'active'
-      WHERE m.organizationid = $1
-        AND LOWER(m.provider) = LOWER($2)
-        AND (
-          LOWER(m.paymentmethod) = LOWER($3)
-          OR m.paymentmethod = '*'
-        )
-        AND m.status = 'active'
-        AND m.effectivefrom <= $4::date
-        AND (m.effectiveto IS NULL OR m.effectiveto >= $4::date)
-      ORDER BY
-        CASE WHEN LOWER(m.paymentmethod) = LOWER($3) THEN 0 ELSE 1 END,
-        m.effectivefrom DESC,
-        m.id DESC
+      SELECT id AS bankcashaccountid
+      FROM bank_cash_accounts
+      WHERE organizationid = $1
+        AND isecommercedefault = TRUE
+        AND accounttype = 'bank'
+        AND status = 'active'
       LIMIT 1
       `,
-      [
-        event.organizationid,
-        event.provider,
-        event.paymentmethod,
-        event.paymentdate,
-      ]
+      [event.organizationid]
     );
-    const defaultAccountResult = mappingResult.rows[0]
-      ? { rows: [] }
-      : await client.query(
-          `
-          SELECT id AS bankcashaccountid
-          FROM bank_cash_accounts
-          WHERE organizationid = $1
-            AND isecommercedefault = TRUE
-            AND accounttype = 'bank'
-            AND status = 'active'
-          LIMIT 1
-          `,
-          [event.organizationid]
-        );
-    const destination =
-      mappingResult.rows[0] || defaultAccountResult.rows[0];
+    const destination = defaultAccountResult.rows[0];
     if (!destination) {
       await client.query(
         `
         UPDATE ecommerce_payment_finance_events
         SET status = 'pending',
             attemptcount = attemptcount + 1,
-            failurecode = 'PAYMENT_ACCOUNT_MAPPING_MISSING',
+            failurecode = 'ECOMMERCE_DEFAULT_BANK_ACCOUNT_MISSING',
             failuremessage = $1,
             modifiedby = $2,
             modifieddate = $3
         WHERE id = $4
         `,
         [
-          `No active ${event.provider}/${event.paymentmethod} mapping or e-commerce default Bank/Cash account exists for ${event.paymentdate}.`,
+          `No active e-commerce default Bank account exists for ${event.paymentdate}.`,
           SYSTEM_ACTOR,
           nowEpoch(),
           eventId,
@@ -219,7 +187,7 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       return {
         status: "pending",
         eventId,
-        reason: "PAYMENT_ACCOUNT_MAPPING_MISSING",
+        reason: "ECOMMERCE_DEFAULT_BANK_ACCOUNT_MISSING",
       };
     }
 
@@ -230,6 +198,8 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       FROM bank_cash_accounts
       WHERE id = $1
         AND organizationid = $2
+        AND accounttype = 'bank'
+        AND isecommercedefault = TRUE
         AND status = 'active'
       FOR UPDATE
       `,
@@ -238,9 +208,9 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
     const bankCashAccount = accountResult.rows[0];
     if (!bankCashAccount) {
       throw new FinanceValidationError(
-        "The mapped Bank/Cash account is unavailable.",
+        "The e-commerce default Bank account is unavailable.",
         409,
-        "PAYMENT_ACCOUNT_UNAVAILABLE"
+        "ECOMMERCE_DEFAULT_BANK_ACCOUNT_UNAVAILABLE"
       );
     }
 
@@ -277,13 +247,15 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       `,
       [bankCashAccountId]
     );
-    const latestTransactionDate = latestTransactionResult.rows[0]
-      ?.transactiondate
-      ? new Date(
-          latestTransactionResult.rows[0].transactiondate
-        ).toISOString().slice(0, 10)
-      : null;
-    if (latestTransactionDate && event.paymentdate < latestTransactionDate) {
+    const latestTransactionDate = toFinanceDateOnly(
+      latestTransactionResult.rows[0]?.transactiondate
+    );
+    const eventPaymentDate = toFinanceDateOnly(event.paymentdate);
+    if (
+      latestTransactionDate &&
+      eventPaymentDate &&
+      eventPaymentDate < latestTransactionDate
+    ) {
       throw new FinanceValidationError(
         "The payment predates the latest posted Bank/Cash transaction. Backdated automatic posting is not enabled.",
         409,
@@ -597,18 +569,7 @@ export module ecommercePaymentFinanceService {
         $10, $11, 'INR', $12, 'pending', $13, $13, $14, $14
       )
       ON CONFLICT (organizationid, provider, sourcepaymentid)
-      DO UPDATE SET
-        paymentmethod = EXCLUDED.paymentmethod,
-        providerorderid = EXCLUDED.providerorderid,
-        merchanttransactionid = EXCLUDED.merchanttransactionid,
-        paymenttransactionid = EXCLUDED.paymenttransactionid,
-        primaryorderid = EXCLUDED.primaryorderid,
-        customerid = EXCLUDED.customerid,
-        customername = EXCLUDED.customername,
-        amount = EXCLUDED.amount,
-        paymentdate = EXCLUDED.paymentdate,
-        modifiedby = EXCLUDED.modifiedby,
-        modifieddate = EXCLUDED.modifieddate
+      DO NOTHING
       RETURNING id, status, banktransactionid
       `,
       [
@@ -629,7 +590,30 @@ export module ecommercePaymentFinanceService {
       ]
     );
 
-    return processEvent(Number(eventResult.rows[0].id));
+    const event =
+      eventResult.rows[0] ||
+      (
+        await query(
+          `
+          SELECT id, status, banktransactionid
+          FROM ecommerce_payment_finance_events
+          WHERE organizationid = $1
+            AND provider = $2
+            AND sourcepaymentid = $3
+          LIMIT 1
+          `,
+          [ORGANIZATION_ID, provider, sourcePaymentId]
+        )
+      ).rows[0];
+    if (!event) {
+      throw new FinanceValidationError(
+        "Unable to resolve the e-commerce finance event.",
+        500,
+        "ECOMMERCE_FINANCE_EVENT_RESOLUTION_FAILED"
+      );
+    }
+
+    return processEvent(Number(event.id));
   };
 
   export const safelyRecordSuccessfulPayment = async (transactionRow: any) => {

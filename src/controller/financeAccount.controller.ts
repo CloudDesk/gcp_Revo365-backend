@@ -1,4 +1,5 @@
 import { financeAccountService } from "../services/financeAccount.service.js";
+import { retailReceiptFinanceService } from "../services/retailReceiptFinance.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module financeAccountController {
@@ -76,6 +77,41 @@ export module financeAccountController {
     try {
       const data = await financeAccountService.listBankTransactions(request);
       return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listRetailCustomers = async (request: any, reply: any) => {
+    try {
+      const data = await retailReceiptFinanceService.listCustomers(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listRetailOutstandingInvoices = async (
+    request: any,
+    reply: any
+  ) => {
+    try {
+      const data =
+        await retailReceiptFinanceService.listOutstandingInvoices(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const postRetailReceipt = async (request: any, reply: any) => {
+    try {
+      const data = await retailReceiptFinanceService.postReceipt(request);
+      return reply.status(201).send({
+        success: true,
+        message: "Retail receipt posted and allocated successfully.",
+        data,
+      });
     } catch (error) {
       return sendFinanceError(reply, error);
     }

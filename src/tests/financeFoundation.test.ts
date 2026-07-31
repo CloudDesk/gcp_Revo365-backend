@@ -10,14 +10,23 @@ import {
   protectAccountNumber,
   requireIsoDate,
   requirePositiveMoney,
+  toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
 import {
+  buildEcommerceCustomerName,
   isEligibleEcommerceOrder,
+  resolveEcommercePaymentDate,
   resolveEcommercePaymentMethod,
   resolveEcommercePaymentProvider,
   resolveEcommercePaymentReference,
 } from "../utils/finance/ecommerceFinance.utils.js";
+import {
+  applyRetailInvoiceAllocation,
+  getRetailInvoicePaymentState,
+  isRetailStoreInvoice,
+  resolveRetailInvoiceAmount,
+} from "../utils/finance/retailReceipt.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -56,6 +65,14 @@ describe("Cash and Bank foundation validation", () => {
     assert.throws(() => requireIsoDate("2026-02-30", "date"));
     assert.throws(() => requireIsoDate("30/07/2026", "date"));
   });
+
+  test("PostgreSQL DATE values are serialized without a timezone shift", () => {
+    assert.equal(
+      toFinanceDateOnly(new Date(2026, 6, 31)),
+      "2026-07-31"
+    );
+    assert.equal(toFinanceDateOnly("2026-07-31"), "2026-07-31");
+  });
 });
 
 describe("TDS section dropdown", () => {
@@ -91,6 +108,13 @@ describe("E-commerce automatic finance entry", () => {
       ]),
       false
     );
+    assert.equal(
+      isEligibleEcommerceOrder([
+        { ordername: "Online", invoicefor: "Product" },
+        { ordername: "Rental", invoicefor: "Product Rental" },
+      ]),
+      false
+    );
   });
 
   test("Razorpay provider, method, and payment reference are resolved", () => {
@@ -122,6 +146,95 @@ describe("E-commerce automatic finance entry", () => {
     assert.equal(
       resolveEcommercePaymentReference(transaction),
       "TXN-1002"
+    );
+  });
+
+  test("Payment date uses the India accounting date", () => {
+    const utcBoundaryEpoch = Math.floor(
+      new Date("2026-07-30T20:00:00.000Z").getTime() / 1000
+    );
+    assert.equal(
+      resolveEcommercePaymentDate({
+        transactiondata: { created_at: utcBoundaryEpoch },
+      }),
+      "2026-07-31"
+    );
+    assert.equal(
+      resolveEcommercePaymentDate({
+        createddate: utcBoundaryEpoch * 1000,
+      }),
+      "2026-07-31"
+    );
+  });
+
+  test("Customer name prefers the registered customer identity", () => {
+    assert.equal(
+      buildEcommerceCustomerName(
+        {
+          firstname: "Asha",
+          lastname: "Kumar",
+          useremail: "asha@example.com",
+        },
+        { name: "Checkout Name" }
+      ),
+      "Asha Kumar"
+    );
+    assert.equal(
+      buildEcommerceCustomerName(
+        { useremail: "asha@example.com" },
+        { name: "Checkout Name" }
+      ),
+      "asha@example.com"
+    );
+  });
+});
+
+describe("Retail in-store receipt allocation", () => {
+  const manualStoreInvoice = {
+    id: 378,
+    invoicenumber: "TEQIT-Invoice-00270",
+    invoicefor: "product",
+    invoicedata: {
+      ordername: "storepurchase",
+      total: "₹23,500",
+    },
+    paidamount: 0,
+    paymentdata: [],
+  };
+
+  test("Manual-store invoice amount and eligibility are resolved", () => {
+    assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
+    assert.equal(resolveRetailInvoiceAmount(manualStoreInvoice), 23500);
+    assert.deepEqual(getRetailInvoicePaymentState(manualStoreInvoice), {
+      invoiceAmount: 23500,
+      paidAmount: 0,
+      outstandingAmount: 23500,
+    });
+  });
+
+  test("Partial allocation calculates the remaining balance and status", () => {
+    const result = applyRetailInvoiceAllocation(
+      manualStoreInvoice,
+      10000
+    );
+    assert.equal(result.paidAmount, 10000);
+    assert.equal(result.balanceAmount, 13500);
+    assert.equal(result.paymentStatus, "partially_paid");
+  });
+
+  test("Full allocation marks the invoice paid", () => {
+    const result = applyRetailInvoiceAllocation(
+      manualStoreInvoice,
+      23500
+    );
+    assert.equal(result.balanceAmount, 0);
+    assert.equal(result.paymentStatus, "paid");
+  });
+
+  test("Allocation cannot exceed the outstanding invoice amount", () => {
+    assert.throws(
+      () => applyRetailInvoiceAllocation(manualStoreInvoice, 23501),
+      /exceeds its outstanding amount/
     );
   });
 });

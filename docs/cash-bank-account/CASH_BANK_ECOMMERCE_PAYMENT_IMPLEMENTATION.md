@@ -34,7 +34,7 @@ provider payment-reference uniqueness controls.
 Until invoice allocation is implemented in the next slice:
 
 ```text
-Debit  Mapped Bank/Cash Account
+Debit  E-commerce Default Bank Account
 Credit Customer Advances
 ```
 
@@ -65,14 +65,15 @@ Every eligible payment is first written to:
 ecommerce_payment_finance_events
 ```
 
-If no active provider/payment-method mapping exists, the event remains:
+If no active e-commerce default Bank account exists, the event remains:
 
 ```text
 status = pending
-failurecode = PAYMENT_ACCOUNT_MAPPING_MISSING
+failurecode = ECOMMERCE_DEFAULT_BANK_ACCOUNT_MISSING
 ```
 
-After configuring the mapping, retry pending events with:
+After marking an active Bank account as the e-commerce default, retry pending
+events with:
 
 ```bash
 npm run process:ecommerce-finance
@@ -84,45 +85,27 @@ An optional processing limit can be supplied:
 npm run process:ecommerce-finance -- 200
 ```
 
-## Payment Account Mapping
+## E-commerce Default Bank Account
 
-Create the Bank/Cash account first, then configure the settlement destination.
-The effective date must be on or before the payments that should use it.
+Create a Bank account and mark **E-commerce default account** in the account
+create/edit modal.
 
-Example wildcard Razorpay mapping:
+Rules:
 
-```sql
-INSERT INTO payment_account_mappings (
-    organizationid,
-    provider,
-    paymentmethod,
-    bankcashaccountid,
-    effectivefrom,
-    status,
-    createdby,
-    modifiedby
-)
-VALUES (
-    1,
-    'razorpay',
-    '*',
-    <bank_cash_account_id>,
-    <effective_from_date>,
-    'active',
-    'configuration',
-    'configuration'
-);
-```
-
-Use `phonepe` as the provider for PhonePe payments. A method-specific mapping
-is selected before a `*` wildcard mapping.
+- Only an active Bank account can be selected.
+- Only one account can be the default per organization.
+- Replacing an existing default requires explicit user confirmation.
+- Razorpay and PhonePe product-order receipts use the same default account in
+  this phase.
+- Provider/payment-method mappings are retained as future foundation but are
+  not used by the Phase 1 automatic posting flow.
 
 ## Deployment
 
-Apply:
+For the frozen Phase 1 database deployment, apply:
 
 ```text
-src/database/migrations/20260730_cash_bank_ecommerce_payment_events.sql
+src/database/releases/20260730_cash_bank_phase1_release.sql
 ```
 
 Then run:
@@ -131,8 +114,8 @@ Then run:
 npm run verify:finance-foundation
 ```
 
-The migration has not been applied automatically as part of the local
-implementation.
+The verification command is read-only and must be run against each configured
+environment after database deployment.
 
 ## Deferred to the Next Slice
 

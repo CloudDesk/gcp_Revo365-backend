@@ -69,6 +69,46 @@ export const createDirectBankTransactionSchema = {
   ],
 };
 
+export const createRetailReceiptSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    transactiondate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    customerid: { type: "integer", minimum: 1 },
+    amount: { type: "number", exclusiveMinimum: 0 },
+    requestreference: {
+      type: "string",
+      minLength: 8,
+      maxLength: 100,
+    },
+    remarks: nullableString,
+    allocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          invoiceid: { type: "integer", minimum: 1 },
+          allocationamount: { type: "number", exclusiveMinimum: 0 },
+        },
+        required: ["invoiceid", "allocationamount"],
+      },
+    },
+  },
+  required: [
+    "transactiondate",
+    "customerid",
+    "amount",
+    "requestreference",
+    "allocations",
+  ],
+};
+
 export const createTdsSectionSchema = {
   type: "object",
   additionalProperties: false,

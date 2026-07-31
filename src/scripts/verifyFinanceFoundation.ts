@@ -151,12 +151,13 @@ const verify = async () => {
         "20260730_cash_bank_standard_permissions_v1",
         "20260730_cash_bank_ecommerce_default_account_v1",
         "20260730_cash_bank_phase1_release_v1",
+        "20260731_cash_bank_retail_receipts_v1",
       ],
     ]
   );
-  if (versionResult.rows.length !== 6) {
+  if (versionResult.rows.length !== 7) {
     failures.push(
-      "Missing the frozen Cash and Bank Phase 1 release or one of its schema versions."
+      "Missing the frozen Cash and Bank Phase 1 release, Retail Receipt migration, or one of their schema versions."
     );
   }
 
@@ -292,6 +293,47 @@ const verify = async () => {
     );
   }
 
+  const retailAllocationIndexResult = await query(
+    `
+    SELECT indexdef
+    FROM pg_indexes
+    WHERE schemaname = current_schema()
+      AND indexname = 'uq_bank_allocations_transaction_document'
+    LIMIT 1
+    `
+  );
+  if (!retailAllocationIndexResult.rows[0]) {
+    failures.push(
+      "Retail invoice allocations must enforce one active allocation per transaction and invoice."
+    );
+  }
+
+  const ecommerceIdempotencyResult = await query(
+    `
+    SELECT
+      EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'ecommerce_payment_finance_events'::regclass
+          AND conname = 'uq_ecommerce_payment_finance_event'
+      ) AS eventunique,
+      EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname = 'uq_bank_transactions_source_payment'
+      ) AS transactionunique
+    `
+  );
+  if (
+    ecommerceIdempotencyResult.rows[0]?.eventunique !== true ||
+    ecommerceIdempotencyResult.rows[0]?.transactionunique !== true
+  ) {
+    failures.push(
+      "E-commerce payments must have event and Bank transaction idempotency controls."
+    );
+  }
+
   if (failures.length > 0) {
     throw new Error(
       `[Finance Foundation Verification]\n${failures
@@ -301,7 +343,7 @@ const verify = async () => {
   }
 
   console.log(
-    `[Finance Foundation Verification] Passed: frozen Phase 1 release, ${Object.keys(expectedColumns).length} tables, 7 system accounts, 12 TDS sections, and Admin/Accountant permissions.`
+    `[Finance Foundation Verification] Passed: frozen Phase 1 release, Retail Receipt controls, ${Object.keys(expectedColumns).length} tables, 7 system accounts, 12 TDS sections, and Admin/Accountant permissions.`
   );
 };
 

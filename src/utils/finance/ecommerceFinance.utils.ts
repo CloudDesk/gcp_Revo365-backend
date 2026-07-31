@@ -4,6 +4,8 @@ const normalizedText = (value: unknown): string =>
 const normalizedLowerText = (value: unknown): string =>
   normalizedText(value).toLowerCase();
 
+const INDIA_TIME_OFFSET_MILLISECONDS = 5.5 * 60 * 60 * 1000;
+
 export const isEligibleEcommerceOrder = (orderRows: any[]): boolean => {
   if (!Array.isArray(orderRows) || orderRows.length === 0) return false;
 
@@ -60,9 +62,13 @@ export const resolveEcommercePaymentDate = (transactionRow: any): string => {
     rawEpoch > 10_000_000_000 ? rawEpoch : rawEpoch * 1000;
   const parsed = new Date(epochMilliseconds);
   if (Number.isNaN(parsed.getTime())) {
-    return new Date().toISOString().slice(0, 10);
+    return new Date(Date.now() + INDIA_TIME_OFFSET_MILLISECONDS)
+      .toISOString()
+      .slice(0, 10);
   }
-  return parsed.toISOString().slice(0, 10);
+  return new Date(parsed.getTime() + INDIA_TIME_OFFSET_MILLISECONDS)
+    .toISOString()
+    .slice(0, 10);
 };
 
 export const buildEcommerceCustomerName = (

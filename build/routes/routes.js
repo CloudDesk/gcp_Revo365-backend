@@ -68,7 +68,7 @@ import { storeQuotationController } from "../controller/storeQuotation.controlle
 import { picklistConfigController } from "../controller/picklistConfig.controller.js";
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createDirectBankTransactionSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { createBankCashAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
 import { requireFinancePermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
@@ -361,6 +361,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] }, financeAccountController.create);
     fastify.patch('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] }, financeAccountController.update);
     fastify.get('/finance/bank-accounts/:accountId/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listTransactions);
+    fastify.get('/finance/retail/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listRetailCustomers);
+    fastify.get('/finance/retail/customers/:customerId/outstanding-invoices', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listRetailOutstandingInvoices);
+    fastify.post('/finance/bank-accounts/:accountId/transactions/retail-receipt', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createRetailReceiptSchema)] }, financeAccountController.postRetailReceipt);
     fastify.post('/finance/bank-accounts/:accountId/transactions/direct-ledger', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] }, financeAccountController.postDirectLedgerTransaction);
     // TDS Section Master foundation
     fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
