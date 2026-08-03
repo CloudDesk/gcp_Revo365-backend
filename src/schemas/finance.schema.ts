@@ -95,6 +95,8 @@ export const createRetailReceiptSchema = {
         properties: {
           invoiceid: { type: "integer", minimum: 1 },
           allocationamount: { type: "number", exclusiveMinimum: 0 },
+          tdsapplied: { type: "boolean" },
+          tdsamount: { type: "number", minimum: 0 },
         },
         required: ["invoiceid", "allocationamount"],
       },

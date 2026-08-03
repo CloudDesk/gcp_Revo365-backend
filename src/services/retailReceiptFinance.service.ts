@@ -116,12 +116,25 @@ const getExistingReceipt = async (
               'id', a.id,
               'invoiceid', a.documentid,
               'invoicenumber', a.documentnumber,
+              'invoiceurl', r.invoiceurl,
               'allocationamount', a.allocationamount,
+              'tdsapplied', a.tdsapplied,
+              'tdssectionid', a.tdssectionid,
+              'tdssection', CASE
+                WHEN a.tdssectionid IS NOT NULL THEN a.statutorysnapshot
+                ELSE NULL
+              END,
+              'adjustmenttype', a.statutorysnapshot->>'adjustmenttype',
+              'tdsamount', a.tdsamount,
+              'totalsettledamount', a.totalsettledamount,
               'status', a.status
             )
             ORDER BY a.id
           )
           FROM bank_transaction_allocations a
+          LEFT JOIN revoinvoice r
+            ON r.id = a.documentid
+           AND a.documenttype = 'sales_invoice'
           WHERE a.banktransactionid = t.id
             AND a.status = 'applied'
         ),
@@ -265,9 +278,40 @@ export module retailReceiptFinanceService {
         "At least one invoice allocation is required."
       );
     }
-    const invoiceIds = requestedAllocations.map((item: any) =>
-      Number(item?.invoiceid)
-    );
+    const normalizedAllocations = requestedAllocations.map((item: any) => {
+      const invoiceId = Number(item?.invoiceid);
+      const allocationAmount = requirePositiveMoney(
+        item?.allocationamount,
+        "allocationamount"
+      );
+      const tdsApplied = item?.tdsapplied === true;
+      const tdsAmount = toMoney(item?.tdsamount ?? 0, "tdsamount");
+
+      if (tdsAmount < 0) {
+        throw new FinanceValidationError(
+          "TDS Receivable amount cannot be negative."
+        );
+      }
+      if (tdsApplied) {
+        if (tdsAmount <= 0) {
+          throw new FinanceValidationError(
+            "TDS Receivable amount must be greater than zero when TDS is applied."
+          );
+        }
+      } else if (tdsAmount !== 0) {
+        throw new FinanceValidationError(
+          "TDS Receivable amount must be zero when TDS is not applied."
+        );
+      }
+
+      return {
+        invoiceId,
+        allocationAmount,
+        tdsApplied,
+        tdsAmount,
+      };
+    });
+    const invoiceIds = normalizedAllocations.map((item) => item.invoiceId);
     if (
       invoiceIds.some(
         (id: number) => !Number.isSafeInteger(id) || id <= 0
@@ -279,12 +323,18 @@ export module retailReceiptFinanceService {
       );
     }
     const allocationTotal = toMoney(
-      requestedAllocations.reduce(
-        (total: number, item: any) =>
-          total + requirePositiveMoney(item?.allocationamount, "allocationamount"),
+      normalizedAllocations.reduce(
+        (total, item) => total + item.allocationAmount,
         0
       )
     );
+    const totalTdsAmount = toMoney(
+      normalizedAllocations.reduce(
+        (total, item) => total + item.tdsAmount,
+        0
+      )
+    );
+    const totalSettlementAmount = toMoney(amount + totalTdsAmount);
     if (allocationTotal !== amount) {
       throw new FinanceValidationError(
         "Receipt amount must equal the total invoice allocation."
@@ -377,8 +427,8 @@ export module retailReceiptFinanceService {
           (row: any): [number, any] => [Number(row.id), row]
         )
       );
-      const preparedAllocations = requestedAllocations.map((item: any) => {
-        const invoice = invoiceById.get(Number(item.invoiceid));
+      const preparedAllocations = normalizedAllocations.map((item) => {
+        const invoice = invoiceById.get(item.invoiceId);
         if (
           !invoice ||
           Number(invoice.customerid) !== customerId ||
@@ -390,9 +440,11 @@ export module retailReceiptFinanceService {
         }
         return {
           invoice,
+          tdsApplied: item.tdsApplied,
           ...applyRetailInvoiceAllocation(
             invoice,
-            item.allocationamount
+            item.allocationAmount,
+            item.tdsAmount
           ),
         };
       });
@@ -437,6 +489,29 @@ export module retailReceiptFinanceService {
           409,
           "ACCOUNTS_RECEIVABLE_LEDGER_MISSING"
         );
+      }
+
+      let tdsReceivableAccountId: number | null = null;
+      if (totalTdsAmount > 0) {
+        const tdsReceivableResult = await client.query(
+          `
+          SELECT id
+          FROM finance_accounts
+          WHERE organizationid = $1
+            AND accountcode = 'SYS-TDS-RECEIVABLE'
+            AND status = 'active'
+          LIMIT 1
+          `,
+          [organizationId]
+        );
+        tdsReceivableAccountId = Number(tdsReceivableResult.rows[0]?.id);
+        if (!Number.isSafeInteger(tdsReceivableAccountId)) {
+          throw new FinanceValidationError(
+            "TDS Receivable system ledger is unavailable.",
+            409,
+            "TDS_RECEIVABLE_LEDGER_MISSING"
+          );
+        }
       }
 
       const balanceAfter = calculateAvailableBalance(
@@ -549,7 +624,7 @@ export module retailReceiptFinanceService {
         )
         VALUES
           ($1, $2, 'customer', $3, $4, 0, $5),
-          ($1, $6, 'customer', $3, 0, $4, $5)
+          ($1, $6, 'customer', $3, 0, $7, $5)
         `,
         [
           journalEntry.id,
@@ -558,8 +633,33 @@ export module retailReceiptFinanceService {
           amount,
           receiptRemarks,
           accountsReceivableId,
+          totalSettlementAmount,
         ]
       );
+
+      if (totalTdsAmount > 0) {
+        await client.query(
+          `
+          INSERT INTO journal_lines (
+            journalentryid,
+            financeaccountid,
+            partytype,
+            partyid,
+            debitamount,
+            creditamount,
+            description
+          )
+          VALUES ($1, $2, 'customer', $3, $4, 0, $5)
+          `,
+          [
+            journalEntry.id,
+            tdsReceivableAccountId,
+            customerId,
+            totalTdsAmount,
+            receiptRemarks,
+          ]
+        );
+      }
 
       const allocationRecords = [];
       for (const allocation of preparedAllocations) {
@@ -572,6 +672,8 @@ export module retailReceiptFinanceService {
             documentnumber,
             allocationamount,
             tdsapplied,
+            tdssectionid,
+            tdsaccountid,
             tdsamount,
             totalsettledamount,
             statutorysnapshot,
@@ -580,8 +682,8 @@ export module retailReceiptFinanceService {
             createddate
           )
           VALUES (
-            $1, 'sales_invoice', $2, $3, $4, FALSE, 0, $4,
-            '{}'::jsonb, 'applied', $5, $6
+            $1, 'sales_invoice', $2, $3, $4, $5, $6, $7, $8, $9,
+            $10::jsonb, 'applied', $11, $12
           )
           RETURNING *
           `,
@@ -590,6 +692,12 @@ export module retailReceiptFinanceService {
             allocation.invoice.id,
             allocation.invoice.invoicenumber,
             allocation.allocationAmount,
+            allocation.tdsApplied,
+            null,
+            allocation.tdsApplied ? tdsReceivableAccountId : null,
+            allocation.tdsAmount,
+            allocation.totalSettledAmount,
+            JSON.stringify({ adjustmenttype: "tds_receivable" }),
             actor,
             epoch,
           ]
@@ -600,6 +708,12 @@ export module retailReceiptFinanceService {
           invoiceid: Number(allocation.invoice.id),
           invoicenumber: allocation.invoice.invoicenumber,
           allocationamount: allocation.allocationAmount,
+          tdsapplied: allocation.tdsApplied,
+          tdssectionid: null,
+          tdssection: null,
+          adjustmenttype: allocation.tdsApplied ? "tds_receivable" : null,
+          tdsamount: allocation.tdsAmount,
+          totalsettledamount: allocation.totalSettledAmount,
           status: "applied",
         });
 
@@ -609,6 +723,8 @@ export module retailReceiptFinanceService {
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: allocation.allocationAmount,
+          tdsamount: allocation.tdsAmount,
+          settlementamount: allocation.totalSettledAmount,
           paymentmethod:
             account.accounttype === "cash" ? "cash" : "bank_transfer",
           paymentdate: epoch,
@@ -696,6 +812,8 @@ export module retailReceiptFinanceService {
             transactionnumber: transactionNumber,
             customerid: customerId,
             amount,
+            tdsamount: totalTdsAmount,
+            totalsettledamount: totalSettlementAmount,
             previousbalance: toMoney(account.currentbalance),
             balanceafter: balanceAfter,
             allocations: allocationRecords,

@@ -71,7 +71,9 @@ export const getSuccessfulRetailPaymentsTotal = (
       }
       return (
         total +
-        parseRetailMoney(payment?.paymentamount ?? payment?.amount)
+        parseRetailMoney(
+          payment?.settlementamount ?? payment?.paymentamount ?? payment?.amount
+        )
       );
     }, 0)
   );
@@ -93,22 +95,30 @@ export const getRetailInvoicePaymentState = (invoice: any) => {
 
 export const applyRetailInvoiceAllocation = (
   invoice: any,
-  allocationAmount: unknown
+  allocationAmount: unknown,
+  tdsAmount: unknown = 0
 ) => {
   const state = getRetailInvoicePaymentState(invoice);
   const allocation = parseRetailMoney(allocationAmount);
+  const tds = parseRetailMoney(tdsAmount);
   if (allocation <= 0) {
     throw new FinanceValidationError(
       "Each invoice allocation must be greater than zero."
     );
   }
-  if (allocation > state.outstandingAmount) {
+  if (tds < 0) {
     throw new FinanceValidationError(
-      `Allocation for invoice ${invoice?.invoicenumber || invoice?.id} exceeds its outstanding amount.`
+      "TDS Receivable amount cannot be negative."
+    );
+  }
+  const totalSettledAmount = toMoney(allocation + tds);
+  if (totalSettledAmount > state.outstandingAmount) {
+    throw new FinanceValidationError(
+      `Total settlement for invoice ${invoice?.invoicenumber || invoice?.id} exceeds its outstanding amount.`
     );
   }
 
-  const paidAmount = toMoney(state.paidAmount + allocation);
+  const paidAmount = toMoney(state.paidAmount + totalSettledAmount);
   const balanceAmount = toMoney(
     Math.max(state.invoiceAmount - paidAmount, 0)
   );
@@ -122,21 +132,25 @@ export const applyRetailInvoiceAllocation = (
   return {
     ...state,
     allocationAmount: allocation,
+    tdsAmount: tds,
+    totalSettledAmount,
     paidAmount,
     balanceAmount,
     paymentStatus,
   };
 };
 
-export const isRetailStoreInvoice = (invoice: any): boolean => {
-  const invoiceData = parseJsonObject(invoice?.invoicedata);
-  const invoiceFor = String(invoice?.invoicefor || "").trim().toLowerCase();
-  const orderName = String(
-    invoice?.linkedordername || invoiceData.ordername || ""
-  )
-    .trim()
-    .toLowerCase();
+export const isRetailStoreProductOrder = (order: any): boolean => {
+  const orderName = String(order?.ordername || "").trim().toLowerCase();
+  const invoiceFor = String(order?.invoicefor || "").trim().toLowerCase();
 
-  return invoiceFor === "product" && orderName === "storepurchase";
+  return orderName === "storepurchase" && invoiceFor === "product";
 };
 
+export const isRetailStoreInvoice = (invoice: any): boolean => {
+  const invoiceData = parseJsonObject(invoice?.invoicedata);
+  return isRetailStoreProductOrder({
+    ordername: invoice?.linkedordername || invoiceData.ordername,
+    invoicefor: invoice?.invoicefor,
+  });
+};

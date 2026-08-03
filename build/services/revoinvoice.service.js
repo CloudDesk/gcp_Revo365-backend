@@ -5,6 +5,7 @@ import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { isRetailStoreProductOrder } from "../utils/finance/retailReceipt.utils.js";
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 const fireInvoiceReadyEmail = async (ticketnumber, invoiceurl) => {
     try {
@@ -183,38 +184,54 @@ const appendPaymentIfMissing = (paymentEntries, nextPayment) => {
         },
     ];
 };
-const getOrderPaymentForInvoice = async (orderid, invoiceAmount) => {
-    if (!orderid || invoiceAmount <= 0)
+const getInvoiceOrderContext = async (orderid) => {
+    if (!orderid)
         return null;
-    const orderPaymentResult = await query(`
+    const orderContextResult = await query(`
         WITH order_refs AS (
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orders
             WHERE orderid = $1
             UNION
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orderline
             WHERE uniqueorderid = $1
             UNION
-            SELECT merchanttransactionid, NULL::varchar AS paymentmethod
+            SELECT
+                merchanttransactionid,
+                NULL::varchar AS paymentmethod,
+                NULL::varchar AS ordername,
+                NULL::varchar AS invoicefor
             FROM thirdpartyorders
             WHERE orderid = $1
         )
         SELECT
-            t.transactionid,
-            t.amount,
-            t.createddate,
-            t.transactiondata,
-            t.razorpay_payment_id,
-            t.razorpay_order_id,
-            order_refs.paymentmethod
+            merchanttransactionid,
+            paymentmethod,
+            ordername,
+            invoicefor
         FROM order_refs
-        JOIN transaction t
-          ON t.merchanttransactionid = order_refs.merchanttransactionid
-        WHERE order_refs.merchanttransactionid IS NOT NULL
-        ORDER BY t.createddate DESC NULLS LAST, t.id DESC
+        WHERE merchanttransactionid IS NOT NULL
         LIMIT 1
         `, [String(orderid)]);
+    return orderContextResult.rows[0] || null;
+};
+const getOrderPaymentForInvoice = async (orderContext, invoiceAmount) => {
+    if (!orderContext?.merchanttransactionid || invoiceAmount <= 0)
+        return null;
+    const orderPaymentResult = await query(`
+        SELECT
+            transactionid,
+            amount,
+            createddate,
+            transactiondata,
+            razorpay_payment_id,
+            razorpay_order_id
+        FROM transaction
+        WHERE merchanttransactionid = $1
+        ORDER BY createddate DESC NULLS LAST, id DESC
+        LIMIT 1
+        `, [orderContext.merchanttransactionid]);
     const transactionRow = orderPaymentResult.rows[0];
     if (!transactionRow)
         return null;
@@ -223,7 +240,7 @@ const getOrderPaymentForInvoice = async (orderid, invoiceAmount) => {
         ? "cash"
         : transactionRow.razorpay_payment_id
             ? "razorpay"
-            : transactionRow.paymentmethod;
+            : orderContext.paymentmethod;
     const transactionAmount = toNumber(transactionRow.amount);
     return {
         paymentamount: Math.min(invoiceAmount, transactionAmount || invoiceAmount),
@@ -260,10 +277,19 @@ const applyInvoicePaymentSummary = async (upsertFields, id) => {
     }
     let paymentEntries = normalizePaymentEntries(invoiceSnapshot.paymentdata);
     const invoiceAmount = getInvoiceAmount(invoiceSnapshot);
-    if (!id && paymentEntries.length === 0) {
-        const orderPayment = await getOrderPaymentForInvoice(invoiceSnapshot.orderid, invoiceAmount);
-        if (orderPayment) {
-            paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+    if (!id) {
+        const orderContext = await getInvoiceOrderContext(invoiceSnapshot.orderid);
+        // In-store product invoices are settled only through the manual retail
+        // receipt flow. The POS transaction remains the operational payment
+        // record, but a newly generated accounting invoice must start unpaid.
+        if (isRetailStoreProductOrder(orderContext)) {
+            paymentEntries = [];
+        }
+        else if (paymentEntries.length === 0) {
+            const orderPayment = await getOrderPaymentForInvoice(orderContext, invoiceAmount);
+            if (orderPayment) {
+                paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+            }
         }
     }
     const { paidAmount, balanceAmount, paymentStatus, lastPaymentDate } = summarizeInvoicePayments(invoiceAmount, paymentEntries);

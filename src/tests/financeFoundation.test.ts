@@ -25,8 +25,10 @@ import {
   applyRetailInvoiceAllocation,
   getRetailInvoicePaymentState,
   isRetailStoreInvoice,
+  isRetailStoreProductOrder,
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
+import { createRetailReceiptSchema } from "../schemas/finance.schema.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -53,6 +55,16 @@ describe("Cash and Bank foundation calculations", () => {
 });
 
 describe("Cash and Bank foundation validation", () => {
+  test("Retail receipt schema accepts TDS allocation fields", () => {
+    const allocationSchema = (createRetailReceiptSchema.properties.allocations as any)
+      .items;
+
+    assert.deepEqual(
+      Object.keys(allocationSchema.properties).sort(),
+      ["allocationamount", "invoiceid", "tdsamount", "tdsapplied"].sort()
+    );
+  });
+
   test("Account and entry types are normalized", () => {
     assert.equal(normalizeAccountType(" BANK "), "bank");
     assert.equal(normalizeAccountType("cash"), "cash");
@@ -203,6 +215,13 @@ describe("Retail in-store receipt allocation", () => {
   };
 
   test("Manual-store invoice amount and eligibility are resolved", () => {
+    assert.equal(
+      isRetailStoreProductOrder({
+        ordername: "StorePurchase",
+        invoicefor: "Product",
+      }),
+      true
+    );
     assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
     assert.equal(resolveRetailInvoiceAmount(manualStoreInvoice), 23500);
     assert.deepEqual(getRetailInvoicePaymentState(manualStoreInvoice), {
@@ -210,6 +229,27 @@ describe("Retail in-store receipt allocation", () => {
       paidAmount: 0,
       outstandingAmount: 23500,
     });
+  });
+
+  test("Online, rental, and service orders retain their existing payment flow", () => {
+    assert.equal(
+      isRetailStoreProductOrder({ ordername: "online", invoicefor: "product" }),
+      false
+    );
+    assert.equal(
+      isRetailStoreProductOrder({
+        ordername: "rental",
+        invoicefor: "product rental",
+      }),
+      false
+    );
+    assert.equal(
+      isRetailStoreProductOrder({
+        ordername: "storepurchase",
+        invoicefor: "service",
+      }),
+      false
+    );
   });
 
   test("Partial allocation calculates the remaining balance and status", () => {
@@ -231,10 +271,76 @@ describe("Retail in-store receipt allocation", () => {
     assert.equal(result.paymentStatus, "paid");
   });
 
+  test("TDS Receivable settles the invoice without increasing the bank allocation", () => {
+    const invoice = {
+      ...manualStoreInvoice,
+      invoicedata: {
+        ordername: "storepurchase",
+        total: "₹1,00,000",
+      },
+    };
+    const result = applyRetailInvoiceAllocation(invoice, 50000, 10000);
+
+    assert.equal(result.allocationAmount, 50000);
+    assert.equal(result.tdsAmount, 10000);
+    assert.equal(result.totalSettledAmount, 60000);
+    assert.equal(result.paidAmount, 60000);
+    assert.equal(result.balanceAmount, 40000);
+    assert.equal(result.paymentStatus, "partially_paid");
+  });
+
+  test("Manual in-store TDS Receivable does not depend on a statutory section", () => {
+    const result = applyRetailInvoiceAllocation(
+      {
+        ...manualStoreInvoice,
+        invoicedata: {
+          ordername: "storepurchase",
+          total: "₹1,00,000",
+        },
+      },
+      50000,
+      10000
+    );
+
+    assert.equal(result.tdsAmount, 10000);
+    assert.equal(result.balanceAmount, 40000);
+  });
+
+  test("TDS settlement remains part of invoice paid history", () => {
+    const state = getRetailInvoicePaymentState({
+      ...manualStoreInvoice,
+      invoicedata: {
+        ordername: "storepurchase",
+        total: "₹1,00,000",
+      },
+      paymentdata: [
+        {
+          paymentamount: 50000,
+          tdsamount: 10000,
+          settlementamount: 60000,
+          status: "success",
+        },
+      ],
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 100000,
+      paidAmount: 60000,
+      outstandingAmount: 40000,
+    });
+  });
+
   test("Allocation cannot exceed the outstanding invoice amount", () => {
     assert.throws(
       () => applyRetailInvoiceAllocation(manualStoreInvoice, 23501),
       /exceeds its outstanding amount/
+    );
+  });
+
+  test("Allocation plus TDS cannot exceed the outstanding invoice amount", () => {
+    assert.throws(
+      () => applyRetailInvoiceAllocation(manualStoreInvoice, 23000, 501),
+      /Total settlement.*exceeds its outstanding amount/
     );
   });
 });

@@ -1114,12 +1114,25 @@ export module financeAccountService {
                 'id', a.id,
                 'invoiceid', a.documentid,
                 'invoicenumber', a.documentnumber,
+                'invoiceurl', r.invoiceurl,
                 'allocationamount', a.allocationamount,
+                'tdsapplied', a.tdsapplied,
+                'tdssectionid', a.tdssectionid,
+                'tdssection', CASE
+                  WHEN a.tdssectionid IS NOT NULL THEN a.statutorysnapshot
+                  ELSE NULL
+                END,
+                'adjustmenttype', a.statutorysnapshot->>'adjustmenttype',
+                'tdsamount', a.tdsamount,
+                'totalsettledamount', a.totalsettledamount,
                 'status', a.status
               )
               ORDER BY a.id
             )
             FROM bank_transaction_allocations a
+            LEFT JOIN revoinvoice r
+              ON r.id = a.documentid
+             AND a.documenttype = 'sales_invoice'
             WHERE a.banktransactionid = t.id
               AND a.status = 'applied'
           ),
