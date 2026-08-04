@@ -29,7 +29,16 @@ import {
   isServiceRequestInvoice,
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
-import { createRetailReceiptSchema } from "../schemas/finance.schema.js";
+import {
+  applySupplierBillAllocation,
+  getSupplierBillPaymentState,
+  isSupplierBillOpen,
+  resolveSupplierBillStatus,
+} from "../utils/finance/supplierBill.utils.js";
+import {
+  createRetailReceiptSchema,
+  createSupplierPaymentSchema,
+} from "../schemas/finance.schema.js";
 import {
   FINANCE_SOURCE_TYPES,
   getRetailReceiptSourceTypes,
@@ -71,6 +80,23 @@ describe("Cash and Bank foundation validation", () => {
     );
   });
 
+  test("Supplier payment schema accepts bill and TDS Payable fields", () => {
+    const allocationSchema = (
+      createSupplierPaymentSchema.properties.allocations as any
+    ).items;
+
+    assert.deepEqual(
+      Object.keys(allocationSchema.properties).sort(),
+      [
+        "allocationamount",
+        "billid",
+        "tdsamount",
+        "tdsapplied",
+        "tdssectionid",
+      ].sort()
+    );
+  });
+
   test("Account and entry types are normalized", () => {
     assert.equal(normalizeAccountType(" BANK "), "bank");
     assert.equal(normalizeAccountType("cash"), "cash");
@@ -101,6 +127,10 @@ describe("Finance source classification", () => {
       FINANCE_SOURCE_TYPES.serviceRequestReceipt,
       "service_request_receipt"
     );
+    assert.equal(
+      FINANCE_SOURCE_TYPES.supplierBillPayment,
+      "supplier_bill_payment"
+    );
   });
 
   test("Legacy Retail source type remains readable for idempotent retries", () => {
@@ -124,6 +154,94 @@ describe("Finance source classification", () => {
         "request-1001"
       ),
       "request-1001"
+    );
+  });
+});
+
+describe("Supplier bill payment allocation", () => {
+  const openBill = {
+    id: 34,
+    invoicenumber: "SUP-INV-34",
+    invoiceamount: 50000,
+    balanceamount: 50000,
+    paymentdata: [],
+    invoicestatus: "in_progress",
+    iscreditpayment: true,
+    paymentduedate: 2_000_000_000,
+  };
+
+  test("Bank payment and TDS Payable settle the Supplier bill together", () => {
+    const result = applySupplierBillAllocation(openBill, 45000, 5000);
+
+    assert.equal(result.allocationAmount, 45000);
+    assert.equal(result.tdsAmount, 5000);
+    assert.equal(result.totalSettledAmount, 50000);
+    assert.equal(result.balanceAmount, 0);
+  });
+
+  test("Existing settlement history includes TDS when deriving outstanding", () => {
+    const state = getSupplierBillPaymentState({
+      ...openBill,
+      paymentdata: [
+        {
+          paymentamount: 18000,
+          tdsamount: 2000,
+          settlementamount: 20000,
+          status: "success",
+        },
+      ],
+      balanceamount: 30000,
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 50000,
+      settledAmount: 20000,
+      outstandingAmount: 30000,
+    });
+  });
+
+  test("A legacy bill without a stored balance uses its payment history", () => {
+    const state = getSupplierBillPaymentState({
+      ...openBill,
+      balanceamount: null,
+      paymentdata: [],
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 50000,
+      settledAmount: 0,
+      outstandingAmount: 50000,
+    });
+  });
+
+  test("Total bank and TDS settlement cannot exceed bill outstanding", () => {
+    assert.throws(
+      () => applySupplierBillAllocation(openBill, 48000, 2001),
+      /Total settlement.*exceeds its outstanding amount/
+    );
+  });
+
+  test("Completed and cancelled bills are not eligible", () => {
+    assert.equal(isSupplierBillOpen(openBill), true);
+    assert.equal(
+      isSupplierBillOpen({ ...openBill, invoicestatus: "cancelled" }),
+      false
+    );
+    assert.equal(
+      isSupplierBillOpen({ ...openBill, invoicestatus: "complete" }),
+      false
+    );
+  });
+
+  test("Bill status preserves overdue completion semantics", () => {
+    assert.equal(resolveSupplierBillStatus(openBill, 0, 1_900_000_000), "complete");
+    assert.equal(
+      resolveSupplierBillStatus(openBill, 0, 2_100_000_000),
+      "overdue_complete"
+    );
+    assert.equal(
+      resolveSupplierBillStatus(openBill, 1000, 2_100_000_000),
+      "overdue"
     );
   });
 });

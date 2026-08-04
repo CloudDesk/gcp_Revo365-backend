@@ -1136,9 +1136,16 @@ export module financeAccountService {
             SELECT jsonb_agg(
               jsonb_build_object(
                 'id', a.id,
+                'documenttype', a.documenttype,
+                'documentid', a.documentid,
+                'documentnumber', a.documentnumber,
                 'invoiceid', a.documentid,
+                'billid', CASE
+                  WHEN a.documenttype = 'purchase_bill' THEN a.documentid
+                  ELSE NULL
+                END,
                 'invoicenumber', a.documentnumber,
-                'invoiceurl', r.invoiceurl,
+                'invoiceurl', COALESCE(r.invoiceurl, bill.invoiceurl),
                 'allocationamount', a.allocationamount,
                 'tdsapplied', a.tdsapplied,
                 'tdssectionid', a.tdssectionid,
@@ -1157,6 +1164,9 @@ export module financeAccountService {
             LEFT JOIN revoinvoice r
               ON r.id = a.documentid
              AND a.documenttype = 'sales_invoice'
+            LEFT JOIN poinvoice bill
+              ON bill.id = a.documentid
+             AND a.documenttype = 'purchase_bill'
             WHERE a.banktransactionid = t.id
               AND a.status = 'applied'
           ),

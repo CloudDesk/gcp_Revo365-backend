@@ -118,11 +118,16 @@ Implemented:
 - User-entered TDS Receivable against Retail In-store invoice allocations
 - Canonical `retail_receipt` source type for new In-store receipts, with legacy
   `retail_instore_receipt` retry compatibility
+- Supplier lookup and outstanding `poinvoice` bill lookup through the related
+  Purchase Order
+- Idempotent manual Supplier payment backend with Bank/Cash Credit, Accounts
+  Payable Debit, `purchase_bill` allocation, bill balance/status update, audit,
+  and optional section-based TDS Payable posting in one database transaction
 
 Next:
 
 - Manual Rental invoice receipt and allocation
-- Manual Supplier payment, bill allocation, and TDS Payable posting
+- Supplier payment frontend modal and transaction-launcher integration
 - Advance and On Account completion for manual Customer/Supplier flows
 
 ---
@@ -875,6 +880,25 @@ Journal:
 | Accounts Payable/Supplier | Bank payment + TDS | 0 |
 | Selected Bank/Cash account | 0 | Actual Bank payment |
 | TDS Payable, when applicable | 0 | TDS amount |
+
+### Backend API
+
+```text
+GET  /finance/suppliers?search=
+GET  /finance/suppliers/:supplierId/outstanding-bills
+POST /finance/bank-accounts/:accountId/transactions/supplier-payment
+```
+
+The POST request uses an idempotent `requestreference`. Its `amount` is the
+actual Bank/Cash payment and must equal the sum of allocation amounts. Each
+allocation contains a `billid`, `allocationamount`, and optional TDS Payable
+fields. When TDS is enabled, `tdssectionid` and a positive user-entered
+`tdsamount` are required.
+
+The posting service locks the selected Bank/Cash account and Supplier bills,
+revalidates every outstanding balance, writes the Bank transaction, journal,
+bill allocations and audit event, and updates `poinvoice` within one database
+transaction. No new Finance table or Supplier-bill migration is required.
 
 ---
 

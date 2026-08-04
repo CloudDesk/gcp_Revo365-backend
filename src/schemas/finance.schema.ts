@@ -111,6 +111,49 @@ export const createRetailReceiptSchema = {
   ],
 };
 
+export const createSupplierPaymentSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    transactiondate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    supplierid: { type: "integer", minimum: 1 },
+    amount: { type: "number", exclusiveMinimum: 0 },
+    requestreference: {
+      type: "string",
+      minLength: 8,
+      maxLength: 100,
+    },
+    remarks: nullableString,
+    allocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          billid: { type: "integer", minimum: 1 },
+          allocationamount: { type: "number", exclusiveMinimum: 0 },
+          tdsapplied: { type: "boolean" },
+          tdssectionid: { type: ["integer", "null"], minimum: 1 },
+          tdsamount: { type: "number", minimum: 0 },
+        },
+        required: ["billid", "allocationamount"],
+      },
+    },
+  },
+  required: [
+    "transactiondate",
+    "supplierid",
+    "amount",
+    "requestreference",
+    "allocations",
+  ],
+};
+
 export const createTdsSectionSchema = {
   type: "object",
   additionalProperties: false,

@@ -81,6 +81,7 @@ import {
     createBankCashAccountSchema,
     createDirectBankTransactionSchema,
     createRetailReceiptSchema,
+    createSupplierPaymentSchema,
     createTdsSectionSchema,
     updateBankCashAccountSchema,
 } from "../schemas/finance.schema.js";
@@ -455,6 +456,21 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/bank-accounts/:accountId/transactions/retail-receipt',
         { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createRetailReceiptSchema)] },
         financeAccountController.postRetailReceipt
+    );
+    fastify.get(
+        '/finance/suppliers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listSuppliers
+    );
+    fastify.get(
+        '/finance/suppliers/:supplierId/outstanding-bills',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listSupplierOutstandingBills
+    );
+    fastify.post(
+        '/finance/bank-accounts/:accountId/transactions/supplier-payment',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] },
+        financeAccountController.postSupplierPayment
     );
     fastify.post(
         '/finance/bank-accounts/:accountId/transactions/direct-ledger',
