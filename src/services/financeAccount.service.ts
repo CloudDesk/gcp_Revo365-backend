@@ -1108,6 +1108,20 @@ export module financeAccountService {
         f.accountname AS counterpartyaccountname,
         f.accountcode AS counterpartyaccountcode,
         COALESCE(
+          NULLIF(
+            TRIM(
+              CONCAT_WS(
+                ' ',
+                NULLIF(creator.firstname, ''),
+                NULLIF(creator.lastname, '')
+              )
+            ),
+            ''
+          ),
+          creator.useremail,
+          t.createdby
+        ) AS creatorname,
+        COALESCE(
           (
             SELECT jsonb_agg(
               jsonb_build_object(
@@ -1141,6 +1155,17 @@ export module financeAccountService {
       FROM bank_transactions t
       LEFT JOIN journal_entries j ON j.id = t.journalentryid
       LEFT JOIN finance_accounts f ON f.id = t.counterpartyaccountid
+      LEFT JOIN LATERAL (
+        SELECT
+          iu.firstname,
+          iu.lastname,
+          iu.useremail
+        FROM inventoryusers iu
+        WHERE iu.id::TEXT = t.createdby
+           OR LOWER(iu.useremail) = LOWER(t.createdby)
+        ORDER BY CASE WHEN iu.id::TEXT = t.createdby THEN 0 ELSE 1 END
+        LIMIT 1
+      ) creator ON TRUE
       WHERE ${conditions.join(" AND ")}
       ORDER BY t.transactiondate DESC, t.posteddate DESC, t.id DESC
       OFFSET $${params.length - 1} LIMIT $${params.length}

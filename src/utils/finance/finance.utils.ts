@@ -154,11 +154,11 @@ export const formatTdsSectionDisplayName = (
 export const resolveFinanceContext = (request: any) => {
   const session = request?.session || {};
   const actor =
+    session.useremail ??
+    session.email ??
     session.id ??
     session.userid ??
     session.userId ??
-    session.useremail ??
-    session.email ??
     "unknown";
   const organizationId = Number(
     session.organizationid ?? session.organizationId ?? 1
