@@ -1,6 +1,7 @@
 export const FINANCE_SOURCE_TYPES = Object.freeze({
   ecommerceOrder: "ecommerce_order",
   retailReceipt: "retail_receipt",
+  serviceRequestReceipt: "service_request_receipt",
   rentalReceipt: "rental_receipt",
   supplierBillPayment: "supplier_bill_payment",
   manual: "manual",

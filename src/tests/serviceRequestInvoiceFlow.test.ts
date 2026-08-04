@@ -144,7 +144,7 @@ describe("Existing invoice flow regression boundaries", () => {
     assert.equal(isServiceRequestInvoice(storeInvoice), false);
     assert.equal(
       resolveCustomerReceiptSourceType([storeInvoice]),
-      "retail_instore_receipt"
+      "retail_receipt"
     );
   });
 

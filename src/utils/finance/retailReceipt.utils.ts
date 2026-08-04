@@ -164,4 +164,4 @@ export const isServiceRequestInvoice = (invoice: any): boolean => {
 export const resolveCustomerReceiptSourceType = (invoices: any[]): string =>
   invoices.some(isServiceRequestInvoice)
     ? "service_request_receipt"
-    : "retail_instore_receipt";
+    : "retail_receipt";

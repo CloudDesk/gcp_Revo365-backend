@@ -97,6 +97,10 @@ describe("Finance source classification", () => {
   test("New E-commerce and Retail entries use the approved source types", () => {
     assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
     assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
+    assert.equal(
+      FINANCE_SOURCE_TYPES.serviceRequestReceipt,
+      "service_request_receipt"
+    );
   });
 
   test("Legacy Retail source type remains readable for idempotent retries", () => {
