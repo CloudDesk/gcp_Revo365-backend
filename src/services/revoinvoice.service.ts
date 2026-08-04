@@ -7,6 +7,7 @@ import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
 import { isRetailStoreProductOrder } from "../utils/finance/retailReceipt.utils.js";
+import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -694,6 +695,7 @@ export module revoinvoiceservice {
             console.log(result, "result in upsertRevoInvoice");
             if (result && result.rows.length > 0) {
                 const row = result.rows[0];
+                await ecommercePaymentFinanceService.safelyLinkInvoice(Number(row.id));
                 if (row.invoicefor === 'service' && row.ticketnumber && row.invoiceurl) {
                     await fireInvoiceReadyEmail(row.ticketnumber, row.invoiceurl);
                 }

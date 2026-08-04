@@ -15,15 +15,79 @@ import {
   resolveEcommercePaymentProvider,
   resolveEcommercePaymentReference,
 } from "../utils/finance/ecommerceFinance.utils.js";
+import { FINANCE_SOURCE_TYPES } from "../utils/finance/financeSource.utils.js";
 
 const ORGANIZATION_ID = 1;
 const SYSTEM_ACTOR = "system:ecommerce_payment";
+const ECOMMERCE_SOURCE_TYPE = FINANCE_SOURCE_TYPES.ecommerceOrder;
+const ECOMMERCE_ALLOCATION_JOURNAL_SOURCE = "ecommerce_invoice_allocation";
 
 type FinanceEventResult = {
   status: "ignored" | "pending" | "posted" | "failed";
   eventId?: number;
   bankTransactionId?: number;
   reason?: string;
+};
+
+type EcommerceInvoiceLinkResult = {
+  status: "ignored" | "linked" | "already_linked" | "failed";
+  invoiceId: number;
+  bankTransactionId?: number;
+  allocationId?: number;
+  reason?: string;
+};
+
+const parseJsonArray = (value: unknown): any[] => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const toInvoiceNumber = (value: unknown) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const numericValue = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
+};
+
+const resolveInvoiceAmount = (invoice: any) => {
+  const invoiceData =
+    invoice?.invoicedata && typeof invoice.invoicedata === "object"
+      ? invoice.invoicedata
+      : {};
+  const candidates = [
+    invoice?.totalorderamount,
+    invoice?.invoiceamount,
+    invoiceData?.payableamount,
+    invoiceData?.total,
+    invoiceData?.totalamount,
+  ];
+  for (const candidate of candidates) {
+    const amount = toInvoiceNumber(candidate);
+    if (amount > 0) return toMoney(amount);
+  }
+  return 0;
+};
+
+const isMatchingInvoicePayment = (payment: any, transaction: any) => {
+  const paymentReferences = new Set(
+    [
+      payment?.providerpaymentid,
+      payment?.transactionreference,
+      payment?.transactionid,
+      payment?.merchanttransactionid,
+    ]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+  );
+  return [transaction?.sourcepaymentid, transaction?.merchanttransactionid]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .some((value) => paymentReferences.has(value));
 };
 
 const getEligibleOrderContext = async (merchantTransactionId: string) => {
@@ -87,6 +151,520 @@ const markEventFailure = async (
     `,
     [status, code, message, SYSTEM_ACTOR, nowEpoch(), eventId]
   );
+};
+
+const linkInvoiceToPostedReceipt = async (
+  invoiceId: number
+): Promise<EcommerceInvoiceLinkResult> => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const invoiceResult = await client.query(
+      `
+      SELECT
+        r.*,
+        order_context.merchanttransactionid AS linkedmerchanttransactionid,
+        order_context.ordername AS linkedordername,
+        order_context.invoicefor AS linkedinvoicefor
+      FROM revoinvoice r
+      LEFT JOIN LATERAL (
+        SELECT candidate.merchanttransactionid, candidate.ordername, candidate.invoicefor
+        FROM (
+          SELECT o.merchanttransactionid, o.ordername, o.invoicefor, 1 AS priority
+          FROM orders o
+          WHERE o.orderid = r.orderid
+          UNION ALL
+          SELECT ol.merchanttransactionid, ol.ordername, ol.invoicefor, 2 AS priority
+          FROM orderline ol
+          WHERE ol.uniqueorderid = r.orderid
+        ) candidate
+        WHERE candidate.merchanttransactionid IS NOT NULL
+        ORDER BY candidate.priority
+        LIMIT 1
+      ) order_context ON TRUE
+      WHERE r.id = $1
+      FOR UPDATE OF r
+      `,
+      [invoiceId]
+    );
+    const invoice = invoiceResult.rows[0];
+    if (!invoice) {
+      await client.query("COMMIT");
+      return { status: "ignored", invoiceId, reason: "INVOICE_NOT_FOUND" };
+    }
+    if (
+      String(invoice.invoicefor || "").trim().toLowerCase() !== "product" ||
+      !isEligibleEcommerceOrder([
+        {
+          ordername: invoice.linkedordername,
+          invoicefor: invoice.linkedinvoicefor,
+        },
+      ])
+    ) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        reason: "NOT_ECOMMERCE_PRODUCT_INVOICE",
+      };
+    }
+
+    const merchantTransactionId = String(
+      invoice.linkedmerchanttransactionid || ""
+    ).trim();
+    if (!merchantTransactionId) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        reason: "MERCHANT_TRANSACTION_ID_MISSING",
+      };
+    }
+
+    const transactionResult = await client.query(
+      `
+      SELECT *
+      FROM bank_transactions
+      WHERE organizationid = $1
+        AND sourcetype = $2
+        AND merchanttransactionid = $3
+        AND partytype = 'customer'
+        AND partyid = $4
+        AND postingstatus = 'posted'
+      ORDER BY id
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [
+        ORGANIZATION_ID,
+        ECOMMERCE_SOURCE_TYPE,
+        merchantTransactionId,
+        invoice.customerid,
+      ]
+    );
+    const bankTransaction = transactionResult.rows[0];
+    if (!bankTransaction) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        reason: "POSTED_ECOMMERCE_RECEIPT_NOT_FOUND",
+      };
+    }
+
+    const existingAllocationResult = await client.query(
+      `
+      SELECT id, banktransactionid
+      FROM bank_transaction_allocations
+      WHERE documenttype = 'sales_invoice'
+        AND documentid = $1
+        AND status = 'applied'
+      ORDER BY id
+      LIMIT 1
+      `,
+      [invoiceId]
+    );
+    const existingAllocation = existingAllocationResult.rows[0];
+    if (existingAllocation) {
+      await client.query("COMMIT");
+      return {
+        status: "already_linked",
+        invoiceId,
+        bankTransactionId: Number(existingAllocation.banktransactionid),
+        allocationId: Number(existingAllocation.id),
+      };
+    }
+
+    const unappliedResult = await client.query(
+      `
+      SELECT *
+      FROM party_unapplied_amounts
+      WHERE banktransactionid = $1
+        AND partytype = 'customer'
+        AND partyid = $2
+        AND unappliedtype = 'advance'
+        AND status = 'open'
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [bankTransaction.id, invoice.customerid]
+    );
+    const unapplied = unappliedResult.rows[0];
+    if (!unapplied || toMoney(unapplied.remainingamount) <= 0) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        bankTransactionId: Number(bankTransaction.id),
+        reason: "NO_UNAPPLIED_ECOMMERCE_AMOUNT",
+      };
+    }
+
+    const invoiceAmount = resolveInvoiceAmount(invoice);
+    if (invoiceAmount <= 0) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        bankTransactionId: Number(bankTransaction.id),
+        reason: "INVOICE_AMOUNT_UNAVAILABLE",
+      };
+    }
+
+    const allocatedResult = await client.query(
+      `
+      SELECT COALESCE(SUM(totalsettledamount), 0) AS allocatedamount
+      FROM bank_transaction_allocations
+      WHERE documenttype = 'sales_invoice'
+        AND documentid = $1
+        AND status = 'applied'
+      `,
+      [invoiceId]
+    );
+    const documentOutstanding = toMoney(
+      Math.max(
+        invoiceAmount - toMoney(allocatedResult.rows[0]?.allocatedamount),
+        0
+      )
+    );
+    const allocationAmount = toMoney(
+      Math.min(toMoney(unapplied.remainingamount), documentOutstanding)
+    );
+    if (allocationAmount <= 0) {
+      await client.query("COMMIT");
+      return {
+        status: "ignored",
+        invoiceId,
+        bankTransactionId: Number(bankTransaction.id),
+        reason: "NO_DOCUMENT_OUTSTANDING_AMOUNT",
+      };
+    }
+
+    const accountsReceivableResult = await client.query(
+      `
+      SELECT id
+      FROM finance_accounts
+      WHERE organizationid = $1
+        AND accountcode = 'SYS-AR'
+        AND status = 'active'
+      LIMIT 1
+      `,
+      [ORGANIZATION_ID]
+    );
+    const accountsReceivableId = Number(accountsReceivableResult.rows[0]?.id);
+    const customerAdvanceAccountId = Number(
+      bankTransaction.counterpartyaccountid
+    );
+    if (
+      !Number.isSafeInteger(accountsReceivableId) ||
+      !Number.isSafeInteger(customerAdvanceAccountId)
+    ) {
+      throw new FinanceValidationError(
+        "The Accounts Receivable or Customer Advance ledger is unavailable.",
+        409,
+        "ECOMMERCE_ALLOCATION_LEDGER_MISSING"
+      );
+    }
+
+    const epoch = nowEpoch();
+    const allocationResult = await client.query(
+      `
+      INSERT INTO bank_transaction_allocations (
+        banktransactionid,
+        documenttype,
+        documentid,
+        documentnumber,
+        allocationamount,
+        tdsapplied,
+        tdssectionid,
+        tdsaccountid,
+        tdsamount,
+        totalsettledamount,
+        statutorysnapshot,
+        status,
+        createdby,
+        createddate
+      )
+      VALUES (
+        $1, 'sales_invoice', $2, $3, $4, FALSE, NULL, NULL, 0, $4,
+        $5::jsonb, 'applied', $6, $7
+      )
+      RETURNING *
+      `,
+      [
+        bankTransaction.id,
+        invoiceId,
+        invoice.invoicenumber,
+        allocationAmount,
+        JSON.stringify({
+          source: ECOMMERCE_SOURCE_TYPE,
+          merchanttransactionid: merchantTransactionId,
+        }),
+        SYSTEM_ACTOR,
+        epoch,
+      ]
+    );
+    const allocation = allocationResult.rows[0];
+    const remainingAmount = toMoney(
+      toMoney(unapplied.remainingamount) - allocationAmount
+    );
+    const appliedAmount = toMoney(
+      toMoney(unapplied.appliedamount) + allocationAmount
+    );
+
+    await client.query(
+      `
+      UPDATE party_unapplied_amounts
+      SET appliedamount = $1,
+          remainingamount = $2,
+          status = $3,
+          modifiedby = $4,
+          modifieddate = $5
+      WHERE id = $6
+      `,
+      [
+        appliedAmount,
+        remainingAmount,
+        remainingAmount === 0 ? "fully_applied" : "open",
+        SYSTEM_ACTOR,
+        epoch,
+        unapplied.id,
+      ]
+    );
+
+    if (remainingAmount === 0) {
+      await client.query(
+        `
+        UPDATE bank_transactions
+        SET allocationmethod = 'against_document'
+        WHERE id = $1
+        `,
+        [bankTransaction.id]
+      );
+    }
+
+    const description = `E-commerce receipt allocated to invoice ${invoice.invoicenumber}`;
+    const journalResult = await client.query(
+      `
+      INSERT INTO journal_entries (
+        organizationid,
+        entrydate,
+        sourcetype,
+        sourceid,
+        status,
+        description,
+        createdby,
+        postedby,
+        createddate,
+        posteddate
+      )
+      VALUES ($1, $2, $3, $4, 'posted', $5, $6, $6, $7, $7)
+      RETURNING *
+      `,
+      [
+        ORGANIZATION_ID,
+        bankTransaction.transactiondate,
+        ECOMMERCE_ALLOCATION_JOURNAL_SOURCE,
+        allocation.id,
+        description,
+        SYSTEM_ACTOR,
+        epoch,
+      ]
+    );
+    const journalEntry = journalResult.rows[0];
+    const journalNumber = `JE-${String(journalEntry.id).padStart(8, "0")}`;
+    await client.query(
+      `
+      INSERT INTO journal_lines (
+        journalentryid,
+        financeaccountid,
+        partytype,
+        partyid,
+        debitamount,
+        creditamount,
+        description
+      )
+      VALUES
+        ($1, $2, 'customer', $3, $4, 0, $5),
+        ($1, $6, 'customer', $3, 0, $4, $5)
+      `,
+      [
+        journalEntry.id,
+        customerAdvanceAccountId,
+        invoice.customerid,
+        allocationAmount,
+        description,
+        accountsReceivableId,
+      ]
+    );
+    await client.query(
+      `UPDATE journal_entries SET journalnumber = $1 WHERE id = $2`,
+      [journalNumber, journalEntry.id]
+    );
+
+    const paymentData = parseJsonArray(invoice.paymentdata);
+    const matchingPaymentIndex = paymentData.findIndex((payment) =>
+      isMatchingInvoicePayment(payment, bankTransaction)
+    );
+    const financePayment = {
+      paymentamount: allocationAmount,
+      paymentmethod: "online",
+      paymentdate: Number(bankTransaction.posteddate || epoch),
+      transactionreference:
+        bankTransaction.sourcepaymentid || bankTransaction.transactionnumber,
+      providerpaymentid: bankTransaction.sourcepaymentid || null,
+      transactionid: null,
+      merchanttransactionid: merchantTransactionId,
+      source: "finance_ecommerce_receipt",
+      status: "success",
+      comments: null,
+      banktransactionid: Number(bankTransaction.id),
+      allocationid: Number(allocation.id),
+    };
+    const nextPaymentData = [...paymentData];
+    if (matchingPaymentIndex >= 0) {
+      nextPaymentData[matchingPaymentIndex] = {
+        ...nextPaymentData[matchingPaymentIndex],
+        banktransactionid: Number(bankTransaction.id),
+        allocationid: Number(allocation.id),
+        merchanttransactionid: merchantTransactionId,
+      };
+    } else {
+      nextPaymentData.push({
+        id: paymentData.length + 1,
+        ...financePayment,
+      });
+    }
+    const paidAmount = toMoney(
+      Math.min(
+        invoiceAmount,
+        nextPaymentData.reduce(
+          (total, payment) =>
+            String(payment?.status || "success").toLowerCase() === "failed"
+              ? total
+              : total + toInvoiceNumber(payment?.paymentamount),
+          0
+        )
+      )
+    );
+    const balanceAmount = toMoney(Math.max(invoiceAmount - paidAmount, 0));
+    const paymentStatus =
+      balanceAmount === 0
+        ? "paid"
+        : paidAmount > 0
+          ? "partially_paid"
+          : "pending";
+    const lastPaymentDate = nextPaymentData.reduce(
+      (latest, payment) =>
+        Math.max(latest, toInvoiceNumber(payment?.paymentdate)),
+      0
+    );
+    await client.query(
+      `
+      UPDATE revoinvoice
+      SET paymentdata = $1::jsonb,
+          paidamount = $2,
+          balanceamount = $3,
+          paymentstatus = $4,
+          lastpaymentdate = $5,
+          modifieddate = $6
+      WHERE id = $7
+      `,
+      [
+        JSON.stringify(nextPaymentData),
+        paidAmount,
+        balanceAmount,
+        paymentStatus,
+        lastPaymentDate || epoch,
+        epoch,
+        invoiceId,
+      ]
+    );
+
+    await client.query(
+      `
+      INSERT INTO finance_audit_events (
+        organizationid,
+        entitytype,
+        entityid,
+        action,
+        actor,
+        eventdata,
+        createddate
+      )
+      VALUES (
+        $1, 'bank_transaction', $2, 'ecommerce_invoice_allocated',
+        $3, $4::jsonb, $5
+      )
+      `,
+      [
+        ORGANIZATION_ID,
+        bankTransaction.id,
+        SYSTEM_ACTOR,
+        JSON.stringify({
+          invoiceid: invoiceId,
+          invoicenumber: invoice.invoicenumber,
+          allocationid: Number(allocation.id),
+          allocationamount: allocationAmount,
+          remainingunappliedamount: remainingAmount,
+          journalentryid: Number(journalEntry.id),
+        }),
+        epoch,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return {
+      status: "linked",
+      invoiceId,
+      bankTransactionId: Number(bankTransaction.id),
+      allocationId: Number(allocation.id),
+    };
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    return {
+      status: "failed",
+      invoiceId,
+      reason: String(error?.code || error?.message || "INVOICE_LINK_FAILED"),
+    };
+  } finally {
+    client.release();
+  }
+};
+
+const linkExistingInvoicesForPayment = async (
+  merchantTransactionId: string
+) => {
+  const invoiceResult = await query(
+    `
+    SELECT DISTINCT r.id
+    FROM revoinvoice r
+    WHERE LOWER(COALESCE(r.invoicefor, '')) = 'product'
+      AND EXISTS (
+        SELECT 1
+        FROM (
+          SELECT o.merchanttransactionid, o.ordername, o.invoicefor
+          FROM orders o
+          WHERE o.orderid = r.orderid
+          UNION ALL
+          SELECT ol.merchanttransactionid, ol.ordername, ol.invoicefor
+          FROM orderline ol
+          WHERE ol.uniqueorderid = r.orderid
+        ) source_order
+        WHERE source_order.merchanttransactionid = $1
+          AND LOWER(COALESCE(source_order.ordername, '')) = 'online'
+          AND LOWER(COALESCE(source_order.invoicefor, '')) = 'product'
+      )
+    ORDER BY r.id
+    `,
+    [merchantTransactionId]
+  );
+
+  const results: EcommerceInvoiceLinkResult[] = [];
+  for (const row of invoiceResult.rows) {
+    results.push(await linkInvoiceToPostedReceipt(Number(row.id)));
+  }
+  return results;
 };
 
 const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
@@ -613,7 +1191,45 @@ export module ecommercePaymentFinanceService {
       );
     }
 
-    return processEvent(Number(event.id));
+    const financeResult = await processEvent(Number(event.id));
+    if (financeResult.status === "posted") {
+      await linkExistingInvoicesForPayment(merchantTransactionId);
+    }
+    return financeResult;
+  };
+
+  export const linkInvoice = async (invoiceId: number) => {
+    if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+      return {
+        status: "ignored",
+        invoiceId,
+        reason: "INVALID_INVOICE_ID",
+      } as EcommerceInvoiceLinkResult;
+    }
+    return linkInvoiceToPostedReceipt(invoiceId);
+  };
+
+  export const safelyLinkInvoice = async (invoiceId: number) => {
+    try {
+      const result = await linkInvoice(invoiceId);
+      if (result.status === "failed") {
+        console.warn(
+          "[EcommerceFinance] Invoice allocation was not completed.",
+          result
+        );
+      }
+      return result;
+    } catch (error: any) {
+      console.error(
+        "[EcommerceFinance] Unable to link invoice to posted receipt:",
+        error?.message || error
+      );
+      return {
+        status: "failed",
+        invoiceId,
+        reason: error?.code || "ECOMMERCE_INVOICE_LINK_FAILED",
+      } as EcommerceInvoiceLinkResult;
+    }
   };
 
   export const safelyRecordSuccessfulPayment = async (transactionRow: any) => {
@@ -639,10 +1255,43 @@ export module ecommercePaymentFinanceService {
     const normalizedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const result = await query(
       `
-      SELECT id
-      FROM ecommerce_payment_finance_events
-      WHERE organizationid = $1
-        AND status IN ('pending', 'failed')
+      SELECT id, merchanttransactionid
+      FROM ecommerce_payment_finance_events event
+      WHERE event.organizationid = $1
+        AND (
+          event.status IN ('pending', 'failed')
+          OR (
+            event.status = 'posted'
+            AND EXISTS (
+              SELECT 1
+              FROM bank_transactions transaction
+              JOIN party_unapplied_amounts unapplied
+                ON unapplied.banktransactionid = transaction.id
+               AND unapplied.status = 'open'
+               AND unapplied.remainingamount > 0
+              WHERE transaction.id = event.banktransactionid
+                AND transaction.postingstatus = 'posted'
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM revoinvoice invoice
+              WHERE LOWER(COALESCE(invoice.invoicefor, '')) = 'product'
+                AND EXISTS (
+                  SELECT 1
+                  FROM (
+                    SELECT orders.merchanttransactionid
+                    FROM orders
+                    WHERE orders.orderid = invoice.orderid
+                    UNION ALL
+                    SELECT orderline.merchanttransactionid
+                    FROM orderline
+                    WHERE orderline.uniqueorderid = invoice.orderid
+                  ) invoice_order
+                  WHERE invoice_order.merchanttransactionid = event.merchanttransactionid
+                )
+            )
+          )
+        )
       ORDER BY paymentdate ASC, id ASC
       LIMIT $2
       `,
@@ -651,7 +1300,11 @@ export module ecommercePaymentFinanceService {
 
     const processed: FinanceEventResult[] = [];
     for (const row of result.rows) {
-      processed.push(await processEvent(Number(row.id)));
+      const financeResult = await processEvent(Number(row.id));
+      processed.push(financeResult);
+      if (financeResult.status === "posted" && row.merchanttransactionid) {
+        await linkExistingInvoicesForPayment(String(row.merchanttransactionid));
+      }
     }
     return processed;
   };

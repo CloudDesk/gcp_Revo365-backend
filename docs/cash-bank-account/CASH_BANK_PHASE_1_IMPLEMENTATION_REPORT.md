@@ -5,8 +5,10 @@
 **Status:** Bank/Cash foundation, e-commerce payment ingestion, and Retail
 In-store receipt allocation implemented locally
 **Scope:** Accounting foundation, E-commerce Order receipts, Retail In-store
-Sales receipts, and Manual Bank/Cash entries  
-**Deferred:** Rental and all Repair/Service Request payment flows  
+Sales receipts, Manual Rental invoice receipts, Supplier bill payments, and
+Manual Bank/Cash entries
+**Deferred:** Automatic Rental payment collection and all Repair/Service
+Request payment flows
 **Backend branch inspected:** `zohobooks`  
 **Frontend repository inspected:** `GCP-Latest-Revo-E-commerce` on `SIT`
 
@@ -87,6 +89,7 @@ Phase 1 will establish a reliable accounting base and support these flows:
 10. Update account balance and invoice/bill payment state only after successful
     posting.
 11. Produce balanced journal lines required by future accounting reports.
+12. Record manual receipts against outstanding Rental invoices.
 
 Phase 1 is a foundation. It will not deliver the complete accounting product.
 
@@ -102,17 +105,25 @@ Implemented:
 - Idempotent system Debit posting to a configured Bank/Cash account
 - Credit posting to Customer Advances with an open unapplied amount
 - Durable pending events when the e-commerce default Bank account is unavailable
+- Immediate or deferred E-commerce sales-invoice allocation without creating a
+  second Bank Debit
+- Customer Advance reclassification to Accounts Receivable when an E-commerce
+  invoice becomes available
 - Retail customer lookup restricted to customers with outstanding Store
   Purchase invoices
 - Manual allocation of one receipt across one or more Retail In-store invoices
 - Bank/Cash Debit, Accounts Receivable journal credit, running-balance update,
   invoice payment-status update, and audit trail in one database transaction
 - Idempotent retail receipt request references
+- User-entered TDS Receivable against Retail In-store invoice allocations
+- Canonical `retail_receipt` source type for new In-store receipts, with legacy
+  `retail_instore_receipt` retry compatibility
 
 Next:
 
-- Existing/deferred sales-invoice allocation and invoice payment-status update
-- TDS adjustment posting
+- Manual Rental invoice receipt and allocation
+- Manual Supplier payment, bill allocation, and TDS Payable posting
+- Advance and On Account completion for manual Customer/Supplier flows
 
 ---
 
@@ -138,6 +149,8 @@ Next:
 - Deferred invoice linking when payment precedes invoice creation
 - Retail In-store paid sale receipt
 - Retail In-store credit sale behavior
+- Manual Rental invoice receipt against an existing outstanding Rental invoice
+- Manual Supplier payment against an existing outstanding Supplier bill
 - Manual Bank/Cash entry
 - System journal creation
 - Audit and idempotency controls
@@ -148,7 +161,6 @@ Next:
 The core accounting model should remain extensible, but Phase 1 will not
 implement source-specific behavior for:
 
-- Rental
 - Repair/Service Request
 - Retail In-store Service collection
 - Refund
@@ -156,7 +168,8 @@ implement source-specific behavior for:
 
 ### 4.3 Deferred from Phase 1
 
-- Rental payment automation
+- Automatic Rental payment collection or event-driven Rental payment posting
+- Rental deposit, refund, penalty, and other Rental lifecycle automation
 - E-commerce Repair/Service Request integration
 - Retail In-store Service invoice collection
 - Complete Credit Card account workflow
@@ -193,6 +206,39 @@ Therefore, during Phase 1:
 If a customer later pays a service invoice at the retail store, that will be
 implemented as a future Retail In-store Service receipt flow. It is not part of
 Phase 1.
+
+### 4.5 Approved shared-table and classification decision
+
+Retail, E-commerce, Rental, future Service receipts, and Supplier payments must
+not create separate Finance transaction tables. They share:
+
+- `bank_transactions` for the Bank/Cash transaction header
+- `bank_transaction_allocations` for settled documents
+- `journal_entries` and `journal_lines` for accounting postings
+- `finance_audit_events` for audit history
+
+The source module and the accounting document are separate classifications:
+
+- `source_type` identifies where or why the transaction originated.
+- `document_type` and `document_id` identify the document being settled.
+- `allocation_method` identifies Against Document, Advance, On Account, or
+  Direct Ledger behavior.
+
+Approved source-type constants for the current implementation are:
+
+- `ecommerce_order`
+- `retail_receipt`
+- `rental_receipt`
+- `supplier_bill_payment`
+- `manual`
+
+`service_receipt` is reserved for a future approved Service invoice collection
+flow; reserving the name does not make that flow part of Phase 1.
+
+No additional source-type or document-type master tables are required for the
+current flows. A new table is justified only when configurable runtime behavior
+or additional referential integrity cannot be represented safely by the
+existing model.
 
 ---
 
@@ -327,9 +373,29 @@ The applicable TDS ledger and TDS amount must both be captured.
 | E-commerce Order | Successful payment capture | Payment/settlement date | Existing Customer | Received amount | 0 | Auto-link invoice or hold for later link |
 | Retail In-store paid sale | Successful receipt posting | Payment date | Existing Customer | Received amount | 0 | Selected/created sales invoice |
 | Retail In-store credit sale | Invoice generated, no payment | No Bank/Cash entry | Customer | 0 | 0 | Invoice stays outstanding |
+| Manual Rental invoice receipt | Accounts user posts entry | Entered date | Existing Customer | Entered amount | 0 | Selected outstanding Rental invoice |
 | Manual customer receipt | Accounts user posts entry | Entered date | Existing Customer | Entered amount | 0 | Invoice, Advance, or On Account |
 | Manual vendor payment | Accounts user posts entry | Entered date | Existing Supplier | 0 | Entered amount | Bill, Advance, or On Account |
 | Manual direct ledger | Accounts user posts entry | Entered date | Existing ledger | Depends on event | Depends on event | Direct Ledger |
+
+### 6.1 Authoritative source and settlement mapping
+
+| Business flow | Source record | `source_type` | Allocation `document_type` | Allocation `document_id` |
+| --- | --- | --- | --- | --- |
+| E-commerce Product receipt | Existing Order/payment record | `ecommerce_order` | `sales_invoice` | `revoinvoice.id` when available |
+| Retail In-store Product receipt | Existing Store Purchase order/invoice | `retail_receipt` | `sales_invoice` | `revoinvoice.id` |
+| Manual Rental invoice receipt | Existing Rental order/agreement | `rental_receipt` | `sales_invoice` | Rental `revoinvoice.id` |
+| Manual Supplier bill payment | Existing Purchase Order/Supplier bill | `supplier_bill_payment` | `purchase_bill` | `poinvoice.id` |
+| Manual ledger entry | Existing Finance ledger | `manual` | No document allocation | Not applicable |
+
+Rental invoices remain Sales Invoices for accounting allocation. Their module
+classification comes from `revoinvoice.invoicefor = 'rental'` and the Bank
+transaction `source_type`; a separate Rental allocation table is not required.
+
+`source_id` retains the originating Order, Rental agreement, Purchase Order, or
+other business reference when available. The authoritative settled document is
+always identified independently by the allocation `document_type` and
+`document_id`.
 
 ---
 
@@ -459,13 +525,18 @@ Current backend hooks include:
 3. Resolve the configured destination Bank/Cash account.
 4. Check whether the payment has already produced an accounting transaction.
 5. Create one Posted Bank Debit transaction.
-6. Credit Accounts Receivable when an invoice exists.
-7. Otherwise credit Customer Advance/Unapplied Receipt.
-8. Create balanced journal lines.
-9. Update the Bank/Cash available balance.
-10. If an invoice exists, create the allocation and update invoice status.
-11. If an invoice does not exist, retain a pending-link record.
-12. Commit all accounting changes atomically.
+6. Credit Customer Advance/Unapplied Receipt so payment capture never depends
+   on invoice-generation timing.
+7. Create balanced journal lines and update the Bank/Cash available balance.
+8. If an invoice already exists, immediately run the invoice-linking step.
+9. Otherwise retain the open `party_unapplied_amounts` record as the durable
+   pending link.
+10. During invoice linking, create a `sales_invoice` allocation, reduce the
+    unapplied amount, and reclassify Customer Advance to Accounts Receivable.
+11. Update invoice payment history and status without creating another Bank
+    transaction.
+12. The Bank posting and each later allocation/reclassification must each be
+    atomic and idempotent.
 
 ### Resulting Bank transaction
 
@@ -491,7 +562,7 @@ When an immediate or admin-triggered invoice is generated:
 4. Move the accounting effect from Customer Advance to Accounts Receivable if
    the initial posting used Customer Advance.
 5. Update `paidamount`, `balanceamount`, and `paymentstatus`.
-6. Mark the pending link as completed.
+6. Mark the unapplied amount Fully Applied when no remainder exists.
 7. Do not create another Bank Debit.
 
 ### Idempotency
@@ -748,6 +819,63 @@ specific document.
 - Retain the original payment date and reference.
 - Maintain an applied and remaining amount.
 
+## 7.9 Manual Rental Invoice Receipt
+
+### Source and eligibility
+
+- Read outstanding Rental invoices from `revoinvoice` where
+  `invoicefor = 'rental'`.
+- The invoice must belong to the selected Customer.
+- Paid, cancelled, deleted, or zero-balance invoices are not selectable.
+- Rental invoice generation alone does not create a Bank/Cash transaction.
+
+### Posting
+
+- Create a Bank/Cash Debit with `source_type = 'rental_receipt'`.
+- Allocate the receipt using `document_type = 'sales_invoice'` and
+  `document_id = revoinvoice.id`.
+- When applicable, add user-entered TDS Receivable to the document settlement;
+  it does not increase the Bank/Cash amount.
+- Update `revoinvoice.paidamount`, `balanceamount`, `paymentstatus`,
+  `lastpaymentdate`, and `paymentdata` atomically with the accounting posting.
+
+Journal:
+
+| Account | Debit | Credit |
+| --- | ---: | ---: |
+| Selected Bank/Cash account | Actual receipt | 0 |
+| TDS Receivable, when applicable | TDS amount | 0 |
+| Accounts Receivable/Customer | 0 | Receipt + TDS |
+
+## 7.10 Manual Supplier Bill Payment
+
+### Source and eligibility
+
+- Read Supplier bills from `poinvoice` and resolve the Supplier through the
+  related Purchase Order.
+- The bill must belong to the selected Supplier.
+- Cancelled, deleted, completed, or zero-balance bills are not selectable.
+- The approved mapping is `document_type = 'purchase_bill'` and
+  `document_id = poinvoice.id`.
+
+### Posting
+
+- Create a Bank/Cash Credit with
+  `source_type = 'supplier_bill_payment'`.
+- The Bank allocation is the actual amount paid from the selected account.
+- When applicable, user-entered TDS Payable increases document settlement but
+  does not increase the Bank/Cash payment.
+- Update `poinvoice.balanceamount`, `paymentdata`, and the approved
+  `invoicestatus` value atomically with the accounting posting.
+
+Journal:
+
+| Account | Debit | Credit |
+| --- | ---: | ---: |
+| Accounts Payable/Supplier | Bank payment + TDS | 0 |
+| Selected Bank/Cash account | 0 | Actual Bank payment |
+| TDS Payable, when applicable | 0 | TDS amount |
+
 ---
 
 ## 8. Proposed User Interface
@@ -916,7 +1044,7 @@ interface is built.
 | `credit_amount` | Credit value |
 | `balance_after` | Running balance after posting |
 | `allocation_method` | Invoice/Bill, Advance, On Account, Direct Ledger |
-| `source_type` | E-commerce Order, Retail, Manual, etc. |
+| `source_type` | Controlled code such as E-commerce Order, Retail Receipt, Rental Receipt, Supplier Bill Payment, or Manual |
 | `source_id` | Source order/ticket/retail reference |
 | `source_payment_id` | Provider payment reference |
 | `merchant_transaction_id` | Existing commerce reference |
@@ -941,6 +1069,7 @@ Constraints:
 | `bank_transaction_id` | Parent transaction |
 | `document_type` | Sales Invoice/Purchase Bill |
 | `document_id` | Existing document ID |
+| `document_number` | Display/reference snapshot of the document number |
 | `allocation_amount` | Actual bank amount allocated |
 | `tds_applied` | Yes/No |
 | `tds_account_id` | TDS ledger |
@@ -1423,6 +1552,14 @@ responses or logs.
 - Total settled cannot exceed current outstanding.
 - Against Invoice/Bill requires full allocation of the Bank Entry Amount.
 - Advance, On Account, and Direct Ledger do not require document allocation.
+- The selected document must belong to the selected Customer/Supplier.
+- Rental allocations must reference `revoinvoice` rows classified as Rental.
+- Purchase Bill allocations must reference `poinvoice` rows for the selected
+  Supplier.
+- Outstanding balance must be re-read and locked inside the database
+  transaction before allocation is committed.
+- A client-generated request reference must prevent a retry from creating a
+  duplicate posting.
 
 ### Automatic source
 
@@ -1516,7 +1653,17 @@ Starting balance: ₹10,000.
 - Bill becomes Paid
 - Journal debits equal credits
 
-## 17.8 Validation
+## 17.8 Manual Rental invoice receipt
+
+- Rental invoice outstanding: ₹50,000
+- Bank Debit: ₹40,000
+- TDS Receivable: ₹5,000
+- Total Rental invoice settlement: ₹45,000
+- Remaining Rental invoice balance: ₹5,000
+- Rental invoice becomes Partially Paid
+- No additional Rental-specific Finance transaction table is used
+
+## 17.9 Validation
 
 - Debit and Credit both entered: reject.
 - Debit and Credit both zero: reject.
@@ -1788,8 +1935,9 @@ The confirmed delivery order is:
 | 4 | Retail In-store receipts and manual invoice allocation | Phase 1 |
 | 5 | TDS Receivable adjustment and applicable-section selection | Phase 1 |
 | 6 | Manual Vendor payment, bill allocation, and TDS Payable | Phase 1 |
-| 7 | Rental transactions | Future phase |
-| 8 | Retail In-store Service/SR invoice receipts | Future phase |
+| 7 | Manual Rental invoice receipts and allocation | Phase 1 |
+| 8 | Automatic Rental collection and other Rental lifecycle transactions | Future phase |
+| 9 | Retail In-store Service/SR invoice receipts | Future phase |
 
 E-commerce Repair/SR is not a payment source in this order. The future
 Service/SR item means a customer actually pays a service invoice at the retail
@@ -1839,9 +1987,19 @@ store.
 - Advance/On Account
 - Direct Ledger
 
+### Slice 5: Manual Rental invoice receipts
+
+- Customer lookup
+- Outstanding Rental invoice lookup from `revoinvoice`
+- Debit receipt and partial/full invoice allocation
+- TDS Receivable when applicable
+- Atomic Rental invoice balance and payment-status update
+- Journal, audit, idempotency, and concurrency validation
+
 ### Later slices
 
-- Rental
+- Automatic Rental collection
+- Rental deposit, refund, penalty, and other Rental lifecycle automation
 - Retail In-store Service invoice collection
 - Repair/Service Request payment integration, only if a real payment flow is
   introduced and approved
@@ -1863,7 +2021,8 @@ These decisions should be resolved before or during the relevant slice:
 5. Should online payments use a gateway clearing account before bank
    settlement?
 6. Are backdated postings allowed in Phase 1?
-7. What is the authoritative purchase-bill table and status field?
+7. `poinvoice` is the authoritative Supplier bill table; confirm the exact
+   `invoicestatus` mapping for unpaid, partially paid, and fully paid bills.
 8. Should user-facing full-settlement status display `Paid` or `Fully Paid`?
 9. Can TDS apply to Retail In-store sales, or only selected B2B customers?
 10. Are advances available against both customer invoices and vendor bills?
@@ -1889,6 +2048,7 @@ Phase 1 is complete when:
 - Payments received before invoices are linked later without duplicate Bank
   entries.
 - Retail In-store receipts can be allocated to outstanding invoices.
+- Manual Rental receipts can be allocated to outstanding Rental invoices.
 - Manual customer receipts and vendor payments follow the approved allocation
   rules.
 - TDS Receivable and TDS Payable settlements work and create balanced journal

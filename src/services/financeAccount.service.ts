@@ -15,6 +15,10 @@ import {
   toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
+import {
+  FINANCE_SOURCE_TYPES,
+  getRetailReceiptSourceTypes,
+} from "../utils/finance/financeSource.utils.js";
 
 const normalizeText = (
   value: unknown,
@@ -1071,8 +1075,14 @@ export module financeAccountService {
       conditions.push(`t.entryside = $${params.length}`);
     }
     if (queryData.sourcetype) {
-      params.push(String(queryData.sourcetype).trim().toLowerCase());
-      conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
+      const sourceType = String(queryData.sourcetype).trim().toLowerCase();
+      if (sourceType === FINANCE_SOURCE_TYPES.retailReceipt) {
+        params.push(getRetailReceiptSourceTypes());
+        conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
+      } else {
+        params.push(sourceType);
+        conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
+      }
     }
     if (queryData.search) {
       params.push(`%${String(queryData.search).trim().toLowerCase()}%`);

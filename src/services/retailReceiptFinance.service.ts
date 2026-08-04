@@ -14,8 +14,14 @@ import {
   getRetailInvoicePaymentState,
   isRetailStoreInvoice,
 } from "../utils/finance/retailReceipt.utils.js";
+import {
+  FINANCE_SOURCE_TYPES,
+  getRetailReceiptSourceTypes,
+  resolveAgainstDocumentSourceId,
+} from "../utils/finance/financeSource.utils.js";
 
-const RETAIL_SOURCE_TYPE = "retail_instore_receipt";
+const RETAIL_SOURCE_TYPE = FINANCE_SOURCE_TYPES.retailReceipt;
+const RETAIL_SOURCE_TYPES = getRetailReceiptSourceTypes();
 
 const normalizeText = (
   value: unknown,
@@ -143,12 +149,12 @@ const getExistingReceipt = async (
     FROM bank_transactions t
     LEFT JOIN journal_entries j ON j.id = t.journalentryid
     WHERE t.organizationid = $1
-      AND t.sourcetype = $2
+      AND t.sourcetype = ANY($2::text[])
       AND t.sourcepaymentid = $3
       AND t.postingstatus <> 'reversed'
     LIMIT 1
     `,
-    [organizationId, RETAIL_SOURCE_TYPE, requestReference]
+    [organizationId, RETAIL_SOURCE_TYPES, requestReference]
   );
   const row = result.rows[0];
   return row
@@ -525,6 +531,10 @@ export module retailReceiptFinanceService {
           ? `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
           : `Retail receipt allocated across ${preparedAllocations.length} invoices`;
       const receiptRemarks = remarks || defaultRemarks;
+      const sourceId = resolveAgainstDocumentSourceId(
+        preparedAllocations.map((allocation) => allocation.invoice.orderid),
+        requestReference
+      );
       const bankTransactionResult = await client.query(
         `
         INSERT INTO bank_transactions (
@@ -569,7 +579,7 @@ export module retailReceiptFinanceService {
           amount,
           balanceAfter,
           RETAIL_SOURCE_TYPE,
-          preparedAllocations[0].invoice.invoicenumber,
+          sourceId,
           requestReference,
           receiptRemarks,
           actor,

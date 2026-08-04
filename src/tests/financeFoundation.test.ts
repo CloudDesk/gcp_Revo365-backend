@@ -29,6 +29,11 @@ import {
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
 import { createRetailReceiptSchema } from "../schemas/finance.schema.js";
+import {
+  FINANCE_SOURCE_TYPES,
+  getRetailReceiptSourceTypes,
+  resolveAgainstDocumentSourceId,
+} from "../utils/finance/financeSource.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -84,6 +89,37 @@ describe("Cash and Bank foundation validation", () => {
       "2026-07-31"
     );
     assert.equal(toFinanceDateOnly("2026-07-31"), "2026-07-31");
+  });
+});
+
+describe("Finance source classification", () => {
+  test("New E-commerce and Retail entries use the approved source types", () => {
+    assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
+    assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
+  });
+
+  test("Legacy Retail source type remains readable for idempotent retries", () => {
+    assert.deepEqual(getRetailReceiptSourceTypes(), [
+      "retail_receipt",
+      "retail_instore_receipt",
+    ]);
+  });
+
+  test("A single document uses its order reference as transaction source ID", () => {
+    assert.equal(
+      resolveAgainstDocumentSourceId(["ORDER-1001"], "request-1001"),
+      "ORDER-1001"
+    );
+  });
+
+  test("A multi-document receipt uses the idempotent request reference", () => {
+    assert.equal(
+      resolveAgainstDocumentSourceId(
+        ["ORDER-1001", "ORDER-1002"],
+        "request-1001"
+      ),
+      "request-1001"
+    );
   });
 });
 
