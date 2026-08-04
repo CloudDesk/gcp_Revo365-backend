@@ -13,6 +13,8 @@ import {
   applyRetailInvoiceAllocation,
   getRetailInvoicePaymentState,
   isRetailStoreInvoice,
+  isServiceRequestInvoice,
+  resolveCustomerReceiptSourceType,
 } from "../utils/finance/retailReceipt.utils.js";
 import {
   FINANCE_SOURCE_TYPES,
@@ -20,8 +22,10 @@ import {
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
 
-const RETAIL_SOURCE_TYPE = FINANCE_SOURCE_TYPES.retailReceipt;
-const RETAIL_SOURCE_TYPES = getRetailReceiptSourceTypes();
+const RECEIPT_SOURCE_TYPES = [
+  ...getRetailReceiptSourceTypes(),
+  FINANCE_SOURCE_TYPES.serviceRequestReceipt,
+];
 
 const normalizeText = (
   value: unknown,
@@ -63,7 +67,7 @@ const epochToIndiaDate = (value: unknown): string | null => {
     .slice(0, 10);
 };
 
-const selectRetailInvoices = `
+const selectReceivableInvoices = `
   SELECT
     r.*,
     linked_order.ordername AS linkedordername
@@ -76,11 +80,19 @@ const selectRetailInvoices = `
     LIMIT 1
   ) linked_order ON TRUE
   WHERE r.customerid = $1
-    AND LOWER(COALESCE(r.invoicefor, '')) = 'product'
     AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
     AND (
-      LOWER(COALESCE(linked_order.ordername, '')) = 'storepurchase'
-      OR LOWER(COALESCE(r.invoicedata->>'ordername', '')) = 'storepurchase'
+      (
+        LOWER(COALESCE(r.invoicefor, '')) = 'product'
+        AND (
+          LOWER(COALESCE(linked_order.ordername, '')) = 'storepurchase'
+          OR LOWER(COALESCE(r.invoicedata->>'ordername', '')) = 'storepurchase'
+        )
+      )
+      OR (
+        LOWER(COALESCE(r.invoicefor, '')) = 'service'
+        AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
+      )
     )
 `;
 
@@ -90,6 +102,8 @@ const serializeOutstandingInvoice = (row: any) => {
     id: Number(row.id),
     invoicenumber: row.invoicenumber,
     orderid: row.orderid,
+    invoicefor: row.invoicefor,
+    ticketnumber: row.ticketnumber,
     customerid: Number(row.customerid),
     customername: row.customername,
     invoicedate: epochToIndiaDate(row.invoicedate || row.createddate),
@@ -154,7 +168,7 @@ const getExistingReceipt = async (
       AND t.postingstatus <> 'reversed'
     LIMIT 1
     `,
-    [organizationId, RETAIL_SOURCE_TYPES, requestReference]
+    [organizationId, RECEIPT_SOURCE_TYPES, requestReference]
   );
   const row = result.rows[0];
   return row
@@ -169,7 +183,7 @@ const getExistingReceipt = async (
 export module retailReceiptFinanceService {
   export const listCustomers = async (request: any) => {
     const search = String(request.query?.search || "").trim().toLowerCase();
-    const invoiceResult = await query(
+    const retailInvoiceResult = await query(
       `
       SELECT
         r.*,
@@ -197,10 +211,31 @@ export module retailReceiptFinanceService {
       LIMIT 2000
       `
     );
+    const serviceInvoiceResult = await query(
+      `
+      SELECT
+        r.*,
+        NULL AS linkedordername,
+        u.firstname,
+        u.lastname,
+        u.useremail,
+        u.usermobilenumber
+      FROM revoinvoice r
+      JOIN users u ON u.id = r.customerid
+      WHERE LOWER(COALESCE(r.invoicefor, '')) = 'service'
+        AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
+        AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
+      ORDER BY r.id DESC
+      LIMIT 2000
+      `
+    );
 
     const customers = new Map<number, any>();
-    for (const row of invoiceResult.rows) {
-      if (!isRetailStoreInvoice(row)) continue;
+    for (const row of [
+      ...retailInvoiceResult.rows,
+      ...serviceInvoiceResult.rows,
+    ]) {
+      if (!isRetailStoreInvoice(row) && !isServiceRequestInvoice(row)) continue;
       const state = getRetailInvoicePaymentState(row);
       if (state.outstandingAmount <= 0) continue;
       const customerId = Number(row.customerid);
@@ -237,13 +272,16 @@ export module retailReceiptFinanceService {
       throw new FinanceValidationError("A valid customerId is required.");
     }
     const result = await query(
-      `${selectRetailInvoices}
+      `${selectReceivableInvoices}
        ORDER BY COALESCE(r.invoicedate, r.createddate) ASC, r.id ASC`,
       [customerId]
     );
 
     return result.rows
-      .filter(isRetailStoreInvoice)
+      .filter(
+        (invoice) =>
+          isRetailStoreInvoice(invoice) || isServiceRequestInvoice(invoice)
+      )
       .map(serializeOutstandingInvoice)
       .filter((invoice) => invoice.outstandingamount > 0);
   };
@@ -438,10 +476,11 @@ export module retailReceiptFinanceService {
         if (
           !invoice ||
           Number(invoice.customerid) !== customerId ||
-          !isRetailStoreInvoice(invoice)
+          (!isRetailStoreInvoice(invoice) &&
+            !isServiceRequestInvoice(invoice))
         ) {
           throw new FinanceValidationError(
-            "All selected invoices must be outstanding retail invoices for the selected customer."
+            "All selected invoices must be eligible outstanding invoices for the selected customer."
           );
         }
         return {
@@ -526,10 +565,24 @@ export module retailReceiptFinanceService {
         amount
       );
       const epoch = nowEpoch();
-      const defaultRemarks =
-        preparedAllocations.length === 1
-          ? `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-          : `Retail receipt allocated across ${preparedAllocations.length} invoices`;
+      const containsServiceInvoice = preparedAllocations.some((allocation) =>
+        isServiceRequestInvoice(allocation.invoice)
+      );
+      const containsRetailInvoice = preparedAllocations.some((allocation) =>
+        isRetailStoreInvoice(allocation.invoice)
+      );
+      const receiptSourceType = resolveCustomerReceiptSourceType(
+        preparedAllocations.map((allocation) => allocation.invoice)
+      );
+      const defaultRemarks = preparedAllocations.length === 1
+        ? containsServiceInvoice
+          ? `Service receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
+          : `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
+        : containsServiceInvoice && containsRetailInvoice
+          ? `Customer receipt allocated across ${preparedAllocations.length} invoices`
+          : containsServiceInvoice
+            ? `Service receipt allocated across ${preparedAllocations.length} invoices`
+            : `Retail receipt allocated across ${preparedAllocations.length} invoices`;
       const receiptRemarks = remarks || defaultRemarks;
       const sourceId = resolveAgainstDocumentSourceId(
         preparedAllocations.map((allocation) => allocation.invoice.orderid),
@@ -578,7 +631,7 @@ export module retailReceiptFinanceService {
           accountsReceivableId,
           amount,
           balanceAfter,
-          RETAIL_SOURCE_TYPE,
+          receiptSourceType,
           sourceId,
           requestReference,
           receiptRemarks,
@@ -730,6 +783,7 @@ export module retailReceiptFinanceService {
         const existingPayments = Array.isArray(allocation.invoice.paymentdata)
           ? allocation.invoice.paymentdata
           : [];
+        const servicePayment = isServiceRequestInvoice(allocation.invoice);
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: allocation.allocationAmount,
@@ -742,7 +796,9 @@ export module retailReceiptFinanceService {
           providerpaymentid: null,
           providerorderid: null,
           transactionid: null,
-          source: "finance_retail_receipt",
+          source: servicePayment
+            ? "finance_service_receipt"
+            : "finance_retail_receipt",
           status: "success",
           comments: remarks,
           banktransactionid: Number(bankTransaction.id),

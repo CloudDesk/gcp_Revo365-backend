@@ -26,6 +26,7 @@ import {
   getRetailInvoicePaymentState,
   isRetailStoreInvoice,
   isRetailStoreProductOrder,
+  isServiceRequestInvoice,
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
 import { createRetailReceiptSchema } from "../schemas/finance.schema.js";
@@ -286,6 +287,25 @@ describe("Retail in-store receipt allocation", () => {
       }),
       false
     );
+  });
+
+  test("Service Request invoice eligibility is isolated from retail eligibility", () => {
+    const serviceInvoice = {
+      id: 501,
+      invoicenumber: "TEQIT-Invoice-00501",
+      invoicefor: "service",
+      ticketnumber: "SR-000501",
+      totalorderamount: 10000,
+    };
+
+    assert.equal(isServiceRequestInvoice(serviceInvoice), true);
+    assert.equal(isRetailStoreInvoice(serviceInvoice), false);
+    assert.equal(
+      isServiceRequestInvoice({ ...serviceInvoice, ticketnumber: "" }),
+      false
+    );
+    assert.equal(isServiceRequestInvoice(manualStoreInvoice), false);
+    assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
   });
 
   test("Partial allocation calculates the remaining balance and status", () => {

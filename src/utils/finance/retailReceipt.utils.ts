@@ -154,3 +154,14 @@ export const isRetailStoreInvoice = (invoice: any): boolean => {
     invoicefor: invoice?.invoicefor,
   });
 };
+
+export const isServiceRequestInvoice = (invoice: any): boolean => {
+  const invoiceFor = String(invoice?.invoicefor || "").trim().toLowerCase();
+  const ticketNumber = String(invoice?.ticketnumber || "").trim();
+  return invoiceFor === "service" && Boolean(ticketNumber);
+};
+
+export const resolveCustomerReceiptSourceType = (invoices: any[]): string =>
+  invoices.some(isServiceRequestInvoice)
+    ? "service_request_receipt"
+    : "retail_instore_receipt";
