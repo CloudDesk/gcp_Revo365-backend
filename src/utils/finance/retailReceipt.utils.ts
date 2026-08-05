@@ -79,11 +79,59 @@ export const getSuccessfulRetailPaymentsTotal = (
   );
 };
 
+const hasLegacyRentalOrderPayment = (invoice: any): boolean => {
+  if (String(invoice?.invoicefor || "").trim().toLowerCase() !== "rental") {
+    return false;
+  }
+  const payments = Array.isArray(invoice?.paymentdata)
+    ? invoice.paymentdata
+    : typeof invoice?.paymentdata === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(invoice.paymentdata);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+  return payments.some(
+    (payment: any) =>
+      String(payment?.source || "").trim().toLowerCase() === "order_payment"
+  );
+};
+
+const getSuccessfulRentalReceiptPaymentsTotal = (paymentData: unknown): number => {
+  const payments = Array.isArray(paymentData)
+    ? paymentData
+    : typeof paymentData === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(paymentData);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+
+  return getSuccessfulRetailPaymentsTotal(
+    payments.filter(
+      (payment: any) =>
+        String(payment?.source || "").trim().toLowerCase() !== "order_payment"
+    )
+  );
+};
+
 export const getRetailInvoicePaymentState = (invoice: any) => {
   const invoiceAmount = resolveRetailInvoiceAmount(invoice);
+  const legacyRentalOrderPayment = hasLegacyRentalOrderPayment(invoice);
+  const successfulPayments = legacyRentalOrderPayment
+    ? getSuccessfulRentalReceiptPaymentsTotal(invoice?.paymentdata)
+    : getSuccessfulRetailPaymentsTotal(invoice?.paymentdata);
   const recordedPaid = Math.max(
-    parseRetailMoney(invoice?.paidamount),
-    getSuccessfulRetailPaymentsTotal(invoice?.paymentdata)
+    legacyRentalOrderPayment ? 0 : parseRetailMoney(invoice?.paidamount),
+    successfulPayments
   );
   const paidAmount = Math.min(recordedPaid, invoiceAmount);
   const outstandingAmount = toMoney(
@@ -161,7 +209,12 @@ export const isServiceRequestInvoice = (invoice: any): boolean => {
   return invoiceFor === "service" && Boolean(ticketNumber);
 };
 
+export const isRentalInvoice = (invoice: any): boolean =>
+  String(invoice?.invoicefor || "").trim().toLowerCase() === "rental";
+
 export const resolveCustomerReceiptSourceType = (invoices: any[]): string =>
-  invoices.some(isServiceRequestInvoice)
-    ? "service_request_receipt"
-    : "retail_receipt";
+  invoices.some(isRentalInvoice)
+    ? "rental_receipt"
+    : invoices.some(isServiceRequestInvoice)
+      ? "service_request_receipt"
+      : "retail_receipt";

@@ -12,6 +12,7 @@ import {
 import {
   applyRetailInvoiceAllocation,
   getRetailInvoicePaymentState,
+  isRentalInvoice,
   isRetailStoreInvoice,
   isServiceRequestInvoice,
   resolveCustomerReceiptSourceType,
@@ -25,7 +26,27 @@ import {
 const RECEIPT_SOURCE_TYPES = [
   ...getRetailReceiptSourceTypes(),
   FINANCE_SOURCE_TYPES.serviceRequestReceipt,
+  FINANCE_SOURCE_TYPES.rentalReceipt,
 ];
+
+type CustomerReceiptMode = "retail" | "rental";
+
+const resolveCustomerReceiptMode = (value: unknown): CustomerReceiptMode => {
+  const normalized = String(value ?? "retail").trim().toLowerCase();
+  if (!normalized || normalized === "retail") return "retail";
+  if (normalized === "rental") return "rental";
+  throw new FinanceValidationError(
+    "Receipt mode must be either retail or rental."
+  );
+};
+
+const isEligibleCustomerReceiptInvoice = (
+  invoice: any,
+  mode: CustomerReceiptMode
+) =>
+  mode === "rental"
+    ? isRentalInvoice(invoice)
+    : isRetailStoreInvoice(invoice) || isServiceRequestInvoice(invoice);
 
 const normalizeText = (
   value: unknown,
@@ -67,7 +88,7 @@ const epochToIndiaDate = (value: unknown): string | null => {
     .slice(0, 10);
 };
 
-const selectReceivableInvoices = `
+const selectReceivableInvoices = (mode: CustomerReceiptMode) => `
   SELECT
     r.*,
     linked_order.ordername AS linkedordername
@@ -80,8 +101,17 @@ const selectReceivableInvoices = `
     LIMIT 1
   ) linked_order ON TRUE
   WHERE r.customerid = $1
-    AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
-    AND (
+    AND ${mode === "rental" ? `(
+      LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
+      OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(COALESCE(r.paymentdata, '[]'::jsonb)) payment
+        WHERE LOWER(COALESCE(payment->>'source', '')) = 'order_payment'
+      )
+    )` : `LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'`}
+    AND ${mode === "rental" ? `(
+      LOWER(COALESCE(r.invoicefor, '')) = 'rental'
+    )` : `(
       (
         LOWER(COALESCE(r.invoicefor, '')) = 'product'
         AND (
@@ -93,7 +123,7 @@ const selectReceivableInvoices = `
         LOWER(COALESCE(r.invoicefor, '')) = 'service'
         AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
       )
-    )
+    )`}
 `;
 
 const serializeOutstandingInvoice = (row: any) => {
@@ -183,59 +213,95 @@ const getExistingReceipt = async (
 export module retailReceiptFinanceService {
   export const listCustomers = async (request: any) => {
     const search = String(request.query?.search || "").trim().toLowerCase();
-    const retailInvoiceResult = await query(
-      `
-      SELECT
-        r.*,
-        linked_order.ordername AS linkedordername,
-        u.firstname,
-        u.lastname,
-        u.useremail,
-        u.usermobilenumber
-      FROM revoinvoice r
-      JOIN users u ON u.id = r.customerid
-      LEFT JOIN LATERAL (
-        SELECT o.ordername
-        FROM orders o
-        WHERE o.orderid = r.orderid
-        ORDER BY o.id
-        LIMIT 1
-      ) linked_order ON TRUE
-      WHERE LOWER(COALESCE(r.invoicefor, '')) = 'product'
-        AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
-        AND (
-          LOWER(COALESCE(linked_order.ordername, '')) = 'storepurchase'
-          OR LOWER(COALESCE(r.invoicedata->>'ordername', '')) = 'storepurchase'
-        )
-      ORDER BY r.id DESC
-      LIMIT 2000
-      `
-    );
-    const serviceInvoiceResult = await query(
-      `
-      SELECT
-        r.*,
-        NULL AS linkedordername,
-        u.firstname,
-        u.lastname,
-        u.useremail,
-        u.usermobilenumber
-      FROM revoinvoice r
-      JOIN users u ON u.id = r.customerid
-      WHERE LOWER(COALESCE(r.invoicefor, '')) = 'service'
-        AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
-        AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
-      ORDER BY r.id DESC
-      LIMIT 2000
-      `
-    );
+    const receiptMode = resolveCustomerReceiptMode(request.query?.mode);
+    let invoiceRows: any[] = [];
+
+    if (receiptMode === "rental") {
+      const rentalInvoiceResult = await query(
+        `
+          SELECT
+            r.*,
+            NULL AS linkedordername,
+            u.firstname,
+            u.lastname,
+            u.useremail,
+            u.usermobilenumber,
+            u.isbusinessuser
+          FROM revoinvoice r
+          JOIN users u ON u.id = r.customerid
+          WHERE LOWER(COALESCE(r.invoicefor, '')) = 'rental'
+            AND (
+              LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(COALESCE(r.paymentdata, '[]'::jsonb)) payment
+                WHERE LOWER(COALESCE(payment->>'source', '')) = 'order_payment'
+              )
+            )
+          ORDER BY r.id DESC
+          LIMIT 2000
+        `
+      );
+      invoiceRows = rentalInvoiceResult.rows;
+    } else {
+      // Preserve the existing retail and service queries, limits, and merge order.
+      const retailInvoiceResult = await query(
+        `
+          SELECT
+            r.*,
+            linked_order.ordername AS linkedordername,
+            u.firstname,
+            u.lastname,
+            u.useremail,
+            u.usermobilenumber,
+            u.isbusinessuser
+          FROM revoinvoice r
+          JOIN users u ON u.id = r.customerid
+          LEFT JOIN LATERAL (
+            SELECT o.ordername
+            FROM orders o
+            WHERE o.orderid = r.orderid
+            ORDER BY o.id
+            LIMIT 1
+          ) linked_order ON TRUE
+          WHERE LOWER(COALESCE(r.invoicefor, '')) = 'product'
+            AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
+            AND (
+              LOWER(COALESCE(linked_order.ordername, '')) = 'storepurchase'
+              OR LOWER(COALESCE(r.invoicedata->>'ordername', '')) = 'storepurchase'
+            )
+          ORDER BY r.id DESC
+          LIMIT 2000
+        `
+      );
+      const serviceInvoiceResult = await query(
+        `
+          SELECT
+            r.*,
+            NULL AS linkedordername,
+            u.firstname,
+            u.lastname,
+            u.useremail,
+            u.usermobilenumber,
+            u.isbusinessuser
+          FROM revoinvoice r
+          JOIN users u ON u.id = r.customerid
+          WHERE LOWER(COALESCE(r.invoicefor, '')) = 'service'
+            AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
+            AND LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
+          ORDER BY r.id DESC
+          LIMIT 2000
+        `
+      );
+      invoiceRows = [
+        ...retailInvoiceResult.rows,
+        ...serviceInvoiceResult.rows,
+      ];
+    }
 
     const customers = new Map<number, any>();
-    for (const row of [
-      ...retailInvoiceResult.rows,
-      ...serviceInvoiceResult.rows,
-    ]) {
-      if (!isRetailStoreInvoice(row) && !isServiceRequestInvoice(row)) continue;
+    for (const row of invoiceRows) {
+      if (!isEligibleCustomerReceiptInvoice(row, receiptMode)) continue;
       const state = getRetailInvoicePaymentState(row);
       if (state.outstandingAmount <= 0) continue;
       const customerId = Number(row.customerid);
@@ -246,6 +312,7 @@ export module retailReceiptFinanceService {
         name: buildCustomerName(row),
         email: row.useremail || null,
         mobilenumber: row.usermobilenumber || null,
+        isbusinessuser: Boolean(row.isbusinessuser),
         outstandinginvoicecount: 0,
         totaloutstanding: 0,
       };
@@ -268,19 +335,19 @@ export module retailReceiptFinanceService {
 
   export const listOutstandingInvoices = async (request: any) => {
     const customerId = Number(request.params?.customerId);
+    const receiptMode = resolveCustomerReceiptMode(request.query?.mode);
     if (!Number.isSafeInteger(customerId) || customerId <= 0) {
       throw new FinanceValidationError("A valid customerId is required.");
     }
     const result = await query(
-      `${selectReceivableInvoices}
+      `${selectReceivableInvoices(receiptMode)}
        ORDER BY COALESCE(r.invoicedate, r.createddate) ASC, r.id ASC`,
       [customerId]
     );
 
     return result.rows
-      .filter(
-        (invoice) =>
-          isRetailStoreInvoice(invoice) || isServiceRequestInvoice(invoice)
+      .filter((invoice) =>
+        isEligibleCustomerReceiptInvoice(invoice, receiptMode)
       )
       .map(serializeOutstandingInvoice)
       .filter((invoice) => invoice.outstandingamount > 0);
@@ -290,6 +357,7 @@ export module retailReceiptFinanceService {
     const { actor, organizationId } = resolveFinanceContext(request);
     const accountId = Number(request.params?.accountId);
     const customerId = Number(request.body?.customerid);
+    const receiptMode = resolveCustomerReceiptMode(request.body?.receiptmode);
     if (!Number.isSafeInteger(accountId) || accountId <= 0) {
       throw new FinanceValidationError("A valid accountId is required.");
     }
@@ -476,8 +544,7 @@ export module retailReceiptFinanceService {
         if (
           !invoice ||
           Number(invoice.customerid) !== customerId ||
-          (!isRetailStoreInvoice(invoice) &&
-            !isServiceRequestInvoice(invoice))
+          !isEligibleCustomerReceiptInvoice(invoice, receiptMode)
         ) {
           throw new FinanceValidationError(
             "All selected invoices must be eligible outstanding invoices for the selected customer."
@@ -571,14 +638,21 @@ export module retailReceiptFinanceService {
       const containsRetailInvoice = preparedAllocations.some((allocation) =>
         isRetailStoreInvoice(allocation.invoice)
       );
+      const containsRentalInvoice = preparedAllocations.some((allocation) =>
+        isRentalInvoice(allocation.invoice)
+      );
       const receiptSourceType = resolveCustomerReceiptSourceType(
         preparedAllocations.map((allocation) => allocation.invoice)
       );
       const defaultRemarks = preparedAllocations.length === 1
-        ? containsServiceInvoice
+        ? containsRentalInvoice
+          ? `Rental receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
+          : containsServiceInvoice
           ? `Service receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
           : `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-        : containsServiceInvoice && containsRetailInvoice
+        : containsRentalInvoice
+          ? `Rental receipt allocated across ${preparedAllocations.length} invoices`
+          : containsServiceInvoice && containsRetailInvoice
           ? `Customer receipt allocated across ${preparedAllocations.length} invoices`
           : containsServiceInvoice
             ? `Service receipt allocated across ${preparedAllocations.length} invoices`
@@ -784,6 +858,7 @@ export module retailReceiptFinanceService {
           ? allocation.invoice.paymentdata
           : [];
         const servicePayment = isServiceRequestInvoice(allocation.invoice);
+        const rentalPayment = isRentalInvoice(allocation.invoice);
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: allocation.allocationAmount,
@@ -796,9 +871,11 @@ export module retailReceiptFinanceService {
           providerpaymentid: null,
           providerorderid: null,
           transactionid: null,
-          source: servicePayment
-            ? "finance_service_receipt"
-            : "finance_retail_receipt",
+          source: rentalPayment
+            ? "finance_rental_receipt"
+            : servicePayment
+              ? "finance_service_receipt"
+              : "finance_retail_receipt",
           status: "success",
           comments: remarks,
           banktransactionid: Number(bankTransaction.id),
@@ -866,7 +943,7 @@ export module retailReceiptFinanceService {
           createddate
         )
         VALUES (
-          $1, 'bank_transaction', $2, 'retail_receipt_posted',
+          $1, 'bank_transaction', $2, '${receiptMode === "rental" ? "rental_receipt_posted" : "retail_receipt_posted"}',
           $3, $4::jsonb, $5
         )
         `,
