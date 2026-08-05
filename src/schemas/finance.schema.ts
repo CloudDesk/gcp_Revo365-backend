@@ -84,6 +84,10 @@ export const createRetailReceiptSchema = {
       minLength: 8,
       maxLength: 100,
     },
+    receiptmode: {
+      type: "string",
+      enum: ["retail", "rental"],
+    },
     remarks: nullableString,
     allocations: {
       type: "array",

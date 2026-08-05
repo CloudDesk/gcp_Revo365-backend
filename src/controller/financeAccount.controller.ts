@@ -108,9 +108,11 @@ export module financeAccountController {
   export const postRetailReceipt = async (request: any, reply: any) => {
     try {
       const data = await retailReceiptFinanceService.postReceipt(request);
+      const isRentalReceipt =
+        String(request.body?.receiptmode || "retail").toLowerCase() === "rental";
       return reply.status(201).send({
         success: true,
-        message: "Retail receipt posted and allocated successfully.",
+        message: `${isRentalReceipt ? "Rental" : "Retail"} receipt posted and allocated successfully.`,
         data,
       });
     } catch (error) {

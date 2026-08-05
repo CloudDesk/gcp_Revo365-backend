@@ -5,7 +5,7 @@ import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
-import { isRetailStoreProductOrder } from "../utils/finance/retailReceipt.utils.js";
+import { getRetailInvoicePaymentState, isRentalInvoice, isRetailStoreProductOrder, } from "../utils/finance/retailReceipt.utils.js";
 import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 const fireInvoiceReadyEmail = async (ticketnumber, invoiceurl) => {
@@ -278,12 +278,20 @@ const applyInvoicePaymentSummary = async (upsertFields, id) => {
     }
     let paymentEntries = normalizePaymentEntries(invoiceSnapshot.paymentdata);
     const invoiceAmount = getInvoiceAmount(invoiceSnapshot);
+    const rentalInvoice = isRentalInvoice(invoiceSnapshot);
+    // A historical migration copied originating order transactions into some
+    // rental invoices. Rental receivables are settled only through Cash & Bank,
+    // so remove those legacy entries while preserving genuine receipt entries.
+    if (rentalInvoice) {
+        paymentEntries = paymentEntries.filter((payment) => normalizeText(payment?.source) !== "order_payment");
+    }
     if (!id) {
         const orderContext = await getInvoiceOrderContext(invoiceSnapshot.orderid);
-        // In-store product invoices are settled only through the manual retail
-        // receipt flow. The POS transaction remains the operational payment
-        // record, but a newly generated accounting invoice must start unpaid.
-        if (isRetailStoreProductOrder(orderContext)) {
+        // In-store product and rental billing invoices are settled through the
+        // Cash & Bank customer-receipt flow. The originating order transaction
+        // remains operational history and must not pre-settle a new receivable.
+        if (isRetailStoreProductOrder(orderContext) ||
+            rentalInvoice) {
             paymentEntries = [];
         }
         else if (paymentEntries.length === 0) {
@@ -391,6 +399,61 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
 };
 export var revoinvoiceservice;
 (function (revoinvoiceservice) {
+    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds) => {
+        const normalizedCustomerIds = Array.from(new Set(customerIds
+            .map((customerId) => Number(customerId))
+            .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
+            .map((customerId) => Math.trunc(customerId))));
+        if (normalizedCustomerIds.length === 0) {
+            return {};
+        }
+        const invoiceResult = await query(`
+            SELECT *
+            FROM revoinvoice
+            WHERE customerid = ANY($1::int[])
+            ORDER BY customerid, id
+            `, [normalizedCustomerIds]);
+        const summaryByCustomer = new Map();
+        invoiceResult.rows.forEach((invoice) => {
+            const customerId = Number(invoice?.customerid);
+            if (!Number.isFinite(customerId))
+                return;
+            const paymentState = getRetailInvoicePaymentState(invoice);
+            const summary = summaryByCustomer.get(customerId) || {
+                invoicecount: 0,
+                invoiceamount: 0,
+                paidamount: 0,
+                balanceamount: 0,
+            };
+            summary.invoicecount += 1;
+            summary.invoiceamount = Number((summary.invoiceamount + paymentState.invoiceAmount).toFixed(2));
+            summary.paidamount = Number((summary.paidamount + paymentState.paidAmount).toFixed(2));
+            summary.balanceamount = Number((summary.balanceamount + paymentState.outstandingAmount).toFixed(2));
+            summaryByCustomer.set(customerId, summary);
+        });
+        return Object.fromEntries(normalizedCustomerIds.map((customerId) => {
+            const summary = summaryByCustomer.get(customerId) || {
+                invoicecount: 0,
+                invoiceamount: 0,
+                paidamount: 0,
+                balanceamount: 0,
+            };
+            const paymentstatus = summary.invoicecount === 0
+                ? "no_invoices"
+                : summary.invoiceamount > 0 && summary.balanceamount === 0
+                    ? "paid"
+                    : summary.paidamount > 0
+                        ? "partially_paid"
+                        : "pending";
+            return [
+                customerId,
+                {
+                    ...summary,
+                    paymentstatus,
+                },
+            ];
+        }));
+    };
     revoinvoiceservice.getRentalAssetCountsByCustomerIds = async (customerIds, options = {}) => {
         const normalizedCustomerIds = Array.from(new Set(customerIds
             .map((customerId) => Number(customerId))
@@ -501,6 +564,21 @@ export var revoinvoiceservice;
             }
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
+            datatypeCheckResult = datatypeCheckResult.map((invoice) => {
+                if (!isRentalInvoice(invoice))
+                    return invoice;
+                const paymentState = getRetailInvoicePaymentState(invoice);
+                return {
+                    ...invoice,
+                    paidamount: paymentState.paidAmount,
+                    balanceamount: paymentState.outstandingAmount,
+                    paymentstatus: paymentState.invoiceAmount > 0 && paymentState.outstandingAmount === 0
+                        ? "paid"
+                        : paymentState.paidAmount > 0
+                            ? "partially_paid"
+                            : "pending",
+                };
+            });
             if (shouldEnrichRentalAssets(request.query.invoicefor)) {
                 datatypeCheckResult = await enrichRentalInvoiceAssets(datatypeCheckResult);
             }

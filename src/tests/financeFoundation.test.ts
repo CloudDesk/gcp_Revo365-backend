@@ -24,9 +24,11 @@ import {
 import {
   applyRetailInvoiceAllocation,
   getRetailInvoicePaymentState,
+  isRentalInvoice,
   isRetailStoreInvoice,
   isRetailStoreProductOrder,
   isServiceRequestInvoice,
+  resolveCustomerReceiptSourceType,
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
 import {
@@ -80,6 +82,13 @@ describe("Cash and Bank foundation validation", () => {
     );
   });
 
+  test("Customer receipt schema accepts an isolated rental mode", () => {
+    assert.deepEqual(
+      (createRetailReceiptSchema.properties.receiptmode as any).enum,
+      ["retail", "rental"]
+    );
+  });
+
   test("Supplier payment schema accepts bill and TDS Payable fields", () => {
     const allocationSchema = (
       createSupplierPaymentSchema.properties.allocations as any
@@ -127,6 +136,7 @@ describe("Finance source classification", () => {
       FINANCE_SOURCE_TYPES.serviceRequestReceipt,
       "service_request_receipt"
     );
+    assert.equal(FINANCE_SOURCE_TYPES.rentalReceipt, "rental_receipt");
     assert.equal(
       FINANCE_SOURCE_TYPES.supplierBillPayment,
       "supplier_bill_payment"
@@ -520,6 +530,86 @@ describe("Retail in-store receipt allocation", () => {
       () => applyRetailInvoiceAllocation(manualStoreInvoice, 23000, 501),
       /Total settlement.*exceeds its outstanding amount/
     );
+  });
+});
+
+describe("Rental invoice receipt allocation", () => {
+  const rentalInvoice = {
+    id: 601,
+    invoicenumber: "TEQIT-Rental-00601",
+    invoicefor: "rental",
+    totalorderamount: 12000,
+    paidamount: 0,
+    paymentdata: [],
+  };
+
+  test("Rental eligibility is isolated from existing retail and service flows", () => {
+    assert.equal(isRentalInvoice(rentalInvoice), true);
+    assert.equal(isRetailStoreInvoice(rentalInvoice), false);
+    assert.equal(isServiceRequestInvoice(rentalInvoice), false);
+    assert.equal(
+      resolveCustomerReceiptSourceType([rentalInvoice]),
+      "rental_receipt"
+    );
+  });
+
+  test("Rental receipt allocation updates the shared invoice balance correctly", () => {
+    const result = applyRetailInvoiceAllocation(rentalInvoice, 7000, 500);
+    assert.equal(result.paidAmount, 7500);
+    assert.equal(result.balanceAmount, 4500);
+    assert.equal(result.paymentStatus, "partially_paid");
+  });
+
+  test("Legacy order payments do not pre-settle a rental receivable", () => {
+    const state = getRetailInvoicePaymentState({
+      ...rentalInvoice,
+      paidamount: 12000,
+      balanceamount: 0,
+      paymentstatus: "paid",
+      paymentdata: [
+        {
+          paymentamount: 12000,
+          settlementamount: 12000,
+          source: "order_payment",
+          status: "success",
+        },
+      ],
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 12000,
+      paidAmount: 0,
+      outstandingAmount: 12000,
+    });
+  });
+
+  test("Rental receipts remain counted when a legacy order payment is present", () => {
+    const state = getRetailInvoicePaymentState({
+      ...rentalInvoice,
+      paidamount: 12000,
+      balanceamount: 0,
+      paymentstatus: "paid",
+      paymentdata: [
+        {
+          paymentamount: 12000,
+          settlementamount: 12000,
+          source: "order_payment",
+          status: "success",
+        },
+        {
+          paymentamount: 7000,
+          settlementamount: 7000,
+          source: "finance_rental_receipt",
+          status: "success",
+        },
+      ],
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 12000,
+      paidAmount: 7000,
+      outstandingAmount: 5000,
+    });
   });
 });
 

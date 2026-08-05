@@ -1,0 +1,411 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { FinanceValidationError, calculateAvailableBalance, formatTdsSectionDisplayName, maskAccountNumber, normalizeAccountType, normalizeEntrySide, protectAccountNumber, requireIsoDate, requirePositiveMoney, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
+import { buildEcommerceCustomerName, isEligibleEcommerceOrder, resolveEcommercePaymentDate, resolveEcommercePaymentMethod, resolveEcommercePaymentProvider, resolveEcommercePaymentReference, } from "../utils/finance/ecommerceFinance.utils.js";
+import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
+import { applySupplierBillAllocation, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, } from "../utils/finance/supplierBill.utils.js";
+import { createRetailReceiptSchema, createSupplierPaymentSchema, } from "../schemas/finance.schema.js";
+import { FINANCE_SOURCE_TYPES, getRetailReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
+describe("Cash and Bank foundation calculations", () => {
+    test("Debit increases available balance", () => {
+        assert.equal(calculateAvailableBalance(10000, "debit", 5000), 15000);
+    });
+    test("Credit decreases available balance", () => {
+        assert.equal(calculateAvailableBalance(10000, "credit", 3000), 7000);
+    });
+    test("Money values are normalized to two decimal places", () => {
+        assert.equal(toMoney(10.005), 10.01);
+        assert.equal(toMoney("90.10"), 90.1);
+    });
+    test("Transaction amount must be greater than zero", () => {
+        assert.throws(() => requirePositiveMoney(0), (error) => error instanceof FinanceValidationError &&
+            error.message === "amount must be greater than zero.");
+    });
+});
+describe("Cash and Bank foundation validation", () => {
+    test("Retail receipt schema accepts TDS allocation fields", () => {
+        const allocationSchema = createRetailReceiptSchema.properties.allocations
+            .items;
+        assert.deepEqual(Object.keys(allocationSchema.properties).sort(), ["allocationamount", "invoiceid", "tdsamount", "tdsapplied"].sort());
+    });
+    test("Customer receipt schema accepts an isolated rental mode", () => {
+        assert.deepEqual(createRetailReceiptSchema.properties.receiptmode.enum, ["retail", "rental"]);
+    });
+    test("Supplier payment schema accepts bill and TDS Payable fields", () => {
+        const allocationSchema = createSupplierPaymentSchema.properties.allocations.items;
+        assert.deepEqual(Object.keys(allocationSchema.properties).sort(), [
+            "allocationamount",
+            "billid",
+            "tdsamount",
+            "tdsapplied",
+            "tdssectionid",
+        ].sort());
+    });
+    test("Account and entry types are normalized", () => {
+        assert.equal(normalizeAccountType(" BANK "), "bank");
+        assert.equal(normalizeAccountType("cash"), "cash");
+        assert.equal(normalizeEntrySide("Debit"), "debit");
+        assert.equal(normalizeEntrySide(" CREDIT "), "credit");
+    });
+    test("Invalid accounting date is rejected", () => {
+        assert.equal(requireIsoDate("2026-07-30", "date"), "2026-07-30");
+        assert.throws(() => requireIsoDate("2026-02-30", "date"));
+        assert.throws(() => requireIsoDate("30/07/2026", "date"));
+    });
+    test("PostgreSQL DATE values are serialized without a timezone shift", () => {
+        assert.equal(toFinanceDateOnly(new Date(2026, 6, 31)), "2026-07-31");
+        assert.equal(toFinanceDateOnly("2026-07-31"), "2026-07-31");
+    });
+});
+describe("Finance source classification", () => {
+    test("New E-commerce and Retail entries use the approved source types", () => {
+        assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
+        assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
+        assert.equal(FINANCE_SOURCE_TYPES.serviceRequestReceipt, "service_request_receipt");
+        assert.equal(FINANCE_SOURCE_TYPES.rentalReceipt, "rental_receipt");
+        assert.equal(FINANCE_SOURCE_TYPES.supplierBillPayment, "supplier_bill_payment");
+    });
+    test("Legacy Retail source type remains readable for idempotent retries", () => {
+        assert.deepEqual(getRetailReceiptSourceTypes(), [
+            "retail_receipt",
+            "retail_instore_receipt",
+        ]);
+    });
+    test("A single document uses its order reference as transaction source ID", () => {
+        assert.equal(resolveAgainstDocumentSourceId(["ORDER-1001"], "request-1001"), "ORDER-1001");
+    });
+    test("A multi-document receipt uses the idempotent request reference", () => {
+        assert.equal(resolveAgainstDocumentSourceId(["ORDER-1001", "ORDER-1002"], "request-1001"), "request-1001");
+    });
+});
+describe("Supplier bill payment allocation", () => {
+    const openBill = {
+        id: 34,
+        invoicenumber: "SUP-INV-34",
+        invoiceamount: 50000,
+        balanceamount: 50000,
+        paymentdata: [],
+        invoicestatus: "in_progress",
+        iscreditpayment: true,
+        paymentduedate: 2000000000,
+    };
+    test("Bank payment and TDS Payable settle the Supplier bill together", () => {
+        const result = applySupplierBillAllocation(openBill, 45000, 5000);
+        assert.equal(result.allocationAmount, 45000);
+        assert.equal(result.tdsAmount, 5000);
+        assert.equal(result.totalSettledAmount, 50000);
+        assert.equal(result.balanceAmount, 0);
+    });
+    test("Existing settlement history includes TDS when deriving outstanding", () => {
+        const state = getSupplierBillPaymentState({
+            ...openBill,
+            paymentdata: [
+                {
+                    paymentamount: 18000,
+                    tdsamount: 2000,
+                    settlementamount: 20000,
+                    status: "success",
+                },
+            ],
+            balanceamount: 30000,
+        });
+        assert.deepEqual(state, {
+            invoiceAmount: 50000,
+            settledAmount: 20000,
+            outstandingAmount: 30000,
+        });
+    });
+    test("A legacy bill without a stored balance uses its payment history", () => {
+        const state = getSupplierBillPaymentState({
+            ...openBill,
+            balanceamount: null,
+            paymentdata: [],
+        });
+        assert.deepEqual(state, {
+            invoiceAmount: 50000,
+            settledAmount: 0,
+            outstandingAmount: 50000,
+        });
+    });
+    test("Total bank and TDS settlement cannot exceed bill outstanding", () => {
+        assert.throws(() => applySupplierBillAllocation(openBill, 48000, 2001), /Total settlement.*exceeds its outstanding amount/);
+    });
+    test("Completed and cancelled bills are not eligible", () => {
+        assert.equal(isSupplierBillOpen(openBill), true);
+        assert.equal(isSupplierBillOpen({ ...openBill, invoicestatus: "cancelled" }), false);
+        assert.equal(isSupplierBillOpen({ ...openBill, invoicestatus: "complete" }), false);
+    });
+    test("Bill status preserves overdue completion semantics", () => {
+        assert.equal(resolveSupplierBillStatus(openBill, 0, 1900000000), "complete");
+        assert.equal(resolveSupplierBillStatus(openBill, 0, 2100000000), "overdue_complete");
+        assert.equal(resolveSupplierBillStatus(openBill, 1000, 2100000000), "overdue");
+    });
+});
+describe("TDS section dropdown", () => {
+    test("Display name follows nature, code, and rate format", () => {
+        assert.equal(formatTdsSectionDisplayName("Commission or Brokerage - others", "1006", "2%"), "Commission or Brokerage - others 1006(2%)");
+    });
+});
+describe("E-commerce automatic finance entry", () => {
+    test("Only online product orders are eligible", () => {
+        assert.equal(isEligibleEcommerceOrder([
+            { ordername: "Online", invoicefor: "Product" },
+        ]), true);
+        assert.equal(isEligibleEcommerceOrder([
+            { ordername: "StorePurchase", invoicefor: "Product" },
+        ]), false);
+        assert.equal(isEligibleEcommerceOrder([
+            { ordername: "Rental", invoicefor: "Product Rental" },
+        ]), false);
+        assert.equal(isEligibleEcommerceOrder([
+            { ordername: "Online", invoicefor: "Product" },
+            { ordername: "Rental", invoicefor: "Product Rental" },
+        ]), false);
+    });
+    test("Razorpay provider, method, and payment reference are resolved", () => {
+        const transaction = {
+            razorpay_payment_id: "pay_1001",
+            transactiondata: { method: "upi" },
+        };
+        assert.equal(resolveEcommercePaymentProvider(transaction), "razorpay");
+        assert.equal(resolveEcommercePaymentMethod(transaction, []), "upi");
+        assert.equal(resolveEcommercePaymentReference(transaction), "pay_1001");
+    });
+    test("PhonePe successful payment is resolved without Razorpay fields", () => {
+        const transaction = {
+            transactionid: "TXN-1002",
+            transactiondata: {
+                code: "PAYMENT_SUCCESS",
+                data: { paymentInstrument: { type: "PAY_PAGE" } },
+            },
+        };
+        assert.equal(resolveEcommercePaymentProvider(transaction), "phonepe");
+        assert.equal(resolveEcommercePaymentMethod(transaction, []), "pay_page");
+        assert.equal(resolveEcommercePaymentReference(transaction), "TXN-1002");
+    });
+    test("Payment date uses the India accounting date", () => {
+        const utcBoundaryEpoch = Math.floor(new Date("2026-07-30T20:00:00.000Z").getTime() / 1000);
+        assert.equal(resolveEcommercePaymentDate({
+            transactiondata: { created_at: utcBoundaryEpoch },
+        }), "2026-07-31");
+        assert.equal(resolveEcommercePaymentDate({
+            createddate: utcBoundaryEpoch * 1000,
+        }), "2026-07-31");
+    });
+    test("Customer name prefers the registered customer identity", () => {
+        assert.equal(buildEcommerceCustomerName({
+            firstname: "Asha",
+            lastname: "Kumar",
+            useremail: "asha@example.com",
+        }, { name: "Checkout Name" }), "Asha Kumar");
+        assert.equal(buildEcommerceCustomerName({ useremail: "asha@example.com" }, { name: "Checkout Name" }), "asha@example.com");
+    });
+});
+describe("Retail in-store receipt allocation", () => {
+    const manualStoreInvoice = {
+        id: 378,
+        invoicenumber: "TEQIT-Invoice-00270",
+        invoicefor: "product",
+        invoicedata: {
+            ordername: "storepurchase",
+            total: "₹23,500",
+        },
+        paidamount: 0,
+        paymentdata: [],
+    };
+    test("Manual-store invoice amount and eligibility are resolved", () => {
+        assert.equal(isRetailStoreProductOrder({
+            ordername: "StorePurchase",
+            invoicefor: "Product",
+        }), true);
+        assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
+        assert.equal(resolveRetailInvoiceAmount(manualStoreInvoice), 23500);
+        assert.deepEqual(getRetailInvoicePaymentState(manualStoreInvoice), {
+            invoiceAmount: 23500,
+            paidAmount: 0,
+            outstandingAmount: 23500,
+        });
+    });
+    test("Online, rental, and service orders retain their existing payment flow", () => {
+        assert.equal(isRetailStoreProductOrder({ ordername: "online", invoicefor: "product" }), false);
+        assert.equal(isRetailStoreProductOrder({
+            ordername: "rental",
+            invoicefor: "product rental",
+        }), false);
+        assert.equal(isRetailStoreProductOrder({
+            ordername: "storepurchase",
+            invoicefor: "service",
+        }), false);
+    });
+    test("Service Request invoice eligibility is isolated from retail eligibility", () => {
+        const serviceInvoice = {
+            id: 501,
+            invoicenumber: "TEQIT-Invoice-00501",
+            invoicefor: "service",
+            ticketnumber: "SR-000501",
+            totalorderamount: 10000,
+        };
+        assert.equal(isServiceRequestInvoice(serviceInvoice), true);
+        assert.equal(isRetailStoreInvoice(serviceInvoice), false);
+        assert.equal(isServiceRequestInvoice({ ...serviceInvoice, ticketnumber: "" }), false);
+        assert.equal(isServiceRequestInvoice(manualStoreInvoice), false);
+        assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
+    });
+    test("Partial allocation calculates the remaining balance and status", () => {
+        const result = applyRetailInvoiceAllocation(manualStoreInvoice, 10000);
+        assert.equal(result.paidAmount, 10000);
+        assert.equal(result.balanceAmount, 13500);
+        assert.equal(result.paymentStatus, "partially_paid");
+    });
+    test("Full allocation marks the invoice paid", () => {
+        const result = applyRetailInvoiceAllocation(manualStoreInvoice, 23500);
+        assert.equal(result.balanceAmount, 0);
+        assert.equal(result.paymentStatus, "paid");
+    });
+    test("TDS Receivable settles the invoice without increasing the bank allocation", () => {
+        const invoice = {
+            ...manualStoreInvoice,
+            invoicedata: {
+                ordername: "storepurchase",
+                total: "₹1,00,000",
+            },
+        };
+        const result = applyRetailInvoiceAllocation(invoice, 50000, 10000);
+        assert.equal(result.allocationAmount, 50000);
+        assert.equal(result.tdsAmount, 10000);
+        assert.equal(result.totalSettledAmount, 60000);
+        assert.equal(result.paidAmount, 60000);
+        assert.equal(result.balanceAmount, 40000);
+        assert.equal(result.paymentStatus, "partially_paid");
+    });
+    test("Manual in-store TDS Receivable does not depend on a statutory section", () => {
+        const result = applyRetailInvoiceAllocation({
+            ...manualStoreInvoice,
+            invoicedata: {
+                ordername: "storepurchase",
+                total: "₹1,00,000",
+            },
+        }, 50000, 10000);
+        assert.equal(result.tdsAmount, 10000);
+        assert.equal(result.balanceAmount, 40000);
+    });
+    test("TDS settlement remains part of invoice paid history", () => {
+        const state = getRetailInvoicePaymentState({
+            ...manualStoreInvoice,
+            invoicedata: {
+                ordername: "storepurchase",
+                total: "₹1,00,000",
+            },
+            paymentdata: [
+                {
+                    paymentamount: 50000,
+                    tdsamount: 10000,
+                    settlementamount: 60000,
+                    status: "success",
+                },
+            ],
+        });
+        assert.deepEqual(state, {
+            invoiceAmount: 100000,
+            paidAmount: 60000,
+            outstandingAmount: 40000,
+        });
+    });
+    test("Allocation cannot exceed the outstanding invoice amount", () => {
+        assert.throws(() => applyRetailInvoiceAllocation(manualStoreInvoice, 23501), /exceeds its outstanding amount/);
+    });
+    test("Allocation plus TDS cannot exceed the outstanding invoice amount", () => {
+        assert.throws(() => applyRetailInvoiceAllocation(manualStoreInvoice, 23000, 501), /Total settlement.*exceeds its outstanding amount/);
+    });
+});
+describe("Rental invoice receipt allocation", () => {
+    const rentalInvoice = {
+        id: 601,
+        invoicenumber: "TEQIT-Rental-00601",
+        invoicefor: "rental",
+        totalorderamount: 12000,
+        paidamount: 0,
+        paymentdata: [],
+    };
+    test("Rental eligibility is isolated from existing retail and service flows", () => {
+        assert.equal(isRentalInvoice(rentalInvoice), true);
+        assert.equal(isRetailStoreInvoice(rentalInvoice), false);
+        assert.equal(isServiceRequestInvoice(rentalInvoice), false);
+        assert.equal(resolveCustomerReceiptSourceType([rentalInvoice]), "rental_receipt");
+    });
+    test("Rental receipt allocation updates the shared invoice balance correctly", () => {
+        const result = applyRetailInvoiceAllocation(rentalInvoice, 7000, 500);
+        assert.equal(result.paidAmount, 7500);
+        assert.equal(result.balanceAmount, 4500);
+        assert.equal(result.paymentStatus, "partially_paid");
+    });
+    test("Legacy order payments do not pre-settle a rental receivable", () => {
+        const state = getRetailInvoicePaymentState({
+            ...rentalInvoice,
+            paidamount: 12000,
+            balanceamount: 0,
+            paymentstatus: "paid",
+            paymentdata: [
+                {
+                    paymentamount: 12000,
+                    settlementamount: 12000,
+                    source: "order_payment",
+                    status: "success",
+                },
+            ],
+        });
+        assert.deepEqual(state, {
+            invoiceAmount: 12000,
+            paidAmount: 0,
+            outstandingAmount: 12000,
+        });
+    });
+    test("Rental receipts remain counted when a legacy order payment is present", () => {
+        const state = getRetailInvoicePaymentState({
+            ...rentalInvoice,
+            paidamount: 12000,
+            balanceamount: 0,
+            paymentstatus: "paid",
+            paymentdata: [
+                {
+                    paymentamount: 12000,
+                    settlementamount: 12000,
+                    source: "order_payment",
+                    status: "success",
+                },
+                {
+                    paymentamount: 7000,
+                    settlementamount: 7000,
+                    source: "finance_rental_receipt",
+                    status: "success",
+                },
+            ],
+        });
+        assert.deepEqual(state, {
+            invoiceAmount: 12000,
+            paidAmount: 7000,
+            outstandingAmount: 5000,
+        });
+    });
+});
+describe("Bank account number protection", () => {
+    const key = "finance-test-key-with-at-least-16-characters";
+    test("Full account number is encrypted and only last four digits are displayed", () => {
+        const protectedValue = protectAccountNumber("1234 5678 9012", key);
+        assert.ok(protectedValue.encrypted.startsWith("v1:"));
+        assert.equal(protectedValue.last4, "9012");
+        assert.equal(maskAccountNumber(protectedValue.last4), "****9012");
+        assert.equal(protectedValue.encrypted.includes("123456789012"), false);
+    });
+    test("Hash is deterministic while ciphertext uses a random IV", () => {
+        const first = protectAccountNumber("123456789012", key);
+        const second = protectAccountNumber("123456789012", key);
+        assert.equal(first.hash, second.hash);
+        assert.notEqual(first.encrypted, second.encrypted);
+    });
+    test("Missing encryption key is rejected", () => {
+        assert.throws(() => protectAccountNumber("123456789012", undefined), (error) => error instanceof FinanceValidationError &&
+            error.code === "FINANCE_ENCRYPTION_KEY_MISSING");
+    });
+});
+//# sourceMappingURL=financeFoundation.test.js.map
