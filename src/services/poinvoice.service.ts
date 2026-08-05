@@ -62,6 +62,16 @@ export module poinvoiceservice {
     }, {});
   };
 
+  const serializeJsonArrayFields = (upsertFields: any) => {
+    ["productdata", "paymentdata"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(upsertFields, field)) {
+        // node-postgres serializes JavaScript arrays as PostgreSQL array
+        // literals. These columns are JSONB, so send valid JSON text instead.
+        upsertFields[field] = JSON.stringify(parseJsonArray(upsertFields[field]));
+      }
+    });
+  };
+
   const validateAndNormalizeProductData = async (
     upsertFields: any,
     id?: any
@@ -312,6 +322,7 @@ export module poinvoiceservice {
         normalizeBillTaxFields(upsertFields);
       }
       upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+      serializeJsonArrayFields(upsertFields);
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
 
@@ -352,6 +363,7 @@ export module poinvoiceservice {
         normalizeBillTaxFields(upsertFields);
       }
       upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+      serializeJsonArrayFields(upsertFields);
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
 
