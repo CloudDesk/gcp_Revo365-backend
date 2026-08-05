@@ -854,6 +854,46 @@ Journal:
 
 ## 7.10 Manual Supplier Bill Payment
 
+### Existing PO Bills flow
+
+- After a Purchase Order is created, users create one or more Bills against
+  that PO.
+- Bill supporting documents/receipts are uploaded as part of the Bill entry.
+- Bill status is currently updated by the existing Bills logic.
+- PO status is selected and updated manually by the user.
+
+### Phase 1 Bills module changes
+
+- Remove the receipt/payment-entry section from the Bills screen.
+- Continue to create Bills against a PO and upload supporting Bill documents
+  from the Bills screen.
+- Do not capture or maintain Bill settlement transactions in the Bills module.
+- Treat transactions posted against the Bill in the Cash and Bank Account
+  module as the authoritative source for Bill settlement.
+- Calculate Bill Balance Amount and Bill Status from the total settled amount
+  recorded through Cash and Bank Account transactions.
+- Keep PO status as a manual user-controlled field; Bill payment transactions
+  must not automatically change the PO status.
+
+### Cash and Bank Account settlement rules
+
+- Allow users to record one or more transactions against the same Supplier
+  Bill.
+- Allow each Bill allocation to include a TDS Payable amount.
+- Count both the actual Bank/Cash payment and TDS Payable toward Bill
+  settlement.
+- Recalculate the Bill Balance Amount and Bill Status after every successfully
+  posted transaction.
+
+```text
+Total Settled Amount = Sum of Bank/Cash Payments + Sum of TDS Payable
+Balance Amount = Bill Amount - Total Settled Amount
+```
+
+For example, for a Bill Amount of ₹50,000, a Payment Amount of ₹40,000 and TDS
+Payable of ₹10,000 produce a Total Settled Amount of ₹50,000. The Balance
+Amount becomes ₹0 and the Bill is marked Fully Paid.
+
 ### Source and eligibility
 
 - Read Supplier bills from `poinvoice` and resolve the Supplier through the
