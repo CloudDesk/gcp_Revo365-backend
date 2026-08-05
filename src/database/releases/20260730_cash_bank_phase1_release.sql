@@ -437,7 +437,12 @@ CREATE TABLE IF NOT EXISTS bank_transaction_allocations (
     CONSTRAINT chk_bank_allocations_tds
         CHECK (
             (tdsapplied = FALSE AND tdsamount = 0 AND tdsaccountid IS NULL AND tdssectionid IS NULL)
-            OR (tdsapplied = TRUE AND tdsamount > 0 AND tdsaccountid IS NOT NULL AND tdssectionid IS NOT NULL)
+            OR (
+                tdsapplied = TRUE
+                AND tdsamount >= 0
+                AND tdsaccountid IS NOT NULL
+                AND (documenttype <> 'purchase_bill' OR tdssectionid IS NOT NULL)
+            )
         ),
     CONSTRAINT chk_bank_allocations_status
         CHECK (status IN ('applied', 'reversed'))

@@ -23,6 +23,92 @@ export const parseSupplierBillMoney = (value: unknown): number => {
   return Number.isFinite(parsed) ? toMoney(parsed) : 0;
 };
 
+export const assertSupplierBillTotalWithinPurchaseOrder = (
+  purchaseOrderTotal: unknown,
+  existingBillTotal: unknown,
+  currentBillTotal: unknown
+) => {
+  const poTotal = parseSupplierBillMoney(purchaseOrderTotal);
+  const existingTotal = parseSupplierBillMoney(existingBillTotal);
+  const billTotal = parseSupplierBillMoney(currentBillTotal);
+  const aggregateBillTotal = toMoney(existingTotal + billTotal);
+
+  if (aggregateBillTotal > poTotal) {
+    const remainingAmount = toMoney(Math.max(poTotal - existingTotal, 0));
+    throw new FinanceValidationError(
+      `Bill amount ${billTotal} exceeds the remaining purchase order amount ${remainingAmount}.`
+    );
+  }
+
+  return {
+    purchaseOrderTotal: poTotal,
+    existingBillTotal: existingTotal,
+    currentBillTotal: billTotal,
+    aggregateBillTotal,
+    remainingAmount: toMoney(Math.max(poTotal - aggregateBillTotal, 0)),
+  };
+};
+
+export const validateSupplierBillProductInput = (
+  name: unknown,
+  quantityValue: unknown,
+  fallbackLabel = "Product"
+) => {
+  const productName = typeof name === "string" ? name.trim() : "";
+  if (
+    !productName ||
+    ["null", "undefined", "false", "0"].includes(productName.toLowerCase())
+  ) {
+    throw new FinanceValidationError(
+      "Product Name must contain a valid value."
+    );
+  }
+
+  const quantity = Number(quantityValue);
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    throw new FinanceValidationError(
+      `Bill quantity for ${fallbackLabel} must be a whole number greater than 0.`
+    );
+  }
+
+  return { productName, quantity };
+};
+
+export const assertSupplierBillCanBeModified = (
+  hasTransactions: unknown
+) => {
+  if (hasTransactions === true || hasTransactions === "true") {
+    throw new FinanceValidationError(
+      "This Bill cannot be updated or deleted because a Cash & Bank transaction has already been recorded against it."
+    );
+  }
+};
+
+export const assertSupplierTdsMapping = (
+  tdsApplied: boolean,
+  tdsAmount: number,
+  tdsSectionId: number | null
+) => {
+  if (tdsAmount < 0) {
+    throw new FinanceValidationError(
+      "TDS Payable amount cannot be negative."
+    );
+  }
+  if (tdsApplied) {
+    if (!Number.isSafeInteger(tdsSectionId) || Number(tdsSectionId) <= 0) {
+      throw new FinanceValidationError(
+        "A valid TDS section is required when TDS Payable is applied."
+      );
+    }
+    return;
+  }
+  if (tdsAmount !== 0 || tdsSectionId !== null) {
+    throw new FinanceValidationError(
+      "TDS amount and section must be empty when TDS is not applied."
+    );
+  }
+};
+
 export const getSupplierBillPaymentState = (bill: any) => {
   const invoiceAmount = Math.max(
     parseSupplierBillMoney(bill?.invoiceamount),
@@ -53,8 +139,19 @@ export const getSupplierBillPaymentState = (bill: any) => {
     hasStoredBalance && storedBalance >= 0 && storedBalance <= invoiceAmount
       ? toMoney(invoiceAmount - storedBalance)
       : 0;
+  const hasFinanceSettlement =
+    bill?.finance_settled_amount !== null &&
+    bill?.finance_settled_amount !== undefined &&
+    bill?.finance_settled_amount !== "";
+  const financeSettledAmount = parseSupplierBillMoney(
+    bill?.finance_settled_amount
+  );
   const settledAmount = Math.min(
-    Math.max(paymentHistoryTotal, settledFromBalance),
+    Math.max(
+      paymentHistoryTotal,
+      settledFromBalance,
+      hasFinanceSettlement ? financeSettledAmount : 0
+    ),
     invoiceAmount
   );
   const outstandingAmount = toMoney(

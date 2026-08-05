@@ -123,11 +123,13 @@ Implemented:
 - Idempotent manual Supplier payment backend with Bank/Cash Credit, Accounts
   Payable Debit, `purchase_bill` allocation, bill balance/status update, audit,
   and optional section-based TDS Payable posting in one database transaction
+- Supplier payment frontend with supplier lookup, multi-Bill allocation,
+  repeat transactions against a partially settled Bill, per-Bill TDS Payable,
+  calculated settlement/balance preview, and transaction-detail display
 
 Next:
 
 - Manual Rental invoice receipt and allocation
-- Supplier payment frontend modal and transaction-launcher integration
 - Advance and On Account completion for manual Customer/Supplier flows
 
 ---
@@ -870,6 +872,12 @@ Journal:
 - Do not capture or maintain Bill settlement transactions in the Bills module.
 - Treat transactions posted against the Bill in the Cash and Bank Account
   module as the authoritative source for Bill settlement.
+- Allow Bill edits and deletion only while no applied, posted Cash and Bank
+  transaction exists against the Bill. After the first transaction, keep the
+  Bill details available in read-only mode and enforce the lock in the backend.
+- Determine this edit lock from transaction allocation existence rather than
+  Bill Status, because status is a derived display value and may include legacy
+  or overdue states.
 - Calculate Bill Balance Amount and Bill Status from the total settled amount
   recorded through Cash and Bank Account transactions.
 - Keep PO status as a manual user-controlled field; Bill payment transactions
@@ -2087,7 +2095,9 @@ These decisions should be resolved before or during the relevant slice:
 6. Are backdated postings allowed in Phase 1?
 7. `poinvoice` is the authoritative Supplier bill table; confirm the exact
    `invoicestatus` mapping for unpaid, partially paid, and fully paid bills.
-8. Should user-facing full-settlement status display `Paid` or `Fully Paid`?
+8. **Resolved:** User-facing full-settlement status displays `Fully Paid`.
+   Legacy backend status values remain compatible and the UI derives Unpaid,
+   Partially Paid, and Fully Paid from Bill Amount and Balance Amount.
 9. Can TDS apply to Retail In-store sales, or only selected B2B customers?
 10. Are advances available against both customer invoices and vendor bills?
 11. Does On Account require later mandatory allocation?

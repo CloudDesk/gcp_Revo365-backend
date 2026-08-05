@@ -1,9 +1,9 @@
--- Manual in-store customer receipts capture TDS Receivable amount directly.
--- A statutory TDS section is not required for this debit receipt workflow.
+-- Supplier Bill payments require a TDS section whenever TDS adjustment is
+-- enabled, while allowing the mapped TDS Payable amount to be zero.
 
 BEGIN;
 
-SELECT pg_advisory_xact_lock(hashtext('20260803_cash_bank_optional_tds_section'));
+SELECT pg_advisory_xact_lock(hashtext('20260805_supplier_tds_zero_amount'));
 
 ALTER TABLE bank_transaction_allocations
     DROP CONSTRAINT IF EXISTS chk_bank_allocations_tds;
@@ -27,8 +27,8 @@ ALTER TABLE bank_transaction_allocations
 
 INSERT INTO finance_schema_versions (version, description)
 VALUES (
-    '20260803_cash_bank_optional_tds_section_v1',
-    'Allow manual receipt TDS Receivable without a statutory TDS section'
+    '20260805_supplier_tds_zero_amount_v1',
+    'Require Supplier Bill TDS section when enabled and allow zero TDS Payable amount'
 )
 ON CONFLICT (version) DO NOTHING;
 

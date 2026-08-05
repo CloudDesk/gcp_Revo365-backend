@@ -30,10 +30,14 @@ import {
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
 import {
+  assertSupplierBillCanBeModified,
+  assertSupplierTdsMapping,
   applySupplierBillAllocation,
+  assertSupplierBillTotalWithinPurchaseOrder,
   getSupplierBillPaymentState,
   isSupplierBillOpen,
   resolveSupplierBillStatus,
+  validateSupplierBillProductInput,
 } from "../utils/finance/supplierBill.utils.js";
 import {
   createRetailReceiptSchema,
@@ -95,6 +99,18 @@ describe("Cash and Bank foundation validation", () => {
         "tdssectionid",
       ].sort()
     );
+  });
+
+  test("TDS Receivable and TDS Payable schema amounts allow zero", () => {
+    const receiptAllocation = (
+      createRetailReceiptSchema.properties.allocations as any
+    ).items;
+    const paymentAllocation = (
+      createSupplierPaymentSchema.properties.allocations as any
+    ).items;
+
+    assert.equal(receiptAllocation.properties.tdsamount.minimum, 0);
+    assert.equal(paymentAllocation.properties.tdsamount.minimum, 0);
   });
 
   test("Account and entry types are normalized", () => {
@@ -170,6 +186,49 @@ describe("Supplier bill payment allocation", () => {
     paymentduedate: 2_000_000_000,
   };
 
+  test("Multiple Bills can exactly consume the Purchase Order total", () => {
+    const result = assertSupplierBillTotalWithinPurchaseOrder(
+      1_000_000,
+      600_000,
+      400_000
+    );
+
+    assert.equal(result.aggregateBillTotal, 1_000_000);
+    assert.equal(result.remainingAmount, 0);
+  });
+
+  test("Aggregate Bill amount cannot exceed the Purchase Order total", () => {
+    assert.throws(
+      () =>
+        assertSupplierBillTotalWithinPurchaseOrder(
+          1_000_000,
+          600_000,
+          400_001
+        ),
+      /exceeds the remaining purchase order amount 400000/
+    );
+  });
+
+  test("Bill product quantity must be a whole number greater than zero", () => {
+    assert.throws(
+      () => validateSupplierBillProductInput("Apple MacBook M3", 0),
+      /whole number greater than 0/
+    );
+    assert.deepEqual(
+      validateSupplierBillProductInput("Apple MacBook M3", "2"),
+      { productName: "Apple MacBook M3", quantity: 2 }
+    );
+  });
+
+  test("Bill product name rejects null and false-like values", () => {
+    for (const invalidName of [null, undefined, false, "", "null", "false"]) {
+      assert.throws(
+        () => validateSupplierBillProductInput(invalidName, 1),
+        /Product Name must contain a valid value/
+      );
+    }
+  });
+
   test("Bank payment and TDS Payable settle the Supplier bill together", () => {
     const result = applySupplierBillAllocation(openBill, 45000, 5000);
 
@@ -177,6 +236,40 @@ describe("Supplier bill payment allocation", () => {
     assert.equal(result.tdsAmount, 5000);
     assert.equal(result.totalSettledAmount, 50000);
     assert.equal(result.balanceAmount, 0);
+  });
+
+  test("Multiple Cash and Bank transactions can settle the same Supplier bill", () => {
+    const firstTransaction = applySupplierBillAllocation(openBill, 10000, 0);
+    const billAfterFirstTransaction = {
+      ...openBill,
+      balanceamount: firstTransaction.balanceAmount,
+      paymentdata: [
+        {
+          paymentamount: firstTransaction.allocationAmount,
+          tdsamount: firstTransaction.tdsAmount,
+          settlementamount: firstTransaction.totalSettledAmount,
+          status: "success",
+        },
+      ],
+    };
+    const secondTransaction = applySupplierBillAllocation(
+      billAfterFirstTransaction,
+      30000,
+      10000
+    );
+
+    assert.equal(firstTransaction.balanceAmount, 40000);
+    assert.equal(secondTransaction.totalSettledAmount, 40000);
+    assert.equal(secondTransaction.settledAmount, 50000);
+    assert.equal(secondTransaction.balanceAmount, 0);
+    assert.equal(
+      resolveSupplierBillStatus(
+        billAfterFirstTransaction,
+        secondTransaction.balanceAmount,
+        1_900_000_000
+      ),
+      "complete"
+    );
   });
 
   test("Existing settlement history includes TDS when deriving outstanding", () => {
@@ -197,6 +290,27 @@ describe("Supplier bill payment allocation", () => {
       invoiceAmount: 50000,
       settledAmount: 20000,
       outstandingAmount: 30000,
+    });
+  });
+
+  test("Cash and Bank allocations are included when deriving Bill settlement", () => {
+    const state = getSupplierBillPaymentState({
+      ...openBill,
+      paymentdata: [
+        {
+          paymentamount: 5000,
+          settlementamount: 5000,
+          status: "success",
+        },
+      ],
+      balanceamount: 45000,
+      finance_settled_amount: 12000,
+    });
+
+    assert.deepEqual(state, {
+      invoiceAmount: 50000,
+      settledAmount: 12000,
+      outstandingAmount: 38000,
     });
   });
 
@@ -231,6 +345,23 @@ describe("Supplier bill payment allocation", () => {
       isSupplierBillOpen({ ...openBill, invoicestatus: "complete" }),
       false
     );
+  });
+
+  test("A Supplier bill is locked after its first Cash and Bank transaction", () => {
+    assert.doesNotThrow(() => assertSupplierBillCanBeModified(false));
+    assert.throws(
+      () => assertSupplierBillCanBeModified(true),
+      /cannot be updated or deleted because a Cash & Bank transaction/
+    );
+  });
+
+  test("Supplier TDS requires a section when enabled and allows zero amount", () => {
+    assert.doesNotThrow(() => assertSupplierTdsMapping(true, 0, 2));
+    assert.throws(
+      () => assertSupplierTdsMapping(true, 0, null),
+      /valid TDS section is required/
+    );
+    assert.doesNotThrow(() => assertSupplierTdsMapping(false, 0, null));
   });
 
   test("Bill status preserves overdue completion semantics", () => {
