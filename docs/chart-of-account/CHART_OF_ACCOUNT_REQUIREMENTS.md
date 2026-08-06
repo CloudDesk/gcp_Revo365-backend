@@ -11,11 +11,24 @@ entries are maintained in this module.
 
 ## 2. Delivery Phases
 
-| Phase | Scope |
-| --- | --- |
-| Phase 1 | Create and list Chart of Accounts records using the fixed Account Type catalogue. |
-| Phase 2 | Use the created accounts when posting a Direct Ledger transaction from the Cash and Bank Account module. |
-| Phase 3 | Show each account's ledger entries and totals, and show Accounts Payable and Accounts Receivable totals on the home/list page. |
+| Phase | Scope | Status |
+| --- | --- | --- |
+| Phase 1 | Create and list Chart of Accounts records using the fixed Account Type catalogue. | **Completed** |
+| Phase 2 | Use the created accounts when posting a Direct Ledger transaction from the Cash and Bank Account module. | **Completed** |
+| Phase 3 | Show each account's ledger entries and totals, and show Accounts Payable and Accounts Receivable totals on the home/list page. | **Completed** |
+
+### 2.1 Implementation Status
+
+**Overall planned implementation: 100% completed.**
+
+All Phase 1, Phase 2, and Phase 3 requirements and acceptance criteria defined
+in this document have been implemented. The frontend and backend production
+builds pass, the backend automated test suite passes, and the Direct Ledger and
+account-ledger results have been verified against the database.
+
+Environment deployment activities, such as running the master SQL and
+restarting the backend service, are operational release steps and are not
+remaining implementation scope.
 
 Related Cash and Bank Account references:
 
@@ -58,15 +71,22 @@ master. Its fields should be interpreted as follows:
 - `accountcode`: the user-entered Account Code.
 - `description`: the user-entered Description. This field must be added if it
   is not already present in the account master.
+- `isusercreatedchartaccount`: `true` only for accounts created through this
+  module; used to keep existing system and Cash/Bank ledgers out of this list.
 
 The frontend only needs to present one **Account Type** selector. The backend
 must derive and persist its broad accounting category from the selected type.
 
 ### 3.3 Supported Account Types
 
-The account type catalogue is fixed for this phase. It may be implemented as a
-backend constant or as seeded database data, but it must not be configurable by
-the user.
+The account type catalogue is fixed for this phase and is stored as seeded
+database master data in `finance_account_types`. It follows the database-master
+pattern used for TDS Sections, while remaining read-only and not configurable
+by the user in Phase 1.
+
+Each Account Type master record stores its canonical code, display name, broad
+accounting category, category label, display order, status, and whether it is
+configurable. All Phase 1 seeds use `isconfigurable = false`.
 
 | Category | Account Type shown to the user | Canonical value |
 | --- | --- | --- |
@@ -89,7 +109,8 @@ the user.
 | Expense | Cost of Goods Sold | `cost_of_goods_sold` |
 | Expense | Other Expense | `other_expense` |
 
-The backend must reject an Account Type that is not in this catalogue.
+The backend must load the dropdown from active Account Type master records and
+reject an Account Type that is missing or inactive in this catalogue.
 
 ### 3.4 Create Account
 
@@ -138,8 +159,15 @@ Expected duplicate errors:
 
 ### 3.6 Account List
 
-The list page must show all Chart of Accounts records available to the current
-organization. Customer and supplier party-master records must not be included.
+The list page must show only accounts created through the Phase 1 Chart of
+Accounts form for the current organization. Customer and supplier party-master
+records, system accounting ledgers, and Bank/Cash ledgers created by the Cash
+and Bank Account module must not be included.
+
+User-created Chart records are identified by
+`isusercreatedchartaccount = true`. Existing accounting records remain in
+`finance_accounts` for their respective workflows but are not part of this
+page.
 
 Each row must show at least:
 
@@ -156,7 +184,7 @@ another organization must never be returned.
 
 The backend must provide operations equivalent to:
 
-- Get the fixed account type catalogue.
+- Get the active database-backed Account Type catalogue.
 - Create a Chart of Accounts record.
 - List all Chart of Accounts records for the current organization.
 
@@ -165,6 +193,17 @@ must use the project's standard success and validation-error formats.
 
 Account creation must be transactional. A failed validation or database write
 must not leave a partial account record.
+
+#### Phase 1 Database Deployment
+
+Use the following file as the single Phase 1 database master for every
+environment:
+
+- [`20260806_chart_of_accounts_phase1.sql`](../../src/database/migrations/20260806_chart_of_accounts_phase1.sql)
+
+Do not maintain a second copy of this SQL under another deployment folder. The
+same idempotent file is used by the migration runner and may be run manually
+for another database deployment.
 
 ### 3.8 Validation and Error Handling
 
@@ -190,7 +229,8 @@ the message below that field.
 3. The backend correctly derives the broad category for the selected Account
    Type.
 4. A newly created account is shown on the list page for the same organization.
-5. Customers and suppliers are not returned as Chart of Accounts records.
+5. Customers, suppliers, system ledgers, and Cash/Bank module ledgers are not
+   returned on the Chart of Accounts page.
 6. The list is flat and does not require parent or child account handling.
 7. Account Name comparison is trimmed and case-insensitive for uniqueness.
 8. Account Code comparison is trimmed and case-insensitive for uniqueness.

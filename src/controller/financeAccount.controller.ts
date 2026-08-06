@@ -4,6 +4,55 @@ import { supplierPaymentFinanceService } from "../services/supplierPaymentFinanc
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module financeAccountController {
+  export const listChartAccountTypes = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.listChartAccountTypes();
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const createChartAccount = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.createChartAccount(request);
+      return reply.status(201).send({
+        success: true,
+        message: "Account created successfully.",
+        data,
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listChartAccounts = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.listChartAccounts(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getChartAccount = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.getChartAccount(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listChartAccountEntries = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.listChartAccountEntries(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const create = async (request: any, reply: any) => {
     try {
       const data = await financeAccountService.createBankCashAccount(request);

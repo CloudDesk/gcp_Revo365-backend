@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import {
   FinanceValidationError,
   calculateAvailableBalance,
+  calculateLedgerBalance,
   formatTdsSectionDisplayName,
   maskAccountNumber,
   normalizeAccountType,
@@ -42,6 +43,8 @@ import {
   validateSupplierBillProductInput,
 } from "../utils/finance/supplierBill.utils.js";
 import {
+  createChartAccountSchema,
+  createDirectBankTransactionSchema,
   createRetailReceiptSchema,
   createSupplierPaymentSchema,
 } from "../schemas/finance.schema.js";
@@ -50,6 +53,50 @@ import {
   getRetailReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
+
+describe("Chart of Accounts Phase 1", () => {
+  test("requires Account Type, Account Name, and Account Code", () => {
+    assert.deepEqual(createChartAccountSchema.required, [
+      "accounttype",
+      "accountname",
+      "accountcode",
+    ]);
+    assert.equal(
+      (createChartAccountSchema.properties.description as any).maxLength,
+      2000
+    );
+  });
+});
+
+describe("Chart of Accounts Phase 2", () => {
+  test("Direct Ledger Entry requires its account, date, narration, side, and amount", () => {
+    assert.deepEqual(createDirectBankTransactionSchema.required, [
+      "transactiondate",
+      "counterpartyaccountid",
+      "entryname",
+      "entryside",
+      "amount",
+    ]);
+    assert.equal(
+      (createDirectBankTransactionSchema.properties.amount as any)
+        .exclusiveMinimum,
+      0
+    );
+  });
+});
+
+describe("Chart of Accounts Phase 3", () => {
+  test("uses debit balances for Assets and Expenses", () => {
+    assert.equal(calculateLedgerBalance("asset", 50000, 10000), 40000);
+    assert.equal(calculateLedgerBalance("expense", 50000, 10000), 40000);
+  });
+
+  test("uses credit balances for Liabilities, Equity, and Income", () => {
+    assert.equal(calculateLedgerBalance("liability", 10000, 50000), 40000);
+    assert.equal(calculateLedgerBalance("equity", 10000, 50000), 40000);
+    assert.equal(calculateLedgerBalance("income", 10000, 50000), 40000);
+  });
+});
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {

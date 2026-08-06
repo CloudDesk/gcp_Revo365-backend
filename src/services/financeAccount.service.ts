@@ -4,6 +4,7 @@ import { FINANCE_ENCRYPTION_KEY } from "../config/config.js";
 import {
   FinanceValidationError,
   calculateAvailableBalance,
+  calculateLedgerBalance,
   maskAccountNumber,
   normalizeAccountType,
   normalizeEntrySide,
@@ -19,6 +20,14 @@ import {
   FINANCE_SOURCE_TYPES,
   getRetailReceiptSourceTypes,
 } from "../utils/finance/financeSource.utils.js";
+
+const CHART_ACCOUNT_CATEGORIES = new Set([
+  "asset",
+  "liability",
+  "equity",
+  "income",
+  "expense",
+]);
 
 const normalizeText = (
   value: unknown,
@@ -231,6 +240,586 @@ const postOpeningBalance = async ({
 };
 
 export module financeAccountService {
+  export const listChartAccountTypes = async () => {
+    const result = await query(
+      `
+      SELECT
+        typecode AS value,
+        typename AS label,
+        accountcategory AS category,
+        categorylabel,
+        displayorder
+      FROM finance_account_types
+      WHERE status = 'active'
+      ORDER BY displayorder ASC, id ASC
+      `
+    );
+    const types = result.rows;
+    const groups = Array.from(
+      types.reduce((grouped: Map<string, any[]>, accountType: any) => {
+        const existing = grouped.get(accountType.categorylabel) || [];
+        existing.push(accountType);
+        grouped.set(accountType.categorylabel, existing);
+        return grouped;
+      }, new Map<string, any[]>())
+    ).map(([label, groupTypes]) => ({ label, types: groupTypes }));
+
+    return {
+      types,
+      groups,
+    };
+  };
+
+  export const createChartAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const data = request.body || {};
+    const accountTypeCode = String(data.accounttype || "").trim().toLowerCase();
+
+    const accountName = normalizeText(
+      data.accountname,
+      "Account Name",
+      true,
+      255
+    )!;
+    const accountCode = normalizeText(
+      data.accountcode,
+      "Account Code",
+      true,
+      40
+    )!;
+    const description = normalizeText(
+      data.description,
+      "Description",
+      false,
+      2000
+    );
+    const normalizedName = accountName.toLocaleLowerCase("en-US");
+    const normalizedCode = accountCode.toLocaleLowerCase("en-US");
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await ensureSystemAccounts(client, organizationId, actor);
+
+      const accountTypeResult = await client.query(
+        `
+        SELECT
+          typecode AS value,
+          typename AS label,
+          accountcategory AS category,
+          categorylabel
+        FROM finance_account_types
+        WHERE typecode = $1
+          AND status = 'active'
+        LIMIT 1
+        `,
+        [accountTypeCode]
+      );
+      const selectedType = accountTypeResult.rows[0];
+      if (!selectedType) {
+        throw new FinanceValidationError(
+          "Select a valid Account Type.",
+          400,
+          "CHART_ACCOUNT_TYPE_INVALID"
+        );
+      }
+
+      // Serialize matching names/codes so service validation remains reliable
+      // even when two create requests arrive concurrently.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1)),
+                pg_advisory_xact_lock(hashtext($2))`,
+        [
+          `chart-account-name:${organizationId}:${normalizedName}`,
+          `chart-account-code:${organizationId}:${normalizedCode}`,
+        ]
+      );
+
+      const duplicateResult = await client.query(
+        `
+        SELECT
+          BOOL_OR(LOWER(TRIM(accountname)) = $2) AS duplicatename,
+          BOOL_OR(LOWER(TRIM(accountcode)) = $3) AS duplicatecode
+        FROM finance_accounts
+        WHERE organizationid = $1
+          AND (
+            LOWER(TRIM(accountname)) = $2
+            OR LOWER(TRIM(accountcode)) = $3
+          )
+        `,
+        [organizationId, normalizedName, normalizedCode]
+      );
+      if (duplicateResult.rows[0]?.duplicatename === true) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      if (duplicateResult.rows[0]?.duplicatecode === true) {
+        throw new FinanceValidationError(
+          "An account with this Account Code already exists.",
+          409,
+          "CHART_ACCOUNT_CODE_DUPLICATE"
+        );
+      }
+
+      const epoch = nowEpoch();
+      const result = await client.query(
+        `
+        INSERT INTO finance_accounts (
+          organizationid,
+          accountcode,
+          accountname,
+          accounttype,
+          accountsubtype,
+          description,
+          isusercreatedchartaccount,
+          currencycode,
+          issystem,
+          status,
+          createdby,
+          modifiedby,
+          createddate,
+          modifieddate
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, TRUE, 'INR', FALSE, 'active', $7, $7, $8, $8)
+        RETURNING *
+        `,
+        [
+          organizationId,
+          accountCode,
+          accountName,
+          selectedType.category,
+          selectedType.value,
+          description,
+          actor,
+          epoch,
+        ]
+      );
+      const account = result.rows[0];
+
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "finance_account",
+        account.id,
+        "created",
+        actor,
+        {
+          accountcode: accountCode,
+          accountname: accountName,
+          accounttype: selectedType.category,
+          accountsubtype: selectedType.value,
+        }
+      );
+
+      await client.query("COMMIT");
+      return {
+        ...account,
+        accounttypelabel: selectedType.label,
+        categorylabel: selectedType.categorylabel,
+      };
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (
+        error?.code === "23505" &&
+        error?.constraint === "uq_finance_chart_accounts_name_normalized"
+      ) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      if (
+        error?.code === "23505" &&
+        error?.constraint === "uq_finance_accounts_code_normalized"
+      ) {
+        throw new FinanceValidationError(
+          "An account with this Account Code already exists.",
+          409,
+          "CHART_ACCOUNT_CODE_DUPLICATE"
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listChartAccounts = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const queryData = request.query || {};
+    const params: any[] = [organizationId];
+    const conditions = [
+      "f.organizationid = $1",
+      "f.isusercreatedchartaccount = TRUE",
+    ];
+
+    if (queryData.search) {
+      params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(f.accountname) LIKE $${params.length}
+        OR LOWER(f.accountcode) LIKE $${params.length}
+      )`);
+    }
+    if (queryData.category) {
+      const category = String(queryData.category).trim().toLowerCase();
+      if (!CHART_ACCOUNT_CATEGORIES.has(category)) {
+        throw new FinanceValidationError("Select a valid account category.");
+      }
+      params.push(category);
+      conditions.push(`f.accounttype = $${params.length}`);
+    }
+    if (queryData.accounttype) {
+      const accountTypeCode = String(queryData.accounttype).trim().toLowerCase();
+      const accountTypeResult = await query(
+        `SELECT typecode
+         FROM finance_account_types
+         WHERE typecode = $1 AND status = 'active'
+         LIMIT 1`,
+        [accountTypeCode]
+      );
+      if (!accountTypeResult.rows[0]) {
+        throw new FinanceValidationError("Select a valid Account Type.");
+      }
+      params.push(accountTypeCode);
+      conditions.push(`f.accountsubtype = $${params.length}`);
+    }
+    if (queryData.status) {
+      const status = String(queryData.status).trim().toLowerCase();
+      if (!['active', 'inactive'].includes(status)) {
+        throw new FinanceValidationError("status must be active or inactive.");
+      }
+      params.push(status);
+      conditions.push(`f.status = $${params.length}`);
+    }
+
+    const page = Math.max(Number(queryData.page) || 1, 1);
+    const count = Math.min(Math.max(Number(queryData.count) || 10, 1), 200);
+    const offset = (page - 1) * count;
+    const whereClause = conditions.join(" AND ");
+    const filterParams = [...params];
+
+    const [countResult, summaryResult] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::INTEGER AS total
+         FROM finance_accounts f
+         WHERE ${whereClause}`,
+        filterParams
+      ),
+      query(
+        `
+        SELECT
+          COUNT(*)::INTEGER AS total,
+          COUNT(*) FILTER (WHERE accounttype = 'asset')::INTEGER AS asset,
+          COUNT(*) FILTER (WHERE accounttype = 'liability')::INTEGER AS liability,
+          COUNT(*) FILTER (WHERE accounttype = 'equity')::INTEGER AS equity,
+          COUNT(*) FILTER (WHERE accounttype = 'income')::INTEGER AS income,
+          COUNT(*) FILTER (WHERE accounttype = 'expense')::INTEGER AS expense,
+          COALESCE((
+            SELECT SUM(jl.debitamount) - SUM(jl.creditamount)
+            FROM finance_accounts ar
+            JOIN journal_lines jl ON jl.financeaccountid = ar.id
+            JOIN journal_entries je ON je.id = jl.journalentryid
+            WHERE ar.organizationid = $1
+              AND ar.accountcode = 'SYS-AR'
+              AND je.organizationid = $1
+              AND je.status = 'posted'
+          ), 0) AS accountsreceivable,
+          COALESCE((
+            SELECT SUM(jl.creditamount) - SUM(jl.debitamount)
+            FROM finance_accounts ap
+            JOIN journal_lines jl ON jl.financeaccountid = ap.id
+            JOIN journal_entries je ON je.id = jl.journalentryid
+            WHERE ap.organizationid = $1
+              AND ap.accountcode = 'SYS-AP'
+              AND je.organizationid = $1
+              AND je.status = 'posted'
+          ), 0) AS accountspayable
+        FROM finance_accounts
+        WHERE organizationid = $1
+          AND isusercreatedchartaccount = TRUE
+        `,
+        [organizationId]
+      ),
+    ]);
+
+    params.push(offset, count);
+    const result = await query(
+      `
+      SELECT
+        f.id,
+        f.accountcode,
+        f.accountname,
+        f.accounttype,
+        f.accountsubtype,
+        f.description,
+        f.isusercreatedchartaccount,
+        f.currencycode,
+        f.issystem,
+        f.status,
+        f.createdby,
+        f.modifiedby,
+        f.createddate,
+        f.modifieddate,
+        fat.typename AS accounttypelabel,
+        fat.categorylabel,
+        COALESCE(ledger_totals.totaldebit, 0) AS totaldebit,
+        COALESCE(ledger_totals.totalcredit, 0) AS totalcredit
+      FROM finance_accounts f
+      LEFT JOIN finance_account_types fat
+        ON fat.typecode = f.accountsubtype
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(jl.debitamount) AS totaldebit,
+          SUM(jl.creditamount) AS totalcredit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journalentryid
+        WHERE jl.financeaccountid = f.id
+          AND je.organizationid = f.organizationid
+          AND je.status = 'posted'
+      ) ledger_totals ON TRUE
+      WHERE ${whereClause}
+      ORDER BY f.modifieddate DESC, f.id DESC
+      OFFSET $${params.length - 1} LIMIT $${params.length}
+      `,
+      params
+    );
+
+    const records = result.rows.map((account: any) => ({
+      ...account,
+      currentledgerbalance: calculateLedgerBalance(
+        account.accounttype,
+        account.totaldebit,
+        account.totalcredit
+      ),
+      accounttypelabel:
+        account.accounttypelabel ||
+        String(account.accountsubtype || "")
+          .split("_")
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" "),
+      categorylabel:
+        account.categorylabel ||
+        String(account.accounttype || "").replace(/^./, (value) =>
+          value.toUpperCase()
+        ),
+    }));
+    const summary = summaryResult.rows[0] || {};
+
+    return {
+      records,
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
+      summary: {
+        total: Number(summary.total || 0),
+        asset: Number(summary.asset || 0),
+        liability: Number(summary.liability || 0),
+        equity: Number(summary.equity || 0),
+        income: Number(summary.income || 0),
+        expense: Number(summary.expense || 0),
+        accountsreceivable: Number(summary.accountsreceivable || 0),
+        accountspayable: Number(summary.accountspayable || 0),
+      },
+    };
+  };
+
+  export const getChartAccount = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+
+    const result = await query(
+      `
+      SELECT
+        f.id,
+        f.accountcode,
+        f.accountname,
+        f.accounttype,
+        f.accountsubtype,
+        f.description,
+        f.isusercreatedchartaccount,
+        f.currencycode,
+        f.issystem,
+        f.status,
+        f.createdby,
+        f.modifiedby,
+        f.createddate,
+        f.modifieddate,
+        fat.typename AS accounttypelabel,
+        fat.categorylabel,
+        COALESCE(ledger_totals.totaldebit, 0) AS totaldebit,
+        COALESCE(ledger_totals.totalcredit, 0) AS totalcredit
+      FROM finance_accounts f
+      LEFT JOIN finance_account_types fat
+        ON fat.typecode = f.accountsubtype
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(jl.debitamount) AS totaldebit,
+          SUM(jl.creditamount) AS totalcredit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journalentryid
+        WHERE jl.financeaccountid = f.id
+          AND je.organizationid = f.organizationid
+          AND je.status = 'posted'
+      ) ledger_totals ON TRUE
+      WHERE f.id = $1
+        AND f.organizationid = $2
+        AND f.isusercreatedchartaccount = TRUE
+      LIMIT 1
+      `,
+      [accountId, organizationId]
+    );
+
+    const account = result.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Chart account was not found.",
+        404,
+        "CHART_ACCOUNT_NOT_FOUND"
+      );
+    }
+
+    return {
+      ...account,
+      currentledgerbalance: calculateLedgerBalance(
+        account.accounttype,
+        account.totaldebit,
+        account.totalcredit
+      ),
+      accounttypelabel:
+        account.accounttypelabel ||
+        String(account.accountsubtype || "")
+          .split("_")
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" "),
+      categorylabel:
+        account.categorylabel ||
+        String(account.accounttype || "").replace(/^./, (value) =>
+          value.toUpperCase()
+        ),
+    };
+  };
+
+  export const listChartAccountEntries = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+
+    const accountResult = await query(
+      `SELECT id, accounttype
+       FROM finance_accounts
+       WHERE id = $1
+         AND organizationid = $2
+         AND isusercreatedchartaccount = TRUE
+       LIMIT 1`,
+      [accountId, organizationId]
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Chart account was not found.",
+        404,
+        "CHART_ACCOUNT_NOT_FOUND"
+      );
+    }
+
+    const page = Math.max(Number(request.query?.page) || 1, 1);
+    const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 200);
+    const offset = (page - 1) * count;
+
+    const summaryResult = await query(
+      `
+      SELECT
+        COUNT(*)::INTEGER AS total,
+        COALESCE(SUM(jl.debitamount), 0) AS totaldebit,
+        COALESCE(SUM(jl.creditamount), 0) AS totalcredit
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.id = jl.journalentryid
+      WHERE jl.financeaccountid = $1
+        AND je.organizationid = $2
+        AND je.status = 'posted'
+      `,
+      [accountId, organizationId]
+    );
+
+    const entriesResult = await query(
+      `
+      SELECT
+        jl.id,
+        jl.journalentryid,
+        je.entrydate AS transactiondate,
+        COALESCE(bt.entryname, jl.description, je.description) AS entryname,
+        jl.description,
+        jl.debitamount,
+        jl.creditamount,
+        je.journalnumber,
+        bt.transactionnumber,
+        CASE
+          WHEN bt.allocationmethod = 'direct_ledger' THEN 'direct_ledger'
+          ELSE je.sourcetype
+        END AS sourcetype,
+        bt.allocationmethod,
+        bt.remarks,
+        bca.id AS bankcashaccountid,
+        bca.accountname AS bankcashaccountname,
+        je.createdby,
+        je.postedby,
+        je.createddate,
+        je.posteddate,
+        je.status AS postingstatus
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.id = jl.journalentryid
+      LEFT JOIN bank_transactions bt
+        ON je.sourcetype = 'bank_transaction'
+       AND bt.id = je.sourceid
+       AND bt.organizationid = je.organizationid
+      LEFT JOIN bank_cash_accounts bca
+        ON bca.id = bt.bankcashaccountid
+       AND bca.organizationid = je.organizationid
+      WHERE jl.financeaccountid = $1
+        AND je.organizationid = $2
+        AND je.status = 'posted'
+      ORDER BY je.entrydate DESC, je.posteddate DESC NULLS LAST, jl.id DESC
+      OFFSET $3 LIMIT $4
+      `,
+      [accountId, organizationId, offset, count]
+    );
+
+    const summary = summaryResult.rows[0] || {};
+    const totalDebit = Number(summary.totaldebit || 0);
+    const totalCredit = Number(summary.totalcredit || 0);
+
+    return {
+      records: entriesResult.rows.map((entry: any) => ({
+        ...entry,
+        transactiondate:
+          toFinanceDateOnly(entry.transactiondate) ?? entry.transactiondate,
+      })),
+      total: Number(summary.total || 0),
+      page,
+      count,
+      summary: {
+        totaldebit: totalDebit,
+        totalcredit: totalCredit,
+        currentledgerbalance: calculateLedgerBalance(
+          account.accounttype,
+          totalDebit,
+          totalCredit
+        ),
+      },
+    };
+  };
+
   export const createBankCashAccount = async (request: any) => {
     const { actor, organizationId } = resolveFinanceContext(request);
     const data = request.body || {};
@@ -760,6 +1349,8 @@ export module financeAccountService {
       FROM finance_accounts
       WHERE organizationid = $1
         AND status = 'active'
+        AND isusercreatedchartaccount = TRUE
+        AND accountsubtype NOT IN ('bank', 'cash')
         ${searchClause}
       ORDER BY accountname ASC
       LIMIT 200
@@ -788,6 +1379,12 @@ export module financeAccountService {
     );
     const entrySide = normalizeEntrySide(request.body?.entryside);
     const amount = requirePositiveMoney(request.body?.amount);
+    const entryName = normalizeText(
+      request.body?.entryname,
+      "Entry Name",
+      true,
+      255
+    )!;
     const remarks = normalizeText(request.body?.remarks, "remarks", false, 2000);
 
     const client = await pool.connect();
@@ -821,7 +1418,10 @@ export module financeAccountService {
         `
         SELECT *
         FROM finance_accounts
-        WHERE id = $1 AND organizationid = $2 AND status = 'active'
+        WHERE id = $1
+          AND organizationid = $2
+          AND status = 'active'
+          AND isusercreatedchartaccount = TRUE
         LIMIT 1
         `,
         [counterpartyAccountId, organizationId]
@@ -890,6 +1490,7 @@ export module financeAccountService {
           allocationmethod,
           sourcetype,
           remarks,
+          entryname,
           postingstatus,
           entrymode,
           createdby,
@@ -899,8 +1500,8 @@ export module financeAccountService {
         )
         VALUES (
           $1, $2, $3, 'ledger', $4, $5, $4, $6, $7, $8, $9,
-          $10, 'direct_ledger', 'manual', $11, 'posted', 'manual',
-          $12, $12, $13, $13
+          $10, 'direct_ledger', 'manual', $11, $12, 'posted', 'manual',
+          $13, $13, $14, $14
         )
         RETURNING *
         `,
@@ -916,6 +1517,7 @@ export module financeAccountService {
           creditAmount,
           balanceAfter,
           remarks,
+          entryName,
           actor,
           epoch,
         ]
@@ -946,7 +1548,7 @@ export module financeAccountService {
           organizationId,
           transactionDate,
           bankTransaction.id,
-          remarks || `Direct ledger transaction for ${bankCashAccount.accountname}`,
+          entryName,
           actor,
           epoch,
         ]
@@ -977,7 +1579,7 @@ export module financeAccountService {
           bankCashAccount.financeaccountid,
           bankDebit,
           bankCredit,
-          remarks,
+          entryName,
           counterparty.id,
           counterpartyDebit,
           counterpartyCredit,
@@ -1024,6 +1626,7 @@ export module financeAccountService {
           transactionnumber: transactionNumber,
           entryside: entrySide,
           amount,
+          entryname: entryName,
           previousbalance: toMoney(bankCashAccount.currentbalance),
           balanceafter: balanceAfter,
           allocationmethod: "direct_ledger",

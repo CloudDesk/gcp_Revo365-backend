@@ -1,6 +1,6 @@
 import pool, { query } from "../database/postgres.js";
 import { FinanceValidationError, calculateAvailableBalance, formatTdsSectionDisplayName, nowEpoch, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
-import { applySupplierBillAllocation, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, } from "../utils/finance/supplierBill.utils.js";
+import { applySupplierBillAllocation, assertSupplierTdsMapping, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, } from "../utils/finance/supplierBill.utils.js";
 import { FINANCE_SOURCE_TYPES, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
 const normalizeText = (value, fieldName, required = false, maxLength = 255) => {
     const normalized = String(value ?? "").trim();
@@ -37,6 +37,19 @@ const epochToIndiaDate = (value) => {
 const selectSupplierBills = `
   SELECT
     bill.*,
+    COALESCE(
+      (
+        SELECT SUM(allocation.totalsettledamount)
+        FROM bank_transaction_allocations allocation
+        JOIN bank_transactions bank_tx
+          ON bank_tx.id = allocation.banktransactionid
+        WHERE allocation.documenttype = 'purchase_bill'
+          AND allocation.documentid = bill.id
+          AND allocation.status = 'applied'
+          AND bank_tx.postingstatus = 'posted'
+      ),
+      0
+    ) AS finance_settled_amount,
     linked_po.supplierid,
     supplier.suppliername,
     supplier.supplieremail,
@@ -209,21 +222,7 @@ export var supplierPaymentFinanceService;
             const tdsApplied = item?.tdsapplied === true;
             const tdsAmount = toMoney(item?.tdsamount ?? 0, "tdsamount");
             const tdsSectionId = item?.tdssectionid == null ? null : Number(item.tdssectionid);
-            if (tdsAmount < 0) {
-                throw new FinanceValidationError("TDS Payable amount cannot be negative.");
-            }
-            if (tdsApplied) {
-                if (tdsAmount <= 0) {
-                    throw new FinanceValidationError("TDS Payable amount must be greater than zero when TDS is applied.");
-                }
-                if (!Number.isSafeInteger(tdsSectionId) ||
-                    Number(tdsSectionId) <= 0) {
-                    throw new FinanceValidationError("A valid TDS section is required when TDS Payable is applied.");
-                }
-            }
-            else if (tdsAmount !== 0 || tdsSectionId !== null) {
-                throw new FinanceValidationError("TDS amount and section must be empty when TDS is not applied.");
-            }
+            assertSupplierTdsMapping(tdsApplied, tdsAmount, tdsSectionId);
             return {
                 billId,
                 allocationAmount,
@@ -242,6 +241,7 @@ export var supplierPaymentFinanceService;
             throw new FinanceValidationError("Payment amount must equal the total supplier bill allocation.");
         }
         const totalTdsAmount = toMoney(normalizedAllocations.reduce((total, item) => total + item.tdsAmount, 0));
+        const hasTdsAllocations = normalizedAllocations.some((item) => item.tdsApplied);
         const totalSettlementAmount = toMoney(amount + totalTdsAmount);
         const client = await pool.connect();
         try {
@@ -281,6 +281,19 @@ export var supplierPaymentFinanceService;
             const billResult = await client.query(`
         SELECT
           bill.*,
+          COALESCE(
+            (
+              SELECT SUM(allocation.totalsettledamount)
+              FROM bank_transaction_allocations allocation
+              JOIN bank_transactions bank_tx
+                ON bank_tx.id = allocation.banktransactionid
+              WHERE allocation.documenttype = 'purchase_bill'
+                AND allocation.documentid = bill.id
+                AND allocation.status = 'applied'
+                AND bank_tx.postingstatus = 'posted'
+            ),
+            0
+          ) AS finance_settled_amount,
           linked_po.supplierid
         FROM poinvoice bill
         JOIN LATERAL (
@@ -336,7 +349,7 @@ export var supplierPaymentFinanceService;
             }
             let tdsPayableAccountId = null;
             const tdsSectionById = new Map();
-            if (totalTdsAmount > 0) {
+            if (hasTdsAllocations) {
                 const tdsPayableResult = await client.query(`
           SELECT id
           FROM finance_accounts

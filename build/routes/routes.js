@@ -68,7 +68,7 @@ import { storeQuotationController } from "../controller/storeQuotation.controlle
 import { picklistConfigController } from "../controller/picklistConfig.controller.js";
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
 import { requireFinancePermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
@@ -355,6 +355,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/store-quotation/:id/finalize', { preHandler: [getSession] }, storeQuotationController.finalizeStoreQuotation);
     fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
     // Cash and Bank Account foundation
+    fastify.get('/finance/chart-of-accounts/types', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountTypes);
+    fastify.get('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccounts);
+    fastify.get('/finance/chart-of-accounts/:accountId/entries', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountEntries);
+    fastify.get('/finance/chart-of-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getChartAccount);
+    fastify.post('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createChartAccountSchema)] }, financeAccountController.createChartAccount);
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
