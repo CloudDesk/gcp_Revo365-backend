@@ -57,6 +57,15 @@ export var poinvoiceservice;
             return fields;
         }, {});
     };
+    const serializeJsonArrayFields = (upsertFields) => {
+        ["productdata", "paymentdata"].forEach((field) => {
+            if (Object.prototype.hasOwnProperty.call(upsertFields, field)) {
+                // node-postgres converts JavaScript arrays into PostgreSQL array
+                // literals, which are invalid values for JSONB columns.
+                upsertFields[field] = JSON.stringify(parseJsonArray(upsertFields[field]));
+            }
+        });
+    };
     const validateAndNormalizeProductData = async (upsertFields, id) => {
         const hasProductData = Object.prototype.hasOwnProperty.call(upsertFields, "productdata");
         if (!hasProductData) {
@@ -244,6 +253,7 @@ export var poinvoiceservice;
                 normalizeBillTaxFields(upsertFields);
             }
             upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount;
+            serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             let findindex = fieldNames.indexOf('paymentduedate');
@@ -283,6 +293,7 @@ export var poinvoiceservice;
                 normalizeBillTaxFields(upsertFields);
             }
             upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount;
+            serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             let findindex = fieldNames.indexOf('paymentduedate');
