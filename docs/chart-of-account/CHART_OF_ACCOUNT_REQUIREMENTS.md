@@ -1,0 +1,541 @@
+# Chart of Accounts Requirements
+
+## 1. Purpose
+
+The Chart of Accounts module provides a single place to create and view the
+organization's accounting accounts.
+
+Customers and suppliers are maintained as separate party masters and are not
+created as Chart of Accounts records. All other accounts used for accounting
+entries are maintained in this module.
+
+## 2. Delivery Phases
+
+| Phase | Scope |
+| --- | --- |
+| Phase 1 | Create and list Chart of Accounts records using the fixed Account Type catalogue. |
+| Phase 2 | Use the created accounts when posting a Direct Ledger transaction from the Cash and Bank Account module. |
+| Phase 3 | Show each account's ledger entries and totals, and show Accounts Payable and Accounts Receivable totals on the home/list page. |
+
+Related Cash and Bank Account references:
+
+- [Cash and Bank Account Requirements](../cash-bank-account/CASH_BANK_REQUIREMENTS.md)
+- [Cash and Bank Phase 1 Implementation Report](../cash-bank-account/CASH_BANK_PHASE_1_IMPLEMENTATION_REPORT.md)
+
+## 3. Phase 1: Chart of Accounts Setup
+
+### 3.1 Scope
+
+This phase includes:
+
+- A fixed list of supported account types supplied by the backend.
+- Creation of new accounts using one flat account structure.
+- A list page showing all accounts created for the current organization.
+- Case-insensitive uniqueness validation for Account Name and Account Code.
+
+This phase does not include:
+
+- Creating customers or suppliers as Chart of Accounts records.
+- User configuration of account types.
+- Parent accounts, child accounts, or any account hierarchy.
+- Nested or tree-based display of accounts.
+- Editing, deleting, merging, or archiving accounts unless added in a later
+  requirement.
+
+### 3.2 Account Structure
+
+All accounts must be stored in one flat account list. No `parentaccountid` or
+similar hierarchy field is required in this phase.
+
+The existing `finance_accounts` model can be used as the accounting account
+master. Its fields should be interpreted as follows:
+
+- `accounttype`: the broad accounting category (`asset`, `liability`,
+  `equity`, `income`, or `expense`).
+- `accountsubtype`: the specific Account Type selected by the user, such as
+  `cash`, `bank`, or `cost_of_goods_sold`.
+- `accountname`: the user-entered Account Name.
+- `accountcode`: the user-entered Account Code.
+- `description`: the user-entered Description. This field must be added if it
+  is not already present in the account master.
+
+The frontend only needs to present one **Account Type** selector. The backend
+must derive and persist its broad accounting category from the selected type.
+
+### 3.3 Supported Account Types
+
+The account type catalogue is fixed for this phase. It may be implemented as a
+backend constant or as seeded database data, but it must not be configurable by
+the user.
+
+| Category | Account Type shown to the user | Canonical value |
+| --- | --- | --- |
+| Assets | Other Asset | `other_asset` |
+| Assets | Other Current Asset | `other_current_asset` |
+| Assets | Cash | `cash` |
+| Assets | Bank | `bank` |
+| Assets | Fixed Asset | `fixed_asset` |
+| Assets | Stock | `stock` |
+| Assets | Payment Clearing | `payment_clearing` |
+| Liability | Other Current Liability | `other_current_liability` |
+| Liability | Credit Card | `credit_card` |
+| Liability | Long Term Liability | `long_term_liability` |
+| Liability | Other Liability | `other_liability` |
+| Liability | Overseas Tax Payable | `overseas_tax_payable` |
+| Equity | Equity | `equity` |
+| Income | Income | `income` |
+| Income | Other Income | `other_income` |
+| Expense | Expense | `expense` |
+| Expense | Cost of Goods Sold | `cost_of_goods_sold` |
+| Expense | Other Expense | `other_expense` |
+
+The backend must reject an Account Type that is not in this catalogue.
+
+### 3.4 Create Account
+
+#### 3.4.1 Form Fields
+
+| Field | Required | Rule |
+| --- | --- | --- |
+| Account Type | Yes | Select one value from the backend-provided account type catalogue. |
+| Account Name | Yes | Trim leading and trailing whitespace; must not be blank; must be unique within the organization without regard to letter case. |
+| Account Code | Yes | Trim leading and trailing whitespace; must not be blank; must be unique within the organization without regard to letter case. |
+| Description | No | Free-text description of the account. |
+
+#### 3.4.2 Creation Behaviour
+
+1. The frontend obtains the supported account types from the backend.
+2. The user completes the form and submits it.
+3. The backend validates all fields and derives the broad accounting category
+   from the selected Account Type.
+4. The backend creates the account for the current organization.
+5. The created account is returned to the frontend and appears on the account
+   list page.
+
+### 3.5 Uniqueness Rules
+
+Account Name and Account Code must each be unique within the current
+organization, irrespective of uppercase or lowercase formatting.
+
+Examples:
+
+- If `Office Rent` exists, `office rent` and `OFFICE RENT` must be rejected as
+  duplicate Account Names.
+- If `ACC-001` exists, `acc-001` must be rejected as a duplicate Account Code.
+- Account Name uniqueness and Account Code uniqueness are independent rules.
+
+Uniqueness must be enforced in both places:
+
+- Service validation, to return a clear field-level error.
+- Database unique indexes using normalized values such as
+  `LOWER(TRIM(accountname))` and `LOWER(TRIM(accountcode))`, scoped by
+  `organizationid`, to prevent duplicates during concurrent requests.
+
+Expected duplicate errors:
+
+- `An account with this Account Name already exists.`
+- `An account with this Account Code already exists.`
+
+### 3.6 Account List
+
+The list page must show all Chart of Accounts records available to the current
+organization. Customer and supplier party-master records must not be included.
+
+Each row must show at least:
+
+- Account Name
+- Account Code
+- Account Type
+- Category
+- Description
+
+The API and query must always apply organization-level isolation. Accounts from
+another organization must never be returned.
+
+### 3.7 Backend Requirements
+
+The backend must provide operations equivalent to:
+
+- Get the fixed account type catalogue.
+- Create a Chart of Accounts record.
+- List all Chart of Accounts records for the current organization.
+
+The exact routes may follow the existing finance module conventions. Responses
+must use the project's standard success and validation-error formats.
+
+Account creation must be transactional. A failed validation or database write
+must not leave a partial account record.
+
+### 3.8 Validation and Error Handling
+
+The backend must reject:
+
+- A missing or unsupported Account Type.
+- A missing, blank, or whitespace-only Account Name.
+- A missing, blank, or whitespace-only Account Code.
+- A duplicate Account Name after trimming and case normalization.
+- A duplicate Account Code after trimming and case normalization.
+- Attempts to create an account for an organization outside the authenticated
+  user's scope.
+
+Validation errors must identify the relevant field so the frontend can display
+the message below that field.
+
+### 3.9 Acceptance Criteria
+
+1. The Account Type selector contains all and only the fixed types listed in
+   this document, grouped under Assets, Liability, Equity, Income, and Expense.
+2. A user can create an account with a valid Account Type, Account Name,
+   Account Code, and optional Description.
+3. The backend correctly derives the broad category for the selected Account
+   Type.
+4. A newly created account is shown on the list page for the same organization.
+5. Customers and suppliers are not returned as Chart of Accounts records.
+6. The list is flat and does not require parent or child account handling.
+7. Account Name comparison is trimmed and case-insensitive for uniqueness.
+8. Account Code comparison is trimmed and case-insensitive for uniqueness.
+9. Duplicate validation remains reliable when two matching requests are sent
+   concurrently.
+10. An unsupported Account Type is rejected by the backend.
+11. Accounts belonging to one organization are not visible to another
+    organization.
+
+### 3.10 Examples
+
+#### Valid Create Request
+
+```json
+{
+  "accounttype": "cost_of_goods_sold",
+  "accountname": "Hardware Purchases",
+  "accountcode": "COGS-001",
+  "description": "Cost of computer hardware purchased for resale"
+}
+```
+
+The backend derives the category as `expense`.
+
+#### Duplicate Name Request
+
+If `Hardware Purchases` already exists for the organization, creating an
+account named `hardware purchases` must fail even when the new Account Code is
+different.
+
+#### Duplicate Code Request
+
+If `COGS-001` already exists for the organization, creating an account with
+code `cogs-001` must fail even when the new Account Name is different.
+
+## 4. Phase 2: Direct Ledger Transaction
+
+### 4.1 Purpose
+
+The Cash and Bank Account module already supports transactions against customer
+invoices and supplier bills. This phase adds the corresponding transaction flow
+for accounts created in Phase 1.
+
+When the user selects **Record Transaction**, the available transaction options
+must include **Direct Ledger Entry**. Selecting this option must render a form
+consistent with the existing customer receipt and supplier payment forms, but
+without invoice/bill allocation or TDS controls.
+
+### 4.2 Account Selection
+
+For a Direct Ledger Entry:
+
+- Replace the Customer/Supplier selector with an **Account** selector.
+- Load active Chart of Accounts records created or available in Phase 1.
+- Do not show customer or supplier party-master records in this selector.
+- The selector must be searchable by Account Name and Account Code.
+- The selected account must belong to the current organization.
+- The selected ledger must not be the same Bank/Cash ledger from which the
+  transaction is being recorded.
+- Bank-to-bank and cash-transfer entries must use a separate transfer workflow
+  and must not be posted as Direct Ledger entries.
+
+### 4.3 Form Layout
+
+The form must contain:
+
+| Field | Required | Behaviour |
+| --- | --- | --- |
+| Bank/Cash Account | Yes | The account from whose Cash and Bank Account screen the transaction is opened. |
+| Transaction Type | Yes | `Direct Ledger Entry`. |
+| Account | Yes | Search and select an active Chart of Accounts record. |
+| Transaction Date | Yes | Use the same date component and date rules as the existing transaction forms. |
+| Entry Name | Yes | Manual narration for the row, for example `June 26 Rent`. |
+| Entry Side | Yes | Select either Debit or Credit from the Bank/Cash account perspective. |
+| Amount | Yes | Must be greater than zero and use the module's standard money precision. |
+| Remarks | No | Optional transaction-level remarks. |
+
+The manual-entry area should use the same visual container as the existing
+invoice/bill allocation area. Instead of document rows, it must display manual
+entry rows with:
+
+- Entry Name
+- Debit/Credit
+- Amount
+
+At least one valid row is required. If the UI supports multiple rows, the
+system-calculated transaction amount must equal the sum of all row amounts.
+
+### 4.4 Excluded Controls
+
+A Direct Ledger Entry must not show or accept:
+
+- Invoice selection
+- Bill selection
+- Invoice or bill allocation amount
+- TDS Applied
+- TDS Section
+- TDS Payable
+- TDS Receivable
+- Payment settlement status
+
+Its allocation method must be stored as `direct_ledger`.
+
+### 4.5 Debit, Credit, and Balance Rules
+
+Debit and Credit in the Cash and Bank Account screen retain the existing
+meaning:
+
+- **Debit**: money coming into the selected Bank/Cash account.
+- **Credit**: money going out of the selected Bank/Cash account.
+
+The Bank/Cash running balance must be calculated by the backend:
+
+```text
+Balance After = Previous Available Balance + Bank Debit - Bank Credit
+```
+
+The client must not submit `balanceafter` or the Bank/Cash current balance as an
+authoritative value.
+
+Exactly one side must be used for each entry:
+
+- Debit and Credit cannot both contain an amount.
+- Debit and Credit cannot both be zero.
+- Amount must be greater than zero.
+
+### 4.6 Journal Posting Rules
+
+Every saved Direct Ledger Entry must create a balanced journal. The selected
+account receives the opposite accounting side from the Bank/Cash ledger.
+
+| Bank/Cash entry | Bank/Cash journal line | Selected account journal line |
+| --- | --- | --- |
+| Debit | Debit | Credit |
+| Credit | Credit | Debit |
+
+The following must be saved atomically:
+
+- Bank/Cash transaction
+- Transaction number
+- Direct Ledger selection
+- Journal entry
+- Balanced journal lines
+- Updated Bank/Cash available balance
+- Audit record
+
+If any operation fails, none of the above changes may be committed.
+
+Only a successfully posted transaction may affect balances or appear in ledger
+totals. Reversed entries must be excluded from current totals or represented by
+their posted reversal, following the existing Cash and Bank Account rules.
+
+### 4.7 Stored Transaction Values
+
+The transaction must store or reference at least:
+
+- Current organization
+- Selected Bank/Cash account
+- Selected Chart of Accounts ID as the counterparty ledger
+- Transaction date
+- Entry name/description
+- Entry side
+- Amount
+- Debit amount
+- Credit amount
+- Balance after posting
+- Allocation method: `direct_ledger`
+- Source type: `manual`
+- Posting status
+- Journal entry reference
+- Created and posted audit information
+
+### 4.8 Example: Rental Payment
+
+Assume the user has created this Phase 1 account:
+
+```text
+Account Name: Rental
+Account Code: EXP-RENT
+Account Type: Expense
+```
+
+The user opens a Bank account and records:
+
+```text
+Transaction Type: Direct Ledger Entry
+Account: Rental
+Transaction Date: 26 June 2026
+Entry Name: June 26 Rent
+Entry Side: Credit
+Amount: ₹50,000
+```
+
+The posting result is:
+
+| Ledger | Debit | Credit |
+| --- | ---: | ---: |
+| Rental Expense | ₹50,000 | ₹0 |
+| Selected Bank | ₹0 | ₹50,000 |
+
+The selected Bank available balance decreases by ₹50,000. The Rental
+account detail shows a ₹50,000 Debit entry because the ledger side is the
+opposite of the Bank/Cash entry side.
+
+### 4.9 Phase 2 Acceptance Criteria
+
+1. Record Transaction includes a Direct Ledger Entry option.
+2. Selecting Direct Ledger Entry displays an Account selector instead of a
+   Customer or Supplier selector.
+3. The Account selector returns active Phase 1 accounts for the current
+   organization.
+4. The manual-entry area accepts Entry Name, Debit/Credit, and Amount.
+5. Transaction Date is mandatory and follows the existing module's date rules.
+6. TDS and invoice/bill allocation controls are not displayed.
+7. A zero, negative, blank, or dual-sided entry is rejected.
+8. Posting creates a Bank/Cash transaction and balanced journal lines in one
+   database transaction.
+9. Bank/Cash available balance uses the existing automatic calculation.
+10. The selected Chart of Accounts ledger receives the opposite side of the
+    Bank/Cash journal line.
+
+## 5. Phase 3: Account Ledger and Summary Reporting
+
+### 5.1 Account List
+
+The Chart of Accounts home/list page must continue to show one flat row per
+account. Each row must also show that account's individual current ledger
+balance.
+
+The value shown for an account must be calculated only from posted journal
+lines belonging to that account and organization. It must not be calculated by
+adding values supplied by the frontend.
+
+The list page should remain a summary. Debit and Credit breakdowns belong on
+the account detail page.
+
+### 5.2 Account Detail View
+
+Selecting an account, such as **Rental**, must open its account detail view.
+The view must include all posted entries that affected that account, including
+Direct Ledger entries created in Phase 2.
+
+The detail summary must show:
+
+- Account Name
+- Account Code
+- Account Type and Category
+- Total Debit
+- Total Credit
+- Current Ledger Balance
+
+The entry list must show each individual ledger value rather than only a
+combined transaction total. Each entry should show:
+
+- Transaction Date
+- Entry Name or journal-line description
+- Transaction/Journal reference
+- Source Type
+- Related Bank/Cash Account, when applicable
+- Debit Amount
+- Credit Amount
+- Created/Posted information
+
+The detail page must support pagination so a large ledger is not loaded in one
+unbounded response.
+
+### 5.3 Account Totals
+
+For every account:
+
+```text
+Total Debit = Sum of posted journal-line Debit amounts
+Total Credit = Sum of posted journal-line Credit amounts
+```
+
+The natural current balance depends on the broad account category:
+
+| Category | Current Ledger Balance |
+| --- | --- |
+| Asset | Total Debit - Total Credit |
+| Expense | Total Debit - Total Credit |
+| Liability | Total Credit - Total Debit |
+| Equity | Total Credit - Total Debit |
+| Income | Total Credit - Total Debit |
+
+The response should also retain the separate Debit and Credit totals so the UI
+does not lose the underlying accounting direction.
+
+### 5.4 Accounts Receivable and Accounts Payable Home Summary
+
+The Chart of Accounts home/list page must display summary cards for:
+
+- **Accounts Receivable**
+- **Accounts Payable**
+
+These totals must come from posted journal lines and must include the accounting
+effect of Direct Ledger entries created in Phase 2 when those entries post to
+the respective Accounts Receivable or Accounts Payable ledger.
+
+Using the existing system ledgers:
+
+```text
+Accounts Receivable =
+  Total Debit of SYS-AR - Total Credit of SYS-AR
+
+Accounts Payable =
+  Total Credit of SYS-AP - Total Debit of SYS-AP
+```
+
+The values represent current net balances, not the gross sum of every historic
+transaction. Posted invoice/bill entries, their settlements, and applicable
+Direct Ledger entries must therefore contribute consistently through journal
+lines. Draft, failed, and reversed accounting effects must not inflate the
+cards.
+
+The summary queries must be scoped to the current organization.
+
+### 5.5 Phase 3 Backend Requirements
+
+The backend must provide operations equivalent to:
+
+- List Chart of Accounts with each account's current balance.
+- Get one account's details, Total Debit, Total Credit, and Current Ledger
+  Balance.
+- List paginated journal entries/lines for one account.
+- Get the current Accounts Receivable and Accounts Payable home summary.
+
+The exact routes may follow the existing finance module conventions.
+
+### 5.6 Phase 3 Acceptance Criteria
+
+1. Every account row shows that account's individual current balance.
+2. Opening an account shows its Total Debit, Total Credit, and Current Ledger
+   Balance.
+3. The account detail lists every posted Direct Ledger entry affecting the
+   account with its individual Debit or Credit value.
+4. The Rental example appears as a Debit in the Rental ledger and a Credit in
+   the selected Bank ledger.
+5. Draft and failed transactions do not affect account totals.
+6. Reversed transactions do not remain in current totals without the
+   corresponding reversing effect.
+7. The home/list page shows current Accounts Receivable and Accounts Payable
+   totals.
+8. Accounts Receivable uses the net Debit balance of the Accounts Receivable
+   system ledger.
+9. Accounts Payable uses the net Credit balance of the Accounts Payable system
+   ledger.
+10. List, detail, and summary queries are isolated by organization.
