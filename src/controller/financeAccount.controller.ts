@@ -132,6 +132,15 @@ export module financeAccountController {
     }
   };
 
+  export const listAllTransactions = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.listBankTransactions(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listRetailCustomers = async (request: any, reply: any) => {
     try {
       const data = await retailReceiptFinanceService.listCustomers(request);

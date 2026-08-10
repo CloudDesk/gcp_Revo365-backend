@@ -1663,16 +1663,29 @@ export module financeAccountService {
 
   export const listBankTransactions = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
-    const bankCashAccountId = Number(request.params?.accountId);
-    if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
-      throw new FinanceValidationError("A valid accountId is required.");
-    }
+    const accountIdParam = request.params?.accountId;
     const queryData = request.query || {};
-    const params: any[] = [bankCashAccountId, organizationId];
-    const conditions = [
-      "t.bankcashaccountid = $1",
-      "t.organizationid = $2",
-    ];
+    const params: any[] = [organizationId];
+    const conditions = ["t.organizationid = $1"];
+
+    if (accountIdParam != null) {
+      const bankCashAccountId = Number(accountIdParam);
+      if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
+        throw new FinanceValidationError("A valid accountId is required.");
+      }
+      params.push(bankCashAccountId);
+      conditions.push(`t.bankcashaccountid = $${params.length}`);
+    }
+    if (queryData.bankcashaccountid) {
+      const bankCashAccountId = Number(queryData.bankcashaccountid);
+      if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
+        throw new FinanceValidationError(
+          "A valid bankcashaccountid is required."
+        );
+      }
+      params.push(bankCashAccountId);
+      conditions.push(`t.bankcashaccountid = $${params.length}`);
+    }
 
     if (queryData.fromdate) {
       params.push(requireIsoDate(queryData.fromdate, "fromdate"));
@@ -1696,12 +1709,37 @@ export module financeAccountService {
         conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
       }
     }
+    if (queryData.transactiontype) {
+      const transactionType = String(queryData.transactiontype)
+        .trim()
+        .toLowerCase();
+      if (transactionType === "customer_receipt") {
+        params.push([
+          FINANCE_SOURCE_TYPES.ecommerceOrder,
+          ...getRetailReceiptSourceTypes(),
+          FINANCE_SOURCE_TYPES.serviceRequestReceipt,
+          FINANCE_SOURCE_TYPES.rentalReceipt,
+        ]);
+        conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
+      } else if (transactionType === "supplier_payment") {
+        params.push(FINANCE_SOURCE_TYPES.supplierBillPayment);
+        conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
+      } else if (transactionType === "direct_ledger") {
+        conditions.push("t.allocationmethod = 'direct_ledger'");
+      } else {
+        throw new FinanceValidationError(
+          "transactiontype must be customer_receipt, supplier_payment, or direct_ledger."
+        );
+      }
+    }
     if (queryData.search) {
       params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
       conditions.push(`(
         LOWER(COALESCE(t.transactionnumber, '')) LIKE $${params.length}
         OR LOWER(COALESCE(t.partyname, '')) LIKE $${params.length}
         OR LOWER(COALESCE(t.remarks, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(b.accountname, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(b.bankname, '')) LIKE $${params.length}
       )`);
     }
 
@@ -1716,6 +1754,9 @@ export module financeAccountService {
         COALESCE(SUM(t.debitamount), 0) AS debit,
         COALESCE(SUM(t.creditamount), 0) AS credit
       FROM bank_transactions t
+      JOIN bank_cash_accounts b
+        ON b.id = t.bankcashaccountid
+       AND b.organizationid = t.organizationid
       WHERE ${conditions.join(" AND ")}
       `,
       filterParams
@@ -1726,6 +1767,11 @@ export module financeAccountService {
       `
       SELECT
         t.*,
+        b.accountname AS bankcashaccountname,
+        b.bankname AS bankname,
+        b.accounttype AS bankcashaccounttype,
+        b.currencycode AS bankcashcurrencycode,
+        b.status AS bankcashaccountstatus,
         j.journalnumber,
         f.accountname AS counterpartyaccountname,
         f.accountcode AS counterpartyaccountcode,
@@ -1785,6 +1831,9 @@ export module financeAccountService {
           '[]'::jsonb
         ) AS allocations
       FROM bank_transactions t
+      JOIN bank_cash_accounts b
+        ON b.id = t.bankcashaccountid
+       AND b.organizationid = t.organizationid
       LEFT JOIN journal_entries j ON j.id = t.journalentryid
       LEFT JOIN finance_accounts f ON f.id = t.counterpartyaccountid
       LEFT JOIN LATERAL (

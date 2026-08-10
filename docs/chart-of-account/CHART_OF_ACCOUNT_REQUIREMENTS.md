@@ -614,6 +614,16 @@ must first be reflected in the document balance before the cards are updated.
 
 The summary queries must be scoped to the current organization.
 
+Selecting **Amount Receivable** opens the organization-wide Cash and Bank
+Transactions view filtered to Customer Receipts. Selecting **Amount Payable**
+opens the same view filtered to Supplier Payments. These links must not select
+an arbitrary first active Bank/Cash account because the card totals cover all
+documents and all settlement accounts.
+
+The filtered transaction view provides settlement history. The card values
+remain document-derived balances and therefore must not be recalculated from
+only the visible Bank/Cash transaction rows.
+
 ### 5.5 Phase 3 Backend Requirements
 
 The backend must provide operations equivalent to:
@@ -646,3 +656,5 @@ The exact routes may follow the existing finance module conventions.
 9. Amount Payable equals the sum of positive outstanding supplier bill
    balances.
 10. List, detail, and summary queries are isolated by organization.
+11. Amount Receivable and Amount Payable navigate to the organization-wide
+    transaction list with Customer Receipt or Supplier Payment filtering.

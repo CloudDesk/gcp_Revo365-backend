@@ -128,6 +128,15 @@ export var financeAccountController;
             return sendFinanceError(reply, error);
         }
     };
+    financeAccountController.listAllTransactions = async (request, reply) => {
+        try {
+            const data = await financeAccountService.listBankTransactions(request);
+            return reply.send({ success: true, data });
+        }
+        catch (error) {
+            return sendFinanceError(reply, error);
+        }
+    };
     financeAccountController.listRetailCustomers = async (request, reply) => {
         try {
             const data = await retailReceiptFinanceService.listCustomers(request);

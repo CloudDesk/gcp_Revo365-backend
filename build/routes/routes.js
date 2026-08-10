@@ -362,6 +362,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createChartAccountSchema)] }, financeAccountController.createChartAccount);
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
+    fastify.get('/finance/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listAllTransactions);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
     fastify.post('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] }, financeAccountController.create);
     fastify.patch('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] }, financeAccountController.update);
