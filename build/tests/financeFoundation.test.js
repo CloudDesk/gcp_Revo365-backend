@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalance, formatTdsSectionDisplayName, maskAccountNumber, normalizeAccountType, normalizeEntrySide, protectAccountNumber, requireIsoDate, requirePositiveMoney, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
 import { buildEcommerceCustomerName, isEligibleEcommerceOrder, resolveEcommercePaymentDate, resolveEcommercePaymentMethod, resolveEcommercePaymentProvider, resolveEcommercePaymentReference, } from "../utils/finance/ecommerceFinance.utils.js";
-import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
+import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, getRetailInvoicesOutstandingTotal, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
 import { assertSupplierBillCanBeModified, assertSupplierTdsMapping, applySupplierBillAllocation, assertSupplierBillTotalWithinPurchaseOrder, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, validateSupplierBillProductInput, } from "../utils/finance/supplierBill.utils.js";
 import { createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, } from "../schemas/finance.schema.js";
 import { FINANCE_SOURCE_TYPES, getRetailReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
+import { getBillGstSummary, getInvoiceGstSummary, parseGstMoney, resolveInvoiceGst, } from "../utils/finance/gstSummary.utils.js";
 describe("Chart of Accounts Phase 1", () => {
     test("requires Account Type, Account Name, and Account Code", () => {
         assert.deepEqual(createChartAccountSchema.required, [
@@ -28,6 +29,40 @@ describe("Chart of Accounts Phase 2", () => {
         assert.equal(createDirectBankTransactionSchema.properties.amount
             .exclusiveMinimum, 0);
     });
+    test("summarizes invoice Output GST amounts across supported sales flows", () => {
+        assert.deepEqual(getInvoiceGstSummary([
+            {
+                invoicefor: "product",
+                taxamount: 180,
+                invoicedata: { taxmode: "cgst_sgst", cgst: 90, sgst: 90 },
+            },
+            {
+                invoicefor: "rental",
+                taxamount: 360,
+                invoicedata: { taxmode: "igst", igstamount: 360 },
+            },
+            {
+                invoicefor: "service",
+                taxamount: 90,
+                invoicedata: { taxtype: "intra_state", cgst: 9, sgst: 9 },
+            },
+            { invoicefor: "penalty", taxamount: 999 },
+        ]), { igst: 360, cgst: 135, sgst: 135, total: 630 });
+    });
+    test("summarizes supplier Bill Input GST from tax amounts, not rates", () => {
+        assert.deepEqual(getBillGstSummary([
+            { payabletaxamount: 1800, cgst: 9, sgst: 9 },
+            { payabletaxamount: 500, cgst: 0, sgst: 0 },
+        ]), { igst: 0, cgst: 1150, sgst: 1150, total: 2300 });
+    });
+    test("reads only the first amount from legacy formatted tax text", () => {
+        assert.equal(parseGstMoney("₹6,896.55 (CGST ₹3,448.28)"), 6896.55);
+        assert.deepEqual(resolveInvoiceGst({
+            invoicefor: "service",
+            taxamount: "₹6,896.55 (CGST ₹3,448.28)",
+            invoicedata: { taxtype: "intra_state", cgst: 9, sgst: 9 },
+        }), { igst: 0, cgst: 3448.28, sgst: 3448.27, total: 6896.55 });
+    });
 });
 describe("Chart of Accounts Phase 3", () => {
     test("uses debit balances for Assets and Expenses", () => {
@@ -38,6 +73,20 @@ describe("Chart of Accounts Phase 3", () => {
         assert.equal(calculateLedgerBalance("liability", 10000, 50000), 40000);
         assert.equal(calculateLedgerBalance("equity", 10000, 50000), 40000);
         assert.equal(calculateLedgerBalance("income", 10000, 50000), 40000);
+    });
+    test("Amount Receivable sums canonical invoice outstanding balances", () => {
+        assert.equal(getRetailInvoicesOutstandingTotal([
+            {
+                totalorderamount: 1000,
+                paidamount: 250,
+                paymentdata: [],
+            },
+            {
+                totalorderamount: 500,
+                paidamount: 500,
+                paymentdata: [],
+            },
+        ]), 750);
     });
 });
 describe("Cash and Bank foundation calculations", () => {

@@ -435,7 +435,62 @@ The selected Bank available balance decreases by ₹50,000. The Rental
 account detail shows a ₹50,000 Debit entry because the ledger side is the
 opposite of the Bank/Cash entry side.
 
-### 4.9 Phase 2 Acceptance Criteria
+### 4.9 GST Summary Extension
+
+The Chart of Accounts home page must include two GST summary sections:
+
+- **Invoice GST — Output GST**
+- **Bill GST — Input GST**
+
+Each section must display separate currency totals for:
+
+- IGST
+- CGST
+- SGST
+- Overall GST Total
+
+#### Invoice GST (Output GST)
+
+Invoice Output GST is the sum of the GST amounts recorded on all
+non-cancelled invoices from these sales flows:
+
+- E-commerce sales
+- In-store sales
+- Rental invoices
+- Service Request invoices
+
+E-commerce and In-store invoices are both represented by Product invoices in
+the current invoice data. Penalty invoices are not part of this summary.
+
+Different invoice flows currently store GST in different shapes. Product
+invoices store component amounts, Rental invoices may use either legacy
+component fields or explicit `igstamount`, `cgstamount`, and `sgstamount`
+fields, and Service Request invoices store GST rates with a total tax amount.
+The backend must normalize those shapes and sum GST currency amounts. It must
+never add percentage rates as though they were monetary values.
+
+#### Bill GST (Input GST)
+
+Bill Input GST is the sum of the GST amounts recorded on every non-cancelled
+supplier Bill. The backend must use the Bill's payable tax amount and allocate
+it to IGST or CGST/SGST according to the tax mode or component rates stored on
+the Bill. Under the current Bill schema, which stores CGST and SGST rates but
+does not yet store IGST, Input IGST is shown as zero.
+
+GST summaries are based on issued invoices and Bills, irrespective of whether
+they are unpaid, partially paid, or fully paid. Payment and settlement status
+must not reduce Output or Input GST. Cancelled documents must not contribute.
+
+```text
+Invoice Output GST Total = Output IGST + Output CGST + Output SGST
+Bill Input GST Total = Input IGST + Input CGST + Input SGST
+```
+
+The page must show a loader in each GST section while the summary is being
+calculated and must not temporarily display zero as though it were the loaded
+result.
+
+### 4.10 Phase 2 Acceptance Criteria
 
 1. Record Transaction includes a Direct Ledger Entry option.
 2. Selecting Direct Ledger Entry displays an Account selector instead of a
@@ -451,6 +506,15 @@ opposite of the Bank/Cash entry side.
 9. Bank/Cash available balance uses the existing automatic calculation.
 10. The selected Chart of Accounts ledger receives the opposite side of the
     Bank/Cash journal line.
+11. The Chart of Accounts home page shows Invoice GST as Output IGST, CGST,
+    SGST, and Total.
+12. Invoice GST includes non-cancelled E-commerce, In-store, Rental, and
+    Service Request invoices and excludes Penalty invoices.
+13. The Chart of Accounts home page shows Bill GST as Input IGST, CGST, SGST,
+    and Total for non-cancelled supplier Bills.
+14. GST cards sum tax amounts rather than GST percentage rates and do not
+    change when a document is paid.
+15. Both GST sections show a loading state until their values are available.
 
 ## 5. Phase 3: Account Ledger and Summary Reporting
 
@@ -519,32 +583,34 @@ The natural current balance depends on the broad account category:
 The response should also retain the separate Debit and Credit totals so the UI
 does not lose the underlying accounting direction.
 
-### 5.4 Accounts Receivable and Accounts Payable Home Summary
+### 5.4 Amount Receivable and Amount Payable Home Summary
 
-The Chart of Accounts home/list page must display summary cards for:
+The Chart of Accounts home/list page must display summary cards labelled:
 
-- **Accounts Receivable**
-- **Accounts Payable**
+- **Amount Receivable**
+- **Amount Payable**
 
-These totals must come from posted journal lines and must include the accounting
-effect of Direct Ledger entries created in Phase 2 when those entries post to
-the respective Accounts Receivable or Accounts Payable ledger.
+These labels represent the Accounts Receivable and Accounts Payable business
+concepts. The card values use the document balances maintained by their source
+modules because those balances include both the originating document amount
+and all subsequent settlements.
 
-Using the existing system ledgers:
+These totals use the transaction-derived balance stored against each customer
+invoice and supplier bill. The Cash and Bank settlement workflows update these
+balances whenever a posted receipt, payment, or TDS adjustment is recorded.
 
 ```text
-Accounts Receivable =
-  Total Debit of SYS-AR - Total Credit of SYS-AR
+Amount Receivable =
+  Sum of each non-cancelled invoice amount minus its successful settlements
 
-Accounts Payable =
-  Total Credit of SYS-AP - Total Debit of SYS-AP
+Amount Payable =
+  Sum of positive balanceamount values for non-cancelled supplier bills
 ```
 
-The values represent current net balances, not the gross sum of every historic
-transaction. Posted invoice/bill entries, their settlements, and applicable
-Direct Ledger entries must therefore contribute consistently through journal
-lines. Draft, failed, and reversed accounting effects must not inflate the
-cards.
+The values represent current outstanding document balances, not the gross sum
+of every historic transaction and not settlement-only SYS-AR/SYS-AP journal
+activity. Paid documents contribute zero. Failed or reversed settlement effects
+must first be reflected in the document balance before the cards are updated.
 
 The summary queries must be scoped to the current organization.
 
@@ -556,7 +622,7 @@ The backend must provide operations equivalent to:
 - Get one account's details, Total Debit, Total Credit, and Current Ledger
   Balance.
 - List paginated journal entries/lines for one account.
-- Get the current Accounts Receivable and Accounts Payable home summary.
+- Get the current Amount Receivable and Amount Payable home summary.
 
 The exact routes may follow the existing finance module conventions.
 
@@ -572,10 +638,11 @@ The exact routes may follow the existing finance module conventions.
 5. Draft and failed transactions do not affect account totals.
 6. Reversed transactions do not remain in current totals without the
    corresponding reversing effect.
-7. The home/list page shows current Accounts Receivable and Accounts Payable
+7. The home/list page shows current Amount Receivable and Amount Payable
    totals.
-8. Accounts Receivable uses the net Debit balance of the Accounts Receivable
-   system ledger.
-9. Accounts Payable uses the net Credit balance of the Accounts Payable system
-   ledger.
+8. Amount Receivable equals the sum of positive outstanding customer invoice
+   balances derived from invoice amounts and successful settlements, including
+   legacy records whose stored balance is stale.
+9. Amount Payable equals the sum of positive outstanding supplier bill
+   balances.
 10. List, detail, and summary queries are isolated by organization.

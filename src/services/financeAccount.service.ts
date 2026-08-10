@@ -20,6 +20,11 @@ import {
   FINANCE_SOURCE_TYPES,
   getRetailReceiptSourceTypes,
 } from "../utils/finance/financeSource.utils.js";
+import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
+import {
+  getBillGstSummary,
+  getInvoiceGstSummary,
+} from "../utils/finance/gstSummary.utils.js";
 
 const CHART_ACCOUNT_CATEGORIES = new Set([
   "asset",
@@ -502,7 +507,7 @@ export module financeAccountService {
     const whereClause = conditions.join(" AND ");
     const filterParams = [...params];
 
-    const [countResult, summaryResult] = await Promise.all([
+    const [countResult, summaryResult, receivableInvoiceResult, billResult] = await Promise.all([
       query(
         `SELECT COUNT(*)::INTEGER AS total
          FROM finance_accounts f
@@ -519,30 +524,30 @@ export module financeAccountService {
           COUNT(*) FILTER (WHERE accounttype = 'income')::INTEGER AS income,
           COUNT(*) FILTER (WHERE accounttype = 'expense')::INTEGER AS expense,
           COALESCE((
-            SELECT SUM(jl.debitamount) - SUM(jl.creditamount)
-            FROM finance_accounts ar
-            JOIN journal_lines jl ON jl.financeaccountid = ar.id
-            JOIN journal_entries je ON je.id = jl.journalentryid
-            WHERE ar.organizationid = $1
-              AND ar.accountcode = 'SYS-AR'
-              AND je.organizationid = $1
-              AND je.status = 'posted'
-          ), 0) AS accountsreceivable,
-          COALESCE((
-            SELECT SUM(jl.creditamount) - SUM(jl.debitamount)
-            FROM finance_accounts ap
-            JOIN journal_lines jl ON jl.financeaccountid = ap.id
-            JOIN journal_entries je ON je.id = jl.journalentryid
-            WHERE ap.organizationid = $1
-              AND ap.accountcode = 'SYS-AP'
-              AND je.organizationid = $1
-              AND je.status = 'posted'
+            SELECT SUM(
+              GREATEST(
+                COALESCE(bill.balanceamount, bill.invoiceamount, 0),
+                0
+              )
+            )
+            FROM poinvoice bill
+            WHERE LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
           ), 0) AS accountspayable
         FROM finance_accounts
         WHERE organizationid = $1
           AND isusercreatedchartaccount = TRUE
         `,
         [organizationId]
+      ),
+      query(
+        `SELECT *
+         FROM revoinvoice
+         WHERE LOWER(COALESCE(paymentstatus, 'pending')) <> 'cancelled'`
+      ),
+      query(
+        `SELECT invoiceamount, balanceamount, payabletaxamount, cgst, sgst
+         FROM poinvoice
+         WHERE LOWER(COALESCE(invoicestatus, 'in_progress')) <> 'cancelled'`
       ),
     ]);
 
@@ -622,8 +627,12 @@ export module financeAccountService {
         equity: Number(summary.equity || 0),
         income: Number(summary.income || 0),
         expense: Number(summary.expense || 0),
-        accountsreceivable: Number(summary.accountsreceivable || 0),
+        accountsreceivable: getRetailInvoicesOutstandingTotal(
+          receivableInvoiceResult.rows
+        ),
         accountspayable: Number(summary.accountspayable || 0),
+        invoicegst: getInvoiceGstSummary(receivableInvoiceResult.rows),
+        billgst: getBillGstSummary(billResult.rows),
       },
     };
   };
