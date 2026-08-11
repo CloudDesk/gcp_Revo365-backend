@@ -56,6 +56,12 @@ const toSafeNumber = (value: any, defaultValue = 0) => {
   return Number.isFinite(parsed) ? parsed : defaultValue;
 };
 
+const roundCurrency = (value: any): number =>
+  Math.round((toSafeNumber(value, 0) + Number.EPSILON) * 100) / 100;
+
+const roundPayableAmount = (value: any): number =>
+  Math.round(roundCurrency(value));
+
 const normalizeOptionalLocation = (value: any): string | null => {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
@@ -74,6 +80,67 @@ const resolveRequestedLocation = (item: any): string | null =>
   normalizeOptionalLocation(item?.storeLocation) ||
   normalizeOptionalLocation(item?.location) ||
   null;
+
+const firstPresentText = (...values: any[]) => {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
+};
+
+const normalizeAddressSnapshot = (value: any) => {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const splitCustomerName = (fullName: any, fallbackUser: any) => {
+  const fallbackFirstName = firstPresentText(fallbackUser?.firstname, "Customer");
+  const fallbackLastName = firstPresentText(fallbackUser?.lastname, "Customer");
+  const normalizedName = firstPresentText(fullName);
+  if (!normalizedName) {
+    return { firstName: fallbackFirstName, lastName: fallbackLastName };
+  }
+
+  const parts = normalizedName.split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || fallbackFirstName,
+    lastName: parts.slice(1).join(" ") || fallbackLastName,
+  };
+};
+
+const buildShiprocketAddressLine = (address: any) =>
+  firstPresentText(
+    [address?.doornumber, address?.address]
+      .filter((value) => firstPresentText(value))
+      .join(", "),
+    address?.address,
+    "Not Provided"
+  );
+
+const getShiprocketAddress2 = (address: any) =>
+  firstPresentText(address?.landmark, "Not Given");
+
+const areSameAddress = (left: any, right: any) => {
+  if (!left || !right) return false;
+  const fields = ["name", "mobilenumber", "address", "doornumber", "landmark", "city", "state", "pincode"];
+  return fields.every(
+    (field) =>
+      String(left?.[field] ?? "").trim().toLowerCase() ===
+      String(right?.[field] ?? "").trim().toLowerCase()
+  );
+};
 
 const allocateProductLocationsForOrder = async (orderItems: any[] = []) => {
   const productItems = (orderItems || []).filter((item) => {
@@ -207,26 +274,40 @@ const resolveTransactionStoreLocation = (orderItems: any[] = []) => {
 const computePayableAmountFromOrderInput = (orderItems: any[], fallbackAmount: any) => {
   const fallback = toSafeNumber(fallbackAmount, 0);
   if (!Array.isArray(orderItems) || orderItems.length === 0) {
-    return fallback;
+    return roundPayableAmount(fallback);
   }
 
   const computed = orderItems.reduce((total, item) => {
     const quantity = toSafeNumber(item?.quantity, 0);
     const productAmount = toSafeNumber(item?.productamount, 0);
+    const discountAmount = Math.max(0, toSafeNumber(item?.discountamount, 0));
     const lineOrderAmount = toSafeNumber(item?.orderamount, 0);
 
     if (lineOrderAmount > 0) {
       return total + lineOrderAmount;
     }
     if (productAmount > 0 && quantity > 0) {
-      return total + productAmount * quantity;
+      const taxRate =
+        toSafeNumber(item?.cgst, 0) +
+        toSafeNumber(item?.sgst, 0) +
+        toSafeNumber(item?.igst, 0);
+      const taxCalculationMode = String(item?.taxcalculationmode || "")
+        .trim()
+        .toLowerCase();
+      const baseAmount = productAmount * quantity;
+      const taxableAmount = Math.max(0, baseAmount - discountAmount);
+      const payableAmount =
+        taxCalculationMode === "exclusive"
+          ? taxableAmount * (1 + taxRate / 100)
+          : taxableAmount;
+      return total + roundCurrency(payableAmount);
     }
     return total;
   }, 0);
 
   // Frontend total may include shipping/tax not represented in order lines.
-  // Use the higher value so Razorpay amount stays aligned with checkout summary.
-  return Math.max(computed, fallback);
+  // Use the higher value, then round the payable total to the nearest rupee.
+  return roundPayableAmount(Math.max(computed, fallback));
 };
 
 const groupOrderQuantities = (orderItems: any[] = []) => {
@@ -962,6 +1043,8 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId: str
     productname: row.productname,
     deliveryfrom: row.deliveryfrom,
     merchanttransactionid: row.merchanttransactionid,
+    billingaddresssnapshot: row.billingaddresssnapshot,
+    shippingaddresssnapshot: row.shippingaddresssnapshot,
   }));
 
   const productIdsFromOrderLine = orderLineItems
@@ -991,6 +1074,16 @@ const getOrderContextByMerchantTransactionId = async (merchantTransactionId: str
     primaryOrderRow,
     user: userResult.rows[0] || null,
     address: addressResult.rows[0] || null,
+    billingAddress:
+      normalizeAddressSnapshot(primaryOrderRow?.billingaddresssnapshot) ||
+      normalizeAddressSnapshot(combinedOrderRows[0]?.billingaddresssnapshot) ||
+      addressResult.rows[0] ||
+      null,
+    shippingAddress:
+      normalizeAddressSnapshot(primaryOrderRow?.shippingaddresssnapshot) ||
+      normalizeAddressSnapshot(combinedOrderRows[0]?.shippingaddresssnapshot) ||
+      addressResult.rows[0] ||
+      null,
     userId,
     transactionFor,
     productIds,
@@ -1460,7 +1553,9 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
     }
 
     const orderData = shippableOrderLineItems[0] || context.primaryOrderRow;
-    if (!orderData || !context.user || !context.address) {
+    const billingAddress = context.billingAddress || context.address;
+    const shippingAddress = context.shippingAddress || context.address;
+    if (!orderData || !context.user || !billingAddress || !shippingAddress) {
       return {
         ok: false,
         reason: "missing_required_order_context",
@@ -1509,32 +1604,44 @@ const createShiprocketOrderForTransaction = async (context: any, transactionData
         const productAmount = toSafeNumber(item.productamount, 0);
         return sum + quantity * productAmount;
       }, 0) || toSafeNumber(orderData.orderamount, transactionData.amount);
+    const billingName = splitCustomerName(billingAddress?.name, context.user);
+    const shippingName = splitCustomerName(shippingAddress?.name, context.user);
+    const billingPhone = firstPresentText(
+      billingAddress?.mobilenumber,
+      context.user?.usermobilenumber,
+      transactionData.mobilenumber
+    );
+    const shippingPhone = firstPresentText(
+      shippingAddress?.mobilenumber,
+      context.user?.usermobilenumber,
+      transactionData.mobilenumber
+    );
 
     const shiprocketPayload = {
       order_id: transactionData.merchanttransactionId,
       order_date: new Date().toISOString(),
       pickup_location: pickupLocation,
-      billing_customer_name: context.user?.firstname || "Customer",
-      billing_last_name: context.user?.lastname || "Customer",
-      billing_address: context.address?.address || "Not Provided",
-      billing_address_2: "Not Given",
-      billing_city: context.address?.city || "Unknown City",
-      billing_pincode: context.address?.pincode || "000000",
-      billing_state: context.address?.state || "Unknown State",
+      billing_customer_name: billingName.firstName,
+      billing_last_name: billingName.lastName,
+      billing_address: buildShiprocketAddressLine(billingAddress),
+      billing_address_2: getShiprocketAddress2(billingAddress),
+      billing_city: billingAddress?.city || "Unknown City",
+      billing_pincode: billingAddress?.pincode || "000000",
+      billing_state: billingAddress?.state || "Unknown State",
       billing_country: "India",
-      billing_email: context.user?.useremail || transactionData.name,
-      billing_phone: context.user?.usermobilenumber || transactionData.mobilenumber,
-      shipping_customer_name: context.user?.firstname || "Customer",
-      shipping_last_name: context.user?.lastname || "Customer",
-      shipping_address: context.address?.address || "Not Provided",
-      shipping_address_2: "Not Given",
-      shipping_city: context.address?.city || "Unknown City",
-      shipping_pincode: context.address?.pincode || "000000",
-      shipping_state: context.address?.state || "Unknown State",
+      billing_email: billingAddress?.email || context.user?.useremail || transactionData.name,
+      billing_phone: billingPhone,
+      shipping_customer_name: shippingName.firstName,
+      shipping_last_name: shippingName.lastName,
+      shipping_address: buildShiprocketAddressLine(shippingAddress),
+      shipping_address_2: getShiprocketAddress2(shippingAddress),
+      shipping_city: shippingAddress?.city || "Unknown City",
+      shipping_pincode: shippingAddress?.pincode || "000000",
+      shipping_state: shippingAddress?.state || "Unknown State",
       shipping_country: "India",
-      shipping_is_billing: true,
-      shipping_email: context.user?.useremail || transactionData.name,
-      shipping_phone: context.user?.usermobilenumber || transactionData.mobilenumber,
+      shipping_is_billing: areSameAddress(billingAddress, shippingAddress),
+      shipping_email: shippingAddress?.email || context.user?.useremail || transactionData.name,
+      shipping_phone: shippingPhone,
       order_items: shiprocketOrderItems,
       payment_method: orderData.paymentmethod === "COD" ? "COD" : "Prepaid",
       sub_total: computedSubtotal,
@@ -2267,11 +2374,14 @@ export module transactionService {
             "One or more products are out of stock. Please try again later.",
         };
       }
+      const authoritativeAmount = computePayableAmountFromOrderInput(orderdata, amount);
+      amount = authoritativeAmount;
+      request.body.transaction.amount = authoritativeAmount;
       const data = {
         merchantId: MERCHANT_ID,
         merchantTransactionId: merchanttransactionId,
         name: name,
-        amount: Number(amount) * 100,
+        amount: authoritativeAmount * 100,
         redirectUrl: `${REDIRECT_URL_PAYMENT_STATUS}/payment/status?id=${merchanttransactionId}&token=${request.headers.authorization}`,
         redirectMode: "POST",
         mobileNumber: mobilenumber,
@@ -2689,6 +2799,13 @@ export const paymentInitializationRazorpay = async (request: any) => {
       };
     }
 
+    const authoritativeAmount = computePayableAmountFromOrderInput(
+      orderdata,
+      amount
+    );
+    amount = authoritativeAmount;
+    request.body.transaction.amount = authoritativeAmount;
+
     // ✅ Refresh rental quantities
     if (request.body?.order?.[0]?.invoicefor === "product rental") {
       try {
@@ -2774,7 +2891,7 @@ export const paymentInitializationRazorpay = async (request: any) => {
         transaction: {
           merchanttransactionId,
           name,
-          amount: toSafeNumber(amount, 0),
+          amount: authoritativeAmount,
           mobilenumber: mobilenumber === "" ? null : mobilenumber,
           productid,
           transactionfor,
@@ -2782,7 +2899,7 @@ export const paymentInitializationRazorpay = async (request: any) => {
           transactiondata: {
             status: "Cash Paid",
             provider: "offline_cash",
-            amount: toSafeNumber(amount, 0),
+            amount: authoritativeAmount,
           },
           razorpay_signature: "",
         },
@@ -2820,7 +2937,7 @@ export const paymentInitializationRazorpay = async (request: any) => {
 
       await syncShiprocketAfterSuccessfulPayment(merchanttransactionId, {
         name,
-        amount,
+        amount: authoritativeAmount,
         mobilenumber,
       });
 
@@ -2861,13 +2978,8 @@ export const paymentInitializationRazorpay = async (request: any) => {
       };
     }
 
-    const authoritativeAmount = computePayableAmountFromOrderInput(
-      orderdata,
-      amount
-    );
-
     const order = await razorpay.orders.create({
-      amount: Math.round(toSafeNumber(authoritativeAmount, 0) * 100),
+      amount: authoritativeAmount * 100,
       currency: "INR",
       receipt: merchanttransactionId,
       notes: {

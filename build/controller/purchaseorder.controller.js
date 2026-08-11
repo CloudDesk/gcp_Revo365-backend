@@ -39,13 +39,13 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {
@@ -60,13 +60,13 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {
@@ -81,13 +81,13 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Removed Successfully`
-                        : `Inovice Removed Successfully`
+                        ? `Bill Removed Successfully`
+                        : `Bill Removed Successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {

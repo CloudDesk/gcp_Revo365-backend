@@ -5,6 +5,7 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -53,6 +54,260 @@ const normalizeInvoiceData = (invoiceData: any) => {
     } catch {
         return invoiceData;
     }
+};
+
+const parseJsonArray = (value: any): any[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+        const trimmedValue = value.trim();
+        if (!trimmedValue || trimmedValue === "null") return [];
+        try {
+            const parsedValue = JSON.parse(trimmedValue);
+            return Array.isArray(parsedValue) ? parsedValue : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+};
+
+const toNumber = (value: any) => {
+    if (value == null || value === "") return 0;
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : 0;
+    }
+    const numericValue = Number(String(value).replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(numericValue) ? numericValue : 0;
+};
+
+const getEpochSeconds = () => Math.floor(Date.now() / 1000);
+
+const getInvoiceAmount = (invoiceData: any) => {
+    const normalizedInvoiceData = normalizeInvoiceData(invoiceData?.invoicedata);
+    const normalizedSummaryData = normalizeInvoiceData(invoiceData?.summaryinvoicedata);
+    const normalizedSupportingData = normalizeInvoiceData(invoiceData?.supportingdocumentdata);
+    const amountCandidates = [
+        invoiceData?.totalorderamount,
+        invoiceData?.invoiceamount,
+        normalizedInvoiceData?.payableamount,
+        normalizedSupportingData?.payableamount,
+        normalizedSummaryData?.totalamount,
+        normalizedInvoiceData?.total,
+        normalizedInvoiceData?.totalamount,
+    ];
+
+    for (const amountCandidate of amountCandidates) {
+        const amount = toNumber(amountCandidate);
+        if (amount > 0) return amount;
+    }
+
+    return 0;
+};
+
+const normalizePaymentMethod = (value: any) => {
+    const method = normalizeText(value);
+    if (!method) return "cash";
+    if (method === "upi" || method === "razorpay" || method === "online") return "razorpay";
+    return method.replace(/\s+/g, "_");
+};
+
+const getPaymentAmount = (payment: any) =>
+    toNumber(payment?.paymentamount ?? payment?.amount);
+
+const normalizePaymentEntries = (paymentData: any) =>
+    parseJsonArray(paymentData)
+        .map((payment: any, index: number) => {
+            const paymentAmount = getPaymentAmount(payment);
+            return {
+                id: payment?.id ?? index + 1,
+                paymentamount: paymentAmount,
+                paymentmethod: normalizePaymentMethod(payment?.paymentmethod),
+                paymentdate: toNumber(payment?.paymentdate) || getEpochSeconds(),
+                transactionreference:
+                    payment?.transactionreference ??
+                    payment?.transactionid ??
+                    payment?.providerpaymentid ??
+                    null,
+                providerpaymentid: payment?.providerpaymentid ?? payment?.razorpay_payment_id ?? null,
+                providerorderid: payment?.providerorderid ?? payment?.razorpay_order_id ?? null,
+                transactionid: payment?.transactionid ?? null,
+                source: payment?.source ?? "manual",
+                status: payment?.status ?? "success",
+                comments: payment?.comments ?? null,
+            };
+        })
+        .filter((payment: any) => payment.paymentamount > 0 && payment.status !== "failed");
+
+const revoInvoiceJsonFields = new Set([
+    "invoicedata",
+    "servicedata",
+    "product",
+    "paymentdata",
+    "summaryinvoicedata",
+    "supportingdocumentdata",
+    "billingaddresssnapshot",
+    "shippingaddresssnapshot",
+]);
+
+const serializeRevoInvoiceJsonFields = (upsertFields: any) => {
+    revoInvoiceJsonFields.forEach((fieldName) => {
+        if (!Object.prototype.hasOwnProperty.call(upsertFields, fieldName)) return;
+
+        const fieldValue = upsertFields[fieldName];
+        if (fieldValue == null || typeof fieldValue === "string") return;
+
+        upsertFields[fieldName] = JSON.stringify(fieldValue);
+    });
+};
+
+const summarizeInvoicePayments = (invoiceAmount: number, paymentEntries: any[]) => {
+    const paidAmount = Number(
+        paymentEntries
+            .reduce((sum: number, payment: any) => sum + getPaymentAmount(payment), 0)
+            .toFixed(2)
+    );
+    const balanceAmount = Number(Math.max(invoiceAmount - paidAmount, 0).toFixed(2));
+    const paymentStatus =
+        invoiceAmount > 0 && paidAmount >= invoiceAmount
+            ? "paid"
+            : paidAmount > 0
+                ? "partially_paid"
+                : "pending";
+    const lastPaymentDate = paymentEntries.reduce((latest: number | null, payment: any) => {
+        const paymentDate = toNumber(payment?.paymentdate);
+        if (!paymentDate) return latest;
+        return latest == null || paymentDate > latest ? paymentDate : latest;
+    }, null);
+
+    return { paidAmount, balanceAmount, paymentStatus, lastPaymentDate };
+};
+
+const appendPaymentIfMissing = (paymentEntries: any[], nextPayment: any) => {
+    const nextProviderPaymentId = nextPayment?.providerpaymentid;
+    const nextTransactionId = nextPayment?.transactionid;
+    const hasExistingPayment = paymentEntries.some((payment: any) => {
+        if (nextProviderPaymentId && payment?.providerpaymentid === nextProviderPaymentId) return true;
+        if (nextTransactionId && payment?.transactionid === nextTransactionId) return true;
+        return false;
+    });
+
+    if (hasExistingPayment) return paymentEntries;
+    return [
+        ...paymentEntries,
+        {
+            ...nextPayment,
+            id: paymentEntries.length + 1,
+        },
+    ];
+};
+
+const getOrderPaymentForInvoice = async (orderid: any, invoiceAmount: number) => {
+    if (!orderid || invoiceAmount <= 0) return null;
+
+    const orderPaymentResult = await query(
+        `
+        WITH order_refs AS (
+            SELECT merchanttransactionid, paymentmethod
+            FROM orders
+            WHERE orderid = $1
+            UNION
+            SELECT merchanttransactionid, paymentmethod
+            FROM orderline
+            WHERE uniqueorderid = $1
+            UNION
+            SELECT merchanttransactionid, NULL::varchar AS paymentmethod
+            FROM thirdpartyorders
+            WHERE orderid = $1
+        )
+        SELECT
+            t.transactionid,
+            t.amount,
+            t.createddate,
+            t.transactiondata,
+            t.razorpay_payment_id,
+            t.razorpay_order_id,
+            order_refs.paymentmethod
+        FROM order_refs
+        JOIN transaction t
+          ON t.merchanttransactionid = order_refs.merchanttransactionid
+        WHERE order_refs.merchanttransactionid IS NOT NULL
+        ORDER BY t.createddate DESC NULLS LAST, t.id DESC
+        LIMIT 1
+        `,
+        [String(orderid)]
+    );
+
+    const transactionRow = orderPaymentResult.rows[0];
+    if (!transactionRow) return null;
+
+    const transactionData = normalizeInvoiceData(transactionRow.transactiondata) || {};
+    const paymentMethod =
+        transactionData?.provider === "offline_cash"
+            ? "cash"
+            : transactionRow.razorpay_payment_id
+                ? "razorpay"
+                : transactionRow.paymentmethod;
+    const transactionAmount = toNumber(transactionRow.amount);
+
+    return {
+        paymentamount: Math.min(invoiceAmount, transactionAmount || invoiceAmount),
+        paymentmethod: normalizePaymentMethod(paymentMethod),
+        paymentdate: toNumber(transactionRow.createddate) || getEpochSeconds(),
+        transactionreference:
+            transactionRow.razorpay_payment_id ||
+            transactionRow.transactionid ||
+            null,
+        providerpaymentid: transactionRow.razorpay_payment_id || null,
+        providerorderid: transactionRow.razorpay_order_id || null,
+        transactionid: transactionRow.transactionid || null,
+        source: "order_payment",
+        status: "success",
+        comments: null,
+    };
+};
+
+const applyInvoicePaymentSummary = async (upsertFields: any, id?: any) => {
+    const shouldNormalizePayments =
+        !id ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "paymentdata") ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "totalorderamount") ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "invoiceamount") ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "invoicedata") ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "summaryinvoicedata") ||
+        Object.prototype.hasOwnProperty.call(upsertFields, "supportingdocumentdata");
+
+    if (!shouldNormalizePayments) return;
+
+    let invoiceSnapshot = upsertFields;
+    if (id) {
+        const existingInvoiceResult = await query(
+            `SELECT * FROM revoinvoice WHERE id = $1 LIMIT 1`,
+            [id]
+        );
+        invoiceSnapshot = {
+            ...(existingInvoiceResult.rows[0] || {}),
+            ...upsertFields,
+        };
+    }
+
+    let paymentEntries = normalizePaymentEntries(invoiceSnapshot.paymentdata);
+    const invoiceAmount = getInvoiceAmount(invoiceSnapshot);
+
+    if (!id && paymentEntries.length === 0) {
+        const orderPayment = await getOrderPaymentForInvoice(invoiceSnapshot.orderid, invoiceAmount);
+        if (orderPayment) {
+            paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+        }
+    }
+
+    const { paidAmount, balanceAmount, paymentStatus, lastPaymentDate } =
+        summarizeInvoicePayments(invoiceAmount, paymentEntries);
+
+    upsertFields.paymentdata = paymentEntries;
+    upsertFields.paidamount = paidAmount;
+    upsertFields.balanceamount = balanceAmount;
+    upsertFields.paymentstatus = paymentStatus;
+    upsertFields.lastpaymentdate = lastPaymentDate;
 };
 
 const shouldEnrichRentalAssets = (invoiceForQuery: any) => {
@@ -302,6 +557,14 @@ export module revoinvoiceservice {
                 }
             });
 
+            parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(
+                request,
+                whereClauses,
+                queryParams,
+                parameterIndex,
+                { tableAlias: "revoinvoice", customerColumn: "customerid" }
+            );
+
             const offset = (pageNumber - 1) * recordCount;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : '';
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
@@ -373,6 +636,8 @@ export module revoinvoiceservice {
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
+            await applyInvoicePaymentSummary(upsertFields, id);
+            serializeRevoInvoiceJsonFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             console.log('-->',fieldNames)

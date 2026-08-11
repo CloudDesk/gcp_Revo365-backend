@@ -5,6 +5,248 @@ import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { purchaseOrderService } from "./purchaseorder.service.js";
 
 export module poinvoiceservice {
+  const poInvoiceFieldNames = new Set([
+    "invoiceamount",
+    "ponumber",
+    "invoicedate",
+    "invoicenumber",
+    "invoiceurl",
+    "paymentdata",
+    "balanceamount",
+    "iscreditpayment",
+    "paymentduedate",
+    "invoicestatus",
+    "pototal",
+    "purchaseorderstatus",
+    "productdata",
+    "subtotal",
+    "discount",
+    "sgst",
+    "cgst",
+    "payabletaxamount",
+  ]);
+
+  const parseJsonArray = (value: any): any[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      const trimmedValue = value.trim();
+      if (!trimmedValue || trimmedValue === "null") return [];
+      try {
+        const parsedValue = JSON.parse(trimmedValue);
+        return Array.isArray(parsedValue) ? parsedValue : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const toNumber = (value: any) => {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : 0;
+  };
+
+  const getProductLineId = (product: any, index: number) =>
+    String(
+      product?.lineid ??
+        product?.productlineid ??
+        `${product?.id ?? product?.name ?? "product"}-${index + 1}`
+    );
+
+  const pickPoInvoiceFields = (data: any) => {
+    return Object.keys(data || {}).reduce((fields: any, key) => {
+      if (poInvoiceFieldNames.has(key)) {
+        fields[key] = data[key];
+      }
+      return fields;
+    }, {});
+  };
+
+  const serializeJsonArrayFields = (upsertFields: any) => {
+    ["productdata", "paymentdata"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(upsertFields, field)) {
+        // node-postgres converts JavaScript arrays into PostgreSQL array
+        // literals, which are invalid values for JSONB columns.
+        upsertFields[field] = JSON.stringify(parseJsonArray(upsertFields[field]));
+      }
+    });
+  };
+
+  const validateAndNormalizeProductData = async (
+    upsertFields: any,
+    id?: any
+  ) => {
+    const hasProductData = Object.prototype.hasOwnProperty.call(
+      upsertFields,
+      "productdata"
+    );
+    if (!hasProductData) {
+      if (id) return;
+      throw new Error("At least one bill product is required");
+    }
+
+    const ponumber = upsertFields.ponumber;
+    if (!ponumber) {
+      throw new Error("PO Number is required for bill product validation");
+    }
+
+    const billProducts = parseJsonArray(upsertFields.productdata);
+    if (!billProducts.length) {
+      throw new Error("At least one bill product is required");
+    }
+
+    const purchaseOrderResult: any = await query(
+      `SELECT product, subtotal, discount, sgst, cgst FROM purchaseorder WHERE ponumber = $1`,
+      [ponumber]
+    );
+    const purchaseOrder = purchaseOrderResult?.rows?.[0];
+    const purchaseOrderProducts = parseJsonArray(
+      purchaseOrder?.product
+    );
+    if (!purchaseOrderProducts.length) {
+      throw new Error("Purchase order products are not available for validation");
+    }
+    const purchaseOrderSubtotal =
+      toNumber(purchaseOrder?.subtotal) ||
+      purchaseOrderProducts.reduce(
+        (sum: number, product: any) =>
+          sum + toNumber(product?.unitPrice) * toNumber(product?.quantity),
+        0
+      );
+    const purchaseOrderDiscount = Math.min(
+      Math.max(toNumber(purchaseOrder?.discount), 0),
+      purchaseOrderSubtotal
+    );
+    upsertFields.sgst = toNumber(purchaseOrder?.sgst);
+    upsertFields.cgst = toNumber(purchaseOrder?.cgst);
+
+    const purchaseOrderProductMap = new Map<string, any>();
+    purchaseOrderProducts.forEach((product: any, index: number) => {
+      const lineid = getProductLineId(product, index);
+      purchaseOrderProductMap.set(lineid, {
+        id: product?.id ?? index + 1,
+        lineid,
+        name: product?.name ?? "",
+        unitPrice: toNumber(product?.unitPrice),
+        quantity: toNumber(product?.quantity),
+      });
+    });
+
+    const existingParams: any[] = [ponumber];
+    let existingWhere = `ponumber = $1 AND COALESCE(invoicestatus, '') != 'cancelled'`;
+    if (id) {
+      existingParams.push(id);
+      existingWhere += ` AND id != $2`;
+    }
+
+    const existingBillResult: any = await query(
+      `SELECT id, productdata FROM poinvoice WHERE ${existingWhere}`,
+      existingParams
+    );
+
+    const billedQuantityByLine = new Map<string, number>();
+    existingBillResult.rows.forEach((bill: any) => {
+      parseJsonArray(bill.productdata).forEach((product: any, index: number) => {
+        const lineid = getProductLineId(product, index);
+        billedQuantityByLine.set(
+          lineid,
+          (billedQuantityByLine.get(lineid) || 0) + toNumber(product.quantity)
+        );
+      });
+    });
+
+    const normalizedProducts: any[] = [];
+    billProducts.forEach((product: any, index: number) => {
+      const lineid = getProductLineId(product, index);
+      const purchaseOrderProduct = purchaseOrderProductMap.get(lineid);
+      if (!purchaseOrderProduct) {
+        throw new Error(
+          `Bill product ${product?.name || lineid} is not part of this purchase order`
+        );
+      }
+
+      const quantity = toNumber(product.quantity);
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        throw new Error(
+          `Bill quantity for ${purchaseOrderProduct.name} must be a whole number`
+        );
+      }
+
+      const alreadyBilledQuantity = billedQuantityByLine.get(lineid) || 0;
+      const remainingQuantity =
+        purchaseOrderProduct.quantity - alreadyBilledQuantity;
+
+      if (quantity > remainingQuantity) {
+        throw new Error(
+          `Bill quantity for ${purchaseOrderProduct.name} cannot exceed remaining quantity ${remainingQuantity}`
+        );
+      }
+
+      if (quantity > 0) {
+        const unitPrice = toNumber(
+          product.unitPrice ?? purchaseOrderProduct.unitPrice
+        );
+        normalizedProducts.push({
+          id: purchaseOrderProduct.id,
+          lineid,
+          name: product?.name || purchaseOrderProduct.name,
+          originalname: purchaseOrderProduct.name,
+          unitPrice,
+          poquantity: purchaseOrderProduct.quantity,
+          quantity,
+          total: Number((unitPrice * quantity).toFixed(2)),
+        });
+      }
+    });
+
+    if (!normalizedProducts.length) {
+      throw new Error("At least one bill product quantity should be greater than 0");
+    }
+
+    upsertFields.productdata = normalizedProducts;
+    const billSubtotal = normalizedProducts.reduce(
+      (sum: number, product: any) => sum + toNumber(product.total),
+      0
+    );
+    const discountRate =
+      purchaseOrderSubtotal > 0
+        ? purchaseOrderDiscount / purchaseOrderSubtotal
+        : 0;
+    upsertFields.discount = Number((billSubtotal * discountRate).toFixed(2));
+  };
+
+  const normalizeBillTaxFields = (upsertFields: any) => {
+    const billProducts = parseJsonArray(upsertFields.productdata);
+    const subtotal = Number(
+      billProducts
+        .reduce((sum: number, product: any) => sum + toNumber(product.total), 0)
+        .toFixed(2)
+    );
+    const discount = toNumber(upsertFields.discount);
+    const sgst = toNumber(upsertFields.sgst);
+    const cgst = toNumber(upsertFields.cgst);
+
+    if (discount < 0) {
+      throw new Error("Bill discount cannot be negative");
+    }
+    if (discount > subtotal) {
+      throw new Error("Bill discount cannot exceed subtotal");
+    }
+    if (sgst < 0 || cgst < 0) {
+      throw new Error("Bill GST percentage cannot be negative");
+    }
+
+    const taxableAmount = Math.max(subtotal - discount, 0);
+    const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst) / 100));
+
+    upsertFields.subtotal = subtotal;
+    upsertFields.discount = discount;
+    upsertFields.sgst = sgst;
+    upsertFields.cgst = cgst;
+    upsertFields.payabletaxamount = payabletaxamount;
+    upsertFields.invoiceamount = Math.round(taxableAmount + payabletaxamount);
+  };
+
   export const getPoInvoiceData = async (request) => {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
@@ -66,15 +308,21 @@ export module poinvoiceservice {
     try {
       let querydata: string;
       let params: any[];
-      const { id, ...upsertFields } = poinvocedata;
-      for (const file of files) {
+      const { id, ...rawUpsertFields } = poinvocedata;
+      const upsertFields = pickPoInvoiceFields(rawUpsertFields);
+      for (const file of files || []) {
         upsertFields.invoiceurl = PROTOCOL + "://" + host + "/" + file.filename;
       }
       let amount = 0
-      JSON.parse(upsertFields.paymentdata).forEach((e) => {
-        amount += e.paymentamount
+      parseJsonArray(upsertFields.paymentdata).forEach((e) => {
+        amount += toNumber(e.paymentamount)
       })
-      upsertFields.balanceamount = upsertFields.invoiceamount - amount
+      await validateAndNormalizeProductData(upsertFields, id);
+      if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
+        normalizeBillTaxFields(upsertFields);
+      }
+      upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+      serializeJsonArrayFields(upsertFields);
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
 
@@ -104,12 +352,18 @@ export module poinvoiceservice {
     try {
       let querydata: string;
       let params: any[];
-      const { id, ...upsertFields } = poinvocedata;
+      const { id, ...rawUpsertFields } = poinvocedata;
+      const upsertFields = pickPoInvoiceFields(rawUpsertFields);
       let amount = 0
-      JSON.parse(upsertFields.paymentdata).forEach((e) => {
-        amount += e.paymentamount
+      parseJsonArray(upsertFields.paymentdata).forEach((e) => {
+        amount += toNumber(e.paymentamount)
       })
-      upsertFields.balanceamount = upsertFields.invoiceamount - amount
+      await validateAndNormalizeProductData(upsertFields, id);
+      if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
+        normalizeBillTaxFields(upsertFields);
+      }
+      upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+      serializeJsonArrayFields(upsertFields);
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
 
@@ -198,7 +452,7 @@ export module poinvoiceservice {
             poinvocedata.pototal,
             poinvocedata.purchaseorderstatus
         );
-        return 'PO Invoice Status Updated Success';
+        return 'PO Bill Status Updated Success';
     } catch (error) {
         console.error("An error in updateInvoiceStatus:", error);
         throw error; // Re-throw the error to handle it at a higher level
@@ -218,9 +472,9 @@ export module poinvoiceservice {
       ]);
 
       if (result.rowCount != 0) {
-        return `Purchase Order invoice Deleted Successfully`;
+        return `Purchase Order bill Deleted Successfully`;
       } else {
-        return `Purchase Order invoice not found with id ${id}`;
+        return `Purchase Order bill not found with id ${id}`;
       }
     } catch (error) {
       console.error("Query Execution Error: IN deletePoInvoice", error);

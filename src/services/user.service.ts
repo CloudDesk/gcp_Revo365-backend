@@ -9,6 +9,7 @@ import { REDIRECT_INVENTORY_URL } from "../config/config.js";
 import { getOtp, saveOtp } from "./otp.service.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
 import { firebaseAuth } from "../firebase/firebaseAdmin.js";
+import { accessScopeService } from "./accessScope.service.js";
 let generatedotp;
 
 export module userService {
@@ -78,6 +79,14 @@ export module userService {
           parameterIndex += paramValues.length;
         }
       });
+
+      parameterIndex = await accessScopeService.appendVendorBusinessCustomerScope(
+        request,
+        whereClauses,
+        queryParams,
+        parameterIndex,
+        { customerAlias: "u", customerIdColumn: "id" }
+      );
 
       const offset = (pageNumber - 1) * recordCount;
       const whereClause =

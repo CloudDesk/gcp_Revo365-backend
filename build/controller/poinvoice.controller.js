@@ -19,8 +19,8 @@ export var poinvoicecontroller;
                 let message = {};
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message);
             }
@@ -52,8 +52,8 @@ export var poinvoicecontroller;
                 let message = {};
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message);
             }

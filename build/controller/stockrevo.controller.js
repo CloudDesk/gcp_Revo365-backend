@@ -163,12 +163,23 @@ export var stockRevoController;
             if (upsertStockResult.command === "UPDATE" || upsertStockResult.command === "INSERT") {
                 const pucArray = upsertStockResult.affectedPucs || Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
                 await stockRevoService.updateQuantity(pucArray);
-                let message = {
-                    product: upsertStockResult.command === "UPDATE"
-                        ? `Stock Updated successfully`
-                        : `Stock Inserted successfully`,
+                const responseMessage = upsertStockResult.command === "UPDATE"
+                    ? `Stock Updated successfully`
+                    : `Stock Inserted successfully`;
+                const message = {
+                    product: responseMessage,
+                    message: responseMessage,
+                    stock: upsertStockResult.result.rows?.[0] || null,
+                    command: upsertStockResult.command,
+                    totalCount: upsertStockResult.totalCount,
                 };
                 reply.status(200).send(message);
+            }
+            else if (upsertStockResult?.status) {
+                reply.status(upsertStockResult.status).send({
+                    message: upsertStockResult.message,
+                    errorDetails: upsertStockResult.errorDetails,
+                });
             }
             else {
                 reply.status(404).send({ error: [upsertStockResult] });
@@ -191,6 +202,12 @@ export var stockRevoController;
                         : `Stock Inserted successfully`,
                 };
                 reply.status(200).send(message);
+            }
+            else if (upsertStockResult?.status) {
+                reply.status(upsertStockResult.status).send({
+                    message: upsertStockResult.message,
+                    errorDetails: upsertStockResult.errorDetails,
+                });
             }
             else {
                 reply.status(404).send({ error: [upsertStockResult] });

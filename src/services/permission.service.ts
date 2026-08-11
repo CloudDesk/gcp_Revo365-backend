@@ -1,10 +1,18 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 export module permssionservice {
     export const getPermissions = async (request: any) => {
         try {
+            const sessionRole = String(request.session?.role || "").toLowerCase();
+            if (sessionRole && sessionRole !== "admin") {
+                request.query = {
+                    ...request.query,
+                    role: request.session.role,
+                };
+            }
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
@@ -42,6 +50,13 @@ export module permssionservice {
             }
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
+            datatypeCheckResult = datatypeCheckResult.map((row: any) => ({
+                ...row,
+                permissionset: accessScopeService.applyRoleScopes(
+                    row.role,
+                    row.permissionset
+                ),
+            }));
             return datatypeCheckResult
         } catch (error) {
             console.error("Query Execution Error: IN getPermissions", error);

@@ -1,5 +1,6 @@
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { query } from "../database/postgres.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 export module getTables {
     export const getTable = async (request: any) => {
@@ -20,16 +21,23 @@ export module getTables {
                 product_revo: "Products",
                 tickets: "Service Requests",
                 orders: "Orders",
-                poinvoice: "Supplier Invoice",
+                poinvoice: "Supplier Bill",
                 purchaserequest: "Purchase Request",
                 transaction: "Transaction",
                 quotes: "Quotes",
                 permissions: "Permissions",
                 kubb_tickets: "KUBB Enquires",
                 buyback_enquiries: "Buyback Enquiries",
-                service_enquiries: "Service Enquiries"
+                service_enquiries: "Service Enquiries",
+                rental_agreement: "Rental Agreements",
+                store_quotations: "Store Quotations",
+                store_quotation_versions: "Store Quotation Versions",
+                picklist_configuration: "Picklist Configuration"
             };
             result.rows.unshift({ table: 'home' })
+            if (!result.rows.some((element) => element.table === 'picklist_configuration')) {
+                result.rows.push({ table: 'picklist_configuration' });
+            }
             result = result.rows
                 .map((element) => {
                     const label = labels[element.table];
@@ -47,9 +55,18 @@ export module getTables {
         try {
             let allowedTables = [];
             let notALlowedTables = [];
-            let getPermissions = await query("select * from permissions where role = $1", [request.params.role]);
+            const sessionRole = String(request.session?.role || "").toLowerCase();
+            const requestedRole = request.params.role;
+            const effectiveRole = sessionRole && sessionRole !== "admin"
+                ? request.session.role
+                : requestedRole;
+            let getPermissions = await query("select * from permissions where role = $1", [effectiveRole]);
             getPermissions.rows.forEach(element => {
-                element.permissionset.forEach((e) => {
+                const permissionset = accessScopeService.applyRoleScopes(
+                    element.role,
+                    element.permissionset
+                );
+                permissionset.forEach((e) => {
                     if (e.permissions.read) {
                         allowedTables.push(e);
                     }

@@ -37,7 +37,7 @@ export var ticketController;
     ticketController.upsertTickets = async (request, reply) => {
         try {
             let host = request.headers.host;
-            let upsertTicket = await ticketService.upsertTickets(request.body, request.files, host);
+            let upsertTicket = await ticketService.upsertTickets(request.body, request.files, host, request);
             if (upsertTicket.command === "UPDATE" || upsertTicket.command === "INSERT") {
                 let message = {};
                 message = {

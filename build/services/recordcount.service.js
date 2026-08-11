@@ -1,6 +1,7 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
+import { accessScopeService } from "./accessScope.service.js";
 export var recordCountService;
 (function (recordCountService) {
     recordCountService.getRecordCount = async (objectName, request) => {
@@ -247,6 +248,7 @@ export var recordCountService;
                     params.push(String(isbusinessuser).toLowerCase() === "true");
                     paramIndex++;
                 }
+                paramIndex = await accessScopeService.appendVendorBusinessCustomerScope(request, clauses, params, paramIndex, { customerAlias: "u", customerIdColumn: "id" });
                 const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
                 if (shouldIncludeRentalTotal) {
                     const result = await query(`
@@ -267,6 +269,63 @@ export var recordCountService;
                     };
                 }
                 return await getCountQuery(`select count(*) from users u ${whereSql}`, params);
+            }
+            if (targetObj === "tickets") {
+                const clauses = [];
+                const params = [];
+                let paramIndex = 1;
+                keys.forEach((key, index) => {
+                    if (["page", "count", "sortby"].includes(key)) {
+                        return;
+                    }
+                    const paramValues = Array.isArray(values[index])
+                        ? values[index]
+                        : [values[index]];
+                    if (key === "range") {
+                        const rangeClauses = paramValues.map((range) => {
+                            const [lowerBound, upperBound] = range.split("-");
+                            params.push(lowerBound, upperBound);
+                            const clause = `(t.${key} BETWEEN $${paramIndex} AND $${paramIndex + 1})`;
+                            paramIndex += 2;
+                            return clause;
+                        });
+                        clauses.push(`(${rangeClauses.join(" OR ")})`);
+                        return;
+                    }
+                    const qualifiedKey = key.includes(".") ? key : `t.${key}`;
+                    const normalClauses = [];
+                    const notClauses = [];
+                    const nullClauses = [];
+                    paramValues.forEach((value) => {
+                        const stringValue = String(value);
+                        if (stringValue.startsWith("NOT ") || stringValue.startsWith("not ")) {
+                            notClauses.push(`${qualifiedKey} != $${paramIndex}`);
+                            params.push(stringValue.slice(4));
+                            paramIndex++;
+                        }
+                        else if (stringValue === "NULL" || stringValue === "null") {
+                            nullClauses.push(`${qualifiedKey} IS NULL`);
+                        }
+                        else {
+                            normalClauses.push(`${qualifiedKey} = $${paramIndex}`);
+                            params.push(value);
+                            paramIndex++;
+                        }
+                    });
+                    const combinedClauses = [
+                        ...normalClauses,
+                        ...notClauses,
+                        ...nullClauses,
+                    ];
+                    if (combinedClauses.length > 0) {
+                        clauses.push(`(${combinedClauses.join(" OR ")})`);
+                    }
+                });
+                clauses.push(`(t.isarchive = FALSE OR t.isarchive IS NULL)`);
+                clauses.push(`(t.isdeleted = FALSE OR t.isdeleted IS NULL)`);
+                clauses.push(`(t.removefromrecyclebin = FALSE OR t.removefromrecyclebin IS NULL)`);
+                paramIndex = await accessScopeService.appendVendorTicketScope(request, clauses, params, paramIndex, { ticketAlias: "t", customerColumn: "userid" });
+                return await getCountQuery(`SELECT COUNT(*) FROM tickets t WHERE ${clauses.join(" AND ")}`, params);
             }
             let whereClause = "";
             let globalCount = false;
@@ -347,6 +406,9 @@ export var recordCountService;
                         ewaste = true;
                 }
             });
+            if (targetObj === "orders") {
+                parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(request, whereClauses, queryParamsList, parameterIndex, { tableAlias: "orders", customerColumn: "userid" });
+            }
             console.log(archieveCount, "archive count");
             console.log(productecom, "PRoduct ecom is");
             whereClause = whereClauses.length > 0 ? whereClauses.join(" AND ") : "";

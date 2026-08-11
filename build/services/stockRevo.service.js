@@ -13,11 +13,61 @@ export var stockRevoService;
     const DAMAGED_STOCK_STATUS = "Damaged";
     const LOST_STOCK_STATUS = "Lost";
     const AVAILABLE_STOCK_ASSET_STATUS = "available";
+    const RENTAL_STOCK_TYPE = "rental_product";
     const BARCODE_LENGTH = 12;
     const LEGACY_BARCODE_LENGTH = 10;
     const FIRST_BARCODE_NUMBER = 1;
+    const PRODUCT_TAX_CODE_FIELDS = ["hsncode", "saccode"];
     const normalizeStockImportHeader = (key) => String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
     const normalizeComparableText = (value) => String(value ?? "").trim().toLowerCase();
+    const normalizeProductTaxCode = (value) => {
+        if (value === undefined || value === null) {
+            return null;
+        }
+        const normalizedValue = String(value).trim();
+        return normalizedValue || null;
+    };
+    const extractProductTaxCodeValues = (stockData) => {
+        const productTaxCodeValues = {};
+        PRODUCT_TAX_CODE_FIELDS.forEach((fieldName) => {
+            if (Object.prototype.hasOwnProperty.call(stockData, fieldName)) {
+                productTaxCodeValues[fieldName] = stockData[fieldName];
+                delete stockData[fieldName];
+            }
+        });
+        return productTaxCodeValues;
+    };
+    const getRequiredProductTaxCodeField = (stocktype) => normalizeComparableText(stocktype) === RENTAL_STOCK_TYPE ? "saccode" : "hsncode";
+    const getProductTaxCodeLabel = (fieldName) => fieldName === "saccode" ? "SAC Code" : "HSN Code";
+    const syncAndValidateProductTaxCode = async (puc, stocktype, productTaxCodeValues) => {
+        const normalizedPuc = String(puc ?? "").trim();
+        if (!normalizedPuc) {
+            return { message: "PUC is required to validate product tax code.", status: 400 };
+        }
+        const requiredField = getRequiredProductTaxCodeField(stocktype);
+        const requiredLabel = getProductTaxCodeLabel(requiredField);
+        if (Object.prototype.hasOwnProperty.call(productTaxCodeValues, requiredField)) {
+            const normalizedTaxCode = normalizeProductTaxCode(productTaxCodeValues[requiredField]);
+            await query(`UPDATE product_revo SET ${requiredField} = $1 WHERE puc = $2`, [normalizedTaxCode, normalizedPuc]);
+        }
+        const productResult = await query(`SELECT puc, hsncode, saccode FROM product_revo WHERE puc = $1 LIMIT 1`, [normalizedPuc]);
+        if (productResult.rows.length === 0) {
+            return { message: `No product found for PUC ${normalizedPuc}.`, status: 400 };
+        }
+        if (!normalizeProductTaxCode(productResult.rows[0]?.[requiredField])) {
+            return {
+                message: `${requiredLabel} is required for ${normalizeComparableText(stocktype) === RENTAL_STOCK_TYPE ? "rental" : "non-rental"} stock.`,
+                status: 400,
+                errorDetails: [
+                    {
+                        key: requiredField,
+                        message: `${requiredLabel} is required for ${normalizeComparableText(stocktype) === RENTAL_STOCK_TYPE ? "rental" : "non-rental"} stock.`,
+                    },
+                ],
+            };
+        }
+        return null;
+    };
     const normalizeBarcodeValue = (value) => String(value ?? "").trim();
     const isUploadedBarcodeField = (key) => ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
     const removeUploadedBarcodeFields = (row) => {
@@ -199,7 +249,7 @@ export var stockRevoService;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ${baseConditions}` : `WHERE ${baseConditions}`;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
-                SELECT s.* 
+                SELECT s.*, p.id AS productid, p.hsncode, p.saccode
                 FROM stock_revo s
                 INNER JOIN product_revo p ON s.puc = p.puc
                 ${whereClause} 
@@ -221,7 +271,10 @@ export var stockRevoService;
     stockRevoService.getEachStockRevoData = async (request) => {
         try {
             const { id } = request.params;
-            const result = await query(`SELECT * FROM stock_revo where id=${id}`, []);
+            const result = await query(`SELECT s.*, p.id AS productid, p.hsncode, p.saccode
+                 FROM stock_revo s
+                 LEFT JOIN product_revo p ON s.puc = p.puc
+                 WHERE s.id = $1`, [id]);
             let getvalues = { objectName: "null" };
             getvalues.objectName = "products";
             let datatypecheckResult = await dataTypeCheck(result);
@@ -251,15 +304,20 @@ export var stockRevoService;
                 const normalizedBarcode = normalizeBarcodeValue(stockRevoData.rfid);
                 stockRevoData.rfid = normalizedBarcode || null;
             }
+            const productTaxCodeValues = extractProductTaxCodeValues(stockRevoData);
             const { id, ...upsertFields } = stockRevoData;
             let command;
             let affectedPucs = new Set();
+            let effectivePuc = upsertFields.puc;
+            let effectiveStockType = upsertFields.stocktype;
             if (id) {
                 // Fetch current stocktype to check for third_party_product restrictions
                 const oldStockResult = await query(`SELECT puc, stocktype, stockstatus, rfid FROM stock_revo WHERE id = $1`, [id]);
                 if (oldStockResult.rows.length > 0) {
                     const currentRow = oldStockResult.rows[0];
                     affectedPucs.add(currentRow.puc);
+                    effectivePuc = upsertFields.puc ?? currentRow.puc;
+                    effectiveStockType = upsertFields.stocktype ?? currentRow.stocktype;
                     const barcodeValidationError = getBarcodeValidationError(upsertFields.rfid, currentRow.rfid);
                     if (barcodeValidationError) {
                         return { message: barcodeValidationError, status: 400 };
@@ -282,6 +340,10 @@ export var stockRevoService;
                     if (statusTransitionError) {
                         return { message: statusTransitionError, status: 400 };
                     }
+                }
+                const taxCodeValidationError = await syncAndValidateProductTaxCode(effectivePuc, effectiveStockType, productTaxCodeValues);
+                if (taxCodeValidationError) {
+                    return taxCodeValidationError;
                 }
                 const fieldNames = Object.keys(upsertFields);
                 const fieldValues = Object.values(upsertFields);
@@ -311,6 +373,10 @@ export var stockRevoService;
                 const duplicateBarcodeError = await getDuplicateBarcodeError(upsertFields.rfid);
                 if (duplicateBarcodeError) {
                     return { message: duplicateBarcodeError, status: 400 };
+                }
+                const taxCodeValidationError = await syncAndValidateProductTaxCode(effectivePuc, effectiveStockType, productTaxCodeValues);
+                if (taxCodeValidationError) {
+                    return taxCodeValidationError;
                 }
                 const fieldNames = Object.keys(upsertFields);
                 const fieldValues = Object.values(upsertFields);
@@ -363,6 +429,13 @@ export var stockRevoService;
             if (normalizeComparableText(currentStock.stockstatus) !== normalizeComparableText(SERVICE_HOLD_STOCK_STATUS)) {
                 return {
                     message: "Only Service Hold stocks can be marked repaired.",
+                    status: 400,
+                };
+            }
+            if (normalizeComparableText(currentStock.holdreason) ===
+                "cost_estimation") {
+                return {
+                    message: "Use the service estimation workflow to release this stock.",
                     status: 400,
                 };
             }
@@ -777,6 +850,7 @@ export var stockRevoService;
                 // The persisted DB field is still rfid, but values are generated server-side.
                 removeUploadedBarcodeFields(jsonresult[i]);
                 jsonresult[i].rfid = generatedBarcodes[i];
+                const productTaxCodeValues = extractProductTaxCodeValues(jsonresult[i]);
                 // Enforce same rules as getDataLoaderDataStock preview route:
                 // - rental_product must always be ecompublish=false
                 // - Barcode Number is auto-generated during import
@@ -790,6 +864,13 @@ export var stockRevoService;
                 if (jsonresult[i].releaseyear) {
                     let convertDateToUTC = await DateCustomize.ConvertDDMMYYYtoutc(jsonresult[i].releaseyear);
                     jsonresult[i].releaseyear = convertDateToUTC;
+                }
+                const taxCodeValidationError = await syncAndValidateProductTaxCode(jsonresult[i].puc, jsonresult[i].stocktype, productTaxCodeValues);
+                if (taxCodeValidationError) {
+                    return {
+                        ...taxCodeValidationError,
+                        message: `Row ${i + 2}: ${taxCodeValidationError.message}`,
+                    };
                 }
             }
             const fields = Object.keys(jsonresult[0]);
@@ -862,7 +943,8 @@ export var stockRevoService;
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = false AND stockstatus = 'Rental Sold'
+                        AND stockstatus = 'Rental Sold'
+                        AND stocktype = 'rental_product'
                     ) AS rentalsoldquantity,
 
                     COUNT(*) FILTER (
@@ -918,21 +1000,18 @@ export var stockRevoService;
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'on_catalogue_product'
                     ) AS oncatalogueqty,
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = true 
                         AND stockstatus = 'Available' 
                         AND stocktype = 'off_catalogue_product'
                     ) AS offcatalogueqty,
 
                     COUNT(*) FILTER (
                         WHERE ${activeFilters}
-                        AND ecompublish = false
                         AND (
                             stockstatus = 'Available'
                             OR stockstatus = 'Rental Sold'
@@ -965,7 +1044,7 @@ export var stockRevoService;
                 const bin_qty = parseInt(quantityResult.rows[0].bin_qty, 10);
                 const archive_qty = parseInt(quantityResult.rows[0].archive_qty, 10);
                 const ewaste_qty = parseInt(quantityResult.rows[0].ewaste_qty, 10);
-                const rentalavailablequantity = rentaltotalquantity - rentalsoldquantity;
+                const rentalavailablequantity = rentaltotalquantity - rentalsoldquantity - reservedforrentalquantity;
                 const quantities = {
                     quantity: totalCount,
                     ecompublishedquantity: ecomPublishedQuantity,
