@@ -435,6 +435,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.createChartAccount
     );
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
+    fastify.get(
+        '/finance/customers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listStatementCustomers
+    );
+    fastify.get(
+        '/finance/customers/:customerId/statement',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.getCustomerStatement
+    );
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get(
         '/finance/transactions',

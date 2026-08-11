@@ -1,9 +1,28 @@
 import { financeAccountService } from "../services/financeAccount.service.js";
 import { retailReceiptFinanceService } from "../services/retailReceiptFinance.service.js";
 import { supplierPaymentFinanceService } from "../services/supplierPaymentFinance.service.js";
+import { customerStatementService } from "../services/customerStatement.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 export var financeAccountController;
 (function (financeAccountController) {
+    financeAccountController.listStatementCustomers = async (request, reply) => {
+        try {
+            const data = await customerStatementService.listCustomers(request);
+            return reply.send({ success: true, data });
+        }
+        catch (error) {
+            return sendFinanceError(reply, error);
+        }
+    };
+    financeAccountController.getCustomerStatement = async (request, reply) => {
+        try {
+            const data = await customerStatementService.getCustomerStatement(request);
+            return reply.send({ success: true, data });
+        }
+        catch (error) {
+            return sendFinanceError(reply, error);
+        }
+    };
     financeAccountController.listChartAccountTypes = async (request, reply) => {
         try {
             const data = await financeAccountService.listChartAccountTypes();

@@ -22,8 +22,8 @@ not part of this phase.
 | Item | Value |
 | --- | --- |
 | Delivery phase | Phase 3 |
-| Requirement status | Planned |
-| Implementation status | Not started |
+| Requirement status | Approved for implementation |
+| Implementation status | In progress — base Customer Statement read slice completed |
 | Primary dependencies | Customer master, supplier master, sales invoices, supplier bills, estimates, Cash and Bank transactions, document allocations |
 
 Related implementation references:
@@ -34,6 +34,39 @@ Related implementation references:
 Phase 3 must reuse the existing Cash and Bank transaction, journal, allocation,
 TDS, invoice-balance, and bill-balance logic. It must not introduce a second
 payment ledger or duplicate payment records in a Customer or Supplier module.
+
+### 2.1 Base Implementation Completed
+
+The first implementation slice establishes:
+
+- Finance-authorized Customer Statement read API.
+- Customer validation and date-range validation.
+- Chronological Invoice and posted Customer Payment rows.
+- Grouped Cash/Bank allocation totals so multi-Invoice payments are not
+  duplicated.
+- Opening, period Invoice, payment, settlement, TDS, unapplied, and closing
+  statement summaries.
+- Canonical current Receivable calculated from existing Invoice balances.
+- A dedicated permission-controlled Customer Statement list and detail
+  workspace that does not reuse the legacy Customer page components.
+- A dedicated **Customer Statement** sidebar entry with list and detail routes.
+- Default collapsed-sidebar behaviour for the Customer Statement route family,
+  consistent with Cash and Bank Accounts and Chart of Accounts.
+- Date filters, summary loading states, statement table, pagination, empty
+  state, and error state.
+- A focused Customer list showing Customer, Business Customer tag, GST,
+  Payment Status, and Balance Amount, with Business Customers ordered first by
+  the backend.
+- Dedicated detail tabs for Overview, Transactions, and Statement, with
+  customer information and Receivable summaries.
+- Focused automated tests for ordering, running balance, opening balance, and
+  India business-date conversion.
+
+This base slice does not mark the full Phase 3 scope complete. Customer Payment
+creation from the Customer page, the consolidated Transactions workspace,
+Estimates integration, Delivery Challan storage and creation, Supplier
+Statement, statement export, and full integration tests remain subsequent
+slices.
 
 ## 3. Scope
 
@@ -828,4 +861,3 @@ Phase 3 is complete only when:
 8. Backend automated tests and frontend production build pass.
 9. Acceptance scenarios in this document are verified with representative
    data.
-

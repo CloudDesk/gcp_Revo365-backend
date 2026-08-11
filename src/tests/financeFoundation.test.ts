@@ -60,6 +60,89 @@ import {
   parseGstMoney,
   resolveInvoiceGst,
 } from "../utils/finance/gstSummary.utils.js";
+import {
+  buildCustomerStatement,
+  toCustomerStatementDate,
+} from "../utils/finance/customerStatement.utils.js";
+
+describe("Customer Statement Phase 3 foundation", () => {
+  test("orders Invoice and Customer Payment rows and calculates running receivable", () => {
+    const statement = buildCustomerStatement([
+      {
+        id: "payment-1",
+        sourceid: 1,
+        transactiontype: "customer_payment",
+        transactiondate: "2026-08-11",
+        reference: "BT-1",
+        description: "Receipt",
+        invoiceamount: 0,
+        paymentamount: 400,
+        settledamount: 400,
+        tdsamount: 0,
+        unappliedamount: 0,
+      },
+      {
+        id: "invoice-1",
+        sourceid: 1,
+        transactiontype: "invoice",
+        transactiondate: "2026-08-10",
+        reference: "INV-1",
+        description: "Invoice",
+        invoiceamount: 1000,
+        paymentamount: 0,
+        settledamount: 0,
+        tdsamount: 0,
+        unappliedamount: 0,
+      },
+    ]);
+
+    assert.equal(statement.records[0].reference, "INV-1");
+    assert.equal(statement.records[0].balance, 1000);
+    assert.equal(statement.records[1].balance, 600);
+    assert.equal(statement.summary.closingreceivable, 600);
+  });
+
+  test("uses pre-period rows for the opening receivable", () => {
+    const statement = buildCustomerStatement(
+      [
+        {
+          id: "invoice-1",
+          sourceid: 1,
+          transactiontype: "invoice",
+          transactiondate: "2026-07-01",
+          reference: "INV-1",
+          description: "Invoice",
+          invoiceamount: 1000,
+          paymentamount: 0,
+          settledamount: 0,
+          tdsamount: 0,
+          unappliedamount: 0,
+        },
+        {
+          id: "payment-1",
+          sourceid: 1,
+          transactiontype: "customer_payment",
+          transactiondate: "2026-08-02",
+          reference: "BT-1",
+          description: "Receipt",
+          invoiceamount: 0,
+          paymentamount: 250,
+          settledamount: 250,
+          tdsamount: 0,
+          unappliedamount: 0,
+        },
+      ],
+      { fromdate: "2026-08-01", todate: "2026-08-31" }
+    );
+
+    assert.equal(statement.summary.openingreceivable, 1000);
+    assert.equal(statement.summary.closingreceivable, 750);
+  });
+
+  test("serializes epoch Invoice dates in the India business date", () => {
+    assert.equal(toCustomerStatementDate(1786386600), "2026-08-11");
+  });
+});
 
 describe("Chart of Accounts Phase 1", () => {
   test("requires Account Type, Account Name, and Account Code", () => {
