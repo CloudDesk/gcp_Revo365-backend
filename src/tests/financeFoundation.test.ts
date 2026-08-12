@@ -51,6 +51,7 @@ import {
 } from "../schemas/finance.schema.js";
 import {
   FINANCE_SOURCE_TYPES,
+  getCustomerReceiptSourceTypes,
   getRetailReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
@@ -287,10 +288,10 @@ describe("Cash and Bank foundation validation", () => {
     );
   });
 
-  test("Customer receipt schema accepts an isolated rental mode", () => {
+  test("Customer receipt schema accepts retail, rental, and customer-workspace modes", () => {
     assert.deepEqual(
       (createRetailReceiptSchema.properties.receiptmode as any).enum,
-      ["retail", "rental"]
+      ["retail", "rental", "all"]
     );
   });
 
@@ -348,6 +349,7 @@ describe("Cash and Bank foundation validation", () => {
 describe("Finance source classification", () => {
   test("New E-commerce and Retail entries use the approved source types", () => {
     assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
+    assert.equal(FINANCE_SOURCE_TYPES.customerReceipt, "customer_receipt");
     assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
     assert.equal(
       FINANCE_SOURCE_TYPES.serviceRequestReceipt,
@@ -358,6 +360,16 @@ describe("Finance source classification", () => {
       FINANCE_SOURCE_TYPES.supplierBillPayment,
       "supplier_bill_payment"
     );
+  });
+
+  test("Customer receipt filters include single-source and mixed receipts", () => {
+    assert.deepEqual(getCustomerReceiptSourceTypes(), [
+      "customer_receipt",
+      "retail_receipt",
+      "retail_instore_receipt",
+      "service_request_receipt",
+      "rental_receipt",
+    ]);
   });
 
   test("Legacy Retail source type remains readable for idempotent retries", () => {

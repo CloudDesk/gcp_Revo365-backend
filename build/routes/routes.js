@@ -363,6 +363,9 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listStatementCustomers);
     fastify.get('/finance/customers/:customerId/statement', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerStatement);
+    fastify.get('/finance/customers/:customerId/estimates', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerEstimates);
+    fastify.get('/finance/customers/:customerId/invoices', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerInvoices);
+    fastify.get('/finance/customers/:customerId/payments', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerPayments);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get('/finance/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listAllTransactions);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);

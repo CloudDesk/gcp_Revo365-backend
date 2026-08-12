@@ -11,42 +11,28 @@ import {
 } from "../utils/finance/finance.utils.js";
 import {
   applyRetailInvoiceAllocation,
+  CustomerReceiptMode,
+  getCustomerReceiptInvoiceSourceMetadata,
   getRetailInvoicePaymentState,
-  isRentalInvoice,
-  isRetailStoreInvoice,
-  isServiceRequestInvoice,
+  isEligibleCustomerReceiptInvoice,
   resolveCustomerReceiptSourceType,
 } from "../utils/finance/retailReceipt.utils.js";
 import {
-  FINANCE_SOURCE_TYPES,
-  getRetailReceiptSourceTypes,
+  getCustomerReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
 
-const RECEIPT_SOURCE_TYPES = [
-  ...getRetailReceiptSourceTypes(),
-  FINANCE_SOURCE_TYPES.serviceRequestReceipt,
-  FINANCE_SOURCE_TYPES.rentalReceipt,
-];
-
-type CustomerReceiptMode = "retail" | "rental";
+const RECEIPT_SOURCE_TYPES = getCustomerReceiptSourceTypes();
 
 const resolveCustomerReceiptMode = (value: unknown): CustomerReceiptMode => {
   const normalized = String(value ?? "retail").trim().toLowerCase();
   if (!normalized || normalized === "retail") return "retail";
   if (normalized === "rental") return "rental";
+  if (normalized === "all") return "all";
   throw new FinanceValidationError(
-    "Receipt mode must be either retail or rental."
+    "Receipt mode must be retail, rental, or all."
   );
 };
-
-const isEligibleCustomerReceiptInvoice = (
-  invoice: any,
-  mode: CustomerReceiptMode
-) =>
-  mode === "rental"
-    ? isRentalInvoice(invoice)
-    : isRetailStoreInvoice(invoice) || isServiceRequestInvoice(invoice);
 
 const normalizeText = (
   value: unknown,
@@ -101,15 +87,15 @@ const selectReceivableInvoices = (mode: CustomerReceiptMode) => `
     LIMIT 1
   ) linked_order ON TRUE
   WHERE r.customerid = $1
-    AND ${mode === "rental" ? `(
+    ${mode === "all" ? "" : `AND ${mode === "rental" ? `(
       LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
       OR EXISTS (
         SELECT 1
         FROM jsonb_array_elements(COALESCE(r.paymentdata, '[]'::jsonb)) payment
         WHERE LOWER(COALESCE(payment->>'source', '')) = 'order_payment'
       )
-    )` : `LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'`}
-    AND ${mode === "rental" ? `(
+    )` : `LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'`}`}
+    ${mode === "all" ? "" : `AND ${mode === "rental" ? `(
       LOWER(COALESCE(r.invoicefor, '')) = 'rental'
     )` : `(
       (
@@ -123,11 +109,12 @@ const selectReceivableInvoices = (mode: CustomerReceiptMode) => `
         LOWER(COALESCE(r.invoicefor, '')) = 'service'
         AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
       )
-    )`}
+    )`}`}
 `;
 
 const serializeOutstandingInvoice = (row: any) => {
   const state = getRetailInvoicePaymentState(row);
+  const sourceMetadata = getCustomerReceiptInvoiceSourceMetadata(row);
   return {
     id: Number(row.id),
     invoicenumber: row.invoicenumber,
@@ -146,6 +133,8 @@ const serializeOutstandingInvoice = (row: any) => {
         : state.paidAmount > 0
           ? "partially_paid"
           : "pending",
+    invoicesource: sourceMetadata?.source ?? "unknown",
+    invoicesourcelabel: sourceMetadata?.label ?? "Other",
   };
 };
 
@@ -632,31 +621,21 @@ export module retailReceiptFinanceService {
         amount
       );
       const epoch = nowEpoch();
-      const containsServiceInvoice = preparedAllocations.some((allocation) =>
-        isServiceRequestInvoice(allocation.invoice)
+      const allocationSources = preparedAllocations.map((allocation) =>
+        getCustomerReceiptInvoiceSourceMetadata(allocation.invoice)
       );
-      const containsRetailInvoice = preparedAllocations.some((allocation) =>
-        isRetailStoreInvoice(allocation.invoice)
-      );
-      const containsRentalInvoice = preparedAllocations.some((allocation) =>
-        isRentalInvoice(allocation.invoice)
+      const uniqueSourceLabels = Array.from(
+        new Set(allocationSources.map((source) => source?.label).filter(Boolean))
       );
       const receiptSourceType = resolveCustomerReceiptSourceType(
         preparedAllocations.map((allocation) => allocation.invoice)
       );
+      const receiptDescription = uniqueSourceLabels.length === 1
+        ? uniqueSourceLabels[0]
+        : "Customer";
       const defaultRemarks = preparedAllocations.length === 1
-        ? containsRentalInvoice
-          ? `Rental receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-          : containsServiceInvoice
-          ? `Service receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-          : `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-        : containsRentalInvoice
-          ? `Rental receipt allocated across ${preparedAllocations.length} invoices`
-          : containsServiceInvoice && containsRetailInvoice
-          ? `Customer receipt allocated across ${preparedAllocations.length} invoices`
-          : containsServiceInvoice
-            ? `Service receipt allocated across ${preparedAllocations.length} invoices`
-            : `Retail receipt allocated across ${preparedAllocations.length} invoices`;
+        ? `${receiptDescription} receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
+        : `${receiptDescription} receipt allocated across ${preparedAllocations.length} invoices`;
       const receiptRemarks = remarks || defaultRemarks;
       const sourceId = resolveAgainstDocumentSourceId(
         preparedAllocations.map((allocation) => allocation.invoice.orderid),
@@ -857,8 +836,9 @@ export module retailReceiptFinanceService {
         const existingPayments = Array.isArray(allocation.invoice.paymentdata)
           ? allocation.invoice.paymentdata
           : [];
-        const servicePayment = isServiceRequestInvoice(allocation.invoice);
-        const rentalPayment = isRentalInvoice(allocation.invoice);
+        const invoiceSource = getCustomerReceiptInvoiceSourceMetadata(
+          allocation.invoice
+        );
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: allocation.allocationAmount,
@@ -871,11 +851,7 @@ export module retailReceiptFinanceService {
           providerpaymentid: null,
           providerorderid: null,
           transactionid: null,
-          source: rentalPayment
-            ? "finance_rental_receipt"
-            : servicePayment
-              ? "finance_service_receipt"
-              : "finance_retail_receipt",
+          source: invoiceSource?.paymentSource || "finance_customer_receipt",
           status: "success",
           comments: remarks,
           banktransactionid: Number(bankTransaction.id),
@@ -943,7 +919,7 @@ export module retailReceiptFinanceService {
           createddate
         )
         VALUES (
-          $1, 'bank_transaction', $2, '${receiptMode === "rental" ? "rental_receipt_posted" : "retail_receipt_posted"}',
+          $1, 'bank_transaction', $2, '${receiptMode === "rental" ? "rental_receipt_posted" : receiptMode === "all" ? "customer_receipt_posted" : "retail_receipt_posted"}',
           $3, $4::jsonb, $5
         )
         `,

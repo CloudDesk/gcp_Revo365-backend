@@ -1,5 +1,6 @@
 export const FINANCE_SOURCE_TYPES = Object.freeze({
   ecommerceOrder: "ecommerce_order",
+  customerReceipt: "customer_receipt",
   retailReceipt: "retail_receipt",
   serviceRequestReceipt: "service_request_receipt",
   rentalReceipt: "rental_receipt",
@@ -14,6 +15,13 @@ export const LEGACY_RETAIL_RECEIPT_SOURCE_TYPES = Object.freeze([
 export const getRetailReceiptSourceTypes = () => [
   FINANCE_SOURCE_TYPES.retailReceipt,
   ...LEGACY_RETAIL_RECEIPT_SOURCE_TYPES,
+];
+
+export const getCustomerReceiptSourceTypes = () => [
+  FINANCE_SOURCE_TYPES.customerReceipt,
+  ...getRetailReceiptSourceTypes(),
+  FINANCE_SOURCE_TYPES.serviceRequestReceipt,
+  FINANCE_SOURCE_TYPES.rentalReceipt,
 ];
 
 export const resolveAgainstDocumentSourceId = (

@@ -95,7 +95,7 @@ export const createRetailReceiptSchema = {
         },
         receiptmode: {
             type: "string",
-            enum: ["retail", "rental"],
+            enum: ["retail", "rental", "all"],
         },
         remarks: nullableString,
         allocations: {

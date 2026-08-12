@@ -9,12 +9,14 @@ export type CustomerStatementRow = {
   description: string;
   invoiceamount: number;
   paymentamount: number;
+  allocatedamount?: number;
   settledamount: number;
   tdsamount: number;
   unappliedamount: number;
   balance: number;
   status?: string | null;
   source?: string | null;
+  allocationmethod?: string | null;
   bankcashaccountname?: string | null;
   bankname?: string | null;
 };
@@ -98,4 +100,3 @@ export const toCustomerStatementDate = (value: unknown): string | null => {
     .toISOString()
     .slice(0, 10);
 };
-

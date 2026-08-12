@@ -23,6 +23,33 @@ export module financeAccountController {
     }
   };
 
+  export const listCustomerEstimates = async (request: any, reply: any) => {
+    try {
+      const data = await customerStatementService.listCustomerEstimates(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listCustomerInvoices = async (request: any, reply: any) => {
+    try {
+      const data = await customerStatementService.listCustomerInvoices(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listCustomerPayments = async (request: any, reply: any) => {
+    try {
+      const data = await customerStatementService.listCustomerPayments(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listChartAccountTypes = async (request: any, reply: any) => {
     try {
       const data = await financeAccountService.listChartAccountTypes();
@@ -185,11 +212,17 @@ export module financeAccountController {
   export const postRetailReceipt = async (request: any, reply: any) => {
     try {
       const data = await retailReceiptFinanceService.postReceipt(request);
-      const isRentalReceipt =
-        String(request.body?.receiptmode || "retail").toLowerCase() === "rental";
+      const receiptMode = String(
+        request.body?.receiptmode || "retail"
+      ).toLowerCase();
+      const receiptLabel = receiptMode === "rental"
+        ? "Rental"
+        : receiptMode === "all"
+          ? "Customer"
+          : "Retail";
       return reply.status(201).send({
         success: true,
-        message: `${isRentalReceipt ? "Rental" : "Retail"} receipt posted and allocated successfully.`,
+        message: `${receiptLabel} receipt posted and allocated successfully.`,
         data,
       });
     } catch (error) {

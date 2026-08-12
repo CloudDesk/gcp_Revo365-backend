@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import pool, { query } from "../database/postgres.js";
 import { FINANCE_ENCRYPTION_KEY } from "../config/config.js";
 import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalance, maskAccountNumber, normalizeAccountType, normalizeEntrySide, nowEpoch, protectAccountNumber, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
-import { FINANCE_SOURCE_TYPES, getRetailReceiptSourceTypes, } from "../utils/finance/financeSource.utils.js";
+import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, getRetailReceiptSourceTypes, } from "../utils/finance/financeSource.utils.js";
 import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
 import { getBillGstSummary, getInvoiceGstSummary, } from "../utils/finance/gstSummary.utils.js";
 const CHART_ACCOUNT_CATEGORIES = new Set([
@@ -1276,9 +1276,7 @@ export var financeAccountService;
             if (transactionType === "customer_receipt") {
                 params.push([
                     FINANCE_SOURCE_TYPES.ecommerceOrder,
-                    ...getRetailReceiptSourceTypes(),
-                    FINANCE_SOURCE_TYPES.serviceRequestReceipt,
-                    FINANCE_SOURCE_TYPES.rentalReceipt,
+                    ...getCustomerReceiptSourceTypes(),
                 ]);
                 conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
             }

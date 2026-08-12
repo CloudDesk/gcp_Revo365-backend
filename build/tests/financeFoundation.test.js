@@ -5,7 +5,7 @@ import { buildEcommerceCustomerName, isEligibleEcommerceOrder, resolveEcommerceP
 import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, getRetailInvoicesOutstandingTotal, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
 import { assertSupplierBillCanBeModified, assertSupplierTdsMapping, applySupplierBillAllocation, assertSupplierBillTotalWithinPurchaseOrder, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, validateSupplierBillProductInput, } from "../utils/finance/supplierBill.utils.js";
 import { createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, } from "../schemas/finance.schema.js";
-import { FINANCE_SOURCE_TYPES, getRetailReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
+import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, getRetailReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
 import { getBillGstSummary, getInvoiceGstSummary, parseGstMoney, resolveInvoiceGst, } from "../utils/finance/gstSummary.utils.js";
 import { buildCustomerStatement, toCustomerStatementDate, } from "../utils/finance/customerStatement.utils.js";
 describe("Customer Statement Phase 3 foundation", () => {
@@ -183,8 +183,8 @@ describe("Cash and Bank foundation validation", () => {
             .items;
         assert.deepEqual(Object.keys(allocationSchema.properties).sort(), ["allocationamount", "invoiceid", "tdsamount", "tdsapplied"].sort());
     });
-    test("Customer receipt schema accepts an isolated rental mode", () => {
-        assert.deepEqual(createRetailReceiptSchema.properties.receiptmode.enum, ["retail", "rental"]);
+    test("Customer receipt schema accepts retail, rental, and customer-workspace modes", () => {
+        assert.deepEqual(createRetailReceiptSchema.properties.receiptmode.enum, ["retail", "rental", "all"]);
     });
     test("Supplier payment schema accepts bill and TDS Payable fields", () => {
         const allocationSchema = createSupplierPaymentSchema.properties.allocations.items;
@@ -221,10 +221,20 @@ describe("Cash and Bank foundation validation", () => {
 describe("Finance source classification", () => {
     test("New E-commerce and Retail entries use the approved source types", () => {
         assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
+        assert.equal(FINANCE_SOURCE_TYPES.customerReceipt, "customer_receipt");
         assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
         assert.equal(FINANCE_SOURCE_TYPES.serviceRequestReceipt, "service_request_receipt");
         assert.equal(FINANCE_SOURCE_TYPES.rentalReceipt, "rental_receipt");
         assert.equal(FINANCE_SOURCE_TYPES.supplierBillPayment, "supplier_bill_payment");
+    });
+    test("Customer receipt filters include single-source and mixed receipts", () => {
+        assert.deepEqual(getCustomerReceiptSourceTypes(), [
+            "customer_receipt",
+            "retail_receipt",
+            "retail_instore_receipt",
+            "service_request_receipt",
+            "rental_receipt",
+        ]);
     });
     test("Legacy Retail source type remains readable for idempotent retries", () => {
         assert.deepEqual(getRetailReceiptSourceTypes(), [

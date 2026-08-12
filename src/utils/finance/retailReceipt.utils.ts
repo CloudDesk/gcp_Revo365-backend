@@ -221,9 +221,64 @@ export const isServiceRequestInvoice = (invoice: any): boolean => {
 export const isRentalInvoice = (invoice: any): boolean =>
   String(invoice?.invoicefor || "").trim().toLowerCase() === "rental";
 
-export const resolveCustomerReceiptSourceType = (invoices: any[]): string =>
-  invoices.some(isRentalInvoice)
-    ? "rental_receipt"
-    : invoices.some(isServiceRequestInvoice)
-      ? "service_request_receipt"
-      : "retail_receipt";
+export type CustomerReceiptInvoiceSource =
+  | "in_store"
+  | "service_request"
+  | "rental";
+
+export type CustomerReceiptMode = "retail" | "rental" | "all";
+
+const CUSTOMER_RECEIPT_SOURCE_METADATA = Object.freeze({
+  in_store: {
+    label: "In-store",
+    transactionSource: "retail_receipt",
+    paymentSource: "finance_retail_receipt",
+  },
+  service_request: {
+    label: "Service Request",
+    transactionSource: "service_request_receipt",
+    paymentSource: "finance_service_receipt",
+  },
+  rental: {
+    label: "Rental",
+    transactionSource: "rental_receipt",
+    paymentSource: "finance_rental_receipt",
+  },
+} satisfies Record<
+  CustomerReceiptInvoiceSource,
+  { label: string; transactionSource: string; paymentSource: string }
+>);
+
+export const resolveCustomerReceiptInvoiceSource = (
+  invoice: any
+): CustomerReceiptInvoiceSource | null => {
+  if (isRentalInvoice(invoice)) return "rental";
+  if (isServiceRequestInvoice(invoice)) return "service_request";
+  if (isRetailStoreInvoice(invoice)) return "in_store";
+  return null;
+};
+
+export const isEligibleCustomerReceiptInvoice = (
+  invoice: any,
+  mode: CustomerReceiptMode
+): boolean => {
+  const source = resolveCustomerReceiptInvoiceSource(invoice);
+  if (!source) return false;
+  if (mode === "all") return true;
+  if (mode === "rental") return source === "rental";
+  return source === "in_store" || source === "service_request";
+};
+
+export const getCustomerReceiptInvoiceSourceMetadata = (invoice: any) => {
+  const source = resolveCustomerReceiptInvoiceSource(invoice);
+  return source ? { source, ...CUSTOMER_RECEIPT_SOURCE_METADATA[source] } : null;
+};
+
+export const resolveCustomerReceiptSourceType = (invoices: any[]): string => {
+  const sources = new Set(
+    invoices.map(resolveCustomerReceiptInvoiceSource).filter(Boolean)
+  );
+  if (sources.size !== 1) return "customer_receipt";
+  const source = Array.from(sources)[0] as CustomerReceiptInvoiceSource;
+  return CUSTOMER_RECEIPT_SOURCE_METADATA[source].transactionSource;
+};

@@ -41,10 +41,10 @@ const customerName = (row: any) =>
   `Customer ${row?.id}`;
 
 const isActiveInvoice = (invoice: any) => {
-  const status = String(
-    invoice?.invoicestatus || invoice?.status || ""
-  ).trim().toLowerCase();
-  return !["cancelled", "canceled", "void"].includes(status);
+  const status = String(invoice?.paymentstatus || "pending")
+    .trim()
+    .toLowerCase();
+  return ["pending", "partially_paid", "paid"].includes(status);
 };
 
 const sourceLabel = (value: unknown) => {
@@ -63,6 +63,32 @@ const paymentSourceLabel = (value: unknown) => {
   if (source.includes("retail")) return "Retail receipt";
   if (source.includes("ecommerce")) return "E-commerce receipt";
   return "Customer receipt";
+};
+
+const CUSTOMER_ESTIMATE_STATUSES = new Set([
+  "draft",
+  "sent",
+  "revised",
+  "accepted",
+  "rejected",
+  "expired",
+  "converted",
+]);
+
+const CUSTOMER_ESTIMATE_TYPES = new Set(["sale", "rental"]);
+
+const requireCustomer = async (customerId: number) => {
+  const customerResult = await query(
+    `SELECT id FROM users WHERE id = $1 LIMIT 1`,
+    [customerId]
+  );
+  if (!customerResult.rows[0]) {
+    throw new FinanceValidationError(
+      "Customer not found.",
+      404,
+      "FINANCE_CUSTOMER_NOT_FOUND"
+    );
+  }
 };
 
 export module customerStatementService {
@@ -205,6 +231,7 @@ export module customerStatementService {
     );
     const page = normalizePageValue(request.query?.page, 1, 1_000_000);
     const count = normalizePageValue(request.query?.count, 10, 100);
+    const summaryOnly = String(request.query?.summaryonly || "") === "true";
     const fromDate = request.query?.fromdate
       ? requireIsoDate(request.query.fromdate, "fromdate")
       : null;
@@ -252,8 +279,20 @@ export module customerStatementService {
         `,
         [customerId]
       ),
-      query(
-        `
+      summaryOnly
+        ? query(
+            `
+            SELECT COUNT(*)::int AS total
+            FROM bank_transactions t
+            WHERE t.organizationid = $1
+              AND t.partytype = 'customer'
+              AND t.partyid = $2
+              AND t.postingstatus = 'posted'
+            `,
+            [organizationId, customerId]
+          )
+        : query(
+          `
         SELECT
           t.id,
           t.transactionnumber,
@@ -325,15 +364,24 @@ export module customerStatementService {
       (summary: any, invoice: any) => {
         const paymentState = getRetailInvoicePaymentState(invoice);
         summary.invoicecount += 1;
+        if (paymentState.outstandingAmount > 0) {
+          summary.outstandinginvoicecount += 1;
+        }
         summary.invoiceamount += paymentState.invoiceAmount;
         summary.paidamount += paymentState.paidAmount;
         summary.currentreceivable += paymentState.outstandingAmount;
         return summary;
       },
-      { invoicecount: 0, invoiceamount: 0, paidamount: 0, currentreceivable: 0 }
+      {
+        invoicecount: 0,
+        outstandinginvoicecount: 0,
+        invoiceamount: 0,
+        paidamount: 0,
+        currentreceivable: 0,
+      }
     );
     Object.keys(invoiceSummary).forEach((key) => {
-      invoiceSummary[key] = key === "invoicecount"
+      invoiceSummary[key] = key.endsWith("count")
         ? Number(invoiceSummary[key])
         : toMoney(invoiceSummary[key], key);
     });
@@ -345,6 +393,42 @@ export module customerStatementService {
           : invoiceSummary.paidamount > 0
             ? "partially_paid"
             : "pending";
+
+    if (summaryOnly) {
+      return {
+        customer: {
+          id: Number(customer.id),
+          name: customerName(customer),
+          email: customer.useremail || null,
+          mobilenumber: customer.usermobilenumber || null,
+          isbusinessuser: Boolean(customer.isbusinessuser),
+          gstnumber: customer.gstnumber || null,
+          addresses: addressResult.rows,
+          invoicecount: invoiceSummary.invoicecount,
+          outstandinginvoicecount: invoiceSummary.outstandinginvoicecount,
+          invoiceamount: invoiceSummary.invoiceamount,
+          paidamount: invoiceSummary.paidamount,
+          balanceamount: invoiceSummary.currentreceivable,
+          paymentstatus: paymentStatus,
+        },
+        records: [] as CustomerStatementRow[],
+        total: 0,
+        page,
+        count,
+        summary: {
+          openingreceivable: 0,
+          invoiceamount: 0,
+          paymentamount: 0,
+          settledamount: 0,
+          tdsreceivable: 0,
+          unappliedamount: 0,
+          closingreceivable: invoiceSummary.currentreceivable,
+          invoicecount: invoiceSummary.invoicecount,
+          paymentcount: Number(paymentResult.rows[0]?.total || 0),
+          currentreceivable: invoiceSummary.currentreceivable,
+        },
+      };
+    }
 
     const invoiceRows = activeInvoices.flatMap((invoice: any) => {
       const transactionDate = toCustomerStatementDate(
@@ -385,11 +469,13 @@ export module customerStatementService {
           paymentSourceLabel(payment.sourcetype),
         invoiceamount: 0,
         paymentamount: toMoney(payment.amount),
+        allocatedamount: toMoney(payment.allocationamount),
         settledamount: toMoney(payment.totalsettledamount),
         tdsamount: toMoney(payment.tdsamount),
         unappliedamount: toMoney(payment.unappliedamount),
         status: String(payment.postingstatus || "posted"),
         source: String(payment.sourcetype || "customer_receipt"),
+        allocationmethod: String(payment.allocationmethod || "invoice_allocation"),
         bankcashaccountname: payment.bankcashaccountname || null,
         bankname: payment.bankname || null,
       }];
@@ -412,6 +498,7 @@ export module customerStatementService {
         gstnumber: customer.gstnumber || null,
         addresses: addressResult.rows,
         invoicecount: invoiceSummary.invoicecount,
+        outstandinginvoicecount: invoiceSummary.outstandinginvoicecount,
         invoiceamount: invoiceSummary.invoiceamount,
         paidamount: invoiceSummary.paidamount,
         balanceamount: invoiceSummary.currentreceivable,
@@ -427,6 +514,268 @@ export module customerStatementService {
         paymentcount: paymentRows.length,
         currentreceivable: invoiceSummary.currentreceivable,
       },
+    };
+  };
+
+  export const listCustomerEstimates = async (request: any) => {
+    // Resolve the finance context even though the legacy Store Quotation tables
+    // are customer-scoped and do not currently carry an organization column.
+    resolveFinanceContext(request);
+    const customerId = requirePositiveInteger(
+      request.params?.customerId,
+      "customerId"
+    );
+    const page = normalizePageValue(request.query?.page, 1, 1_000_000);
+    const count = normalizePageValue(request.query?.count, 10, 100);
+    const status = String(request.query?.status || "").trim().toLowerCase();
+    const estimateType = String(request.query?.type || "").trim().toLowerCase();
+
+    if (status && !CUSTOMER_ESTIMATE_STATUSES.has(status)) {
+      throw new FinanceValidationError("Invalid Estimate status filter.");
+    }
+    if (estimateType && !CUSTOMER_ESTIMATE_TYPES.has(estimateType)) {
+      throw new FinanceValidationError("Estimate type must be sale or rental.");
+    }
+
+    await requireCustomer(customerId);
+
+    const params: any[] = [customerId];
+    const conditions = [
+      "q.customerid = $1",
+      "COALESCE(q.isdeleted, FALSE) = FALSE",
+      "q.quotationtype IN ('sale', 'rental')",
+    ];
+    if (status) {
+      params.push(status);
+      conditions.push(`LOWER(q.status) = $${params.length}`);
+    }
+    if (estimateType) {
+      params.push(estimateType);
+      conditions.push(`LOWER(q.quotationtype) = $${params.length}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+    const offset = (page - 1) * count;
+    const recordParams = [...params, offset, count];
+    const [recordResult, countResult] = await Promise.all([
+      query(
+        `
+        SELECT
+          q.id,
+          q.quotationnumber,
+          q.quotationtype,
+          q.status,
+          q.convertedorderid,
+          q.convertedinvoiceid,
+          q.createddate,
+          q.modifieddate,
+          COALESCE(fv.id, lv.id) AS versionid,
+          COALESCE(fv.versionnumber, lv.versionnumber) AS versionnumber,
+          COALESCE(fv.totalamount, lv.totalamount, 0) AS totalamount
+        FROM store_quotations q
+        LEFT JOIN store_quotation_versions fv
+          ON fv.id = q.finalversionid
+        LEFT JOIN LATERAL (
+          SELECT
+            version.id,
+            version.versionnumber,
+            version.totalamount
+          FROM store_quotation_versions version
+          WHERE version.quotationid = q.id
+          ORDER BY version.versionnumber DESC, version.id DESC
+          LIMIT 1
+        ) lv ON TRUE
+        ${whereClause}
+        ORDER BY q.createddate DESC, q.id DESC
+        OFFSET $${params.length + 1} LIMIT $${params.length + 2}
+        `,
+        recordParams
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total FROM store_quotations q ${whereClause}`,
+        params
+      ),
+    ]);
+
+    return {
+      records: recordResult.rows.map((estimate: any) => ({
+        id: Number(estimate.id),
+        estimatenumber:
+          estimate.quotationnumber || `SQ-${String(estimate.id).padStart(6, "0")}`,
+        estimatetype: String(estimate.quotationtype || "sale"),
+        estimatedate: toCustomerStatementDate(estimate.createddate),
+        referencenumber: estimate.convertedorderid || null,
+        convertedinvoiceid: estimate.convertedinvoiceid
+          ? Number(estimate.convertedinvoiceid)
+          : null,
+        amount: toMoney(estimate.totalamount),
+        status: String(estimate.status || "draft"),
+        versionid: estimate.versionid ? Number(estimate.versionid) : null,
+        versionnumber: estimate.versionnumber
+          ? Number(estimate.versionnumber)
+          : null,
+      })),
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
+    };
+  };
+
+  export const listCustomerInvoices = async (request: any) => {
+    resolveFinanceContext(request);
+    const customerId = requirePositiveInteger(
+      request.params?.customerId,
+      "customerId"
+    );
+    const page = normalizePageValue(request.query?.page, 1, 1_000_000);
+    const count = normalizePageValue(request.query?.count, 10, 100);
+    await requireCustomer(customerId);
+
+    const offset = (page - 1) * count;
+    const [recordResult, countResult] = await Promise.all([
+      query(
+        `
+        SELECT *
+        FROM revoinvoice
+        WHERE customerid = $1
+        ORDER BY COALESCE(invoicedate, createddate) DESC, id DESC
+        OFFSET $2 LIMIT $3
+        `,
+        [customerId, offset, count]
+      ),
+      query(
+        `
+        SELECT COUNT(*)::int AS total
+        FROM revoinvoice
+        WHERE customerid = $1
+        `,
+        [customerId]
+      ),
+    ]);
+
+    return {
+      records: recordResult.rows.map((invoice: any) => {
+        const paymentState = getRetailInvoicePaymentState(invoice);
+        const paymentstatus = paymentState.outstandingAmount === 0
+          ? "paid"
+          : paymentState.paidAmount > 0
+            ? "partially_paid"
+            : "pending";
+        return {
+          id: Number(invoice.id),
+          invoicenumber: String(invoice.invoicenumber || `INV-${invoice.id}`),
+          invoicedate: toCustomerStatementDate(
+            invoice.invoicedate || invoice.createddate
+          ),
+          source: String(invoice.invoicefor || "invoice"),
+          sourcelabel: sourceLabel(invoice.invoicefor),
+          invoiceamount: paymentState.invoiceAmount,
+          paidamount: paymentState.paidAmount,
+          balanceamount: paymentState.outstandingAmount,
+          paymentstatus,
+        };
+      }),
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
+    };
+  };
+
+  export const listCustomerPayments = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const customerId = requirePositiveInteger(
+      request.params?.customerId,
+      "customerId"
+    );
+    const page = normalizePageValue(request.query?.page, 1, 1_000_000);
+    const count = normalizePageValue(request.query?.count, 10, 100);
+    await requireCustomer(customerId);
+
+    const offset = (page - 1) * count;
+    const paymentWhere = `
+      t.organizationid = $1
+      AND t.partytype = 'customer'
+      AND t.partyid = $2
+      AND t.postingstatus = 'posted'
+    `;
+    const [recordResult, countResult] = await Promise.all([
+      query(
+        `
+        SELECT
+          t.id,
+          t.transactionnumber,
+          t.transactiondate,
+          t.amount,
+          t.allocationmethod,
+          t.sourcetype,
+          t.remarks,
+          t.postingstatus,
+          b.accountname AS bankcashaccountname,
+          b.bankname,
+          COALESCE(allocation.allocationamount, 0) AS allocationamount,
+          COALESCE(allocation.tdsamount, 0) AS tdsamount,
+          COALESCE(allocation.totalsettledamount, 0) AS totalsettledamount,
+          COALESCE(unapplied.remainingamount, 0) AS unappliedamount
+        FROM bank_transactions t
+        JOIN bank_cash_accounts b
+          ON b.id = t.bankcashaccountid
+         AND b.organizationid = t.organizationid
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(a.allocationamount) AS allocationamount,
+            SUM(a.tdsamount) AS tdsamount,
+            SUM(a.totalsettledamount) AS totalsettledamount
+          FROM bank_transaction_allocations a
+          WHERE a.banktransactionid = t.id
+            AND a.documenttype = 'sales_invoice'
+            AND a.status = 'applied'
+        ) allocation ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT SUM(u.remainingamount) AS remainingamount
+          FROM party_unapplied_amounts u
+          WHERE u.banktransactionid = t.id
+            AND u.partytype = 'customer'
+            AND u.partyid = $2
+            AND u.status = 'open'
+        ) unapplied ON TRUE
+        WHERE ${paymentWhere}
+        ORDER BY t.transactiondate DESC, t.posteddate DESC, t.id DESC
+        OFFSET $3 LIMIT $4
+        `,
+        [organizationId, customerId, offset, count]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total FROM bank_transactions t WHERE ${paymentWhere}`,
+        [organizationId, customerId]
+      ),
+    ]);
+
+    return {
+      records: recordResult.rows.map((payment: any) => ({
+        id: Number(payment.id),
+        transactionnumber: String(
+          payment.transactionnumber || `BT-${payment.id}`
+        ),
+        transactiondate: toCustomerStatementDate(payment.transactiondate),
+        paymentamount: toMoney(payment.amount),
+        allocatedamount: toMoney(payment.allocationamount),
+        settledamount: toMoney(payment.totalsettledamount),
+        tdsamount: toMoney(payment.tdsamount),
+        unappliedamount: toMoney(payment.unappliedamount),
+        allocationmethod: String(
+          payment.allocationmethod || "invoice_allocation"
+        ),
+        source: String(payment.sourcetype || "customer_receipt"),
+        description:
+          String(payment.remarks || "").trim() ||
+          paymentSourceLabel(payment.sourcetype),
+        bankcashaccountname: payment.bankcashaccountname || null,
+        bankname: payment.bankname || null,
+        status: String(payment.postingstatus || "posted"),
+      })),
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
     };
   };
 }

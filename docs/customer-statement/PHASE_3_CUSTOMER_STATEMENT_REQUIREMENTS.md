@@ -23,7 +23,7 @@ not part of this phase.
 | --- | --- |
 | Delivery phase | Phase 3 |
 | Requirement status | Approved for implementation |
-| Implementation status | In progress — base Customer Statement read slice completed |
+| Implementation status | In progress — Customer Statement read, Customer Payments, and Estimates slices completed |
 | Primary dependencies | Customer master, supplier master, sales invoices, supplier bills, estimates, Cash and Bank transactions, document allocations |
 
 Related implementation references:
@@ -62,11 +62,52 @@ The first implementation slice establishes:
 - Focused automated tests for ordering, running balance, opening balance, and
   India business-date conversion.
 
-This base slice does not mark the full Phase 3 scope complete. Customer Payment
-creation from the Customer page, the consolidated Transactions workspace,
-Estimates integration, Delivery Challan storage and creation, Supplier
-Statement, statement export, and full integration tests remain subsequent
-slices.
+### 2.2 Customer Payments Implementation Completed
+
+The Customer Payments slice now also provides:
+
+- A permission-controlled **Record Customer Payment** action in the dedicated
+  Customer Statement workspace.
+- An **Add** action in the expanded Customer Payments accordion. The action
+  resolves **Customer Receipt** as the entry type in the background and opens
+  the existing Bank/Cash account selector directly.
+- The existing active Bank/Cash account selector before the receipt form opens.
+- The existing Customer Receipt allocation and TDS Receivable form, posting
+  service, journal rules, validation, idempotency, and success toast.
+- The current Customer preselected and read-only in the Customer workspace
+  flow, while the global Cash and Bank flow retains its searchable Customer
+  selector.
+- Automatic loading of the selected Customer's eligible outstanding In-store,
+  Service Request, and Rental Invoices in one workspace flow.
+- Customer Payment rows with the transaction reference, Bank/Cash account,
+  payment, applied amount, TDS, unapplied amount, and posting status.
+- Navigation from a Customer Payment row to the existing Cash and Bank
+  transaction detail flow.
+- Independently paginated, lazy-loaded Invoice and Customer Payment accordions
+  so large customer histories are not returned as one combined UI payload.
+- Dedicated Invoice and Customer Payment pagination footers with total counts.
+- Customer, date, and posted-payment indexes supporting the paginated queries.
+- Refresh of Customer Payments, Invoice balances, Receivables, and Statement
+  data after a successful post.
+
+### 2.3 Estimates Implementation Completed
+
+The Estimates slice now also provides:
+
+- Customer-scoped in-store Sale and Rental Estimates from the existing Store
+  Quotation module.
+- Estimate date, Estimate number, type, converted-order reference when
+  available, latest/final version amount, and current workflow status.
+- Existing Store Quotation statuses: Draft, Sent, Revised, Accepted, Rejected,
+  Expired, and Converted.
+- Server-side status and Sale/Rental type filters with pagination.
+- Navigation from the Estimate number to the existing Store Quotation view.
+- Read-only Estimate visibility with no Receivable, statement, journal, or
+  Cash/Bank effect.
+
+These completed slices do not mark the full Phase 3 scope complete. Delivery
+Challan storage and creation, Supplier Statement, statement export, and full
+integration tests remain subsequent slices.
 
 ## 3. Scope
 

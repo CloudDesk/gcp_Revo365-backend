@@ -18,6 +18,7 @@ import {
 } from "../utils/finance/finance.utils.js";
 import {
   FINANCE_SOURCE_TYPES,
+  getCustomerReceiptSourceTypes,
   getRetailReceiptSourceTypes,
 } from "../utils/finance/financeSource.utils.js";
 import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
@@ -1716,9 +1717,7 @@ export module financeAccountService {
       if (transactionType === "customer_receipt") {
         params.push([
           FINANCE_SOURCE_TYPES.ecommerceOrder,
-          ...getRetailReceiptSourceTypes(),
-          FINANCE_SOURCE_TYPES.serviceRequestReceipt,
-          FINANCE_SOURCE_TYPES.rentalReceipt,
+          ...getCustomerReceiptSourceTypes(),
         ]);
         conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
       } else if (transactionType === "supplier_payment") {
