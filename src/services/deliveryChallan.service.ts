@@ -12,6 +12,7 @@ import {
   validateDeliveryQuantities,
 } from "../utils/finance/deliveryChallan.utils.js";
 import { toCustomerStatementDate } from "../utils/finance/customerStatement.utils.js";
+import { deliveryChallanDocumentService } from "./deliveryChallanDocument.service.js";
 
 const requirePositiveInteger = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -76,6 +77,17 @@ const withDeliveryProgress = (
   };
 });
 
+const startDeliveryChallanDocumentGeneration = (
+  challanId: number,
+  organizationId: number
+) => {
+  setImmediate(() => {
+    void deliveryChallanDocumentService.generate(challanId, organizationId).catch((error) => {
+      console.error("Delivery Challan document background generation failed:", error);
+    });
+  });
+};
+
 export module deliveryChallanService {
   export const createCustomerAddress = async (request: any) => {
     resolveFinanceContext(request);
@@ -133,6 +145,7 @@ export module deliveryChallanService {
       query(
         `SELECT dc.id, dc.challannumber, dc.challanmode, dc.invoiceid, dc.invoicenumber,
                 dc.challandate, dc.notes, dc.referencenumber, dc.recipientname,
+                dc.documentstatus, dc.documenturl,
                 COUNT(dcl.id)::int AS deliveredlinecount,
                 COALESCE(SUM(dcl.deliveryquantity), 0) AS totaldeliveredquantity
          FROM delivery_challans dc
@@ -361,8 +374,9 @@ export module deliveryChallanService {
         `INSERT INTO delivery_challans
           (id, organizationid, challannumber, challanmode, customerid, invoiceid,
            invoicenumber, challandate, showamounts, referencenumber, purpose,
-           recipientname, recipientphone, recipientaddress, notes, createdby, createddate)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+           recipientname, recipientphone, recipientaddress, notes, documentstatus,
+           createdby, createddate)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'pending', $16, $17)`,
         [challanId, organizationId, challannumber, mode, customerId, invoiceId,
          invoice ? String(invoice.invoicenumber || `INV-${invoiceId}`) : null,
          challandate, showamounts, referencenumber, purpose, recipientname,
@@ -386,7 +400,8 @@ export module deliveryChallanService {
         );
       }
       await client.query("COMMIT");
-      return { id: challanId, challannumber };
+      startDeliveryChallanDocumentGeneration(challanId, organizationId);
+      return { id: challanId, challannumber, documentstatus: "pending" };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -403,7 +418,10 @@ export module deliveryChallanService {
       `SELECT dc.id, dc.challannumber, dc.challanmode, dc.customerid, dc.invoiceid,
               dc.invoicenumber, dc.challandate, dc.showamounts, dc.referencenumber,
               dc.purpose, dc.recipientname, dc.recipientphone, dc.recipientaddress,
-              dc.notes, dc.createdby, dc.createddate,
+              dc.notes, dc.createdby, dc.createddate, dc.documentstatus,
+              dc.documenturl, dc.documenterror, dc.documentattempts,
+              dc.documentgenerateddate, COUNT(dcl.id)::int AS deliveredlinecount,
+              COALESCE(SUM(dcl.deliveryquantity), 0) AS totaldeliveredquantity,
               COALESCE(jsonb_agg(jsonb_build_object(
                 'id', dcl.id,
                 'invoicelinekey', dcl.invoicelinekey,
@@ -430,6 +448,7 @@ export module deliveryChallanService {
     const row = result.rows[0];
     const canViewAmounts = row.showamounts === true
       && await hasInvoiceFinancialVisibility(request);
+    const canAccessDocument = row.showamounts !== true || canViewAmounts;
     return {
       ...row,
       id: Number(row.id),
@@ -437,6 +456,10 @@ export module deliveryChallanService {
       invoiceid: row.invoiceid == null ? null : Number(row.invoiceid),
       challandate: toCustomerStatementDate(row.challandate),
       showamounts: canViewAmounts,
+      documentaccess: canAccessDocument,
+      documenturl: canAccessDocument ? row.documenturl : null,
+      deliveredlinecount: Number(row.deliveredlinecount),
+      totaldeliveredquantity: Number(row.totaldeliveredquantity),
       lines: row.lines.map((line: any) => ({
         ...line,
         id: Number(line.id),
@@ -446,5 +469,38 @@ export module deliveryChallanService {
         lineamount: canViewAmounts && line.lineamount != null ? Number(line.lineamount) : null,
       })),
     };
+  };
+
+  export const retryDocument = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const customerId = optionalPositiveInteger(request.params?.customerId, "customerId");
+    const challanId = requirePositiveInteger(request.params?.challanId, "challanId");
+    const params = customerId ? [challanId, organizationId, customerId] : [challanId, organizationId];
+    const customerClause = customerId ? "AND customerid = $3" : "";
+    const result = await query(
+      `UPDATE delivery_challans
+       SET documentstatus = 'pending', documenterror = NULL,
+           documentstarteddate = NULL, modifiedby = $${customerId ? 4 : 3},
+           modifieddate = $${customerId ? 5 : 4}
+       WHERE id = $1 AND organizationid = $2 ${customerClause}
+         AND documentstatus IN ('failed', 'not_generated')
+       RETURNING id, challannumber, documentstatus`,
+      [...params, request.session?.email || request.session?.username || "system", nowEpoch()]
+    );
+
+    if (!result.rows[0]) {
+      const existing = await query(
+        `SELECT id, challannumber, documentstatus, documenturl
+         FROM delivery_challans WHERE id = $1 AND organizationid = $2 ${customerClause} LIMIT 1`,
+        params
+      );
+      if (!existing.rows[0]) {
+        throw new FinanceValidationError("Delivery Challan not found.", 404, "DELIVERY_CHALLAN_NOT_FOUND");
+      }
+      return existing.rows[0];
+    }
+
+    startDeliveryChallanDocumentGeneration(challanId, organizationId);
+    return result.rows[0];
   };
 }

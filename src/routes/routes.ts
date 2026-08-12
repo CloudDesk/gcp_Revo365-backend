@@ -490,6 +490,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallan
     );
+    fastify.post(
+        '/finance/customers/:customerId/delivery-challans/:challanId/document',
+        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('create')] },
+        financeAccountController.retryDeliveryChallanDocument
+    );
     fastify.get(
         '/finance/delivery-challans',
         { preHandler: [getSession, requireDeliveryChallanPermission('read')] },
@@ -504,6 +509,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/delivery-challans/:challanId',
         { preHandler: [getSession, requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallan
+    );
+    fastify.post(
+        '/finance/delivery-challans/:challanId/document',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.retryDeliveryChallanDocument
     );
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get(

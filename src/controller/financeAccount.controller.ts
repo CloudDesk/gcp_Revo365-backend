@@ -92,6 +92,15 @@ export module financeAccountController {
     }
   };
 
+  export const retryDeliveryChallanDocument = async (request: any, reply: any) => {
+    try {
+      const data = await deliveryChallanService.retryDocument(request);
+      return reply.status(202).send({ success: true, message: "Delivery Challan PDF generation started.", data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const createDeliveryChallanCustomerAddress = async (request: any, reply: any) => {
     try {
       const data = await deliveryChallanService.createCustomerAddress(request);

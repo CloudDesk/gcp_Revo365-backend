@@ -372,9 +372,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/customers/:customerId/invoices/:invoiceId/delivery-lines', { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] }, financeAccountController.getDeliveryChallanInvoiceLines);
     fastify.post('/finance/customers/:customerId/delivery-challans', { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('create')] }, financeAccountController.createDeliveryChallan);
     fastify.get('/finance/customers/:customerId/delivery-challans/:challanId', { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] }, financeAccountController.getDeliveryChallan);
+    fastify.post('/finance/customers/:customerId/delivery-challans/:challanId/document', { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/delivery-challans', { preHandler: [getSession, requireDeliveryChallanPermission('read')] }, financeAccountController.listDeliveryChallans);
     fastify.post('/finance/delivery-challans', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.createDeliveryChallan);
     fastify.get('/finance/delivery-challans/:challanId', { preHandler: [getSession, requireDeliveryChallanPermission('read')] }, financeAccountController.getDeliveryChallan);
+    fastify.post('/finance/delivery-challans/:challanId/document', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get('/finance/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listAllTransactions);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);

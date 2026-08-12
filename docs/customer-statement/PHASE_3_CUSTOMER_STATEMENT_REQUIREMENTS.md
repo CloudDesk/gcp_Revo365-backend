@@ -125,6 +125,9 @@ The Delivery Challans slice now also provides:
   protected by Invoice read permission.
 - A dedicated Delivery Challan read/create permission resource and reusable
   organization-scoped APIs for a future global workspace.
+- Asynchronous printable PDF generation after atomic Challan creation, with
+  document status, retry metadata, and the GCP Storage URL linked to the
+  Delivery Challan.
 - No Invoice amount, Receivable, GST, journal, or Cash/Bank effect.
 
 These completed slices do not mark the full Phase 3 scope complete. Supplier
@@ -455,6 +458,8 @@ value, receivable, or automatic inventory movement.
 6. Save the Delivery Challan header and all lines atomically.
 7. Refresh the Invoice delivery quantities, where applicable, and Delivery
    Challan list after a successful save.
+8. Queue printable PDF generation after the database transaction commits. PDF
+   rendering or storage failure must not roll back the saved Challan.
 
 ### 9.3 Required Header Data
 
@@ -581,6 +586,32 @@ both permit them.
 
 No payment status should be displayed as a Delivery Challan status. Invoice
 payment status and physical delivery progress are separate concepts.
+
+### 9.8 Printable Document Lifecycle
+
+- Every newly created Delivery Challan starts with document status `pending`.
+- After the Challan transaction commits, the backend asynchronously claims the
+  record as `processing`, renders an A4 PDF from the immutable Challan
+  snapshots, sends it to the file-upload service, and stores the resulting URL
+  with status `ready`.
+- The printable document must obey `Show Amounts`; rate and amount columns must
+  be omitted when monetary visibility was not selected.
+- Generation failures set status `failed`, preserve the Challan, record a
+  bounded internal error and attempt count, and allow an authorized user to
+  queue regeneration.
+- The detail UI polls only while status is `pending` or `processing`, shows a
+  loader during that period, shows the PDF link when `ready`, and shows a
+  regenerate action when `failed`. Pre-existing Challans use `not_generated`
+  and expose an initial Generate PDF action.
+- Generation claims are idempotent. Repeated generate requests must not create
+  parallel files, and a stale `processing` claim may be recovered after the
+  configured timeout.
+- PDF files must be uploaded through the dedicated `gcp_file_upload` project,
+  consistent with other generated project documents. The backend configures
+  `GCP_FILE_UPLOAD_BASE_URL`; both services share
+  `FILE_UPLOAD_INTERNAL_SECRET`. The file-upload project owns Storage access
+  and stores the PDFs under `delivery-challans/` in its existing
+  `REVO_PRODUCT_INVOICE_BUCKET` document bucket.
 
 ## 10. Customer Statement
 
@@ -750,6 +781,7 @@ names may follow the existing API conventions.
   customer filtering.
 - Create a Manual/General Delivery Challan with or without a customer.
 - Resolve recipient and product lookups required by the reusable global form.
+- Start or retry a Delivery Challan PDF and return its current document state.
 
 ### 12.3 Supplier Operations
 
@@ -793,6 +825,8 @@ The Delivery Challan header requires data equivalent to:
 - Created By
 - Created Date
 - Updated By/Date where applicable
+- Document status, URL, bounded error, attempt count, processing/generated
+  timestamps, and document version
 
 ### 13.2 Delivery Challan Line
 
@@ -820,6 +854,7 @@ Each line requires data equivalent to:
 - Index by Organization and Customer.
 - Index by Organization and Invoice.
 - Index Delivery Challan lines by Invoice Line ID for delivered-quantity sums.
+- Index pending/processing Delivery Challans for document-worker recovery.
 
 The final implementation must use the project's master migration/change file
 policy so the same schema can be deployed safely to every environment.
@@ -836,6 +871,7 @@ Minimum permission separation:
 | View Delivery Challan | Customer/Invoice read permission |
 | Create Delivery Challan | Dedicated Delivery Challan create permission |
 | View Delivery Challan amounts | Delivery Challan read plus Invoice financial visibility |
+| Generate or retry Delivery Challan PDF | Delivery Challan create permission |
 | View Supplier Statement | Supplier read plus approved finance visibility |
 
 The implementation should map these capabilities to existing permission keys

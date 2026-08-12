@@ -45,6 +45,8 @@ const config = {
    * Phase 2: override per-order from fulfillment_assignments.assigned_location.
    */
   FULFILLMENT_DEFAULT_LOCATION: process.env.FULFILLMENT_DEFAULT_LOCATION ?? "head_office",
+  GCP_FILE_UPLOAD_BASE_URL: process.env.GCP_FILE_UPLOAD_BASE_URL,
+  FILE_UPLOAD_INTERNAL_SECRET: process.env.FILE_UPLOAD_INTERNAL_SECRET,
   // ENV_GOOGLE_CLIENT_ID: process.env.ENV_GOOGLE_CLIENT_ID,
   // ENV_GOOGLE_CLIENT_SECRET: process.env.ENV_GOOGLE_CLIENT_SECRET,
   // ENV_GOOGLE_REDIRECT_URI: process.env.ENV_GOOGLE_REDIRECT_URI,
@@ -88,6 +90,8 @@ export const { SHIPROCKET_BASE_URL } = config
 export const { ENV_GOOGLE_LOCATION_ID } = config
 export const { ENV_GOOGLE_API_KEY } = config
 export const { FULFILLMENT_DEFAULT_LOCATION } = config
+export const { GCP_FILE_UPLOAD_BASE_URL } = config
+export const { FILE_UPLOAD_INTERNAL_SECRET } = config
 // export const { ENV_GOOGLE_CLIENT_ID } = config
 // export const { ENV_GOOGLE_CLIENT_SECRET } = config  
 // export const { ENV_GOOGLE_REDIRECT_URI } = config
