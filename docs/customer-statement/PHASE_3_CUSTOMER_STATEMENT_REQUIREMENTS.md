@@ -23,7 +23,7 @@ not part of this phase.
 | --- | --- |
 | Delivery phase | Phase 3 |
 | Requirement status | Approved for implementation |
-| Implementation status | In progress — Customer Statement read, Customer Payments, and Estimates slices completed |
+| Implementation status | In progress — Customer Statement read, Customer Payments, Estimates, and Delivery Challans slices completed |
 | Primary dependencies | Customer master, supplier master, sales invoices, supplier bills, estimates, Cash and Bank transactions, document allocations |
 
 Related implementation references:
@@ -105,9 +105,31 @@ The Estimates slice now also provides:
 - Read-only Estimate visibility with no Receivable, statement, journal, or
   Cash/Bank effect.
 
-These completed slices do not mark the full Phase 3 scope complete. Delivery
-Challan storage and creation, Supplier Statement, statement export, and full
-integration tests remain subsequent slices.
+### 2.4 Delivery Challans Implementation Completed
+
+The Delivery Challans slice now also provides:
+
+- Organization- and customer-scoped Delivery Challan header and line storage.
+- Customer Invoice selection and line-level Invoice, previously delivered,
+  remaining, and new delivery quantities.
+- Multiple partial challans until every selected Invoice line is fully
+  delivered.
+- Transactional Invoice locking and backend quantity revalidation to prevent
+  concurrent over-delivery.
+- Atomic header and line creation with a system-generated Challan number.
+- Independently paginated, lazy-loaded Delivery Challan history.
+- Read-only Challan detail with its source Invoice and delivered lines.
+- Invoice-linked and Manual/General creation modes in one reusable form.
+- Manual recipient snapshots and custom goods lines for non-sale transit.
+- Optional immutable Invoice rate/amount snapshots, hidden by default and
+  protected by Invoice read permission.
+- A dedicated Delivery Challan read/create permission resource and reusable
+  organization-scoped APIs for a future global workspace.
+- No Invoice amount, Receivable, GST, journal, or Cash/Bank effect.
+
+These completed slices do not mark the full Phase 3 scope complete. Supplier
+Statement, statement export, and full integration tests remain subsequent
+slices.
 
 ## 3. Scope
 
@@ -127,11 +149,15 @@ integration tests remain subsequent slices.
    line items.
 7. Multiple Delivery Challans against one Invoice, limited by the Invoice
    line's remaining deliverable quantity.
-8. Customer Statement containing relevant Invoices and Customer Payment
+8. Manual/General Delivery Challans without an Invoice for non-sale movement
+   of TeqIT-owned or other goods.
+9. Optional display of read-only Invoice rate and amount snapshots on an
+   Invoice-linked Delivery Challan, hidden by default.
+10. Customer Statement containing relevant Invoices and Customer Payment
    transactions.
-9. Supplier Statement containing relevant Bills and Supplier Payment
+11. Supplier Statement containing relevant Bills and Supplier Payment
    transactions.
-10. Organization, customer, supplier, date, permission, and status scoping.
+12. Organization, customer, supplier, date, permission, and status scoping.
 
 ### 3.2 Excluded
 
@@ -140,7 +166,6 @@ The following are not part of this phase unless separately approved:
 - Additional transaction types shown in the reference application.
 - Retainer invoices, recurring invoices, credit notes, sales orders, expenses,
   emails, comments, or customer portal features.
-- Creating a Delivery Challan without an Invoice.
 - Creating a Delivery Challan for a different customer than the Invoice.
 - Editing Invoice prices, taxes, discounts, or totals from a Delivery Challan.
 - Using a Delivery Challan to update receivables or Cash/Bank balances.
@@ -404,37 +429,58 @@ permission.
 
 ### 9.1 Purpose
 
-A Delivery Challan records the quantity physically delivered for selected line
-items of an existing Invoice. It does not create a new sale, payment, journal
-entry, GST value, or receivable.
+A Delivery Challan records the physical movement of goods. It may be linked to
+selected lines of an existing Invoice or created as a Manual/General Challan
+for non-sale transit. It does not create a sale, payment, journal entry, GST
+value, receivable, or automatic inventory movement.
+
+### 9.1.1 Challan Modes
+
+| Mode | Purpose | Invoice | Customer/Recipient |
+| --- | --- | --- | --- |
+| Invoice-linked | Deliver goods already present on a sales Invoice | Required | Derived from and locked to the Invoice |
+| Manual/General | Personal transit or other movement of goods from TeqIT | Not permitted | Existing customer or manually entered recipient |
 
 ### 9.2 Creation Flow
 
-1. Start from the selected customer's Delivery Challans section or from an
-   eligible Invoice.
-2. Select one existing Invoice belonging to that customer and organization.
-3. Load the Invoice line items.
-4. Show Invoice Quantity, Previously Delivered Quantity, Remaining Deliverable
-   Quantity, and Delivery Quantity for each line.
-5. Select one or more line items.
-6. Enter a Delivery Quantity for every selected line.
-7. Enter the Delivery Challan Date.
-8. Save the Delivery Challan header and all selected lines atomically.
-9. Refresh the Invoice delivery quantities and Delivery Challan list after a
-   successful save.
+1. Open the reusable Delivery Challan form from a customer workspace, eligible
+   Invoice, or the future global Delivery Challan workspace.
+2. Select Invoice-linked or Manual/General mode.
+3. For Invoice-linked mode, select an eligible Invoice and its lines. For
+   Manual/General mode, select an optional customer or enter recipient details
+   and add product or custom descriptive lines.
+4. Enter the Delivery Challan Date, optional reference, purpose, and notes.
+5. For Invoice-linked mode, choose whether monetary values are displayed;
+   values are hidden by default.
+6. Save the Delivery Challan header and all lines atomically.
+7. Refresh the Invoice delivery quantities, where applicable, and Delivery
+   Challan list after a successful save.
 
 ### 9.3 Required Header Data
 
 | Field | Required | Rule |
 | --- | --- | --- |
 | Delivery Challan Number | Yes | System-generated unique number using the project's sequence convention |
-| Customer | Yes | Derived from the selected Invoice; not freely editable |
-| Invoice | Yes | Must belong to the customer and organization |
+| Challan Mode | Yes | `invoice` or `manual` |
+| Customer | Conditional | Required and derived from Invoice in Invoice mode; optional in Manual mode |
+| Recipient Name | Conditional | Required in Manual mode when no customer is selected |
+| Recipient Phone/Address | No | Snapshot only; must not overwrite customer master data |
+| Invoice | Conditional | Required only in Invoice mode and must belong to the customer and organization |
 | Delivery Challan Date | Yes | Valid application date |
+| Reference Number | Conditional | Invoice number mapped automatically in Invoice mode; optional user-entered transit reference in Manual mode, maximum 255 characters |
+| Purpose | No | Concise reason for movement, maximum 500 characters |
+| Show Amounts | Yes | Invoice mode only; defaults to false and never changes accounting |
 | Notes | No | Optional delivery note with a controlled maximum length |
 
 Existing customer and Invoice addresses may be shown on the document but must
 not silently overwrite the customer master.
+
+For a customer-scoped Challan, the latest saved customer address is selected
+by default and its contact phone and formatted delivery address are copied as
+Challan snapshots. When multiple saved addresses exist, the user must be able
+to choose one. When no saved address exists, the form must allow a new address
+to be created in the customer address master and immediately selected before
+the Challan is saved.
 
 ### 9.4 Required Line Data
 
@@ -446,9 +492,18 @@ not silently overwrite the customer master.
 | Previously Delivered Quantity | Yes | Sum of successfully created Delivery Challan quantities for the Invoice line |
 | Remaining Deliverable Quantity | Yes | Invoice Quantity minus Previously Delivered Quantity |
 | Delivery Quantity | Yes | Must be greater than zero and not exceed Remaining Deliverable Quantity |
+| Rate/Amount Snapshot | Conditional | Copied read-only from Invoice only when Show Amounts is enabled |
 
 Product name, price, tax, discount, and Invoice total must not be editable from
 the Delivery Challan.
+
+### 9.4.1 Manual/General Lines
+
+Each Manual/General line requires an item description, a whole-number quantity
+of at least one, and a unit of measure. Product ID and asset, RFID, or serial
+reference are optional. A line may reference the product catalogue or be a
+custom descriptive line. Manual lines do not contain Invoice quantity,
+previously delivered, or remaining quantity fields.
 
 ### 9.5 Quantity Rules
 
@@ -477,6 +532,20 @@ Validation rules:
   the Invoice line quantity.
 - Delivery Challan creation must lock or safely revalidate Invoice delivery
   quantities to prevent concurrent over-delivery.
+- Manual/General quantities must be whole numbers of at least one.
+- Creating a Manual/General Challan must not automatically reserve, issue,
+  transfer, or decrement stock. Inventory movement remains a separate workflow.
+
+### 9.5.1 Amount Visibility
+
+- `Show Amounts` defaults to false.
+- When false, API presentation responses and printable output must omit rate,
+  tax, line amount, and monetary totals.
+- When true, rate and amount are immutable snapshots copied from the Invoice;
+  they cannot be entered or edited from the Challan.
+- Amount visibility requires approved Invoice/financial visibility permission.
+- Toggling amount visibility has no Invoice, GST, Receivable, journal, or
+  Cash/Bank effect.
 
 ### 9.6 Example
 
@@ -501,12 +570,14 @@ rejected by the backend even if the frontend submits it.
 Minimum displayed values:
 
 - Delivery Challan Number
-- Invoice Number
+- Mode and Invoice Number or Manual Reference
 - Delivery Challan Date
 - Delivered line count or total delivered quantity
 
-Selecting a Delivery Challan opens a read-only detail showing its Invoice and
-line-level delivered quantities.
+Selecting a Delivery Challan opens a read-only detail showing its source,
+recipient, and line-level delivered quantities. Monetary fields are returned
+and displayed only when the stored visibility option and current permission
+both permit them.
 
 No payment status should be displayed as a Delivery Challan status. Invoice
 payment status and physical delivery progress are separate concepts.
@@ -675,6 +746,10 @@ names may follow the existing API conventions.
   Remaining Deliverable Quantity.
 - Create a Delivery Challan atomically.
 - Get one Delivery Challan with line details.
+- List Delivery Challans globally with organization scoping and optional
+  customer filtering.
+- Create a Manual/General Delivery Challan with or without a customer.
+- Resolve recipient and product lookups required by the reusable global form.
 
 ### 12.3 Supplier Operations
 
@@ -707,7 +782,12 @@ The Delivery Challan header requires data equivalent to:
 - Organization ID
 - Delivery Challan Number
 - Customer ID
-- Invoice ID
+- Challan Mode
+- Optional Customer ID
+- Optional Invoice ID and Invoice Number snapshot
+- Recipient name, phone, and address snapshot
+- Show Amounts flag
+- Optional reference number and purpose
 - Delivery Challan Date
 - Notes
 - Created By
@@ -720,9 +800,12 @@ Each line requires data equivalent to:
 
 - Internal ID
 - Delivery Challan ID
-- Invoice Line ID
-- Product/Item reference
+- Line Source: Invoice, Product, or Custom
+- Optional Invoice Line ID
+- Optional Product/Item reference
+- Product/Item name and unit snapshot
 - Delivered Quantity
+- Optional Invoice quantity, rate, and amount snapshots
 - Created audit fields
 
 ### 13.3 Constraints and Indexes
@@ -730,6 +813,9 @@ Each line requires data equivalent to:
 - Delivery Challan Number must be unique within the organization.
 - Customer, Invoice, and Invoice Line relationships must be enforced or
   validated transactionally.
+- Invoice mode requires customer, Invoice, and Invoice lines.
+- Manual mode must not reference an Invoice and requires either a customer or
+  a recipient name.
 - Delivery Quantity must be greater than zero.
 - Index by Organization and Customer.
 - Index by Organization and Invoice.
@@ -748,7 +834,8 @@ Minimum permission separation:
 | View Customer Statement | Customer read plus approved finance visibility |
 | Record Customer Payment | Existing Cash and Bank transaction-create permission |
 | View Delivery Challan | Customer/Invoice read permission |
-| Create Delivery Challan | Approved sales/delivery create permission |
+| Create Delivery Challan | Dedicated Delivery Challan create permission |
+| View Delivery Challan amounts | Delivery Challan read plus Invoice financial visibility |
 | View Supplier Statement | Supplier read plus approved finance visibility |
 
 The implementation should map these capabilities to existing permission keys
@@ -839,15 +926,24 @@ The UI must handle messages equivalent to:
 
 ### 18.4 Delivery Challans
 
-1. A Delivery Challan can only be created from an existing Invoice.
-2. Invoice line quantities and remaining quantities are shown.
-3. Delivery Quantity must be greater than zero.
-4. The backend rejects any quantity above the remaining Invoice line quantity.
-5. Multiple Delivery Challans can be created until the Invoice quantity is
+1. A Delivery Challan can be Invoice-linked or Manual/General.
+2. Invoice-linked Challans require an existing Invoice belonging to the
+   selected customer and organization.
+3. Manual/General Challans can be created without an Invoice and with either
+   an existing customer or manually entered recipient.
+4. Invoice line quantities and remaining quantities are shown.
+5. Delivery Quantity must be a whole number of at least one.
+6. The backend rejects any quantity above the remaining Invoice line quantity.
+7. Multiple Delivery Challans can be created until the Invoice quantity is
    fully delivered.
-6. Concurrent requests cannot over-deliver an Invoice line.
-7. Creating a Delivery Challan does not change Invoice amount, Receivable, GST,
+8. Concurrent requests cannot over-deliver an Invoice line.
+9. Invoice amounts are hidden by default and, when enabled, are copied as
+   immutable read-only snapshots.
+10. Creating a Delivery Challan does not change Invoice amount, Receivable, GST,
    journal entries, or Bank/Cash balance.
+11. Creating a Manual/General Challan does not automatically move inventory.
+12. The same form component supports customer-locked and future global launch
+    contexts.
 
 ### 18.5 Statements
 
@@ -883,6 +979,16 @@ The UI must handle messages equivalent to:
 15. Multi-allocation transaction appears once in a statement.
 16. Cross-organization customer, supplier, Invoice, Bill, or Delivery Challan
     access is rejected.
+17. Manual/General Challan with an existing customer succeeds.
+18. Manual/General Challan without a customer and with recipient details
+    succeeds.
+19. Manual/General Challan without either customer or recipient fails.
+20. Manual product and custom descriptive lines are accepted without changing
+    stock.
+21. Hidden-amount Challan responses omit monetary values.
+22. Amount-visible Invoice Challan returns immutable Invoice snapshots only to
+    a user with the required permission.
+23. Existing Invoice-linked Challans remain readable after schema migration.
 
 ## 20. Definition of Done
 

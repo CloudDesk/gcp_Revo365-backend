@@ -2,6 +2,7 @@ import { financeAccountService } from "../services/financeAccount.service.js";
 import { retailReceiptFinanceService } from "../services/retailReceiptFinance.service.js";
 import { supplierPaymentFinanceService } from "../services/supplierPaymentFinance.service.js";
 import { customerStatementService } from "../services/customerStatement.service.js";
+import { deliveryChallanService } from "../services/deliveryChallan.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module financeAccountController {
@@ -45,6 +46,56 @@ export module financeAccountController {
     try {
       const data = await customerStatementService.listCustomerPayments(request);
       return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listDeliveryChallans = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.list(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const listDeliveryChallanInvoices = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.listEligibleInvoices(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getDeliveryChallanInvoiceLines = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.getInvoiceLines(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const createDeliveryChallan = async (request: any, reply: any) => {
+    try {
+      const data = await deliveryChallanService.create(request);
+      return reply.status(201).send({ success: true, message: "Delivery Challan created successfully.", data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getDeliveryChallan = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.getById(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const createDeliveryChallanCustomerAddress = async (request: any, reply: any) => {
+    try {
+      const data = await deliveryChallanService.createCustomerAddress(request);
+      return reply.status(201).send({ success: true, message: "Customer address created successfully.", data });
     } catch (error) {
       return sendFinanceError(reply, error);
     }

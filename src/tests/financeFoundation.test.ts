@@ -65,6 +65,91 @@ import {
   buildCustomerStatement,
   toCustomerStatementDate,
 } from "../utils/finance/customerStatement.utils.js";
+import {
+  extractDeliverableInvoiceLines,
+  validateManualDeliveryLines,
+  validateDeliveryQuantities,
+} from "../utils/finance/deliveryChallan.utils.js";
+
+describe("Delivery Challan Phase 3 quantity rules", () => {
+  const invoiceLines = extractDeliverableInvoiceLines({
+    items: [
+      { id: 1, orderlineid: 792, name: "Laptop", quantity: 10 },
+      { id: 2, productid: 44, productname: "Dock", quantity: 2 },
+    ],
+  });
+
+  test("extracts stable Invoice line keys from legacy Invoice JSON", () => {
+    assert.deepEqual(invoiceLines, [
+      {
+        invoicelinekey: "orderline:792",
+        productid: null,
+        productname: "Laptop",
+        invoicequantity: 10,
+        unit: "Nos",
+        unitrate: null,
+        lineamount: null,
+      },
+      {
+        invoicelinekey: "item:2",
+        productid: 44,
+        productname: "Dock",
+        invoicequantity: 2,
+        unit: "Nos",
+        unitrate: null,
+        lineamount: null,
+      },
+    ]);
+  });
+
+  test("allows partial delivery up to the server-calculated remaining quantity", () => {
+    const lines = validateDeliveryQuantities(
+      invoiceLines,
+      new Map([["orderline:792", 4]]),
+      [{ invoicelinekey: "orderline:792", deliveryquantity: 6 }]
+    );
+    assert.equal(lines[0].deliveryquantity, 6);
+  });
+
+  test("rejects over-delivery and duplicate submitted lines", () => {
+    assert.throws(
+      () => validateDeliveryQuantities(
+        invoiceLines,
+        new Map([["orderline:792", 4]]),
+        [{ invoicelinekey: "orderline:792", deliveryquantity: 7 }]
+      ),
+      FinanceValidationError
+    );
+    assert.throws(
+      () => validateDeliveryQuantities(
+        invoiceLines,
+        new Map(),
+        [
+          { invoicelinekey: "item:2", deliveryquantity: 1 },
+          { invoicelinekey: "item:2", deliveryquantity: 1 },
+        ]
+      ),
+      FinanceValidationError
+    );
+  });
+
+  test("validates Manual/General lines without Invoice data", () => {
+    assert.deepEqual(validateManualDeliveryLines([
+      { productname: "Demo equipment", deliveryquantity: 2, unit: "Nos", assetreference: "RFID-1" },
+    ]), [{
+      linesource: "custom",
+      productid: null,
+      productname: "Demo equipment",
+      deliveryquantity: 2,
+      unit: "Nos",
+      assetreference: "RFID-1",
+    }]);
+    assert.throws(
+      () => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]),
+      FinanceValidationError
+    );
+  });
+});
 
 describe("Customer Statement Phase 3 foundation", () => {
   test("orders Invoice and Customer Payment rows and calculates running receivable", () => {
