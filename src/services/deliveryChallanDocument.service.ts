@@ -1,10 +1,29 @@
 import axios from "axios";
+import { readFile } from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 import { query } from "../database/postgres.js";
 import { renderHtmlToPdf } from "../utils/pdf/renderHtmlToPdf.js";
 import { getDeliveryChallanDocumentHtml } from "../utils/finance/deliveryChallanDocumentTemplate.js";
 import { FILE_UPLOAD_INTERNAL_SECRET, GCP_FILE_UPLOAD_BASE_URL } from "../config/config.js";
 
 const PROCESSING_TIMEOUT_SECONDS = 10 * 60;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DELIVERY_CHALLAN_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_logo.jpeg");
+let cachedLogoDataUrl: string | null | undefined;
+
+const getLogoDataUrl = async () => {
+  if (cachedLogoDataUrl !== undefined) return cachedLogoDataUrl;
+  try {
+    const logo = await readFile(DELIVERY_CHALLAN_LOGO_PATH);
+    cachedLogoDataUrl = `data:image/jpeg;base64,${logo.toString("base64")}`;
+  } catch (error: any) {
+    cachedLogoDataUrl = null;
+    console.warn(`Delivery Challan logo not found at ${DELIVERY_CHALLAN_LOGO_PATH}: ${error?.message || error}`);
+  }
+  return cachedLogoDataUrl;
+};
 
 const sanitizeFileName = (value: unknown) => String(value || "delivery-challan")
   .trim()
@@ -92,6 +111,7 @@ export module deliveryChallanDocumentService {
       if (!document) throw new Error("Delivery Challan not found.");
       const html = getDeliveryChallanDocumentHtml({
         ...document,
+        logoDataUrl: await getLogoDataUrl(),
         showamounts: document.showamounts === true,
         lines: document.lines.map((line: any) => ({
           ...line,
