@@ -76,6 +76,7 @@ const CUSTOMER_ESTIMATE_STATUSES = new Set([
 ]);
 
 const CUSTOMER_ESTIMATE_TYPES = new Set(["sale", "rental"]);
+const CUSTOMER_STATEMENT_TYPES = new Set(["invoice", "customer_payment"]);
 
 const requireCustomer = async (customerId: number) => {
   const customerResult = await query(
@@ -232,6 +233,14 @@ export module customerStatementService {
     const page = normalizePageValue(request.query?.page, 1, 1_000_000);
     const count = normalizePageValue(request.query?.count, 10, 100);
     const summaryOnly = String(request.query?.summaryonly || "") === "true";
+    const transactionType = String(request.query?.type || "")
+      .trim()
+      .toLowerCase();
+    if (transactionType && !CUSTOMER_STATEMENT_TYPES.has(transactionType)) {
+      throw new FinanceValidationError(
+        "Statement type must be invoice or customer_payment."
+      );
+    }
     const fromDate = request.query?.fromdate
       ? requireIsoDate(request.query.fromdate, "fromdate")
       : null;
@@ -307,6 +316,7 @@ export module customerStatementService {
           COALESCE(allocation.allocationamount, 0) AS allocationamount,
           COALESCE(allocation.tdsamount, 0) AS tdsamount,
           COALESCE(allocation.totalsettledamount, 0) AS totalsettledamount,
+          COALESCE(allocation.documentnumbers, ARRAY[]::varchar[]) AS documentnumbers,
           COALESCE(unapplied.remainingamount, 0) AS unappliedamount
         FROM bank_transactions t
         JOIN bank_cash_accounts b
@@ -316,7 +326,12 @@ export module customerStatementService {
           SELECT
             SUM(a.allocationamount) AS allocationamount,
             SUM(a.tdsamount) AS tdsamount,
-            SUM(a.totalsettledamount) AS totalsettledamount
+            SUM(a.totalsettledamount) AS totalsettledamount,
+            array_agg(DISTINCT a.documentnumber ORDER BY a.documentnumber)
+              FILTER (
+                WHERE a.documentnumber IS NOT NULL
+                  AND TRIM(a.documentnumber) <> ''
+              ) AS documentnumbers
           FROM bank_transaction_allocations a
           WHERE a.banktransactionid = t.id
             AND a.documenttype = 'sales_invoice'
@@ -478,6 +493,9 @@ export module customerStatementService {
         allocationmethod: String(payment.allocationmethod || "invoice_allocation"),
         bankcashaccountname: payment.bankcashaccountname || null,
         bankname: payment.bankname || null,
+        documentnumbers: Array.isArray(payment.documentnumbers)
+          ? payment.documentnumbers.map(String)
+          : [],
       }];
     });
 
@@ -485,8 +503,13 @@ export module customerStatementService {
       [...invoiceRows, ...paymentRows],
       { fromdate: fromDate, todate: toDate }
     );
+    const filteredRecords = transactionType
+      ? statement.records.filter(
+          (record) => record.transactiontype === transactionType
+        )
+      : statement.records;
     const offset = (page - 1) * count;
-    const records = statement.records.slice(offset, offset + count);
+    const records = filteredRecords.slice(offset, offset + count);
 
     return {
       customer: {
@@ -505,7 +528,7 @@ export module customerStatementService {
         paymentstatus: paymentStatus,
       },
       records: records as CustomerStatementRow[],
-      total: statement.records.length,
+      total: filteredRecords.length,
       page,
       count,
       summary: {

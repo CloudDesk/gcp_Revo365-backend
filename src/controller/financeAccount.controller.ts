@@ -3,12 +3,22 @@ import { retailReceiptFinanceService } from "../services/retailReceiptFinance.se
 import { supplierPaymentFinanceService } from "../services/supplierPaymentFinance.service.js";
 import { customerStatementService } from "../services/customerStatement.service.js";
 import { deliveryChallanService } from "../services/deliveryChallan.service.js";
+import { supplierStatementService } from "../services/supplierStatement.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module financeAccountController {
   export const listStatementCustomers = async (request: any, reply: any) => {
     try {
       const data = await customerStatementService.listCustomers(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getSupplierStatement = async (request: any, reply: any) => {
+    try {
+      const data = await supplierStatementService.getSupplierStatement(request);
       return reply.send({ success: true, data });
     } catch (error) {
       return sendFinanceError(reply, error);

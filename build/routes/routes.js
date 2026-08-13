@@ -363,6 +363,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listStatementCustomers);
     fastify.get('/finance/customers/:customerId/statement', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerStatement);
+    fastify.get('/finance/suppliers/:supplierId/statement', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierStatement);
     fastify.get('/finance/customers/:customerId/estimates', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerEstimates);
     fastify.get('/finance/customers/:customerId/invoices', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerInvoices);
     fastify.get('/finance/customers/:customerId/payments', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerPayments);

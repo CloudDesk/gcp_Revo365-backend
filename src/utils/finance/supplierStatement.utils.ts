@@ -1,53 +1,54 @@
 import { toMoney } from "./finance.utils.js";
 
-export type CustomerStatementRow = {
+export type SupplierStatementRow = {
   id: string;
   sourceid: number;
-  transactiontype: "invoice" | "customer_payment";
+  transactiontype: "bill" | "supplier_payment";
   transactiondate: string;
   reference: string;
   description: string;
-  invoiceamount: number;
+  billamount: number;
   paymentamount: number;
   allocatedamount?: number;
   settledamount: number;
   tdsamount: number;
-  unappliedamount: number;
   balance: number;
   status?: string | null;
   source?: string | null;
-  allocationmethod?: string | null;
   bankcashaccountname?: string | null;
   bankname?: string | null;
   documentnumbers?: string[];
 };
 
-type StatementInputRow = Omit<CustomerStatementRow, "balance">;
+type SupplierStatementInputRow = Omit<SupplierStatementRow, "balance">;
 
-const compareRows = (left: StatementInputRow, right: StatementInputRow) => {
+const compareRows = (
+  left: SupplierStatementInputRow,
+  right: SupplierStatementInputRow
+) => {
   const dateOrder = left.transactiondate.localeCompare(right.transactiondate);
   if (dateOrder !== 0) return dateOrder;
   if (left.transactiontype !== right.transactiontype) {
-    return left.transactiontype === "invoice" ? -1 : 1;
+    return left.transactiontype === "bill" ? -1 : 1;
   }
   return left.id.localeCompare(right.id, undefined, { numeric: true });
 };
 
-const statementEffect = (row: StatementInputRow) =>
-  toMoney(row.invoiceamount - row.settledamount, "statement effect");
+const statementEffect = (row: SupplierStatementInputRow) =>
+  toMoney(row.billamount - row.settledamount, "supplier statement effect");
 
-export const buildCustomerStatement = (
-  inputRows: StatementInputRow[],
+export const buildSupplierStatement = (
+  inputRows: SupplierStatementInputRow[],
   options: { fromdate?: string | null; todate?: string | null } = {}
 ) => {
   const rows = [...inputRows].sort(compareRows);
   const fromDate = options.fromdate || null;
   const toDate = options.todate || null;
-  const openingReceivable = toMoney(
+  const openingPayable = toMoney(
     rows
       .filter((row) => Boolean(fromDate) && row.transactiondate < String(fromDate))
       .reduce((total, row) => total + statementEffect(row), 0),
-    "opening receivable"
+    "opening payable"
   );
   const periodRows = rows.filter(
     (row) =>
@@ -55,11 +56,11 @@ export const buildCustomerStatement = (
       (!toDate || row.transactiondate <= toDate)
   );
 
-  let runningBalance = openingReceivable;
-  const records: CustomerStatementRow[] = periodRows.map((row) => {
+  let runningBalance = openingPayable;
+  const records: SupplierStatementRow[] = periodRows.map((row) => {
     runningBalance = toMoney(
       runningBalance + statementEffect(row),
-      "statement balance"
+      "supplier statement balance"
     );
     return { ...row, balance: runningBalance };
   });
@@ -67,9 +68,9 @@ export const buildCustomerStatement = (
   return {
     records,
     summary: {
-      openingreceivable: openingReceivable,
-      invoiceamount: toMoney(
-        periodRows.reduce((total, row) => total + row.invoiceamount, 0)
+      openingpayable: openingPayable,
+      billamount: toMoney(
+        periodRows.reduce((total, row) => total + row.billamount, 0)
       ),
       paymentamount: toMoney(
         periodRows.reduce((total, row) => total + row.paymentamount, 0)
@@ -77,27 +78,10 @@ export const buildCustomerStatement = (
       settledamount: toMoney(
         periodRows.reduce((total, row) => total + row.settledamount, 0)
       ),
-      tdsreceivable: toMoney(
+      tdspayable: toMoney(
         periodRows.reduce((total, row) => total + row.tdsamount, 0)
       ),
-      unappliedamount: toMoney(
-        periodRows.reduce((total, row) => total + row.unappliedamount, 0)
-      ),
-      closingreceivable: runningBalance,
+      closingpayable: runningBalance,
     },
   };
-};
-
-export const toCustomerStatementDate = (value: unknown): string | null => {
-  if (value == null || value === "") return null;
-  const normalized = String(value).trim();
-  const dateOnly = normalized.match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/)?.[1];
-  if (dateOnly) return dateOnly;
-
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return null;
-  const milliseconds = numeric > 10_000_000_000 ? numeric : numeric * 1000;
-  return new Date(milliseconds + 5.5 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
 };
