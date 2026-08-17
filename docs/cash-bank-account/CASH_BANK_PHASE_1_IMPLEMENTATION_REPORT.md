@@ -826,6 +826,191 @@ specific document.
 - Retain the original payment date and reference.
 - Maintain an applied and remaining amount.
 
+### Planned addition: On Account Of and later adjustment
+
+> **Planning note only:** This subsection records a missed Phase 1 requirement.
+> It is not part of the current implementation.
+
+The dedicated scalable reference for multiple entries, immutable movements,
+document allocations, Journal transfers, reversals, reporting, and future data
+design is [On Account Of — Future Reference and Movement Plan](./ON_ACCOUNT_OF_REFERENCE_PLAN.md).
+This subsection remains the Phase 1 functional summary; the dedicated document
+is the authoritative reference for future On Account expansion.
+
+**On Account Of** identifies the existing Customer or Supplier to whom an
+unallocated receipt or payment belongs. The amount represents real money that
+has already moved through the selected Bank/Cash account, but it is not yet
+adjusted against a specific Invoice or Bill.
+
+Terminology:
+
+- **Reference** is free text or a source document/payment identifier.
+- **On Account Of** is the structured Customer/Supplier mapping carried by the
+  Cash/Bank transaction, unapplied balance, and accounting lines.
+- **On Account amount** is the remaining bank portion available for later
+  adjustment against that party's documents.
+
+#### Creating and accumulating an On Account amount
+
+1. Select an existing Customer or Supplier. Free-text parties are not allowed.
+2. Enter the Cash/Bank transaction date, amount, reference, and optional
+   remarks.
+3. Select **On Account** without selecting an Invoice or Bill.
+4. Post one normal Cash/Bank transaction and its balanced Journal.
+5. Create a separate traceable On Account entry with Original, Applied, and
+   Remaining amounts.
+6. If the party already has an open On Account value, the new amount increases
+   the party's total available On Account balance. It must not overwrite or
+   merge away the original transaction history.
+
+Example: a Customer pays `₹50,000` before an Invoice is selected.
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Bank/Cash | 50,000.00 | 0.00 |
+| Customer Advances | 0.00 | 50,000.00 |
+
+The transaction is mapped **On Account Of** that Customer and the available On
+Account amount becomes `₹50,000`. If the Customer already had `₹20,000`
+available, the party-level available total becomes `₹70,000`, while both source
+entries remain separately auditable.
+
+For a Supplier paid before a Bill is selected, the corresponding posting is:
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Supplier Advances | 50,000.00 | 0.00 |
+| Bank/Cash | 0.00 | 50,000.00 |
+
+#### Adjust action in Transaction Entries
+
+The Cash and Bank Transaction Entries workspace should show open On Account
+entries and provide an **Adjust Against Invoice/Bill** action.
+
+- A Customer entry may be adjusted only against eligible Invoices belonging to
+  the same Customer.
+- A Supplier entry may be adjusted only against eligible Bills belonging to
+  the same Supplier.
+- The user may adjust the full amount or a partial amount.
+- The allocation cannot exceed the selected document's current outstanding
+  amount or the selected On Account entry's remaining amount.
+- The backend must lock and re-check both balances during posting.
+- Reversed, fully applied, cross-party, and cross-organization amounts are not
+  eligible.
+- If more than one On Account entry is used, each source entry's applied and
+  remaining amounts must be updated independently and retained for audit.
+
+The adjustment must not create another Bank/Cash transaction and must not
+change the Bank/Cash available balance. The original transaction already
+recorded the money movement. Adjustment creates only the document allocation
+and the required accounting reclassification.
+
+#### Customer adjustment examples
+
+**Example A — full adjustment without TDS**
+
+- Customer On Account available: `₹50,000`
+- Invoice outstanding: `₹50,000`
+- Bank allocation from On Account: `₹50,000`
+- TDS Receivable: `₹0`
+- Invoice balance after adjustment: `₹0`
+- On Account balance after adjustment: `₹0`
+
+Reclassification:
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances | 50,000.00 | 0.00 |
+| Accounts Receivable | 0.00 | 50,000.00 |
+
+**Example B — partial Invoice settlement**
+
+- Customer On Account available: `₹50,000`
+- Invoice outstanding: `₹1,00,000`
+- Bank allocation from On Account: `₹50,000`
+- Invoice balance after adjustment: `₹50,000`
+- On Account balance after adjustment: `₹0`
+- Invoice status after adjustment: `Partially Paid`
+
+**Example C — full Invoice settlement with TDS Receivable**
+
+- Customer On Account available: `₹50,000`
+- Invoice outstanding: `₹50,000`
+- Bank allocation from On Account: `₹45,000`
+- TDS Receivable: `₹5,000`
+- Total Invoice settlement: `₹50,000`
+- Invoice balance after adjustment: `₹0`
+- On Account balance after adjustment: `₹5,000`
+
+Only the `₹45,000` bank portion reduces the On Account balance. The `₹5,000`
+TDS portion settles the Invoice through the TDS Receivable ledger.
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances | 45,000.00 | 0.00 |
+| TDS Receivable | 5,000.00 | 0.00 |
+| Accounts Receivable | 0.00 | 50,000.00 |
+
+#### Supplier adjustment examples
+
+The same rules apply when the organization paid a Supplier earlier and held the
+payment On Account Of that Supplier.
+
+**Example A — full adjustment without TDS**
+
+- Supplier On Account available: `₹50,000`
+- Bill outstanding: `₹50,000`
+- Bank allocation from On Account: `₹50,000`
+- Bill balance after adjustment: `₹0`
+- On Account balance after adjustment: `₹0`
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Accounts Payable | 50,000.00 | 0.00 |
+| Supplier Advances | 0.00 | 50,000.00 |
+
+**Example B — partial Bill settlement**
+
+- Supplier On Account available: `₹50,000`
+- Bill outstanding: `₹1,00,000`
+- Bank allocation from On Account: `₹50,000`
+- Bill balance after adjustment: `₹50,000`
+- On Account balance after adjustment: `₹0`
+- Bill status after adjustment: `Partially Paid`
+
+**Example C — full Bill settlement with TDS Payable**
+
+- Supplier On Account available: `₹50,000`
+- Bill outstanding: `₹50,000`
+- Bank allocation from On Account: `₹45,000`
+- TDS Payable: `₹5,000`
+- Total Bill settlement: `₹50,000`
+- Bill balance after adjustment: `₹0`
+- On Account balance after adjustment: `₹5,000`
+
+Only the `₹45,000` bank portion reduces the On Account balance. The `₹5,000`
+TDS portion settles the Bill through the TDS Payable ledger.
+
+| Posting | Debit | Credit |
+| --- | ---: | ---: |
+| Accounts Payable | 50,000.00 | 0.00 |
+| Supplier Advances | 0.00 | 45,000.00 |
+| TDS Payable | 0.00 | 5,000.00 |
+
+#### Result and reporting rules
+
+After a successful adjustment:
+
+- Update the Invoice/Bill paid, balance, and status values atomically.
+- Update the On Account entry's Applied and Remaining amounts atomically.
+- Show the allocation under the original Cash/Bank transaction.
+- Retain the original transaction date, transaction number, reference, party,
+  and Bank/Cash account.
+- Refresh the Customer/Supplier statement and expose the remaining On Account
+  balance separately from Invoice/Bill outstanding.
+- Write an audit event linking the original On Account entry, allocation,
+  affected documents, TDS values, and reclassification Journal.
+
 ## 7.9 Manual Rental Invoice Receipt
 
 ### Source and eligibility
