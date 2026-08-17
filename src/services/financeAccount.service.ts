@@ -786,7 +786,79 @@ export module financeAccountService {
         je.postedby,
         je.createddate,
         je.posteddate,
-        je.status AS postingstatus
+        je.status AS postingstatus,
+        CASE
+          WHEN bt.id IS NULL THEN NULL
+          ELSE
+            to_jsonb(bt)
+            || jsonb_build_object(
+              'bankcashaccountname', bca.accountname,
+              'bankname', bca.bankname,
+              'bankcashaccounttype', bca.accounttype,
+              'bankcashcurrencycode', bca.currencycode,
+              'bankcashaccountstatus', bca.status,
+              'journalnumber', je.journalnumber,
+              'counterpartyaccountname', counterparty.accountname,
+              'counterpartyaccountcode', counterparty.accountcode,
+              'creatorname', COALESCE(
+                NULLIF(
+                  TRIM(
+                    CONCAT_WS(
+                      ' ',
+                      NULLIF(creator.firstname, ''),
+                      NULLIF(creator.lastname, '')
+                    )
+                  ),
+                  ''
+                ),
+                creator.useremail,
+                bt.createdby
+              ),
+              'allocations', COALESCE(
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'id', allocation.id,
+                      'documenttype', allocation.documenttype,
+                      'documentid', allocation.documentid,
+                      'documentnumber', allocation.documentnumber,
+                      'invoiceid', allocation.documentid,
+                      'billid', CASE
+                        WHEN allocation.documenttype = 'purchase_bill'
+                          THEN allocation.documentid
+                        ELSE NULL
+                      END,
+                      'invoicenumber', allocation.documentnumber,
+                      'invoiceurl', COALESCE(invoice.invoiceurl, bill.invoiceurl),
+                      'allocationamount', allocation.allocationamount,
+                      'tdsapplied', allocation.tdsapplied,
+                      'tdssectionid', allocation.tdssectionid,
+                      'tdssection', CASE
+                        WHEN allocation.tdssectionid IS NOT NULL
+                          THEN allocation.statutorysnapshot
+                        ELSE NULL
+                      END,
+                      'adjustmenttype', allocation.statutorysnapshot->>'adjustmenttype',
+                      'tdsamount', allocation.tdsamount,
+                      'totalsettledamount', allocation.totalsettledamount,
+                      'status', allocation.status
+                    )
+                    ORDER BY allocation.id
+                  )
+                  FROM bank_transaction_allocations allocation
+                  LEFT JOIN revoinvoice invoice
+                    ON invoice.id = allocation.documentid
+                   AND allocation.documenttype = 'sales_invoice'
+                  LEFT JOIN poinvoice bill
+                    ON bill.id = allocation.documentid
+                   AND allocation.documenttype = 'purchase_bill'
+                  WHERE allocation.banktransactionid = bt.id
+                    AND allocation.status = 'applied'
+                ),
+                '[]'::jsonb
+              )
+            )
+        END AS transaction
       FROM journal_lines jl
       JOIN journal_entries je ON je.id = jl.journalentryid
       LEFT JOIN bank_transactions bt
@@ -796,6 +868,23 @@ export module financeAccountService {
       LEFT JOIN bank_cash_accounts bca
         ON bca.id = bt.bankcashaccountid
        AND bca.organizationid = je.organizationid
+      LEFT JOIN finance_accounts counterparty
+        ON counterparty.id = bt.counterpartyaccountid
+       AND counterparty.organizationid = je.organizationid
+      LEFT JOIN LATERAL (
+        SELECT
+          inventory_user.firstname,
+          inventory_user.lastname,
+          inventory_user.useremail
+        FROM inventoryusers inventory_user
+        WHERE inventory_user.id::TEXT = bt.createdby
+           OR LOWER(inventory_user.useremail) = LOWER(bt.createdby)
+        ORDER BY CASE
+          WHEN inventory_user.id::TEXT = bt.createdby THEN 0
+          ELSE 1
+        END
+        LIMIT 1
+      ) creator ON bt.id IS NOT NULL
       WHERE jl.financeaccountid = $1
         AND je.organizationid = $2
         AND je.status = 'posted'
