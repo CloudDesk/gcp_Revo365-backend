@@ -67,9 +67,10 @@ import { consolidatedInvoiceController } from "../controller/consolidatedInvoice
 import { storeQuotationController } from "../controller/storeQuotation.controller.js";
 import { picklistConfigController } from "../controller/picklistConfig.controller.js";
 import { financeAccountController } from "../controller/financeAccount.controller.js";
+import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
-import { requireDeliveryChallanPermission, requireFinancePermission } from "../services/financeAccess.service.js";
+import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
         const taskSecretHeader = request.headers["x-task-secret"];
@@ -391,6 +392,13 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/suppliers/:supplierId/outstanding-bills', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSupplierOutstandingBills);
     fastify.post('/finance/bank-accounts/:accountId/transactions/supplier-payment', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] }, financeAccountController.postSupplierPayment);
     fastify.post('/finance/bank-accounts/:accountId/transactions/direct-ledger', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] }, financeAccountController.postDirectLedgerTransaction);
+    // Phase 4 Journal module foundation. Drafts are intentionally isolated
+    // from posting until the subsequent posting/reversal slice is delivered.
+    fastify.get('/finance/journals/accounts', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listEligibleAccounts);
+    fastify.get('/finance/journals', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.list);
+    fastify.get('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.getById);
+    fastify.post('/finance/journals', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(createJournalDraftSchema)] }, journalController.createDraft);
+    fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
     // TDS Section Master foundation
     fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
     fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);

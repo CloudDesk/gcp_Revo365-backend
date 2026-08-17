@@ -1,4 +1,35 @@
 import { query } from "../database/postgres.js";
+export const requireJournalPermission = (permission) => {
+    return async (request, reply) => {
+        const role = String(request.session?.role || "").trim().toLowerCase();
+        if (!role) {
+            return reply.status(403).send({
+                success: false,
+                error: {
+                    code: "JOURNAL_ACCESS_DENIED",
+                    message: "Journal access is restricted to authorized internal users.",
+                },
+            });
+        }
+        const result = await query(`SELECT permission_item->'permissions' AS permissions
+       FROM permissions p
+       CROSS JOIN LATERAL jsonb_array_elements(
+         COALESCE(p.permissionset, '[]'::jsonb)
+       ) permission_item
+       WHERE LOWER(p.role) = $1
+         AND permission_item->>'objectAPI' = 'journal'
+       LIMIT 1`, [role]);
+        if (result.rows[0]?.permissions?.[permission] === true)
+            return;
+        return reply.status(403).send({
+            success: false,
+            error: {
+                code: "JOURNAL_ACCESS_DENIED",
+                message: `You do not have ${permission} permission for Journals.`,
+            },
+        });
+    };
+};
 export const requireFinancePermission = (permission) => {
     return async (request, reply) => {
         const role = String(request.session?.role || "").trim().toLowerCase();

@@ -175,4 +175,44 @@ export const createTdsSectionSchema = {
     },
     required: ["newcode", "natureofpayment", "rate"],
 };
+const journalLineSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        financeaccountid: { type: "integer", minimum: 1 },
+        description: { type: ["string", "null"], maxLength: 2000 },
+        debitamount: { type: "number", minimum: 0 },
+        creditamount: { type: "number", minimum: 0 },
+    },
+    required: ["financeaccountid", "debitamount", "creditamount"],
+};
+const journalDraftProperties = {
+    entrydate: {
+        type: "string",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    reference: { type: ["string", "null"], maxLength: 255 },
+    description: { type: "string", minLength: 1, maxLength: 2000 },
+    lines: {
+        type: "array",
+        minItems: 2,
+        maxItems: 100,
+        items: journalLineSchema,
+    },
+};
+export const createJournalDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: journalDraftProperties,
+    required: ["entrydate", "description", "lines"],
+};
+export const updateJournalDraftSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        ...journalDraftProperties,
+        version: { type: "integer", minimum: 1 },
+    },
+    required: ["entrydate", "description", "lines", "version"],
+};
 //# sourceMappingURL=finance.schema.js.map

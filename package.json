@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx src/index",
-    "test": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts src/tests/financeFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts src/tests/deliveryChallanDocumentTemplate.test.ts",
+    "test": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts src/tests/financeFoundation.test.ts src/tests/journalFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts src/tests/deliveryChallanDocumentTemplate.test.ts",
     "test:service-estimation-stock": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts",
     "test:service-invoice-flow": "tsx --test src/tests/financeFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts",
     "verify:product-stock-api": "npx tsx src/scripts/verifyProductStockApi.ts",
