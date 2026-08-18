@@ -192,6 +192,11 @@ const journalDraftProperties = {
         pattern: "^\\d{4}-\\d{2}-\\d{2}$",
     },
     reference: { type: ["string", "null"], maxLength: 255 },
+    journalpurpose: {
+        type: "string",
+        enum: ["general", "accrual", "reclassification", "correction"],
+    },
+    relatedjournalentryid: { type: ["integer", "null"], minimum: 1 },
     description: { type: "string", minLength: 1, maxLength: 2000 },
     lines: {
         type: "array",
@@ -214,5 +219,26 @@ export const updateJournalDraftSchema = {
         version: { type: "integer", minimum: 1 },
     },
     required: ["entrydate", "description", "lines", "version"],
+};
+export const postJournalSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        version: { type: "integer", minimum: 1 },
+    },
+    required: ["version"],
+};
+export const reverseJournalSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        version: { type: "integer", minimum: 1 },
+        reversaldate: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+        },
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    required: ["version", "reversaldate", "reason"],
 };
 //# sourceMappingURL=finance.schema.js.map

@@ -25,7 +25,7 @@ Payments, or other source modules.
 | --- | --- |
 | Delivery phase | Phase 4 |
 | Requirement status | BA approved, including Customer-to-Customer On Account Of Journal transfers |
-| Implementation status | Base Journal foundation in progress; On Account Of transfer and dependent-reversal flow not implemented |
+| Implementation status | Independent Journal scope implemented: categorized list, detail, Manual Draft/Edit/Post/Reverse lifecycle, purpose classification, optional structured related-entry linkage, linked reversal/source navigation, activity history, responsive layout, and Admin/Accountant access. On Account Of foundation is owned by its separate feature branch; Journal transfer and dependent reversal remain integration work. |
 | Primary dependencies | Chart of Accounts, existing finance journal tables, account ledger, authentication and organization permissions |
 
 Related requirement references:
@@ -34,6 +34,42 @@ Related requirement references:
 - [Chart of Accounts Requirements](../chart-of-account/CHART_OF_ACCOUNT_REQUIREMENTS.md)
 - [Phase 3 Customer and Supplier Statement Requirements](../customer-statement/PHASE_3_CUSTOMER_STATEMENT_REQUIREMENTS.md)
 - [On Account Of — Reference and Movement Requirement Plan](../cash-bank-account/ON_ACCOUNT_OF_REFERENCE_PLAN.md)
+
+### 1.1 Branch ownership and integration order
+
+The Journal and On Account Of work may be developed in separate feature
+branches, but they must not independently create competing On Account tables,
+reference formats, balance rules, or allocation logic.
+
+- The **On Account Of branch** owns On Account reference persistence, immutable
+  movements, available-balance calculation, Customer/Supplier Cash and Bank
+  creation, Invoice/Bill allocation links, locking, and reversal primitives.
+- The **Journal branch** owns the Journal header/lines, Draft/Post/Reverse
+  lifecycle, Journal permissions, Journal list/detail UI, and the dedicated
+  Customer-to-Customer transfer orchestration and UI.
+- The Journal branch consumes the On Account service/API contract. It must not
+  update `party_unapplied_amounts` or Invoice allocation balances directly.
+- Merge the On Account Of foundation first. Rebase the Journal branch onto that
+  integration commit, then implement the transfer and later-payment replacement
+  orchestration against the finalized contract.
+- Until that contract is available, Journal transfer work remains planned and
+  feature-gated; ordinary manual Journals must not post to Customer/Supplier
+  advance control accounts as a workaround.
+
+Minimum contract required by the Journal branch:
+
+1. Search eligible open Customer On Account references with stable ID, display
+   number, Customer, currency, available amount, status, and version.
+2. Atomically transfer an amount using source reference/version, destination
+   Customer, Journal ID, actor, and idempotency key; return both linked movement
+   IDs and the destination reference.
+3. Query transfer dependencies, including allocations funded by the transferred
+   reference.
+4. Atomically reverse/replace a transfer with explicit optimistic-lock and
+   idempotency inputs; return restored balances and reversal movement IDs.
+5. Return typed errors for insufficient balance, stale version, incompatible
+   downstream activity, duplicate request, organization mismatch, and currency
+   mismatch.
 
 ## 3. Business Understanding
 
@@ -233,6 +269,19 @@ accounting team has one audit view of the existing journal ledger.
 System-generated Journals are read-only in this workspace. They remain owned by
 their source modules.
 
+The UI must organize the same server-side Journal ledger into these tabs:
+
+1. **Manual Journals** — default working tab for manual Draft, Posted, Reversed,
+   and Reversal Journals.
+2. **System-Generated** — read-only Journals created by Cash/Bank, opening
+   balance, receipt, payment, Invoice, Bill, e-commerce, and other source
+   modules.
+3. **All Entries** — combined audit and reconciliation view.
+
+Tabs are filters only. They must not create separate Journal storage or duplicate
+an accounting entry. Pagination and totals must be calculated by the backend
+after applying the selected category.
+
 Required columns:
 
 | Column | Description |
@@ -248,6 +297,11 @@ Required columns:
 | Created By | User or system actor that created the Journal |
 | Posted By | User or system actor that posted the Journal, when applicable |
 
+Manual Journals must provide a server-side **Created by Me** filter using the
+authenticated actor. System-generated rows should show their source reference
+when available and provide **Open Source** navigation to the owning module. They
+must not expose direct manual Edit, Post, or Reverse actions.
+
 The Source label must be derived from the stored source type through a
 controlled mapping. Raw database values must not be shown directly to users.
 
@@ -259,6 +313,8 @@ The list must support:
 - Date From and Date To.
 - Status.
 - Source.
+- Category: Manual, System-Generated, or All.
+- Created by Me for Manual Journals.
 - Account, using an active or historical Chart of Accounts lookup as
   appropriate.
 - Common server-side pagination and sorting.
@@ -300,11 +356,24 @@ Line columns:
 | Field | Required | Rule |
 | --- | --- | --- |
 | Entry Date | Yes | Valid business date; stored as a date without unintended timezone conversion |
+| Journal Purpose | Yes | General Entry, Accrual/New Entry, Reclassification, or Correction |
 | Reference | No | Trimmed free text; used for an external or internal supporting reference |
 | Description | Yes | Trimmed Journal narration; must not be blank |
+| Related Accounting Entry | Conditional | Structured link to an eligible posted Journal entry; required for Reclassification and Correction, optional for General Entry, and not used for a standalone Accrual/New Entry |
 
 The Journal Number, status, created user, created date, posted user, and posted
 date are system-controlled and must not be manually entered.
+
+The Related Accounting Entry selector searches the posted accounting ledger by
+Journal number, source transaction number, reference, description, and account.
+It stores the related Journal entry ID rather than copying display text. The
+source must belong to the same organization, remain posted, and not already be
+reversed when the Draft is saved and again when it is posted. Selecting a source
+does not modify that entry and does not automatically copy or reverse its lines.
+For the independent Journal scope, the selector includes only entries containing
+at least one eligible normal Chart of Accounts posting line. System-only
+E-commerce, Customer/Supplier control-account, and On Account Of entries are not
+offered through this generic correction/reclassification lookup.
 
 ### 7.2 Journal Lines
 
@@ -847,6 +916,21 @@ database-safe enforcement strategy where practical.
 
 ## 14. Permissions
 
+### 14.1 Approved role access
+
+The organization's **Admin** and **Accountant** roles have full access to the
+Journal module. For both roles, full access includes list, detail, create, edit
+Draft, Post, Reverse, Customer On Account Transfer, and Replace Transfer With
+Payment actions.
+
+This role rule does not weaken tenant boundaries or business validation. Every
+request must still be restricted to the authenticated user's organization and
+must satisfy Journal status, balance, reference, allocation, concurrency, and
+reversal rules. Users outside the Admin and Accountant roles have no Journal
+access unless a later approved role mapping explicitly grants it.
+
+### 14.2 Permission capabilities
+
 Use dedicated Journal permissions equivalent to:
 
 | Permission | Allows |
@@ -860,7 +944,8 @@ Use dedicated Journal permissions equivalent to:
 | Journal Transfer Replacement | Reverse a linked transfer and its dependent allocations after a later destination-Customer payment |
 
 Permissions must be enforced by both frontend action visibility and backend
-authorization. Hiding a button is not sufficient security.
+authorization. Admin and Accountant must receive all listed capabilities;
+hiding a button is not sufficient security.
 
 ## 15. Validation and Error Handling
 
@@ -1010,6 +1095,9 @@ normal module operations.
     payment for the destination Customer.
 31. Original and reversal Transactions, Journals, allocations, and movements
     remain visible and linked.
+32. Admin and Accountant users can perform every Journal action permitted by
+    the record's current state; other roles are denied unless explicitly added
+    by a later approved role mapping.
 
 ## 19. Minimum Test Scenarios
 
@@ -1060,6 +1148,9 @@ normal module operations.
     later change; verify complete rollback.
 36. Send concurrent transfer and replacement requests and verify idempotent,
     single effects.
+37. Verify both Admin and Accountant can list, view, create, edit Drafts, Post,
+    Reverse, transfer On Account Of, and replace a transfer with a payment.
+38. Verify an unapproved role cannot access Journal APIs or actions.
 
 ## 20. BA Approval and Remaining Implementation Decisions
 
@@ -1076,6 +1167,8 @@ The BA-approved business direction includes:
   publish.
 - Customer-to-Customer On Account Of transfer and the linked later-payment
   replacement/reversal workflow are approved requirements.
+- Admin and Accountant roles have full Journal module access, including On
+  Account transfer and replacement/reversal actions.
 
 The following implementation decisions remain and must not change the approved
 business outcomes:
@@ -1088,14 +1181,16 @@ business outcomes:
    write actions only on manual Journals.
 4. Whether manual Journal Reference must be unique, optional, or required for
    specific organizations.
-5. The final permission/approval threshold for Customer-to-Customer transfers,
-   plus whether attachments, recurring Journals, templates, imports, or
-   automatic reversal dates are required in a future phase.
+5. Whether attachments, recurring Journals, templates, imports, or automatic
+   reversal dates are required in a future phase. Admin and Accountant access
+   is already confirmed and is not an open decision.
 6. Whether the organization already has a financial-period lock that must be
    applied to Entry Date and Reversal Date.
-7. Whether the original Journal should retain stored status `posted` with a
-   derived Reversed display state, or use stored status `reversed` with updated
-   ledger queries. Either implementation must satisfy section 10.5.
+
+Implemented lifecycle decision: the original Journal retains stored status
+`posted` so the ledger continues to include its lines, while the linked opposite
+Journal also remains `posted`. The API derives the original's displayed
+`Reversed` state from the reversal link; together both Journals net to zero.
 
 ## 21. Definition of Done
 

@@ -86,6 +86,8 @@ import {
     createSupplierPaymentSchema,
     createTdsSectionSchema,
     createJournalDraftSchema,
+    postJournalSchema,
+    reverseJournalSchema,
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
 } from "../schemas/finance.schema.js";
@@ -581,12 +583,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.postDirectLedgerTransaction
     );
 
-    // Phase 4 Journal module foundation. Drafts are intentionally isolated
-    // from posting until the subsequent posting/reversal slice is delivered.
+    // Phase 4 Journal module: manual Draft, Post, and linked Reverse lifecycle.
     fastify.get(
         '/finance/journals/accounts',
         { preHandler: [getSession, requireJournalPermission('read')] },
         journalController.listEligibleAccounts
+    );
+    fastify.get(
+        '/finance/journals/related-entries',
+        { preHandler: [getSession, requireJournalPermission('read')] },
+        journalController.listRelatedEntries
     );
     fastify.get(
         '/finance/journals',
@@ -607,6 +613,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/journals/:journalId',
         { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] },
         journalController.updateDraft
+    );
+    fastify.post(
+        '/finance/journals/:journalId/post',
+        { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] },
+        journalController.postDraft
+    );
+    fastify.post(
+        '/finance/journals/:journalId/reverse',
+        { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] },
+        journalController.reversePosted
     );
 
     // TDS Section Master foundation

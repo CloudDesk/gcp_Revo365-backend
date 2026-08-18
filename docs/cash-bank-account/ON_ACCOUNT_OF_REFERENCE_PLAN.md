@@ -278,7 +278,8 @@ receipt or change any Bank/Cash balance.
     transfer cannot be posted through Supplier control accounts.
 11. Parent/group/main-heading accounts cannot be selected; only approved actual
     posting accounts are allowed.
-12. The operation requires dedicated transfer permission and a client-generated
+12. Admin and Accountant roles have full access to the operation. The backend
+    must still enforce the transfer capability and require a client-generated
     idempotency reference.
 13. Concurrent allocation and transfer attempts must lock and re-check the
     source Available Amount.
@@ -510,13 +511,11 @@ source Transaction/Journal, and affected document.
 
 1. Whether automatic allocation consumes oldest references first or requires
    explicit user selection.
-2. The permission and approval threshold for an approved Customer-to-Customer
-   Journal transfer.
-3. Whether Supplier-to-Supplier or mixed Customer/Supplier transfer types are
+2. Whether Supplier-to-Supplier or mixed Customer/Supplier transfer types are
    ever permitted; they are excluded until separately approved.
-4. Whether one source Bank Transaction can create more than one On Account
+3. Whether one source Bank Transaction can create more than one On Account
    Reference.
-5. Foreign-currency and exchange-rate treatment.
-6. Final UI confirmation and Finance-review behavior when dependent allocations
+4. Foreign-currency and exchange-rate treatment.
+5. Final UI confirmation and Finance-review behavior when dependent allocations
    prevent safe replacement; the required atomic reversal outcome is defined.
-7. Retention and display rules for fully applied references.
+6. Retention and display rules for fully applied references.

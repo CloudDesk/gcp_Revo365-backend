@@ -18,6 +18,14 @@ export module journalController {
     }
   };
 
+  export const listRelatedEntries = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await journalService.listRelatedEntries(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const getById = async (request: any, reply: any) => {
     try {
       return reply.send({ success: true, data: await journalService.getById(request) });
@@ -44,6 +52,30 @@ export module journalController {
         success: true,
         message: "Journal Draft updated successfully.",
         data: await journalService.updateDraft(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const postDraft = async (request: any, reply: any) => {
+    try {
+      return reply.send({
+        success: true,
+        message: "Journal posted successfully.",
+        data: await journalService.postDraft(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const reversePosted = async (request: any, reply: any) => {
+    try {
+      return reply.status(201).send({
+        success: true,
+        message: "Journal reversed successfully.",
+        data: await journalService.reversePosted(request),
       });
     } catch (error) {
       return sendFinanceError(reply, error);

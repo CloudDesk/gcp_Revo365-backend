@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   createJournalDraftSchema,
+  postJournalSchema,
+  reverseJournalSchema,
   updateJournalDraftSchema,
 } from "../schemas/finance.schema.js";
 import {
   formatJournalNumber,
   normalizeJournalDraft,
+  normalizeJournalReversal,
 } from "../utils/finance/journal.utils.js";
 import { FinanceValidationError } from "../utils/finance/finance.utils.js";
+import { requireJournalPermission } from "../services/financeAccess.service.js";
 
 describe("Journal Phase 4 foundation", () => {
   test("defines create and optimistic-concurrency update contracts", () => {
@@ -18,6 +22,12 @@ describe("Journal Phase 4 foundation", () => {
       "lines",
     ]);
     assert.ok(updateJournalDraftSchema.required.includes("version"));
+    assert.deepEqual(postJournalSchema.required, ["version"]);
+    assert.deepEqual(reverseJournalSchema.required, [
+      "version",
+      "reversaldate",
+      "reason",
+    ]);
   });
 
   test("normalizes a balanced two-line draft in stable line order", () => {
@@ -34,6 +44,33 @@ describe("Journal Phase 4 foundation", () => {
     assert.equal(draft.totalcredit, 30000);
     assert.equal(draft.difference, 0);
     assert.deepEqual(draft.lines.map((line) => line.lineorder), [1, 2]);
+    assert.equal(draft.journalpurpose, "general");
+    assert.equal(draft.relatedjournalentryid, null);
+  });
+
+  test("requires a structured related entry for reclassification and correction", () => {
+    const lines = [
+      { financeaccountid: 11, debitamount: 10000, creditamount: 0 },
+      { financeaccountid: 12, debitamount: 0, creditamount: 10000 },
+    ];
+    const draft = normalizeJournalDraft({
+      entrydate: "2026-08-18",
+      journalpurpose: "reclassification",
+      relatedjournalentryid: 72,
+      description: "Move Rent to Salary Expenses",
+      lines,
+    });
+    assert.equal(draft.journalpurpose, "reclassification");
+    assert.equal(draft.relatedjournalentryid, 72);
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-08-18",
+        journalpurpose: "correction",
+        description: "Missing source",
+        lines,
+      }),
+      FinanceValidationError
+    );
   });
 
   test("allows an unbalanced Draft without treating it as posted", () => {
@@ -77,5 +114,56 @@ describe("Journal Phase 4 foundation", () => {
 
   test("formats Journal numbers using the existing finance convention", () => {
     assert.equal(formatJournalNumber(42), "JE-00000042");
+  });
+
+  test("normalizes a dated Journal reversal reason", () => {
+    assert.deepEqual(
+      normalizeJournalReversal({
+        reversaldate: "2026-08-18",
+        reason: "  Incorrect expense classification  ",
+      }),
+      {
+        reversaldate: "2026-08-18",
+        reason: "Incorrect expense classification",
+      }
+    );
+    assert.throws(
+      () => normalizeJournalReversal({ reversaldate: "2026-08-18", reason: " " }),
+      FinanceValidationError
+    );
+  });
+
+  test("grants full Journal capability only to Admin and Accountant roles", async () => {
+    for (const role of ["admin", "accountant"]) {
+      let replyUsed = false;
+      await requireJournalPermission("reverse")(
+        { session: { role } },
+        {
+          status: () => {
+            replyUsed = true;
+            return { send: () => undefined };
+          },
+        }
+      );
+      assert.equal(replyUsed, false);
+    }
+
+    let deniedStatus = 0;
+    let deniedPayload: any;
+    await requireJournalPermission("read")(
+      { session: { role: "viewer" } },
+      {
+        status: (status: number) => {
+          deniedStatus = status;
+          return {
+            send: (payload: any) => {
+              deniedPayload = payload;
+            },
+          };
+        },
+      }
+    );
+    assert.equal(deniedStatus, 403);
+    assert.equal(deniedPayload.error.code, "JOURNAL_ACCESS_DENIED");
   });
 });

@@ -69,7 +69,7 @@ import { picklistConfigController } from "../controller/picklistConfig.controlle
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
@@ -392,13 +392,15 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/suppliers/:supplierId/outstanding-bills', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSupplierOutstandingBills);
     fastify.post('/finance/bank-accounts/:accountId/transactions/supplier-payment', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] }, financeAccountController.postSupplierPayment);
     fastify.post('/finance/bank-accounts/:accountId/transactions/direct-ledger', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] }, financeAccountController.postDirectLedgerTransaction);
-    // Phase 4 Journal module foundation. Drafts are intentionally isolated
-    // from posting until the subsequent posting/reversal slice is delivered.
+    // Phase 4 Journal module: manual Draft, Post, and linked Reverse lifecycle.
     fastify.get('/finance/journals/accounts', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listEligibleAccounts);
+    fastify.get('/finance/journals/related-entries', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listRelatedEntries);
     fastify.get('/finance/journals', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.list);
     fastify.get('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.getById);
     fastify.post('/finance/journals', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(createJournalDraftSchema)] }, journalController.createDraft);
     fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
+    fastify.post('/finance/journals/:journalId/post', { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] }, journalController.postDraft);
+    fastify.post('/finance/journals/:journalId/reverse', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] }, journalController.reversePosted);
     // TDS Section Master foundation
     fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
     fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);

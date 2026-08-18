@@ -4,6 +4,7 @@ import {
 } from "./finance.utils.js";
 
 export const MANUAL_JOURNAL_SOURCE = "manual_journal";
+export const MANUAL_JOURNAL_REVERSAL_SOURCE = "manual_journal_reversal";
 
 export type NormalizedJournalLine = {
   financeaccountid: number;
@@ -17,6 +18,8 @@ export type NormalizedJournalDraft = {
   entrydate: string;
   reference: string | null;
   description: string;
+  journalpurpose: "general" | "accrual" | "reclassification" | "correction";
+  relatedjournalentryid: number | null;
   lines: NormalizedJournalLine[];
   totaldebit: number;
   totalcredit: number;
@@ -67,6 +70,24 @@ export const normalizeJournalDraft = (
     true,
     2000
   )!;
+  const journalpurpose = String(payload?.journalpurpose || "general") as NormalizedJournalDraft["journalpurpose"];
+  if (!["general", "accrual", "reclassification", "correction"].includes(journalpurpose)) {
+    throw new FinanceValidationError(
+      "journalpurpose must be general, accrual, reclassification, or correction."
+    );
+  }
+  const submittedRelatedId = payload?.relatedjournalentryid;
+  const relatedjournalentryid = submittedRelatedId == null || submittedRelatedId === ""
+    ? null
+    : Number(submittedRelatedId);
+  if (relatedjournalentryid !== null && (!Number.isSafeInteger(relatedjournalentryid) || relatedjournalentryid <= 0)) {
+    throw new FinanceValidationError("relatedjournalentryid must be a positive integer.");
+  }
+  if (["reclassification", "correction"].includes(journalpurpose) && relatedjournalentryid === null) {
+    throw new FinanceValidationError(
+      "A related posted accounting entry is required for reclassification or correction."
+    );
+  }
   const submittedLines = Array.isArray(payload?.lines) ? payload.lines : [];
   if (submittedLines.length < 2) {
     throw new FinanceValidationError("At least two Journal lines are required.");
@@ -117,6 +138,8 @@ export const normalizeJournalDraft = (
     entrydate,
     reference,
     description,
+    journalpurpose,
+    relatedjournalentryid,
     lines,
     totaldebit: totalDebitCents / 100,
     totalcredit: totalCreditCents / 100,
@@ -126,3 +149,8 @@ export const normalizeJournalDraft = (
 
 export const formatJournalNumber = (id: number) =>
   `JE-${String(id).padStart(8, "0")}`;
+
+export const normalizeJournalReversal = (payload: any) => ({
+  reversaldate: requireIsoDate(payload?.reversaldate, "reversaldate"),
+  reason: normalizeText(payload?.reason, "reason", true, 2000)!,
+});

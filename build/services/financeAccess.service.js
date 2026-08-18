@@ -11,23 +11,20 @@ export const requireJournalPermission = (permission) => {
                 },
             });
         }
-        const result = await query(`SELECT permission_item->'permissions' AS permissions
-       FROM permissions p
-       CROSS JOIN LATERAL jsonb_array_elements(
-         COALESCE(p.permissionset, '[]'::jsonb)
-       ) permission_item
-       WHERE LOWER(p.role) = $1
-         AND permission_item->>'objectAPI' = 'journal'
-       LIMIT 1`, [role]);
-        if (result.rows[0]?.permissions?.[permission] === true)
-            return;
-        return reply.status(403).send({
-            success: false,
-            error: {
-                code: "JOURNAL_ACCESS_DENIED",
-                message: `You do not have ${permission} permission for Journals.`,
-            },
-        });
+        if (!["accountant", "admin"].includes(role)) {
+            return reply.status(403).send({
+                success: false,
+                error: {
+                    code: "JOURNAL_ACCESS_DENIED",
+                    message: "Journal access is restricted to Accountant and Admin roles.",
+                },
+            });
+        }
+        // Journal access is intentionally full for both approved roles. The
+        // permission record remains useful to clients for action visibility, while
+        // the backend role rule prevents stale permission JSON from blocking a
+        // newly deployed Journal capability.
+        return;
     };
 };
 export const requireFinancePermission = (permission) => {
