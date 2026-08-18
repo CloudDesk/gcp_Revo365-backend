@@ -833,9 +833,20 @@ specific document.
 
 The dedicated scalable reference for multiple entries, immutable movements,
 document allocations, Journal transfers, reversals, reporting, and future data
-design is [On Account Of — Future Reference and Movement Plan](./ON_ACCOUNT_OF_REFERENCE_PLAN.md).
+design is [On Account Of — Reference and Movement Requirement Plan](./ON_ACCOUNT_OF_REFERENCE_PLAN.md).
 This subsection remains the Phase 1 functional summary; the dedicated document
 is the authoritative reference for future On Account expansion.
+
+The approved Journal extension also permits a controlled
+Customer-to-Customer transfer of an unused On Account Of amount. If the
+destination Customer later pays through Bank, Finance may explicitly replace
+the earlier transfer with that payment: the transfer-funded Invoice allocations
+are reversed/un-cleared, the transferred amount is returned to the source
+Customer, and the later Bank-origin amount remains with the destination
+Customer. This is a planned requirement only; no implementation is claimed in
+this Phase 1 report. Full reference, limit, accounting, traceability, and atomic
+reversal rules are defined in the dedicated plan and the Phase 4 Journal
+requirements.
 
 **On Account Of** identifies the existing Customer or Supplier to whom an
 unallocated receipt or payment belongs. The amount represents real money that

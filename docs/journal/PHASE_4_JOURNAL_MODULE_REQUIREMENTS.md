@@ -3,8 +3,15 @@
 ## 1. Document Purpose
 
 This document defines the Phase 4 requirements for a Journal module that allows
-the accounting team to create, review, post, and reverse accounting adjustments
-that do not require an actual Cash/Bank movement.
+the accounting team to create, review, post, and reverse new accounting
+entries, accruals, adjustments, corrections, reclassifications, and approved
+On Account Of transfers.
+
+A Journal is not limited to correcting an earlier entry. It may participate in
+a business scenario that also has an earlier or later Cash/Bank movement when
+the Journal records a distinct accounting event that is not handled by an
+existing module. The actual receipt or payment must still be recorded once
+through Cash and Bank; the Journal must not duplicate that money movement.
 
 The module must reuse the existing Chart of Accounts, `journal_entries`,
 `journal_lines`, and account-ledger mechanisms. It must not create a second
@@ -17,8 +24,8 @@ Payments, or other source modules.
 | Item | Value |
 | --- | --- |
 | Delivery phase | Phase 4 |
-| Requirement status | Draft for review |
-| Implementation status | Not started |
+| Requirement status | BA approved, including Customer-to-Customer On Account Of Journal transfers |
+| Implementation status | Base Journal foundation in progress; On Account Of transfer and dependent-reversal flow not implemented |
 | Primary dependencies | Chart of Accounts, existing finance journal tables, account ledger, authentication and organization permissions |
 
 Related requirement references:
@@ -26,6 +33,7 @@ Related requirement references:
 - [Cash and Bank Account Requirements](../cash-bank-account/CASH_BANK_REQUIREMENTS.md)
 - [Chart of Accounts Requirements](../chart-of-account/CHART_OF_ACCOUNT_REQUIREMENTS.md)
 - [Phase 3 Customer and Supplier Statement Requirements](../customer-statement/PHASE_3_CUSTOMER_STATEMENT_REQUIREMENTS.md)
+- [On Account Of — Reference and Movement Requirement Plan](../cash-bank-account/ON_ACCOUNT_OF_REFERENCE_PLAN.md)
 
 ## 3. Business Understanding
 
@@ -56,9 +64,11 @@ money movement occurs.
 
 ### 3.3 Manual Journal
 
-A manual Journal is used for an accounting entry, accrual, adjustment, or
-reclassification that does not require an actual Bank/Cash movement and is not
-already posted by another source module.
+A manual Journal is used for a new accounting entry, accrual, adjustment,
+correction, reclassification, or approved party-control transfer that is not
+already posted by another source module. The Journal itself may refer to an
+earlier or later Cash/Bank event, but it must not create a second copy of the
+actual receipt or payment.
 
 Examples include:
 
@@ -67,6 +77,8 @@ Examples include:
   transaction has already been posted.
 - Recording another approved non-cash adjustment between Chart of Accounts
   accounts.
+- Transferring an available Customer On Account Of amount to another Customer
+  through the dedicated party-transfer Journal workflow.
 
 ### 3.4 Reverse Journal
 
@@ -91,13 +103,21 @@ The original Journal remains in history and is linked to the reversal.
 11. Organization isolation, permissions, audit fields, and concurrency controls.
 12. Immediate visibility of posted and reversed effects in the existing Chart
     of Accounts ledger and totals.
+13. Customer-to-Customer transfer of an unused On Account Of amount through a
+    dedicated party-aware Journal.
+14. Source and destination On Account Reference traceability.
+15. Controlled reversal of the transfer and its dependent Invoice allocations
+    when a later Customer payment replaces the transferred amount.
 
 ### 4.2 Excluded
 
 The following are not part of this phase unless separately approved:
 
 - Creating or editing Bank/Cash transactions from the Journal module.
-- Allocating a Journal against Customer Invoices or Supplier Bills.
+- General-purpose allocation of an ordinary manual Journal against Customer
+  Invoices or Supplier Bills. The approved On Account Of transfer uses the
+  normal On Account allocation flow after transfer and supports only the
+  explicitly defined dependent reversal.
 - TDS selection or TDS allocation in a manual Journal.
 - Creating Customers or Suppliers as Chart of Accounts records.
 - Duplicating an Invoice, Bill, Customer Receipt, Supplier Payment, Direct
@@ -113,6 +133,8 @@ The following are not part of this phase unless separately approved:
 - Parent/child Chart of Accounts hierarchy, tree display, test-account cleanup,
   or historical account migration.
 - Importing Journals from spreadsheet or another accounting system.
+- Cross-organization On Account transfers, Customer-to-Supplier transfers, and
+  Supplier-to-Customer transfers.
 
 ## 5. Core Principles
 
@@ -157,14 +179,31 @@ Examples:
 | Customer Invoice remains unpaid | No additional Journal; keep the Invoice outstanding |
 | Salary expense is recognized before payment | Manual Journal |
 | Existing expense was classified to the wrong COA account | Manual Journal reclassification |
+| Texve On Account is temporarily transferred to Clouddesk | Dedicated On Account Of Journal Transfer |
+| Clouddesk later pays through Bank | Customer Receipt recorded once in Cash and Bank, followed by the linked transfer-replacement reversal workflow |
 
-### 5.4 Organization Isolation
+### 5.4 Actual Posting Accounts
+
+Journals must use the existing Chart of Accounts and must post only to actual
+active posting accounts. The Journal module must not create a separate account
+catalogue.
+
+Parent, group, category, or main-heading records are display/aggregation nodes
+and are never valid Journal posting targets. If the current Chart of Accounts
+is flat, every eligible record must still represent a real posting account.
+
+The dedicated On Account Of transfer is the only approved Phase 4 exception to
+the general system-account restriction. It may use approved party control
+accounts, but each line must also carry the correct Customer/Supplier and On
+Account Reference so the control-account total and party subledger reconcile.
+
+### 5.5 Organization Isolation
 
 Every Journal header, Journal line, account lookup, list, detail, post, and
 reversal operation must be restricted to the authenticated user's organization.
 An ID from another organization must be treated as unavailable.
 
-### 5.5 Posted History Is Immutable
+### 5.6 Posted History Is Immutable
 
 After posting, a Journal's date, description, reference, accounts, Debit
 amounts, and Credit amounts must not be edited or deleted. A correction must be
@@ -277,6 +316,8 @@ Each persisted line must contain:
 | Description | No | Optional trimmed line narration |
 | Debit | Conditional | Positive amount when Credit is empty/zero |
 | Credit | Conditional | Positive amount when Debit is empty/zero |
+| On Account Of | Conditional | Required for an approved party-control transfer; structured Customer/Supplier relationship, never free text |
+| On Account Reference | Conditional | Required source or destination reference for an On Account Of transfer |
 
 The form must:
 
@@ -288,6 +329,11 @@ The form must:
 - Prevent negative values.
 - Prevent both Debit and Credit on one line.
 - Prevent a line with both Debit and Credit empty or zero from being persisted.
+- Require party type, party ID, and On Account Reference on every dedicated On
+  Account Of transfer line.
+- Validate that the selected control account is compatible with the party type:
+  Customer-related lines use Accounts Receivable/Customer Advances as approved;
+  Supplier-related lines use Accounts Payable/Supplier Advances as approved.
 
 Running calculation:
 
@@ -308,8 +354,13 @@ The Account selector must:
 - Exclude Customers and Suppliers maintained in their separate party masters.
 - Exclude Bank/Cash ledgers and other system-only accounts that would represent
   an actual money movement or are not approved for manual posting.
+- Allow only the explicitly approved party control accounts in the dedicated On
+  Account Of transfer workflow; do not expose those accounts to unrestricted
+  ordinary manual Journals.
 - Reject an inactive, missing, cross-organization, or otherwise ineligible
   account during backend validation even if an old browser value is submitted.
+- Exclude parent/group/main-heading accounts and accept only real posting
+  accounts.
 
 The same eligible account may appear on more than one line only when there is a
 valid accounting reason. The backend must aggregate all lines when checking the
@@ -508,6 +559,41 @@ Two concurrent reversal requests for the same original Journal must never
 create two reversals. The database and service must enforce a single valid
 reversal relationship for an original Journal.
 
+### 10.7 Dependent Reversal for an On Account Of Transfer
+
+An On Account Of transfer may have downstream Invoice allocations. Reversing
+only its Debit and Credit lines would leave the Customer subledgers and Invoice
+balances incorrect. The dedicated reversal must therefore reverse the complete
+linked effect.
+
+The replacement/reversal action must:
+
+1. Identify the original transfer Journal, source Customer and On Account
+   Reference, destination Customer and transferred On Account Reference, and
+   every downstream allocation funded by that transfer.
+2. Confirm that the later Bank receipt belongs to the destination Customer and
+   has created a separate available On Account Of amount sufficient for the
+   intended replacement. An unrelated Customer payment must not automatically
+   reverse a transfer.
+3. Lock the transfer references, allocation links, affected Invoices, later
+   payment reference, and original Journal.
+4. Reverse/un-clear only the Invoice settlements funded by the transferred
+   reference, restoring their balances and statuses.
+5. Restore the transferred amount to the destination reference temporarily,
+   then create the linked opposite Journal that moves it back to the source
+   Customer.
+6. Restore the source Customer's available On Account Of balance.
+7. Leave the destination Customer's later Bank-origin On Account Of amount
+   available for normal allocation.
+8. Leave all original Transactions, Journals, movements, and allocations in
+   history with explicit reversal links; do not delete or rewrite them.
+9. Post the dependent allocation reversals, On Account movements, opposite
+   Journal, document balance/status updates, and audit events atomically.
+
+If any linked Invoice or On Account balance has changed in a way that prevents
+safe reversal, the action must fail without partial changes and explain which
+dependency requires Finance review.
+
 ## 11. Accounting Examples
 
 ### 11.1 Salary Accrual Before Payment
@@ -575,6 +661,60 @@ If the reclassification in section 11.2 was posted incorrectly, reverse it:
 
 The original and reverse Journals remain visible and linked.
 
+### 11.5 Customer-to-Customer On Account Of Transfer
+
+Customer **Texve** has an unused On Account Of balance of `₹1,00,000`.
+Finance transfers the full amount to **Clouddesk** through the dedicated Journal
+transfer workflow.
+
+Required transfer relationships:
+
+```text
+Texve On Account Reference
+        ↓ decrease ₹1,00,000
+Transfer Journal
+        ↓ increase ₹1,00,000
+Clouddesk Transferred On Account Reference
+```
+
+Party-subledger Journal:
+
+| Account and party | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances — Texve | 1,00,000.00 | 0.00 |
+| Customer Advances — Clouddesk | 0.00 | 1,00,000.00 |
+
+The general-ledger control account nets to zero, while ownership moves between
+the two Customer subledgers. The transfer amount cannot exceed Texve's unused
+available balance. Clouddesk may then use the transferred reference through the
+normal On Account Of allocation flow to clear its eligible Invoices.
+
+#### Later Clouddesk payment and transfer replacement
+
+Clouddesk later pays `₹1,00,000` through Bank.
+
+1. Record the Bank receipt once against Clouddesk and create a new Bank-origin
+   Clouddesk On Account Reference.
+2. Use the explicit **Replace Transfer With Payment** action to select the
+   earlier transfer. Do not reverse it merely because any payment was received.
+3. Reverse/un-clear the Clouddesk Invoice allocations funded by the transferred
+   reference.
+4. Create the opposite transfer Journal:
+
+| Account and party | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances — Clouddesk transferred reference | 1,00,000.00 | 0.00 |
+| Customer Advances — Texve restored reference | 0.00 | 1,00,000.00 |
+
+5. Texve again has `₹1,00,000` available and may allocate it against Texve's
+   Invoices through the normal flow.
+6. Clouddesk's new Bank-origin `₹1,00,000` remains available for Clouddesk and
+   may be applied separately against its Invoices.
+
+The Bank receipt, transfer reversal, allocation reversal, and any later
+reapplication are distinct traceable financial events. No second Bank receipt
+is created.
+
 ## 12. Backend Requirements
 
 The backend must provide operations equivalent to:
@@ -587,6 +727,11 @@ The backend must provide operations equivalent to:
 - Update a manual Journal Draft.
 - Post a manual Journal Draft.
 - Reverse an eligible posted manual Journal.
+- Search eligible source and destination Customers and On Account References
+  for the dedicated transfer workflow.
+- Create and post a Customer-to-Customer On Account Of transfer Draft.
+- Replace a linked transfer with a later destination-Customer payment and
+  reverse its dependent Invoice allocations safely.
 
 Exact routes may follow existing Finance module conventions. Responses must use
 the project's standard success, validation-error, authorization-error, and
@@ -597,6 +742,10 @@ not-found formats.
 Manual Journals must use a dedicated, stable source type such as
 `manual_journal`. It must not reuse `bank_transaction` or another source type
 owned by an existing workflow.
+
+On Account Of transfer Journals must use a separate controlled source type such
+as `on_account_transfer`. A transfer-reversal Journal must link to both the
+original transfer Journal and the approved replacement/payment workflow.
 
 For a manual Journal, `sourceid` must follow one documented, self-consistent
 model. If the current schema requires a non-null source ID, the implementation
@@ -665,6 +814,10 @@ Required conceptual values:
 - Optional Description
 - Created Date
 - Stable line order for consistent display
+- Party Type and Party ID when the line is party-related
+- On Account Reference ID when the line increases, decreases, transfers, or
+  reverses an On Account Of amount
+- Transfer role such as Source, Destination, or Reversal when applicable
 
 If stable line order is not already guaranteed, add an explicit line sequence.
 
@@ -682,6 +835,12 @@ The database design must support or enforce:
 - No Journal line with both Debit and Credit positive.
 - No Journal line with both Debit and Credit zero.
 - Foreign-key protection for referenced accounts and Journal relationships.
+- Foreign-key or equivalent validated protection for source/destination On
+  Account References and party relationships.
+- Only one active replacement/reversal chain for one transfer Journal.
+- No transfer amount greater than the source reference's available amount.
+- No source and destination Customer being the same.
+- No cross-organization or currency-mismatched transfer.
 
 Balanced totals require transaction-level validation and should also use a
 database-safe enforcement strategy where practical.
@@ -697,6 +856,8 @@ Use dedicated Journal permissions equivalent to:
 | Journal Edit | Edit a manual Draft |
 | Journal Post | Post a balanced manual Draft |
 | Journal Reverse | Reverse an eligible posted manual Journal |
+| Journal On Account Transfer | Transfer an available amount between approved Customer On Account References |
+| Journal Transfer Replacement | Reverse a linked transfer and its dependent allocations after a later destination-Customer payment |
 
 Permissions must be enforced by both frontend action visibility and backend
 authorization. Hiding a button is not sufficient security.
@@ -724,6 +885,14 @@ The backend must reject:
   reversed Journal.
 - A blank Reversal Reason.
 - Duplicate concurrent Post or Reverse processing.
+- Missing or invalid source/destination Customer or On Account Reference.
+- Source and destination Customer being the same.
+- Transfer amount greater than the source unused On Account Of balance.
+- A party-control account incompatible with the selected party type.
+- A parent/group/main-heading account.
+- An automatic transfer reversal triggered by an unrelated payment.
+- A dependent reversal when linked allocation or document state cannot be
+  restored safely.
 
 ### 15.2 Required Business Errors
 
@@ -798,7 +967,9 @@ normal module operations.
 6. The Account selector shows only eligible accounts from the current
    organization.
 7. Customers, Suppliers, Bank/Cash ledgers, and system-only accounts are not
-   incorrectly available for manual Journal posting.
+   incorrectly available for ordinary manual Journal posting; approved party
+   control accounts and Customer selectors appear only in the dedicated On
+   Account Of transfer workflow.
 8. A line cannot contain both Debit and Credit.
 9. A line cannot contain a zero or negative posting amount.
 10. An unbalanced Journal cannot be posted.
@@ -806,8 +977,10 @@ normal module operations.
 12. Posted lines appear exactly once in the affected existing account ledgers
     and totals.
 13. Posting a manual Journal does not change a Bank/Cash balance.
-14. Posting a manual Journal does not independently change Invoice, Bill,
-    Receivable, Payable, allocation, or TDS records.
+14. Posting an ordinary manual Journal does not independently change Invoice,
+    Bill, Receivable, Payable, allocation, or TDS records. The dedicated On
+    Account Of transfer/replacement workflow changes only its explicitly linked
+    party balances and dependent allocations.
 15. A posted Journal cannot be edited or deleted.
 16. An eligible posted manual Journal can be reversed once.
 17. A reversal creates a new posted Journal with the original Debit and Credit
@@ -824,6 +997,19 @@ normal module operations.
 24. Search, date, status, source, account filters, sorting, and pagination work
     without incorrect totals.
 25. Audit events identify the acting user and relevant Journal relationships.
+26. A Customer-to-Customer transfer cannot exceed the source Customer's unused
+    On Account Of balance.
+27. The transfer creates linked decrease/increase movements and a balanced
+    party-aware Journal without changing Bank/Cash.
+28. The destination Customer may allocate the transferred reference to its own
+    eligible Invoices only.
+29. A later destination-Customer Bank payment creates a separate On Account
+    Reference and does not automatically reverse an unrelated transfer.
+30. The explicit replacement action reverses the transfer-funded Invoice
+    allocations, restores the source Customer balance, and retains the later
+    payment for the destination Customer.
+31. Original and reversal Transactions, Journals, allocations, and movements
+    remain visible and linked.
 
 ## 19. Minimum Test Scenarios
 
@@ -858,10 +1044,41 @@ normal module operations.
     and reversal.
 28. Verify transaction rollback when one line insert, posting update, or audit
     write fails.
+29. Transfer `₹1,00,000` from Texve's available On Account Reference to
+    Clouddesk and verify both party balances and the net-zero control account.
+30. Reject a transfer greater than Texve's available unused amount.
+31. Reject same-Customer, cross-organization, currency-mismatched, and
+    unauthorized party transfers.
+32. Allocate the transferred Clouddesk reference across one and multiple
+    Clouddesk Invoices and preserve reference-level traceability.
+33. Record a later Clouddesk Bank receipt and verify it creates a separate
+    Clouddesk On Account Reference.
+34. Replace the earlier transfer with that payment, un-clear only the Invoices
+    funded by the transfer, restore Texve's balance, and retain Clouddesk's new
+    Bank-origin balance.
+35. Reject dependent reversal when a linked allocation has an incompatible
+    later change; verify complete rollback.
+36. Send concurrent transfer and replacement requests and verify idempotent,
+    single effects.
 
-## 20. Open Decisions Before Implementation Approval
+## 20. BA Approval and Remaining Implementation Decisions
 
-The following points require confirmation before this draft is marked approved:
+The BA-approved business direction includes:
+
+- Journals may create new entries such as Salary accruals and are not limited to
+  corrections.
+- Actual Bank/Cash receipts and payments remain owned by Cash and Bank, while a
+  Journal may record a distinct related accounting event without duplication.
+- Reversal creates a new linked Journal and preserves the original.
+- Journals reuse existing actual posting accounts and never post to group/main
+  headings.
+- Draft and Post are distinct states; **Post** is the approved system term for
+  publish.
+- Customer-to-Customer On Account Of transfer and the linked later-payment
+  replacement/reversal workflow are approved requirements.
+
+The following implementation decisions remain and must not change the approved
+business outcomes:
 
 1. Whether an unbalanced Journal may be saved as Draft. This document currently
    allows it but requires balance before Post.
@@ -871,9 +1088,9 @@ The following points require confirmation before this draft is marked approved:
    write actions only on manual Journals.
 4. Whether manual Journal Reference must be unique, optional, or required for
    specific organizations.
-5. Whether a future phase requires Customer/Supplier control-account Journals,
-   approval workflow, attachments, recurring Journals, templates, imports, or
-   automatic reversal dates.
+5. The final permission/approval threshold for Customer-to-Customer transfers,
+   plus whether attachments, recurring Journals, templates, imports, or
+   automatic reversal dates are required in a future phase.
 6. Whether the organization already has a financial-period lock that must be
    applied to Entry Date and Reversal Date.
 7. Whether the original Journal should retain stored status `posted` with a
@@ -892,6 +1109,9 @@ Phase 4 is complete when:
   ledger and totals.
 - No duplicate Cash/Bank, Invoice, Bill, Receivable, Payable, allocation, or TDS
   effects are introduced.
+- Customer-to-Customer On Account transfers, downstream allocation links, and
+  later-payment replacement reversals satisfy the approved atomicity,
+  traceability, and balance-restoration rules.
 - Automated unit, integration, authorization, organization-isolation,
   concurrency, and reversal tests pass.
 - Frontend and backend production builds pass.

@@ -1,10 +1,14 @@
-# On Account Of — Future Reference and Movement Plan
+# On Account Of — Reference and Movement Requirement Plan
 
 ## 1. Document Status
 
 This is a planning and accounting-reference document only. It does not confirm
 that the described APIs, database tables, screens, or posting services are
 implemented.
+
+The Customer-to-Customer Journal transfer and later-payment replacement flow
+in section 10 is BA-approved as a requirement. Its implementation is not
+claimed by this document.
 
 This document extends the Cash and Bank Account Phase 1 requirements so the
 **On Account Of** capability can grow safely beyond a single unapplied amount.
@@ -89,18 +93,21 @@ the already-recorded money remains available and is later used.
 
 ### 6.2 Journal-transfer source
 
-A future approved Journal may transfer an amount into On Account without new
-Bank/Cash movement.
+An approved Customer-to-Customer Journal may transfer an unused On Account Of
+amount from one Customer to another without a new Bank/Cash movement.
 
 Requirements:
 
 - The Journal line must include **On Account Of**, Party Type, Party ID, and On
   Account Reference.
 - The Journal must be balanced and use approved control accounts.
-- The transfer creates a `journal_transfer_in` movement.
+- The source reference receives a `journal_transfer_out` movement and the
+  destination receives a linked `journal_transfer_in` movement.
 - The Cash/Bank available balance remains unchanged.
 - An arbitrary manual Journal must not silently create or change On Account
   value without this explicit relationship and backend validation.
+- This approval applies to Customer-to-Customer transfer only. Supplier and
+  mixed Customer/Supplier transfer types remain outside the approved scope.
 
 ## 7. Multiple Entries for the Same Party
 
@@ -220,28 +227,97 @@ Reclassification:
 
 ## 10. Journal Transfers
 
-Journal transfers are future controlled movements, not ordinary edits.
+Journal transfers are controlled movements, not ordinary edits or free-form
+manual Journal lines.
 
-Supported future cases may include:
+### 10.1 Approved Customer-to-Customer transfer
 
-- Transfer between two On Account References belonging to the same party
-- Reclassify an approved amount into or out of the party's Advance control
-  account
-- Correct an accounting classification while retaining the original Cash/Bank
-  movement
+When the Journal is Customer-related and uses an approved Accounts
+Receivable/Customer Advances control-account context, Finance may select a
+source Customer and transfer an amount from that Customer's unused On Account
+Of balance to a different destination Customer.
 
-Required controls:
+Example:
+
+1. Customer **Texve** has `₹1,00,000` available under a traceable On Account
+   Reference.
+2. Finance transfers `₹1,00,000` to Customer **Clouddesk** through the dedicated
+   Journal workflow.
+3. Texve receives a linked `journal_transfer_out` movement and Clouddesk
+   receives a linked `journal_transfer_in` movement.
+4. Clouddesk may use the transferred reference to clear only Clouddesk's
+   eligible Invoices through the normal On Account Of allocation flow.
+
+Party-subledger Journal:
+
+| Account and party | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances — Texve | 1,00,000.00 | 0.00 |
+| Customer Advances — Clouddesk | 0.00 | 1,00,000.00 |
+
+The control account nets to zero. The Journal transfers ownership of an
+already-recorded amount between Customer subledgers; it does not record another
+receipt or change any Bank/Cash balance.
+
+### 10.2 Transfer controls
 
 1. A transfer has its own Journal Number and transfer reference.
-2. Source and destination relationships are explicit.
+2. Source Customer, source On Account Reference, destination Customer, and
+   destination transferred reference are explicit and immutable after posting.
 3. Transfer Out cannot exceed source Available Amount.
 4. Both movement records and the balanced Journal post atomically.
 5. No Bank/Cash balance is changed.
 6. The source transaction and all prior movements remain unchanged.
-7. Cross-Customer, cross-Supplier, Customer-to-Supplier, and
-   cross-organization transfers are blocked unless Finance separately approves
-   a dedicated inter-party workflow.
-8. Generic manual Journal posting must not bypass On Account validations.
+7. Source and destination Customers must be different, active, in the same
+   organization, and use the same currency.
+8. The destination reference remains owned by the destination Customer and may
+   be allocated only to that Customer's Invoices.
+9. Supplier-to-Supplier, Customer-to-Supplier, Supplier-to-Customer, and
+   cross-organization transfers are blocked unless separately approved.
+10. Party/control-account compatibility is backend validated. A Customer
+    transfer cannot be posted through Supplier control accounts.
+11. Parent/group/main-heading accounts cannot be selected; only approved actual
+    posting accounts are allowed.
+12. The operation requires dedicated transfer permission and a client-generated
+    idempotency reference.
+13. Concurrent allocation and transfer attempts must lock and re-check the
+    source Available Amount.
+14. Generic manual Journal posting must not bypass On Account validations.
+
+### 10.3 Later destination payment and transfer replacement
+
+If Clouddesk later pays `₹1,00,000` through Bank:
+
+1. Record the Bank receipt once against Clouddesk through the Cash and Bank
+   module.
+2. Create a separate Bank-origin Clouddesk On Account Reference. The payment
+   must not silently overwrite the transferred reference or automatically
+   reverse the earlier Journal.
+3. Finance may invoke an explicit **Replace Transfer With Payment** action and
+   select the earlier transfer.
+4. Verify that the later payment belongs to Clouddesk and has sufficient unused
+   value for the intended replacement.
+5. Reverse/un-clear only the Clouddesk Invoice allocations funded by the
+   transferred reference, restoring those Invoice balances and statuses.
+6. Create linked reversal movements and the opposite Journal to return the
+   amount to Texve:
+
+| Account and party | Debit | Credit |
+| --- | ---: | ---: |
+| Customer Advances — Clouddesk transferred reference | 1,00,000.00 | 0.00 |
+| Customer Advances — Texve restored reference | 0.00 | 1,00,000.00 |
+
+7. Texve's original On Account Of availability is restored and may be applied
+   against Texve's Invoices through the normal flow.
+8. Clouddesk's later Bank-origin amount remains available for Clouddesk and may
+   be applied to its Invoices separately.
+
+The original Bank Transaction, transfer Journal, transfer movements, Invoice
+allocations, later Bank receipt, and all reversal records remain visible and
+linked. Nothing posted is deleted or rewritten. The replacement must lock every
+affected reference, allocation, Invoice, and Journal and commit atomically. If
+the dependency chain cannot be safely restored, it must fail without partial
+changes and identify the item requiring Finance review.
 
 ## 11. Proposed Conceptual Data Model
 
@@ -280,7 +356,22 @@ but the scalable model needs the following concepts.
 | Idempotency Reference | Prevent duplicate movements |
 | Audit fields | Actor and timestamp |
 
-### 11.3 Allocation source bridge
+### 11.3 Transfer and replacement relationship
+
+The scalable model must also retain:
+
+- Transfer identity and Journal ID
+- Source and destination Customer IDs
+- Source and destination On Account Reference IDs
+- Paired Transfer Out and Transfer In movement IDs
+- Amount and currency
+- Status such as Posted, Partially Allocated, Replaced, or Reversed
+- Later Bank-origin replacement Reference ID, when selected
+- Reversal Journal and reversal movement IDs
+- Every downstream Invoice allocation funded by the transferred reference
+- Idempotency, actor, timestamps, and reason
+
+### 11.4 Allocation source bridge
 
 When one document consumes multiple references, or one reference settles
 multiple documents, a bridge must record:
@@ -338,6 +429,8 @@ Available actions are context-sensitive:
 
 - Adjust Against Invoice/Bill
 - Transfer through approved Journal workflow
+- Replace Transfer With Payment when an eligible later destination-Customer
+  Bank-origin reference exists
 - Reverse, subject to permission and downstream-allocation rules
 - Open source Transaction, Journal, Invoice, Bill, Customer, or Supplier
 
@@ -349,6 +442,9 @@ Available actions are context-sensitive:
 - Require a client-generated idempotency reference for every posting action.
 - Prevent negative Available Amount.
 - Prevent duplicate source movements and duplicate active allocation links.
+- Allow only one active replacement/reversal chain for a transfer.
+- Never infer replacement merely from a later payment; require an explicit
+  authorized action selecting both records.
 - Post movement, allocation, Journal, document balance, statement effect, and
   audit event atomically.
 - A failed operation must leave all balances unchanged.
@@ -382,7 +478,7 @@ source Transaction/Journal, and affected document.
 - Existing APIs may expose compatibility fields while new clients use the
   reference and movement model.
 
-## 17. Minimum Future Acceptance Scenarios
+## 17. Minimum Acceptance Scenarios
 
 1. Create multiple Customer On Account receipts and verify the aggregate and
    reference-level balances.
@@ -393,22 +489,34 @@ source Transaction/Journal, and affected document.
 6. Allocate one document from multiple references.
 7. Apply Customer TDS Receivable without reducing On Account by the TDS amount.
 8. Apply Supplier TDS Payable without reducing On Account by the TDS amount.
-9. Transfer an approved amount through Journal without changing Bank/Cash.
-10. Reject a transfer greater than Available Amount.
-11. Reject cross-party and cross-organization allocation or transfer.
-12. Reverse a valid source or movement without deleting history.
-13. Verify duplicate requests do not create duplicate movements.
-14. Reconcile header snapshots to immutable movements and party totals.
+9. Transfer `₹1,00,000` from Texve to Clouddesk through Journal without changing
+   Bank/Cash and verify the paired reference movements.
+10. Reject a transfer greater than Texve's Available Amount.
+11. Reject same-Customer, Supplier, mixed-party, cross-organization,
+    currency-mismatched, and unauthorized transfers.
+12. Allocate the transferred Clouddesk reference only to Clouddesk Invoices.
+13. Record Clouddesk's later Bank payment as a separate On Account Reference;
+    verify that it does not automatically reverse the transfer.
+14. Explicitly replace the transfer with the later payment, reverse/un-clear
+    only transfer-funded Invoice settlements, restore Texve's balance, and
+    retain Clouddesk's Bank-origin balance.
+15. Reject a replacement when linked state cannot be safely restored and verify
+    complete rollback.
+16. Reverse a valid source or movement without deleting history.
+17. Verify duplicate and concurrent requests do not create duplicate effects.
+18. Reconcile header snapshots to immutable movements and party totals.
 
 ## 18. Decisions Required Before Implementation
 
 1. Whether automatic allocation consumes oldest references first or requires
    explicit user selection.
-2. Whether Journal transfers require approval above a configured amount.
-3. Whether any cross-party transfer is permitted and under which accounting
-   control.
+2. The permission and approval threshold for an approved Customer-to-Customer
+   Journal transfer.
+3. Whether Supplier-to-Supplier or mixed Customer/Supplier transfer types are
+   ever permitted; they are excluded until separately approved.
 4. Whether one source Bank Transaction can create more than one On Account
    Reference.
 5. Foreign-currency and exchange-rate treatment.
-6. Reversal rules after a reference has downstream document allocations.
+6. Final UI confirmation and Finance-review behavior when dependent allocations
+   prevent safe replacement; the required atomic reversal outcome is defined.
 7. Retention and display rules for fully applied references.
