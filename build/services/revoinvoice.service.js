@@ -145,6 +145,19 @@ const serializeRevoInvoiceJsonFields = (upsertFields) => {
         upsertFields[fieldName] = JSON.stringify(fieldValue);
     });
 };
+const buildRentalReferenceNumber = (invoice) => {
+    const orderKey = String(invoice?.orderid || invoice?.customerid || "RENTAL")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(-16) || "RENTAL";
+    const rawDate = Number(invoice?.invoicedate);
+    const date = Number.isFinite(rawDate) && rawDate > 0
+        ? new Date(String(Math.trunc(rawDate)).length <= 10 ? rawDate * 1000 : rawDate)
+        : new Date();
+    const dateKey = Number.isNaN(date.getTime())
+        ? "UNDATED"
+        : `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+    return `RENTAL-REF-${orderKey}-${dateKey}`;
+};
 const summarizeInvoicePayments = (invoiceAmount, paymentEntries) => {
     const paidAmount = Number(paymentEntries
         .reduce((sum, payment) => sum + getPaymentAmount(payment), 0)
@@ -526,6 +539,14 @@ export var revoinvoiceservice;
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
+            // Rental billing rows are internal source records. They must never
+            // consume an official Sales Invoice number or expose a customer PDF.
+            if (!id && String(upsertFields.invoicefor || "").toLowerCase() === "rental") {
+                upsertFields.invoicenumber = buildRentalReferenceNumber(upsertFields);
+                upsertFields.invoicedocumenttype = "rental_intermediate_record";
+                upsertFields.invoiceurl = null;
+                upsertFields.supportingdocumenturl = null;
+            }
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }

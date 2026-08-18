@@ -83,6 +83,10 @@ export var userService;
             let queryText = `
         SELECT
           u.*,
+          latest_address.id AS addressid,
+          latest_address.doornumber AS address_doornumber,
+          latest_address.landmark AS address_landmark,
+          latest_address.address AS address_address,
           latest_address.city,
           latest_address.city AS address_city,
           latest_address.state,
@@ -92,7 +96,7 @@ export var userService;
           0::int AS rentaldevicecount
         FROM users u
         LEFT JOIN LATERAL (
-          SELECT city, state, pincode
+          SELECT id, doornumber, landmark, address, city, state, pincode
           FROM address a
           WHERE a.userid = u.id
           ORDER BY a.modifieddate DESC NULLS LAST, a.id DESC

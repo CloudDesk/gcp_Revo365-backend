@@ -23,6 +23,8 @@ export var poinvoiceservice;
         "discount",
         "sgst",
         "cgst",
+        "igst",
+        "taxmode",
         "payabletaxamount",
     ]);
     const parseJsonArray = (value) => {
@@ -81,7 +83,11 @@ export var poinvoiceservice;
         if (!billProducts.length) {
             throw new Error("At least one bill product is required");
         }
-        const purchaseOrderResult = await query(`SELECT product, subtotal, discount, sgst, cgst FROM purchaseorder WHERE ponumber = $1`, [ponumber]);
+        const purchaseOrderResult = await query(`SELECT po.product, po.subtotal, po.discount, po.sgst, po.cgst,
+              supplier.state AS supplierstate
+       FROM purchaseorder po
+       LEFT JOIN supplier ON supplier.id = po.supplierid
+       WHERE po.ponumber = $1`, [ponumber]);
         const purchaseOrder = purchaseOrderResult?.rows?.[0];
         const purchaseOrderProducts = parseJsonArray(purchaseOrder?.product);
         if (!purchaseOrderProducts.length) {
@@ -90,8 +96,13 @@ export var poinvoiceservice;
         const purchaseOrderSubtotal = toNumber(purchaseOrder?.subtotal) ||
             purchaseOrderProducts.reduce((sum, product) => sum + toNumber(product?.unitPrice) * toNumber(product?.quantity), 0);
         const purchaseOrderDiscount = Math.min(Math.max(toNumber(purchaseOrder?.discount), 0), purchaseOrderSubtotal);
-        upsertFields.sgst = toNumber(purchaseOrder?.sgst);
-        upsertFields.cgst = toNumber(purchaseOrder?.cgst);
+        const supplierState = String(purchaseOrder?.supplierstate || "").trim().toLowerCase();
+        const isInterstate = Boolean(supplierState) && supplierState !== "tamil nadu" && supplierState !== "tamilnadu" && supplierState !== "tn";
+        const gstRate = toNumber(purchaseOrder?.sgst) + toNumber(purchaseOrder?.cgst) || 18;
+        upsertFields.sgst = isInterstate ? 0 : toNumber(purchaseOrder?.sgst);
+        upsertFields.cgst = isInterstate ? 0 : toNumber(purchaseOrder?.cgst);
+        upsertFields.igst = isInterstate ? gstRate : 0;
+        upsertFields.taxmode = isInterstate ? "igst" : "cgst_sgst";
         const purchaseOrderProductMap = new Map();
         purchaseOrderProducts.forEach((product, index) => {
             const lineid = getProductLineId(product, index);
@@ -165,21 +176,24 @@ export var poinvoiceservice;
         const discount = toNumber(upsertFields.discount);
         const sgst = toNumber(upsertFields.sgst);
         const cgst = toNumber(upsertFields.cgst);
+        const igst = toNumber(upsertFields.igst);
         if (discount < 0) {
             throw new Error("Bill discount cannot be negative");
         }
         if (discount > subtotal) {
             throw new Error("Bill discount cannot exceed subtotal");
         }
-        if (sgst < 0 || cgst < 0) {
+        if (sgst < 0 || cgst < 0 || igst < 0) {
             throw new Error("Bill GST percentage cannot be negative");
         }
         const taxableAmount = Math.max(subtotal - discount, 0);
-        const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst) / 100));
+        const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst + igst) / 100));
         upsertFields.subtotal = subtotal;
         upsertFields.discount = discount;
         upsertFields.sgst = sgst;
         upsertFields.cgst = cgst;
+        upsertFields.igst = igst;
+        upsertFields.taxmode = igst > 0 ? "igst" : "cgst_sgst";
         upsertFields.payabletaxamount = payabletaxamount;
         upsertFields.invoiceamount = Math.round(taxableAmount + payabletaxamount);
     };

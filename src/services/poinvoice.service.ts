@@ -23,6 +23,8 @@ export module poinvoiceservice {
     "discount",
     "sgst",
     "cgst",
+    "igst",
+    "taxmode",
     "payabletaxamount",
   ]);
 
@@ -96,7 +98,11 @@ export module poinvoiceservice {
     }
 
     const purchaseOrderResult: any = await query(
-      `SELECT product, subtotal, discount, sgst, cgst FROM purchaseorder WHERE ponumber = $1`,
+      `SELECT po.product, po.subtotal, po.discount, po.sgst, po.cgst,
+              supplier.state AS supplierstate
+       FROM purchaseorder po
+       LEFT JOIN supplier ON supplier.id = po.supplierid
+       WHERE po.ponumber = $1`,
       [ponumber]
     );
     const purchaseOrder = purchaseOrderResult?.rows?.[0];
@@ -117,8 +123,13 @@ export module poinvoiceservice {
       Math.max(toNumber(purchaseOrder?.discount), 0),
       purchaseOrderSubtotal
     );
-    upsertFields.sgst = toNumber(purchaseOrder?.sgst);
-    upsertFields.cgst = toNumber(purchaseOrder?.cgst);
+    const supplierState = String(purchaseOrder?.supplierstate || "").trim().toLowerCase();
+    const isInterstate = Boolean(supplierState) && supplierState !== "tamil nadu" && supplierState !== "tamilnadu" && supplierState !== "tn";
+    const gstRate = toNumber(purchaseOrder?.sgst) + toNumber(purchaseOrder?.cgst) || 18;
+    upsertFields.sgst = isInterstate ? 0 : toNumber(purchaseOrder?.sgst);
+    upsertFields.cgst = isInterstate ? 0 : toNumber(purchaseOrder?.cgst);
+    upsertFields.igst = isInterstate ? gstRate : 0;
+    upsertFields.taxmode = isInterstate ? "igst" : "cgst_sgst";
 
     const purchaseOrderProductMap = new Map<string, any>();
     purchaseOrderProducts.forEach((product: any, index: number) => {
@@ -225,6 +236,7 @@ export module poinvoiceservice {
     const discount = toNumber(upsertFields.discount);
     const sgst = toNumber(upsertFields.sgst);
     const cgst = toNumber(upsertFields.cgst);
+    const igst = toNumber(upsertFields.igst);
 
     if (discount < 0) {
       throw new Error("Bill discount cannot be negative");
@@ -232,17 +244,19 @@ export module poinvoiceservice {
     if (discount > subtotal) {
       throw new Error("Bill discount cannot exceed subtotal");
     }
-    if (sgst < 0 || cgst < 0) {
+    if (sgst < 0 || cgst < 0 || igst < 0) {
       throw new Error("Bill GST percentage cannot be negative");
     }
 
     const taxableAmount = Math.max(subtotal - discount, 0);
-    const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst) / 100));
+    const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst + igst) / 100));
 
     upsertFields.subtotal = subtotal;
     upsertFields.discount = discount;
     upsertFields.sgst = sgst;
     upsertFields.cgst = cgst;
+    upsertFields.igst = igst;
+    upsertFields.taxmode = igst > 0 ? "igst" : "cgst_sgst";
     upsertFields.payabletaxamount = payabletaxamount;
     upsertFields.invoiceamount = Math.round(taxableAmount + payabletaxamount);
   };
