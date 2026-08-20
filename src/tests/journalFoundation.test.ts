@@ -166,4 +166,59 @@ describe("Journal Phase 4 foundation", () => {
     assert.equal(deniedStatus, 403);
     assert.equal(deniedPayload.error.code, "JOURNAL_ACCESS_DENIED");
   });
+
+  test("allows accrual and general entries without a related entry", () => {
+    const accrual = normalizeJournalDraft({
+      entrydate: "2026-08-20",
+      description: "Salary expense accrual before bank payment",
+      journalpurpose: "accrual",
+      lines: [
+        { financeaccountid: 101, debitamount: 100000, creditamount: 0 },
+        { financeaccountid: 102, debitamount: 0, creditamount: 100000 },
+      ],
+    });
+    assert.equal(accrual.journalpurpose, "accrual");
+    assert.equal(accrual.relatedjournalentryid, null);
+    assert.equal(accrual.totaldebit, 100000);
+    assert.equal(accrual.totalcredit, 100000);
+    assert.equal(accrual.difference, 0);
+
+    const general = normalizeJournalDraft({
+      entrydate: "2026-08-20",
+      description: "Non-cash asset adjustment",
+      journalpurpose: "general",
+      lines: [
+        { financeaccountid: 201, debitamount: 5000, creditamount: 0 },
+        { financeaccountid: 202, debitamount: 0, creditamount: 5000 },
+      ],
+    });
+    assert.equal(general.journalpurpose, "general");
+    assert.equal(general.relatedjournalentryid, null);
+  });
+
+  test("rejects negative amounts, empty lines, and lines without accounts", () => {
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-08-20",
+        description: "Negative amount test",
+        lines: [
+          { financeaccountid: 101, debitamount: -100, creditamount: 0 },
+          { financeaccountid: 102, debitamount: 0, creditamount: 100 },
+        ],
+      }),
+      FinanceValidationError
+    );
+
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-08-20",
+        description: "Missing account test",
+        lines: [
+          { debitamount: 100, creditamount: 0 },
+          { financeaccountid: 102, debitamount: 0, creditamount: 100 },
+        ],
+      }),
+      FinanceValidationError
+    );
+  });
 });

@@ -122,6 +122,50 @@ A Reverse Journal cancels the accounting effect of a previously posted manual
 Journal by creating a new Journal with the Debit and Credit sides exchanged.
 The original Journal remains in history and is linked to the reversal.
 
+### 3.5 Two Distinct Account Sources and Operations (Final Business Model)
+
+The Journal module strictly separates account-based entries from party-based On Account Of movements:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           JOURNAL MODULE WORKSPACE                          │
+├───────────────────────────────┬─────────────────────────────────────────────┤
+│  A. CHART OF ACCOUNTS         │  B. CUSTOMER / SUPPLIER (ON ACCOUNT OF)     │
+│     (Account-Based Journals)  │     (Party Receivable / Payable Movement)   │
+├───────────────────────────────┼─────────────────────────────────────────────┤
+│ • Accruals / New entries      │ • Customer receivable / on-account movement │
+│ • Corrections                 │ • Supplier payable / on-account movement    │
+│ • Reclassifications           │ • Customer-to-Customer on-account transfer  │
+│ • Non-cash adjustments        │ • Supplier-to-Supplier on-account transfer  │
+│ • Selected from active COA    │ • Uses approved party control-accounts      │
+│ • No Party selection required │ • Requires Party & On Account Reference     │
+│ • NEVER creates Bank movement │ • NEVER creates duplicate "Journal accounts"│
+└───────────────────────────────┴─────────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  C. REVERSE JOURNAL (Journal Operation)                                     │
+│  • Reverses an existing posted Journal by creating a NEW linked Journal.     │
+│  • Swaps Debit and Credit lines; original remains immutable in history.     │
+│  • Prevents duplicate reversal.                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Important Distinction Rules:
+
+1. **Normal Account-Based Journal:**
+   - Customer/Supplier selection is **NOT** required.
+   - Lines use active posting accounts from the existing **Chart of Accounts**.
+   - Used for accruals (e.g. Salary Expense Dr / Salary Payable Cr) and reclassifications (e.g. Salary Expense Dr / Rent Expense Cr).
+2. **On Account Of:**
+   - Customer/Supplier party selection **IS** required.
+   - Operates through the approved Customer/Supplier receivable/payable **control-account mechanism** and On Account references.
+   - Do **NOT** create separate "Journal accounts" for Customers or Suppliers.
+   - Do **NOT** treat Customers or Suppliers as normal Chart of Accounts dropdown items.
+3. **Reverse Journal:**
+   - Not an account source, but an atomic operation on an eligible posted Journal.
+   - Creates a **NEW** linked Journal with opposite Debit/Credit sides and preserves the original record unchanged.
+
 ## 4. Scope
 
 ### 4.1 Included
