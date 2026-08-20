@@ -13,6 +13,7 @@ import {
   CustomerStatementRow,
   toCustomerStatementDate,
 } from "../utils/finance/customerStatement.utils.js";
+import { onAccountStatementService } from "./onAccountStatement.service.js";
 
 const requirePositiveInteger = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -278,7 +279,13 @@ export module customerStatementService {
       );
     }
 
-    const [invoiceResult, paymentResult, addressResult] = await Promise.all([
+    const onaccount = await onAccountStatementService.getPartyStatement(
+      request,
+      "customer",
+      customerId
+    );
+
+    const [invoiceResult, paymentResult, onAccountPaymentResult, addressResult] = await Promise.all([
       query(
         `
         SELECT *
@@ -353,6 +360,66 @@ export module customerStatementService {
         `,
         [organizationId, customerId]
       ),
+      summaryOnly
+        ? query(
+            `
+            SELECT COUNT(DISTINCT m.journalentryid)::int AS total
+            FROM on_account_document_allocations a
+            JOIN on_account_references r
+              ON r.id = a.onaccountreferenceid
+             AND r.organizationid = a.organizationid
+            JOIN on_account_movements m
+              ON m.id = a.onaccountmovementid
+             AND m.organizationid = a.organizationid
+            WHERE a.organizationid = $1
+              AND r.partytype = 'customer'
+              AND r.partyid = $2
+              AND a.documenttype = 'sales_invoice'
+              AND a.status = 'applied'
+            `,
+            [organizationId, customerId]
+          )
+        : query(
+            `
+            SELECT
+              j.id,
+              j.journalnumber AS transactionnumber,
+              j.entrydate AS transactiondate,
+              SUM(a.bankportion)::numeric(18, 2) AS amount,
+              'on_account_application'::text AS allocationmethod,
+              'on_account_application'::text AS sourcetype,
+              j.description AS remarks,
+              j.status AS postingstatus,
+              NULL::text AS bankcashaccountname,
+              NULL::text AS bankname,
+              SUM(a.bankportion)::numeric(18, 2) AS allocationamount,
+              SUM(a.tdsamount)::numeric(18, 2) AS tdsamount,
+              SUM(a.totalsettlement)::numeric(18, 2) AS totalsettledamount,
+              array_agg(DISTINCT a.documentnumber ORDER BY a.documentnumber)
+                FILTER (WHERE a.documentnumber IS NOT NULL AND TRIM(a.documentnumber) <> '')
+                AS documentnumbers,
+              0::numeric(18, 2) AS unappliedamount
+            FROM on_account_document_allocations a
+            JOIN on_account_references r
+              ON r.id = a.onaccountreferenceid
+             AND r.organizationid = a.organizationid
+            JOIN on_account_movements m
+              ON m.id = a.onaccountmovementid
+             AND m.organizationid = a.organizationid
+            JOIN journal_entries j
+              ON j.id = m.journalentryid
+             AND j.organizationid = a.organizationid
+            WHERE a.organizationid = $1
+              AND r.partytype = 'customer'
+              AND r.partyid = $2
+              AND a.documenttype = 'sales_invoice'
+              AND a.status = 'applied'
+              AND j.status = 'posted'
+            GROUP BY j.id, j.journalnumber, j.entrydate, j.description, j.status
+            ORDER BY j.entrydate, j.id
+            `,
+            [organizationId, customerId]
+          ),
       query(
         `
         SELECT
@@ -427,6 +494,7 @@ export module customerStatementService {
           paymentstatus: paymentStatus,
         },
         records: [] as CustomerStatementRow[],
+        onaccount,
         total: 0,
         page,
         count,
@@ -439,7 +507,9 @@ export module customerStatementService {
           unappliedamount: 0,
           closingreceivable: invoiceSummary.currentreceivable,
           invoicecount: invoiceSummary.invoicecount,
-          paymentcount: Number(paymentResult.rows[0]?.total || 0),
+          paymentcount:
+            Number(paymentResult.rows[0]?.total || 0) +
+            Number(onAccountPaymentResult.rows[0]?.total || 0),
           currentreceivable: invoiceSummary.currentreceivable,
         },
       };
@@ -470,7 +540,10 @@ export module customerStatementService {
       }];
     });
 
-    const paymentRows = paymentResult.rows.flatMap((payment: any) => {
+    const paymentRows = [
+      ...paymentResult.rows,
+      ...onAccountPaymentResult.rows,
+    ].flatMap((payment: any) => {
       const transactionDate = toCustomerStatementDate(payment.transactiondate);
       if (!transactionDate) return [];
       return [{
@@ -528,6 +601,7 @@ export module customerStatementService {
         paymentstatus: paymentStatus,
       },
       records: records as CustomerStatementRow[],
+      onaccount,
       total: filteredRecords.length,
       page,
       count,

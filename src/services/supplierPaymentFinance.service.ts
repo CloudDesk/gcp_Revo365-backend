@@ -21,6 +21,8 @@ import {
   FINANCE_SOURCE_TYPES,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
+import { resolveOnAccountAllocationMethod } from "../utils/finance/onAccount.utils.js";
+import { allocateOnAccountReferenceNumber } from "./onAccountFoundation.service.js";
 
 const normalizeText = (
   value: unknown,
@@ -122,6 +124,12 @@ const getExistingPayment = async (
     SELECT
       t.*,
       j.journalnumber,
+      oa.id AS onaccountreferenceid,
+      oa.referencenumber AS onaccountreferencenumber,
+      oa.originalamount AS onaccountoriginalamount,
+      oa.usedamount AS onaccountusedamount,
+      oa.availableamount AS onaccountavailableamount,
+      oa.status AS onaccountstatus,
       COALESCE(
         (
           SELECT jsonb_agg(
@@ -156,15 +164,22 @@ const getExistingPayment = async (
       ) AS allocations
     FROM bank_transactions t
     LEFT JOIN journal_entries j ON j.id = t.journalentryid
+    LEFT JOIN on_account_references oa
+      ON oa.organizationid = t.organizationid
+     AND oa.sourcebanktransactionid = t.id
+     AND oa.partytype = 'supplier'
     WHERE t.organizationid = $1
-      AND t.sourcetype = $2
+      AND t.sourcetype = ANY($2::text[])
       AND t.sourcepaymentid = $3
       AND t.postingstatus <> 'reversed'
     LIMIT 1
     `,
     [
       organizationId,
-      FINANCE_SOURCE_TYPES.supplierBillPayment,
+      [
+        FINANCE_SOURCE_TYPES.supplierBillPayment,
+        FINANCE_SOURCE_TYPES.supplierOnAccount,
+      ],
       requestReference,
     ]
   );
@@ -174,13 +189,401 @@ const getExistingPayment = async (
         ...row,
         transactiondate:
           toFinanceDateOnly(row.transactiondate) ?? row.transactiondate,
+        onaccount: row.onaccountreferenceid
+          ? {
+              id: Number(row.onaccountreferenceid),
+              referencenumber: row.onaccountreferencenumber,
+              originalamount: toMoney(row.onaccountoriginalamount),
+              usedamount: toMoney(row.onaccountusedamount),
+              availableamount: toMoney(row.onaccountavailableamount),
+              status: row.onaccountstatus,
+            }
+          : null,
       }
     : null;
+};
+
+const postSupplierOnAccountPayment = async ({
+  actor,
+  organizationId,
+  accountId,
+  supplierId,
+  transactionDate,
+  amount,
+  remarks,
+  requestReference,
+}: {
+  actor: string;
+  organizationId: number;
+  accountId: number;
+  supplierId: number;
+  transactionDate: string;
+  amount: number;
+  remarks: string | null;
+  requestReference: string;
+}) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `supplier-payment:${organizationId}:${requestReference}`,
+    ]);
+
+    const existingPayment = await getExistingPayment(
+      client,
+      organizationId,
+      requestReference
+    );
+    if (existingPayment) {
+      await client.query("COMMIT");
+      return existingPayment;
+    }
+
+    const accountResult = await client.query(
+      `
+      SELECT *
+      FROM bank_cash_accounts
+      WHERE id = $1
+        AND organizationid = $2
+      FOR UPDATE
+      `,
+      [accountId, organizationId]
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Bank/Cash account was not found.",
+        404,
+        "BANK_CASH_ACCOUNT_NOT_FOUND"
+      );
+    }
+    if (account.status !== "active") {
+      throw new FinanceValidationError(
+        "Supplier advances can only be posted from an active Bank/Cash account."
+      );
+    }
+
+    const supplierResult = await client.query(
+      `
+      SELECT id, suppliername, supplieremail, supplierphonenumber, suppliercode
+      FROM supplier
+      WHERE id = $1
+        AND COALESCE(isdeleted, FALSE) = FALSE
+      LIMIT 1
+      `,
+      [supplierId]
+    );
+    const supplier = supplierResult.rows[0];
+    if (!supplier) {
+      throw new FinanceValidationError("The selected Supplier was not found.");
+    }
+    const supplierName =
+      String(supplier.suppliername || "").trim() || `Supplier ${supplierId}`;
+
+    const latestTransactionResult = await client.query(
+      `
+      SELECT transactiondate
+      FROM bank_transactions
+      WHERE bankcashaccountid = $1
+        AND postingstatus = 'posted'
+      ORDER BY transactiondate DESC, posteddate DESC, id DESC
+      LIMIT 1
+      `,
+      [accountId]
+    );
+    const latestTransactionDate = toFinanceDateOnly(
+      latestTransactionResult.rows[0]?.transactiondate
+    );
+    if (latestTransactionDate && transactionDate < latestTransactionDate) {
+      throw new FinanceValidationError(
+        "Backdated transactions are not enabled in the foundation release."
+      );
+    }
+
+    const supplierAdvanceResult = await client.query(
+      `
+      SELECT id
+      FROM finance_accounts
+      WHERE organizationid = $1
+        AND accountcode = 'SYS-SUPPLIER-ADVANCE'
+        AND status = 'active'
+      LIMIT 1
+      `,
+      [organizationId]
+    );
+    const supplierAdvanceAccountId = Number(supplierAdvanceResult.rows[0]?.id);
+    if (!Number.isSafeInteger(supplierAdvanceAccountId)) {
+      throw new FinanceValidationError(
+        "Supplier Advances system ledger is unavailable.",
+        409,
+        "SUPPLIER_ADVANCE_LEDGER_MISSING"
+      );
+    }
+
+    const balanceAfter = calculateAvailableBalance(
+      account.currentbalance,
+      "credit",
+      amount
+    );
+    const epoch = nowEpoch();
+    const paymentRemarks =
+      remarks || `Advance paid On Account to ${supplierName}`;
+    const bankTransactionResult = await client.query(
+      `
+      INSERT INTO bank_transactions (
+        organizationid, bankcashaccountid, transactiondate,
+        partytype, partyid, partyname, counterpartyaccountid,
+        entryside, amount, debitamount, creditamount, balanceafter,
+        allocationmethod, sourcetype, sourceid, sourcepaymentid,
+        remarks, postingstatus, entrymode, createdby, postedby,
+        createddate, posteddate
+      )
+      VALUES (
+        $1, $2, $3, 'supplier', $4, $5, $6,
+        'credit', $7, 0, $7, $8,
+        'on_account', $9, $10, $10,
+        $11, 'posted', 'manual', $12, $12, $13, $13
+      )
+      RETURNING *
+      `,
+      [
+        organizationId,
+        accountId,
+        transactionDate,
+        supplierId,
+        supplierName,
+        supplierAdvanceAccountId,
+        amount,
+        balanceAfter,
+        FINANCE_SOURCE_TYPES.supplierOnAccount,
+        requestReference,
+        paymentRemarks,
+        actor,
+        epoch,
+      ]
+    );
+    const bankTransaction = bankTransactionResult.rows[0];
+    const transactionNumber = `BT-${String(bankTransaction.id).padStart(8, "0")}`;
+
+    const journalResult = await client.query(
+      `
+      INSERT INTO journal_entries (
+        organizationid, entrydate, sourcetype, sourceid, status,
+        description, createdby, postedby, createddate, posteddate
+      )
+      VALUES ($1, $2, 'bank_transaction', $3, 'posted', $4, $5, $5, $6, $6)
+      RETURNING *
+      `,
+      [
+        organizationId,
+        transactionDate,
+        bankTransaction.id,
+        paymentRemarks,
+        actor,
+        epoch,
+      ]
+    );
+    const journalEntry = journalResult.rows[0];
+    const journalNumber = `JE-${String(journalEntry.id).padStart(8, "0")}`;
+    await client.query(
+      `
+      INSERT INTO journal_lines (
+        journalentryid, financeaccountid, partytype, partyid,
+        debitamount, creditamount, description
+      )
+      VALUES
+        ($1, $2, 'supplier', $3, $4, 0, $5),
+        ($1, $6, 'supplier', $3, 0, $4, $5)
+      `,
+      [
+        journalEntry.id,
+        supplierAdvanceAccountId,
+        supplierId,
+        amount,
+        paymentRemarks,
+        account.financeaccountid,
+      ]
+    );
+
+    const onAccountReferenceNumber = await allocateOnAccountReferenceNumber(
+      client,
+      organizationId,
+      "supplier"
+    );
+    const onAccountReferenceResult = await client.query(
+      `
+      INSERT INTO on_account_references (
+        organizationid, referencenumber, partytype, partyid, currencycode,
+        sourcetype, sourceid, sourcebanktransactionid, sourcejournalentryid,
+        originalamount, usedamount, availableamount, status,
+        createdby, modifiedby, createddate, modifieddate
+      )
+      VALUES (
+        $1, $2, 'supplier', $3, $4,
+        'cash_bank_origin', $5, $6, $7,
+        $8, 0, $8, 'open', $9, $9, $10, $10
+      )
+      RETURNING *
+      `,
+      [
+        organizationId,
+        onAccountReferenceNumber,
+        supplierId,
+        String(account.currencycode || "INR").toUpperCase(),
+        requestReference,
+        bankTransaction.id,
+        journalEntry.id,
+        amount,
+        actor,
+        epoch,
+      ]
+    );
+    const onAccountReference = onAccountReferenceResult.rows[0];
+    await client.query(
+      `
+      INSERT INTO on_account_movements (
+        organizationid, onaccountreferenceid, movementtype, direction, amount,
+        banktransactionid, journalentryid, idempotencykey, idempotencysequence,
+        description, createdby, createddate
+      )
+      VALUES ($1, $2, 'cash_bank_origin', 'increase', $3, $4, $5, $6, 1, $7, $8, $9)
+      `,
+      [
+        organizationId,
+        onAccountReference.id,
+        amount,
+        bankTransaction.id,
+        journalEntry.id,
+        requestReference,
+        paymentRemarks,
+        actor,
+        epoch,
+      ]
+    );
+
+    await client.query(
+      `UPDATE journal_entries SET journalnumber = $1 WHERE id = $2`,
+      [journalNumber, journalEntry.id]
+    );
+    await client.query(
+      `
+      UPDATE bank_transactions
+      SET transactionnumber = $1, journalentryid = $2, sourceid = $3
+      WHERE id = $4
+      `,
+      [
+        transactionNumber,
+        journalEntry.id,
+        onAccountReferenceNumber,
+        bankTransaction.id,
+      ]
+    );
+    await client.query(
+      `
+      UPDATE bank_cash_accounts
+      SET currentbalance = $1, version = version + 1,
+          modifiedby = $2, modifieddate = $3
+      WHERE id = $4
+      `,
+      [balanceAfter, actor, epoch, accountId]
+    );
+    await client.query(
+      `
+      INSERT INTO finance_audit_events (
+        organizationid, entitytype, entityid, action, actor, eventdata, createddate
+      )
+      VALUES ($1, 'bank_transaction', $2, 'supplier_on_account_posted', $3, $4::jsonb, $5)
+      `,
+      [
+        organizationId,
+        bankTransaction.id,
+        actor,
+        JSON.stringify({
+          transactionnumber: transactionNumber,
+          supplierid: supplierId,
+          amount,
+          previousbalance: toMoney(account.currentbalance),
+          balanceafter: balanceAfter,
+          onaccountreferenceid: Number(onAccountReference.id),
+          onaccountreferencenumber: onAccountReferenceNumber,
+          journalentryid: Number(journalEntry.id),
+        }),
+        epoch,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return {
+      ...bankTransaction,
+      transactiondate: transactionDate,
+      transactionnumber: transactionNumber,
+      journalentryid: Number(journalEntry.id),
+      journalnumber: journalNumber,
+      sourceid: onAccountReferenceNumber,
+      allocations: [],
+      onaccountreferenceid: Number(onAccountReference.id),
+      onaccountreferencenumber: onAccountReferenceNumber,
+      onaccount: {
+        id: Number(onAccountReference.id),
+        referencenumber: onAccountReferenceNumber,
+        originalamount: amount,
+        usedamount: 0,
+        availableamount: amount,
+        status: "open",
+      },
+    };
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    if (error?.code === "23505") {
+      const existingPayment = await getExistingPayment(
+        client,
+        organizationId,
+        requestReference
+      );
+      if (existingPayment) return existingPayment;
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 export module supplierPaymentFinanceService {
   export const listSuppliers = async (request: any) => {
     const search = String(request.query?.search || "").trim().toLowerCase();
+    const allocationMethod = resolveOnAccountAllocationMethod(
+      request.query?.allocationmethod
+    );
+    if (allocationMethod === "on_account") {
+      const supplierResult = await query(
+        `
+        SELECT id, suppliername, supplieremail, supplierphonenumber, suppliercode
+        FROM supplier
+        WHERE COALESCE(isdeleted, FALSE) = FALSE
+          AND (
+            $1 = ''
+            OR LOWER(COALESCE(suppliername::text, '')) LIKE '%' || $1 || '%'
+            OR LOWER(COALESCE(supplieremail::text, '')) LIKE '%' || $1 || '%'
+            OR LOWER(COALESCE(supplierphonenumber::text, '')) LIKE '%' || $1 || '%'
+            OR LOWER(COALESCE(suppliercode::text, '')) LIKE '%' || $1 || '%'
+          )
+        ORDER BY LOWER(COALESCE(suppliername::text, '')), id
+        LIMIT 50
+        `,
+        [search]
+      );
+      return supplierResult.rows.map((supplier: any) => ({
+        id: Number(supplier.id),
+        name:
+          String(supplier.suppliername || "").trim() ||
+          `Supplier ${supplier.id}`,
+        email: supplier.supplieremail || null,
+        mobilenumber: supplier.supplierphonenumber || null,
+        suppliercode: supplier.suppliercode || null,
+        outstandingbillcount: 0,
+        totaloutstanding: 0,
+      }));
+    }
     const result = await query(
       `${selectSupplierBills}
        ORDER BY COALESCE(bill.invoicedate, bill.createddate) ASC, bill.id ASC
@@ -271,6 +674,29 @@ export module supplierPaymentFinanceService {
       true,
       100
     )!;
+    const allocationMethod = resolveOnAccountAllocationMethod(
+      request.body?.allocationmethod
+    );
+    if (allocationMethod === "on_account") {
+      const requestedAllocations = Array.isArray(request.body?.allocations)
+        ? request.body.allocations
+        : [];
+      if (requestedAllocations.length > 0) {
+        throw new FinanceValidationError(
+          "Bill allocations are not allowed for an On Account Supplier advance."
+        );
+      }
+      return postSupplierOnAccountPayment({
+        actor,
+        organizationId,
+        accountId,
+        supplierId,
+        transactionDate,
+        amount,
+        remarks,
+        requestReference,
+      });
+    }
     const requestedAllocations = Array.isArray(request.body?.allocations)
       ? request.body.allocations
       : [];

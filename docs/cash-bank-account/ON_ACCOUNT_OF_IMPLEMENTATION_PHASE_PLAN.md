@@ -110,7 +110,7 @@ Only the Bank Portion reduces the available Supplier On Account balance.
 
 ## 5. Phase Names and Order
 
-1. **On Account Database Foundation and Legacy Migration**
+1. **On Account Base Setup, Database Foundation, and Legacy Migration**
 2. **Customer Advance Payment Creation**
 3. **Customer On Account List and Reference Details**
 4. **Customer Invoice Application with TDS**
@@ -124,7 +124,7 @@ affected phase begins.
 
 ---
 
-## Phase 1 — On Account Database Foundation and Legacy Migration
+## Phase 1 — On Account Base Setup, Database Foundation, and Legacy Migration
 
 ### Goal
 
@@ -743,6 +743,6 @@ explicit go-ahead from the reviewer.
 
 ## 8. Starting Point After Approval
 
-After explicit approval, implementation begins with **Phase 1 — On Account
-Database Foundation and Legacy Migration** only. No Phase 2 work begins until
+After explicit approval, implementation begins with **Phase 1 — On Account Base
+Setup, Database Foundation, and Legacy Migration** only. No Phase 2 work begins until
 Phase 1 has passed automated verification, manual review, and explicit approval.

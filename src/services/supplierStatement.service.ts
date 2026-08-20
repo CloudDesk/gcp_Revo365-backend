@@ -11,6 +11,7 @@ import {
   buildSupplierStatement,
   SupplierStatementRow,
 } from "../utils/finance/supplierStatement.utils.js";
+import { onAccountStatementService } from "./onAccountStatement.service.js";
 
 const requirePositiveInteger = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -90,6 +91,12 @@ export module supplierStatementService {
         "FINANCE_SUPPLIER_NOT_FOUND"
       );
     }
+
+    const onaccount = await onAccountStatementService.getPartyStatement(
+      request,
+      "supplier",
+      supplierId
+    );
 
     const [billResult, paymentResult] = await Promise.all([
       query(
@@ -252,6 +259,7 @@ export module supplierStatementService {
         gstnumber: supplier.gstnumber || null,
       },
       records: filteredRecords.slice(offset, offset + count) as SupplierStatementRow[],
+      onaccount,
       total: filteredRecords.length,
       page,
       count,

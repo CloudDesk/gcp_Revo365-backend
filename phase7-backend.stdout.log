@@ -1,0 +1,14 @@
+
+> revo-365_backend@1.0.0 dev
+> npx tsx src/index
+
+C:\Github\Teqit\gcp_Revo365-backend\src\utils\DocXGenerator DIRNAME
+C:\Github\Teqit\gcp_Revo365-backend\uploads uploadsDIR
+Initializing CloudTasksClient...
+GOOGLE_APPLICATION_CREDENTIALS: Not set (using default credentials)
+CloudTasksClient initialized successfully
+Razorpay gateway initialized
+Connected successfully to the Redis store
+{"level":30,"time":1787116519325,"pid":16476,"hostname":"DESKTOP-KKQEVFS","msg":"Server listening at http://0.0.0.0:5600"}
+Successfully Connected http://0.0.0.0:5600
+validation {"supplierid":69,"applicationdate":"2026-08-19","requestreference":"supplier-oa-apply-d3eb144f-82b4-4bfa-afc3-dfe3135e481a","remarks":null,"referenceallocations":[{"referenceid":8,"amount":10000}],"billallocations":[{"billid":42,"bankportion":10000,"tdsapplied":false,"tdssectionid":null,"tdsamount":0}]}

@@ -228,6 +228,25 @@ export type CustomerReceiptInvoiceSource =
 
 export type CustomerReceiptMode = "retail" | "rental" | "all";
 
+export type CustomerReceiptAllocationMethod =
+  | "against_document"
+  | "on_account";
+
+export const resolveCustomerReceiptAllocationMethod = (
+  value: unknown
+): CustomerReceiptAllocationMethod => {
+  const normalized = String(value ?? "against_document")
+    .trim()
+    .toLowerCase();
+  if (!normalized || normalized === "against_document") {
+    return "against_document";
+  }
+  if (normalized === "on_account") return "on_account";
+  throw new FinanceValidationError(
+    "Allocation method must be against_document or on_account."
+  );
+};
+
 const CUSTOMER_RECEIPT_SOURCE_METADATA = Object.freeze({
   in_store: {
     label: "In-store",

@@ -1,0 +1,72 @@
+Finance module error error: invalid input syntax for type bigint: ""
+    at C:\Github\Teqit\gcp_Revo365-backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async query (C:\Github\Teqit\gcp_Revo365-backend\src\database\postgres.ts:83:19)
+    at async Object.listCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\services\retailReceiptFinance.service.ts:565:22)
+    at async Object.listRetailCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\controller\financeAccount.controller.ts:379:20) {
+  length: 110,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '402',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'numutils.c',
+  line: '878',
+  routine: 'pg_strtoint64_safe'
+}
+Finance module error error: invalid input syntax for type bigint: ""
+    at C:\Github\Teqit\gcp_Revo365-backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async query (C:\Github\Teqit\gcp_Revo365-backend\src\database\postgres.ts:83:19)
+    at async Object.listCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\services\retailReceiptFinance.service.ts:565:22)
+    at async Object.listRetailCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\controller\financeAccount.controller.ts:379:20) {
+  length: 110,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '402',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'numutils.c',
+  line: '878',
+  routine: 'pg_strtoint64_safe'
+}
+Finance module error error: invalid input syntax for type bigint: ""
+    at C:\Github\Teqit\gcp_Revo365-backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async query (C:\Github\Teqit\gcp_Revo365-backend\src\database\postgres.ts:83:19)
+    at async Object.listCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\services\retailReceiptFinance.service.ts:565:22)
+    at async Object.listRetailCustomers (C:\Github\Teqit\gcp_Revo365-backend\src\controller\financeAccount.controller.ts:379:20) {
+  length: 110,
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: '402',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'numutils.c',
+  line: '878',
+  routine: 'pg_strtoint64_safe'
+}
