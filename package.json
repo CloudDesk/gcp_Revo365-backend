@@ -15,6 +15,7 @@
     "migrate:dev": "npx tsx src/scripts/runMigrations.ts",
     "verify:finance-foundation": "npx tsx src/scripts/verifyFinanceFoundation.ts",
     "verify:on-account-foundation": "npx tsx src/scripts/verifyOnAccountFoundation.ts",
+    "verify:journal-on-account-baseline": "npx tsx src/scripts/verifyJournalOnAccountIntegrationBaseline.ts",
     "process:ecommerce-finance": "npx tsx src/scripts/processPendingEcommerceFinance.ts",
     "authgcp": "gcloud auth login",
     "set-project": "gcloud config set project revo-dev-and-test",
