@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const Ajv = require("ajv");
 import {
   FinanceValidationError,
   calculateAvailableBalance,
@@ -31,6 +35,7 @@ import {
   isRetailStoreProductOrder,
   isServiceRequestInvoice,
   resolveCustomerReceiptSourceType,
+  resolveCustomerReceiptAllocationMethod,
   resolveRetailInvoiceAmount,
 } from "../utils/finance/retailReceipt.utils.js";
 import {
@@ -46,6 +51,8 @@ import {
 import {
   createChartAccountSchema,
   createDirectBankTransactionSchema,
+  applyCustomerOnAccountSchema,
+  applySupplierOnAccountSchema,
   createRetailReceiptSchema,
   createSupplierPaymentSchema,
 } from "../schemas/finance.schema.js";
@@ -70,6 +77,393 @@ import {
   validateManualDeliveryLines,
   validateDeliveryQuantities,
 } from "../utils/finance/deliveryChallan.utils.js";
+import {
+  assertOnAccountMovementBalance,
+  calculateOnAccountAvailableFromMovements,
+  deriveOnAccountStatus,
+  formatOnAccountReferenceNumber,
+  normalizeOnAccountPartyType,
+  normalizeOnAccountStatusFilter,
+  resolveOnAccountAllocationMethod,
+  isOnAccountReferenceReconciled,
+  validateOnAccountSettlementAmounts,
+  buildOnAccountApplicationMatrix,
+  buildOnAccountReadScope,
+  summarizeOnAccountStatement,
+} from "../utils/finance/onAccount.utils.js";
+import { requireFinancePermission } from "../services/financeAccess.service.js";
+import {
+  allocateOnAccountReferenceNumber,
+  findOnAccountMovementByIdempotency,
+  lockOnAccountReferences,
+} from "../services/onAccountFoundation.service.js";
+
+describe("On Account Phase 1 foundation", () => {
+  test("formats stable Customer and Supplier reference numbers", () => {
+    assert.equal(formatOnAccountReferenceNumber("customer", 1), "OA-C-00000001");
+    assert.equal(formatOnAccountReferenceNumber("SUPPLIER", 42), "OA-S-00000042");
+    assert.equal(normalizeOnAccountPartyType(" Customer "), "customer");
+    assert.throws(
+      () => formatOnAccountReferenceNumber("ledger", 1),
+      FinanceValidationError
+    );
+    assert.throws(
+      () => formatOnAccountReferenceNumber("customer", 0),
+      FinanceValidationError
+    );
+  });
+
+  test("derives the lifecycle from original, used, and available amounts", () => {
+    assert.equal(deriveOnAccountStatus(1000, 0, 1000), "open");
+    assert.equal(deriveOnAccountStatus(1000, 250, 750), "partially_applied");
+    assert.equal(deriveOnAccountStatus(1000, 1000, 0), "fully_applied");
+    assert.equal(deriveOnAccountStatus(1000, 0, 1000, true), "reversed");
+    assert.throws(
+      () => deriveOnAccountStatus(1000, 500, 400),
+      FinanceValidationError
+    );
+  });
+
+  test("reconciles append-only increases and decreases", () => {
+    const movements = [
+      { direction: "increase" as const, amount: 1000 },
+      { direction: "decrease" as const, amount: 250 },
+      { direction: "decrease" as const, amount: 100 },
+    ];
+    assert.equal(calculateOnAccountAvailableFromMovements(movements), 650);
+    assert.equal(assertOnAccountMovementBalance(650, movements), 650);
+    assert.throws(
+      () => assertOnAccountMovementBalance(700, movements),
+      (error: any) =>
+        error instanceof FinanceValidationError &&
+        error.code === "ON_ACCOUNT_RECONCILIATION_FAILED"
+    );
+  });
+
+  test("keeps TDS outside the On Account bank portion", () => {
+    assert.deepEqual(validateOnAccountSettlementAmounts(45000, 5000), {
+      bankportion: 45000,
+      tdsamount: 5000,
+      totalsettlement: 50000,
+    });
+    assert.throws(
+      () => validateOnAccountSettlementAmounts(0, 5000),
+      FinanceValidationError
+    );
+    assert.throws(
+      () => validateOnAccountSettlementAmounts(45000, -1),
+      FinanceValidationError
+    );
+  });
+
+  test("allocates organization-scoped reference numbers from the database counter", async () => {
+    const calls: Array<{ text: string; values?: unknown[] }> = [];
+    const client = {
+      query: async (text: string, values?: unknown[]) => {
+        calls.push({ text, values });
+        return { rows: [{ lastnumber: "7" }] };
+      },
+    };
+    assert.equal(
+      await allocateOnAccountReferenceNumber(client, 3, "customer"),
+      "OA-C-00000007"
+    );
+    assert.deepEqual(calls[0].values, [3, "customer"]);
+    assert.match(calls[0].text, /ON CONFLICT \(organizationid, partytype\)/);
+  });
+
+  test("locks references in a stable order and rejects reversed references", async () => {
+    const client = {
+      query: async (_text: string, values?: unknown[]) => ({
+        rows: (values?.[1] as number[]).map((id) => ({
+          id,
+          status: id === 2 ? "reversed" : "open",
+        })),
+      }),
+    };
+    await assert.rejects(
+      () => lockOnAccountReferences(client, 1, [3, 2]),
+      (error: any) =>
+        error instanceof FinanceValidationError &&
+        error.code === "ON_ACCOUNT_REFERENCE_REVERSED"
+    );
+    await assert.rejects(
+      () => lockOnAccountReferences(client, 1, [3, 3]),
+      FinanceValidationError
+    );
+  });
+
+  test("returns an existing idempotent movement when present", async () => {
+    const client = {
+      query: async (_text: string, values?: unknown[]) => ({
+        rows: [{ id: 9, idempotencykey: values?.[1] }],
+      }),
+    };
+    const movement = await findOnAccountMovementByIdempotency(
+      client,
+      1,
+      "request-100",
+      2
+    );
+    assert.equal(movement.id, 9);
+    assert.equal(movement.idempotencykey, "request-100");
+  });
+});
+
+describe("On Account Phase 3 read model", () => {
+  test("normalizes supported reference status filters", () => {
+    assert.equal(normalizeOnAccountStatusFilter(undefined), null);
+    assert.equal(normalizeOnAccountStatusFilter(" Open "), "open");
+    assert.equal(
+      normalizeOnAccountStatusFilter("PARTIALLY_APPLIED"),
+      "partially_applied"
+    );
+    assert.equal(
+      normalizeOnAccountStatusFilter("fully_applied"),
+      "fully_applied"
+    );
+    assert.equal(normalizeOnAccountStatusFilter("reversed"), "reversed");
+    assert.throws(
+      () => normalizeOnAccountStatusFilter("pending"),
+      FinanceValidationError
+    );
+  });
+
+  test("compares displayed available value with the movement ledger at money precision", () => {
+    assert.equal(isOnAccountReferenceReconciled("1000.00", "1000"), true);
+    assert.equal(isOnAccountReferenceReconciled(1000, 999.99), false);
+  });
+});
+
+describe("On Account Phase 4 Customer Invoice application", () => {
+  test("distributes one reference across multiple Invoices", () => {
+    assert.deepEqual(
+      buildOnAccountApplicationMatrix(
+        [{ referenceid: 1, amount: 1000 }],
+        [
+          { invoiceid: 10, bankportion: 400, tdsamount: 0 },
+          { invoiceid: 11, bankportion: 600, tdsamount: 0 },
+        ]
+      ),
+      [
+        { referenceid: 1, invoiceid: 10, bankportion: 400, tdsamount: 0, totalsettlement: 400 },
+        { referenceid: 1, invoiceid: 11, bankportion: 600, tdsamount: 0, totalsettlement: 600 },
+      ]
+    );
+  });
+
+  test("distributes multiple references to one Invoice and counts TDS once", () => {
+    assert.deepEqual(
+      buildOnAccountApplicationMatrix(
+        [
+          { referenceid: 1, amount: 300 },
+          { referenceid: 2, amount: 700 },
+        ],
+        [{ invoiceid: 10, bankportion: 1000, tdsamount: 100 }]
+      ),
+      [
+        { referenceid: 1, invoiceid: 10, bankportion: 300, tdsamount: 100, totalsettlement: 400 },
+        { referenceid: 2, invoiceid: 10, bankportion: 700, tdsamount: 0, totalsettlement: 700 },
+      ]
+    );
+  });
+
+  test("rejects a mismatch between selected references and Invoice bank portions", () => {
+    assert.throws(
+      () =>
+        buildOnAccountApplicationMatrix(
+          [{ referenceid: 1, amount: 999 }],
+          [{ invoiceid: 10, bankportion: 1000, tdsamount: 0 }]
+        ),
+      FinanceValidationError
+    );
+  });
+
+  test("validates the Phase 4 request contract", () => {
+    const validate = new Ajv({ strict: false }).compile(
+      applyCustomerOnAccountSchema as any
+    );
+    assert.equal(
+      validate({
+        customerid: 7,
+        applicationdate: "2026-08-18",
+        requestreference: "oa-application-request-1",
+        referenceallocations: [{ referenceid: 1, amount: 900 }],
+        invoiceallocations: [
+          {
+            invoiceid: 10,
+            bankportion: 900,
+            tdsapplied: true,
+            tdsamount: 100,
+          },
+        ],
+      }),
+      true
+    );
+  });
+});
+
+describe("On Account Phase 6 Supplier read model", () => {
+  test("scopes Supplier references by Organization and party type", () => {
+    assert.deepEqual(buildOnAccountReadScope(7, "supplier"), {
+      params: [7],
+      conditions: ["r.organizationid = $1", "r.partytype = 'supplier'"],
+    });
+    assert.deepEqual(buildOnAccountReadScope(7, "customer"), {
+      params: [7],
+      conditions: ["r.organizationid = $1", "r.partytype = 'customer'"],
+    });
+    assert.throws(() => buildOnAccountReadScope(0, "supplier"), FinanceValidationError);
+    assert.throws(() => buildOnAccountReadScope(7, "vendor"), FinanceValidationError);
+  });
+
+  test("keeps Supplier lifecycle totals and movement reconciliation consistent", () => {
+    assert.equal(deriveOnAccountStatus(1000, 0, 1000), "open");
+    assert.equal(deriveOnAccountStatus(1000, 300, 700), "partially_applied");
+    assert.equal(deriveOnAccountStatus(1000, 1000, 0), "fully_applied");
+    assert.equal(isOnAccountReferenceReconciled(700, 700), true);
+    assert.equal(isOnAccountReferenceReconciled(700, 699.99), false);
+  });
+});
+
+describe("On Account Phase 7 Supplier Bill application", () => {
+  test("distributes multiple Supplier references across multiple Bills", () => {
+    assert.deepEqual(
+      buildOnAccountApplicationMatrix(
+        [
+          { referenceid: 41, amount: 400 },
+          { referenceid: 42, amount: 600 },
+        ],
+        [
+          { invoiceid: 81, bankportion: 750, tdsamount: 50 },
+          { invoiceid: 82, bankportion: 250, tdsamount: 0 },
+        ]
+      ),
+      [
+        { referenceid: 41, invoiceid: 81, bankportion: 400, tdsamount: 50, totalsettlement: 450 },
+        { referenceid: 42, invoiceid: 81, bankportion: 350, tdsamount: 0, totalsettlement: 350 },
+        { referenceid: 42, invoiceid: 82, bankportion: 250, tdsamount: 0, totalsettlement: 250 },
+      ]
+    );
+  });
+
+  test("settles a Supplier Bill with OA Bank Portion and TDS Payable", () => {
+    const result = applySupplierBillAllocation(
+      { id: 81, invoicenumber: "BILL-81", invoiceamount: 1000, paymentdata: [] },
+      900,
+      100
+    );
+    assert.equal(result.allocationAmount, 900);
+    assert.equal(result.tdsAmount, 100);
+    assert.equal(result.totalSettledAmount, 1000);
+    assert.equal(result.balanceAmount, 0);
+  });
+
+  test("rejects excessive settlement and invalid Supplier TDS mapping", () => {
+    assert.throws(
+      () => applySupplierBillAllocation(
+        { id: 81, invoicenumber: "BILL-81", invoiceamount: 1000, paymentdata: [] },
+        900,
+        101
+      ),
+      /exceeds its outstanding amount/
+    );
+    assert.throws(
+      () => assertSupplierTdsMapping(true, 100, null),
+      /valid TDS section/
+    );
+  });
+
+  test("validates the Phase 7 Supplier application contract", () => {
+    const validate = new Ajv({ strict: false }).compile(
+      applySupplierOnAccountSchema as any
+    );
+    assert.equal(
+      validate({
+        supplierid: 5,
+        applicationdate: "2026-08-19",
+        requestreference: "supplier-oa-application-1",
+        referenceallocations: [{ referenceid: 41, amount: 900 }],
+        billallocations: [{
+          billid: 81,
+          bankportion: 900,
+          tdsapplied: true,
+          tdssectionid: 2,
+          tdsamount: 100,
+        }],
+      }),
+      true
+    );
+    assert.equal(
+      validate({
+        supplierid: 5,
+        applicationdate: "2026-08-19",
+        requestreference: "supplier-oa-application-2",
+        referenceallocations: [{ referenceid: 41, amount: 900 }],
+        billallocations: [{ billid: 81, bankportion: 900, unexpected: true }],
+      }),
+      false
+    );
+  });
+});
+
+describe("On Account Phase 8 statements and release controls", () => {
+  test("calculates opening, period movement, TDS, and closing availability", () => {
+    const result = summarizeOnAccountStatement(
+      [
+        { eventdate: "2026-08-01", direction: "increase", amount: 1000 },
+        { eventdate: "2026-08-05", direction: "decrease", amount: 200, tdsamount: 20 },
+        { eventdate: "2026-08-10", direction: "increase", amount: 500 },
+        { eventdate: "2026-08-20", direction: "decrease", amount: 300, tdsamount: 30 },
+      ],
+      "2026-08-05",
+      "2026-08-10"
+    );
+    assert.equal(result.openingavailable, 1000);
+    assert.equal(result.increases, 500);
+    assert.equal(result.decreases, 200);
+    assert.equal(result.tdssettled, 20);
+    assert.equal(result.closingavailable, 1300);
+    assert.equal(result.period.length, 2);
+  });
+
+  test("keeps TDS outside availability while retaining it in statement reporting", () => {
+    const result = summarizeOnAccountStatement([
+      { eventdate: "2026-08-01", direction: "increase", amount: 1000 },
+      { eventdate: "2026-08-02", direction: "decrease", amount: 900, tdsamount: 100 },
+    ]);
+    assert.equal(result.closingavailable, 100);
+    assert.equal(result.tdssettled, 100);
+  });
+
+  test("rejects invalid statement periods and movement audit values", () => {
+    assert.throws(
+      () => summarizeOnAccountStatement([], "2026-08-10", "2026-08-01"),
+      /From Date cannot be later/
+    );
+    assert.throws(
+      () => summarizeOnAccountStatement([
+        { eventdate: "invalid", direction: "increase", amount: 100 },
+      ]),
+      /eventdate must use YYYY-MM-DD/
+    );
+  });
+
+  test("denies On Account finance access to missing and non-finance roles", async () => {
+    const responses: any[] = [];
+    const reply = {
+      status(code: number) {
+        return { send: (payload: any) => responses.push({ code, payload }) };
+      },
+    };
+    const middleware = requireFinancePermission("read");
+    await middleware({ session: {} }, reply);
+    await middleware({ session: { role: "sales" } }, reply);
+    assert.equal(responses.length, 2);
+    assert.deepEqual(responses.map((item) => item.code), [403, 403]);
+    assert.ok(responses.every((item) => item.payload.error.code === "FINANCE_ACCESS_DENIED"));
+  });
+});
 
 describe("Delivery Challan Phase 3 quantity rules", () => {
   const invoiceLines = extractDeliverableInvoiceLines({
@@ -380,6 +774,65 @@ describe("Cash and Bank foundation validation", () => {
     );
   });
 
+  test("Customer receipt allocation method defaults to the existing invoice flow", () => {
+    assert.equal(
+      resolveCustomerReceiptAllocationMethod(undefined),
+      "against_document"
+    );
+    assert.equal(
+      resolveCustomerReceiptAllocationMethod("on_account"),
+      "on_account"
+    );
+    assert.throws(
+      () => resolveCustomerReceiptAllocationMethod("advance"),
+      FinanceValidationError
+    );
+  });
+
+  test("Customer receipt schema keeps legacy allocations and permits allocation-free On Account receipts", () => {
+    const validate = new Ajv({ strict: false }).compile(
+      createRetailReceiptSchema as any
+    );
+    const base = {
+      transactiondate: "2026-08-18",
+      customerid: 7,
+      amount: 1000,
+      requestreference: "phase-2-request-001",
+    };
+
+    assert.equal(
+      validate({
+        ...base,
+        allocations: [{ invoiceid: 11, allocationamount: 1000 }],
+      }),
+      true
+    );
+    assert.equal(
+      validate({
+        ...base,
+        allocationmethod: "on_account",
+        allocations: [],
+      }),
+      true
+    );
+    assert.equal(
+      validate({ ...base, allocationmethod: "on_account" }),
+      true
+    );
+    assert.equal(
+      validate({ ...base, allocationmethod: "against_document" }),
+      false
+    );
+    assert.equal(
+      validate({
+        ...base,
+        allocationmethod: "on_account",
+        allocations: [{ invoiceid: 11, allocationamount: 1000 }],
+      }),
+      false
+    );
+  });
+
   test("Supplier payment schema accepts bill and TDS Payable fields", () => {
     const allocationSchema = (
       createSupplierPaymentSchema.properties.allocations as any
@@ -394,6 +847,52 @@ describe("Cash and Bank foundation validation", () => {
         "tdsapplied",
         "tdssectionid",
       ].sort()
+    );
+  });
+
+  test("Supplier payment allocation method defaults to the existing bill flow", () => {
+    assert.equal(resolveOnAccountAllocationMethod(undefined), "against_document");
+    assert.equal(resolveOnAccountAllocationMethod("on_account"), "on_account");
+    assert.throws(
+      () => resolveOnAccountAllocationMethod("advance"),
+      FinanceValidationError
+    );
+  });
+
+  test("Supplier payment schema preserves bill payments and permits allocation-free advances", () => {
+    const validate = new Ajv({ strict: false }).compile(
+      createSupplierPaymentSchema as any
+    );
+    const base = {
+      transactiondate: "2026-08-18",
+      supplierid: 9,
+      amount: 2500,
+      requestreference: "phase-5-request-001",
+    };
+
+    assert.equal(
+      validate({
+        ...base,
+        allocations: [{ billid: 15, allocationamount: 2500 }],
+      }),
+      true
+    );
+    assert.equal(
+      validate({ ...base, allocationmethod: "on_account", allocations: [] }),
+      true
+    );
+    assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+    assert.equal(
+      validate({ ...base, allocationmethod: "against_document" }),
+      false
+    );
+    assert.equal(
+      validate({
+        ...base,
+        allocationmethod: "on_account",
+        allocations: [{ billid: 15, allocationamount: 2500 }],
+      }),
+      false
     );
   });
 
@@ -435,6 +934,10 @@ describe("Finance source classification", () => {
   test("New E-commerce and Retail entries use the approved source types", () => {
     assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
     assert.equal(FINANCE_SOURCE_TYPES.customerReceipt, "customer_receipt");
+    assert.equal(
+      FINANCE_SOURCE_TYPES.customerOnAccount,
+      "customer_on_account"
+    );
     assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
     assert.equal(
       FINANCE_SOURCE_TYPES.serviceRequestReceipt,
@@ -445,11 +948,16 @@ describe("Finance source classification", () => {
       FINANCE_SOURCE_TYPES.supplierBillPayment,
       "supplier_bill_payment"
     );
+    assert.equal(
+      FINANCE_SOURCE_TYPES.supplierOnAccount,
+      "supplier_on_account"
+    );
   });
 
   test("Customer receipt filters include single-source and mixed receipts", () => {
     assert.deepEqual(getCustomerReceiptSourceTypes(), [
       "customer_receipt",
+      "customer_on_account",
       "retail_receipt",
       "retail_instore_receipt",
       "service_request_receipt",

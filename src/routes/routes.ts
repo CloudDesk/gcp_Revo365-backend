@@ -82,6 +82,8 @@ import {
     createBankCashAccountSchema,
     createChartAccountSchema,
     createDirectBankTransactionSchema,
+    applyCustomerOnAccountSchema,
+    applySupplierOnAccountSchema,
     createRetailReceiptSchema,
     createSupplierPaymentSchema,
     createTdsSectionSchema,
@@ -530,6 +532,46 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/transactions',
         { preHandler: [getSession, requireFinancePermission('read')] },
         financeAccountController.listAllTransactions
+    );
+    fastify.get(
+        '/finance/on-account/customers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listCustomerOnAccountReferences
+    );
+    fastify.get(
+        '/finance/on-account/customers/:referenceId',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.getCustomerOnAccountReference
+    );
+    fastify.get(
+        '/finance/on-account/suppliers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listSupplierOnAccountReferences
+    );
+    fastify.get(
+        '/finance/on-account/suppliers/:referenceId',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.getSupplierOnAccountReference
+    );
+    fastify.get(
+        '/finance/on-account/customers/:referenceId/application-context',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.getCustomerOnAccountApplicationContext
+    );
+    fastify.post(
+        '/finance/on-account/customers/applications',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applyCustomerOnAccountSchema)] },
+        financeAccountController.applyCustomerOnAccountToInvoices
+    );
+    fastify.get(
+        '/finance/on-account/suppliers/:referenceId/application-context',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.getSupplierOnAccountApplicationContext
+    );
+    fastify.post(
+        '/finance/on-account/suppliers/applications',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applySupplierOnAccountSchema)] },
+        financeAccountController.applySupplierOnAccountToBills
     );
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
     fastify.post(
