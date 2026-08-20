@@ -307,24 +307,17 @@ The Journal workspace must provide:
 
 ### 6.2 Journal List
 
-The list must show both manual Journals and system-generated Journals so the
-accounting team has one audit view of the existing journal ledger.
+The Journals list workspace is dedicated exclusively to Manual Journals (Drafts,
+Posted, Reversed, and Reversals). Normal system-generated transactions (Cash/Bank,
+Invoices, Bills, Customer Receipts, Supplier Payments) are managed within their
+respective transaction modules.
 
-System-generated Journals are read-only in this workspace. They remain owned by
-their source modules.
+The UI displays the active manual journal workspace with focused search and status filters:
 
-The UI must organize the same server-side Journal ledger into these tabs:
-
-1. **Manual Journals** — default working tab for manual Draft, Posted, Reversed,
-   and Reversal Journals.
-2. **System-Generated** — read-only Journals created by Cash/Bank, opening
-   balance, receipt, payment, Invoice, Bill, e-commerce, and other source
-   modules.
-3. **All Entries** — combined audit and reconciliation view.
-
-Tabs are filters only. They must not create separate Journal storage or duplicate
-an accounting entry. Pagination and totals must be calculated by the backend
-after applying the selected category.
+1. **Manual Journals Workspace** — list of manual Draft, Posted, Reversed, and
+   Reversal Journals.
+2. **Search and Filters** — filter by search term, status (`draft`, `posted`,
+   `reversed`), source type, or "Created by Me".
 
 Required columns:
 
