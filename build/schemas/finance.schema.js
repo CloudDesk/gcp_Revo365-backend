@@ -97,10 +97,13 @@ export const createRetailReceiptSchema = {
             type: "string",
             enum: ["retail", "rental", "all"],
         },
+        allocationmethod: {
+            type: "string",
+            enum: ["against_document", "on_account"],
+        },
         remarks: nullableString,
         allocations: {
             type: "array",
-            minItems: 1,
             maxItems: 100,
             items: {
                 type: "object",
@@ -120,7 +123,132 @@ export const createRetailReceiptSchema = {
         "customerid",
         "amount",
         "requestreference",
-        "allocations",
+    ],
+    allOf: [
+        {
+            if: {
+                properties: {
+                    allocationmethod: { const: "on_account" },
+                },
+                required: ["allocationmethod"],
+            },
+            then: {
+                properties: {
+                    allocations: { type: "array", maxItems: 0 },
+                },
+            },
+            else: {
+                properties: {
+                    allocations: { type: "array", minItems: 1 },
+                },
+                required: ["allocations"],
+            },
+        },
+    ],
+};
+export const applyCustomerOnAccountSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        customerid: { type: "integer", minimum: 1 },
+        applicationdate: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+        },
+        requestreference: {
+            type: "string",
+            minLength: 8,
+            maxLength: 100,
+        },
+        remarks: nullableString,
+        referenceallocations: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    referenceid: { type: "integer", minimum: 1 },
+                    amount: { type: "number", exclusiveMinimum: 0 },
+                },
+                required: ["referenceid", "amount"],
+            },
+        },
+        invoiceallocations: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    invoiceid: { type: "integer", minimum: 1 },
+                    bankportion: { type: "number", exclusiveMinimum: 0 },
+                    tdsapplied: { type: "boolean" },
+                    tdsamount: { type: "number", minimum: 0 },
+                },
+                required: ["invoiceid", "bankportion"],
+            },
+        },
+    },
+    required: [
+        "customerid",
+        "applicationdate",
+        "requestreference",
+        "referenceallocations",
+        "invoiceallocations",
+    ],
+};
+export const applySupplierOnAccountSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        supplierid: { type: "integer", minimum: 1 },
+        applicationdate: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+        },
+        requestreference: { type: "string", minLength: 8, maxLength: 100 },
+        remarks: nullableString,
+        referenceallocations: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    referenceid: { type: "integer", minimum: 1 },
+                    amount: { type: "number", exclusiveMinimum: 0 },
+                },
+                required: ["referenceid", "amount"],
+            },
+        },
+        billallocations: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    billid: { type: "integer", minimum: 1 },
+                    bankportion: { type: "number", exclusiveMinimum: 0 },
+                    tdsapplied: { type: "boolean" },
+                    tdssectionid: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+                    tdsamount: { type: "number", minimum: 0 },
+                },
+                required: ["billid", "bankportion"],
+            },
+        },
+    },
+    required: [
+        "supplierid",
+        "applicationdate",
+        "requestreference",
+        "referenceallocations",
+        "billallocations",
     ],
 };
 export const createSupplierPaymentSchema = {
@@ -138,10 +266,13 @@ export const createSupplierPaymentSchema = {
             minLength: 8,
             maxLength: 100,
         },
+        allocationmethod: {
+            type: "string",
+            enum: ["against_document", "on_account"],
+        },
         remarks: nullableString,
         allocations: {
             type: "array",
-            minItems: 1,
             maxItems: 100,
             items: {
                 type: "object",
@@ -162,7 +293,27 @@ export const createSupplierPaymentSchema = {
         "supplierid",
         "amount",
         "requestreference",
-        "allocations",
+    ],
+    allOf: [
+        {
+            if: {
+                properties: {
+                    allocationmethod: { const: "on_account" },
+                },
+                required: ["allocationmethod"],
+            },
+            then: {
+                properties: {
+                    allocations: { type: "array", maxItems: 0 },
+                },
+            },
+            else: {
+                properties: {
+                    allocations: { type: "array", minItems: 1 },
+                },
+                required: ["allocations"],
+            },
+        },
     ],
 };
 export const createTdsSectionSchema = {

@@ -103,7 +103,10 @@ export module supplierStatementService {
         `
         SELECT
           bill.*,
-          linked_po.supplierid,
+          CASE
+            WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+            ELSE linked_po.supplierid
+          END AS supplierid,
           COALESCE(
             (
               SELECT SUM(allocation.totalsettledamount)
@@ -119,14 +122,17 @@ export module supplierStatementService {
             0
           ) AS finance_settled_amount
         FROM poinvoice bill
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
           SELECT po.supplierid
           FROM purchaseorder po
           WHERE po.ponumber = bill.ponumber
           ORDER BY po.id DESC
           LIMIT 1
         ) linked_po ON TRUE
-        WHERE linked_po.supplierid = $1
+        WHERE (CASE
+          WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+          ELSE linked_po.supplierid
+        END) = $1
         ORDER BY COALESCE(bill.invoicedate, bill.createddate), bill.id
         `,
         [supplierId, organizationId]
@@ -191,7 +197,7 @@ export module supplierStatementService {
         reference: String(bill.invoicenumber || `BILL-${bill.id}`),
         description: bill.ponumber
           ? `Purchase Order ${bill.ponumber}`
-          : "Purchase Bill",
+          : "Direct Expense Bill",
         billamount: state.invoiceAmount,
         paymentamount: 0,
         settledamount: 0,

@@ -28,6 +28,8 @@ import { generatePRSchema } from "../schemas/prgenerate.schema.js";
 import { prInsertSchema } from "../schemas/pr.schema.js";
 import { quoteController } from "../controller/quote.controller.js";
 import { poinvoicecontroller } from "../controller/poinvoice.controller.js";
+import { directBillController } from "../controller/directBill.controller.js";
+import { directExpenseBillPaymentTrackingSchema, directExpenseBillSchema } from "../schemas/directBill.schema.js";
 import { notesController } from "../controller/notes.controller.js";
 import { InventoryuserController } from "../controller/Inventoryuser.controller.js";
 import { ticketController } from "../controller/tickets.controller.js";
@@ -69,7 +71,7 @@ import { picklistConfigController } from "../controller/picklistConfig.controlle
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, applyCustomerOnAccountSchema, applySupplierOnAccountSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
@@ -381,6 +383,14 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/delivery-challans/:challanId/document', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get('/finance/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listAllTransactions);
+    fastify.get('/finance/on-account/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerOnAccountReferences);
+    fastify.get('/finance/on-account/customers/:referenceId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerOnAccountReference);
+    fastify.get('/finance/on-account/suppliers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSupplierOnAccountReferences);
+    fastify.get('/finance/on-account/suppliers/:referenceId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierOnAccountReference);
+    fastify.get('/finance/on-account/customers/:referenceId/application-context', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerOnAccountApplicationContext);
+    fastify.post('/finance/on-account/customers/applications', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applyCustomerOnAccountSchema)] }, financeAccountController.applyCustomerOnAccountToInvoices);
+    fastify.get('/finance/on-account/suppliers/:referenceId/application-context', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierOnAccountApplicationContext);
+    fastify.post('/finance/on-account/suppliers/applications', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applySupplierOnAccountSchema)] }, financeAccountController.applySupplierOnAccountToBills);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
     fastify.post('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] }, financeAccountController.create);
     fastify.patch('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] }, financeAccountController.update);
@@ -416,6 +426,14 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/poinvoice', { preHandler: [getSession] }, poinvoicecontroller.getPOInvoice);
     fastify.post('/poinvoice', { preHandler: [getSession, filesUpload] }, poinvoicecontroller.upsertPoInvoice);
     fastify.post('/v2/poinvoice', poinvoicecontroller.upsertGcpPoInvoice);
+    // Direct Expense Bills use the same poinvoice table but never enter the
+    // PO validation path above.
+    fastify.get('/direct-bills', { preHandler: [getSession] }, directBillController.listHistory);
+    fastify.get('/direct-bills/outstanding', { preHandler: [getSession] }, directBillController.listOutstanding);
+    fastify.get('/direct-bills/:id', { preHandler: [getSession] }, directBillController.getById);
+    fastify.post('/direct-bills', { preHandler: [getSession, validateRequestBody(directExpenseBillSchema)] }, directBillController.upsert);
+    fastify.post('/direct-bills/:id/attachment', { preHandler: [getSession, filesUpload] }, directBillController.attachFile);
+    fastify.post('/direct-bills/:id/payment-tracking', { preHandler: [getSession, validateRequestBody(directExpenseBillPaymentTrackingSchema)] }, directBillController.addPaymentTracking);
     //Gmail
     fastify.post('/gmail', { preHandler: [getSession, filesUpload] }, sendMail);
     //orderRFID

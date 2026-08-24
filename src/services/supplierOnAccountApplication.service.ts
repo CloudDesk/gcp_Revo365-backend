@@ -336,9 +336,12 @@ export module supplierOnAccountApplicationService {
               AND allocation.status = 'applied'
               AND bank_tx.postingstatus = 'posted'
           ), 0) AS finance_settled_amount,
-          linked_po.supplierid
+          CASE
+            WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+            ELSE linked_po.supplierid
+          END AS supplierid
         FROM poinvoice bill
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
           SELECT po.supplierid
           FROM purchaseorder po
           WHERE po.ponumber = bill.ponumber
