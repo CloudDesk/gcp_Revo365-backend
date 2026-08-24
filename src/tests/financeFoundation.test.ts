@@ -50,6 +50,7 @@ import {
   getRetailReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
+import { assertTransactionDateIsWithinAccountHistory } from "../utils/finance/bankTransactionBalance.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -76,6 +77,19 @@ describe("Cash and Bank foundation calculations", () => {
 });
 
 describe("Cash and Bank foundation validation", () => {
+  test("Backdated transactions after the opening balance date are allowed", () => {
+    assert.doesNotThrow(() =>
+      assertTransactionDateIsWithinAccountHistory("2026-08-01", "2026-01-01")
+    );
+  });
+
+  test("Transactions before the opening balance date are rejected", () => {
+    assert.throws(
+      () => assertTransactionDateIsWithinAccountHistory("2025-12-31", "2026-01-01"),
+      (error: any) => error instanceof FinanceValidationError
+    );
+  });
+
   test("Retail receipt schema accepts TDS allocation fields", () => {
     const allocationSchema = (createRetailReceiptSchema.properties.allocations as any)
       .items;
