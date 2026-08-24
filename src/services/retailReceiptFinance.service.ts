@@ -23,6 +23,10 @@ import {
   getCustomerReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
 
 const RECEIPT_SOURCE_TYPES = getCustomerReceiptSourceTypes();
 
@@ -966,25 +970,10 @@ export module retailReceiptFinanceService {
         };
       });
 
-      const latestTransactionResult = await client.query(
-        `
-        SELECT transactiondate
-        FROM bank_transactions
-        WHERE bankcashaccountid = $1
-          AND postingstatus = 'posted'
-        ORDER BY transactiondate DESC, posteddate DESC, id DESC
-        LIMIT 1
-        `,
-        [accountId]
+      assertTransactionDateIsWithinAccountHistory(
+        transactionDate,
+        account.openingbalancedate
       );
-      const latestTransactionDate = toFinanceDateOnly(
-        latestTransactionResult.rows[0]?.transactiondate
-      );
-      if (latestTransactionDate && transactionDate < latestTransactionDate) {
-        throw new FinanceValidationError(
-          "Backdated transactions are not enabled in the foundation release."
-        );
-      }
 
       const accountsReceivableResult = await client.query(
         `
@@ -1312,17 +1301,15 @@ export module retailReceiptFinanceService {
         `,
         [transactionNumber, journalEntry.id, bankTransaction.id]
       );
-      await client.query(
-        `
-        UPDATE bank_cash_accounts
-        SET currentbalance = $1,
-            version = version + 1,
-            modifiedby = $2,
-            modifieddate = $3
-        WHERE id = $4
-        `,
-        [balanceAfter, actor, epoch, accountId]
+      const rebuiltBalances = await rebuildBankCashAccountBalances(
+        client,
+        account,
+        actor,
+        epoch
       );
+      const transactionBalanceAfter =
+        rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+      bankTransaction.balanceafter = transactionBalanceAfter;
       await client.query(
         `
         INSERT INTO finance_audit_events (
@@ -1350,7 +1337,7 @@ export module retailReceiptFinanceService {
             tdsamount: totalTdsAmount,
             totalsettledamount: totalSettlementAmount,
             previousbalance: toMoney(account.currentbalance),
-            balanceafter: balanceAfter,
+            balanceafter: transactionBalanceAfter,
             allocations: allocationRecords,
             journalentryid: Number(journalEntry.id),
           }),
