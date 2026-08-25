@@ -414,8 +414,13 @@ export const postCustomerTransferSchema = {
   properties: {
     sourcecustomerid: { type: "integer", minimum: 1 },
     sourcereferenceid: { type: "integer", minimum: 1 },
+    sourcereferenceversion: { type: "integer", minimum: 0 },
     destinationcustomerid: { type: "integer", minimum: 1 },
-    amount: { type: "number", exclusiveMinimum: 0 },
+    currencycode: {
+      type: "string",
+      pattern: "^[A-Z]{3}$",
+    },
+    amount: { type: "number", exclusiveMinimum: 0, multipleOf: 0.01 },
     entrydate: {
       type: "string",
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
@@ -426,7 +431,9 @@ export const postCustomerTransferSchema = {
   required: [
     "sourcecustomerid",
     "sourcereferenceid",
+    "sourcereferenceversion",
     "destinationcustomerid",
+    "currencycode",
     "amount",
     "entrydate",
     "description",
@@ -440,7 +447,8 @@ export const replaceCustomerTransferSchema = {
   properties: {
     version: { type: "integer", minimum: 1 },
     replacementreferenceid: { type: "integer", minimum: 1 },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
+    reason: { type: "string", maxLength: 2000 },
+    idempotencykey: { type: "string", minLength: 8, maxLength: 100 },
   },
-  required: ["version", "replacementreferenceid"],
+  required: ["version", "replacementreferenceid", "idempotencykey"],
 };

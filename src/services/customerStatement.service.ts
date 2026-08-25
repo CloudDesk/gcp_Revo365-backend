@@ -429,7 +429,7 @@ export module customerStatementService {
             WHERE m.organizationid = $1
               AND r.partytype = 'customer'
               AND r.partyid = $2
-              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out')
+              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out', 'journal_transfer_reversal')
             `,
             [organizationId, customerId]
           )
@@ -439,7 +439,7 @@ export module customerStatementService {
               j.id,
               j.journalnumber AS transactionnumber,
               j.entrydate AS transactiondate,
-              CASE WHEN m.movementtype = 'journal_transfer_out' THEN -m.amount ELSE m.amount END AS amount,
+              CASE WHEN m.direction = 'decrease' THEN -m.amount ELSE m.amount END AS amount,
               NULL::text AS allocationmethod,
               m.movementtype AS sourcetype,
               j.description AS remarks,
@@ -457,7 +457,7 @@ export module customerStatementService {
             WHERE m.organizationid = $1
               AND r.partytype = 'customer'
               AND r.partyid = $2
-              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out')
+              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out', 'journal_transfer_reversal')
               AND j.status = 'posted'
             ORDER BY j.entrydate, j.posteddate, j.id
             `,
