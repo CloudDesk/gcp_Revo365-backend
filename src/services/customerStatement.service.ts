@@ -285,7 +285,7 @@ export module customerStatementService {
       customerId
     );
 
-    const [invoiceResult, paymentResult, onAccountPaymentResult, addressResult] = await Promise.all([
+    const [invoiceResult, paymentResult, onAccountPaymentResult, transferResult, addressResult] = await Promise.all([
       query(
         `
         SELECT *
@@ -420,6 +420,49 @@ export module customerStatementService {
             `,
             [organizationId, customerId]
           ),
+      summaryOnly
+        ? query(
+            `
+            SELECT COUNT(DISTINCT m.id)::int AS total
+            FROM on_account_movements m
+            JOIN on_account_references r ON r.id = m.onaccountreferenceid
+            WHERE m.organizationid = $1
+              AND r.partytype = 'customer'
+              AND r.partyid = $2
+              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out')
+            `,
+            [organizationId, customerId]
+          )
+        : query(
+            `
+            SELECT
+              j.id,
+              j.journalnumber AS transactionnumber,
+              j.entrydate AS transactiondate,
+              CASE WHEN m.movementtype = 'journal_transfer_out' THEN -m.amount ELSE m.amount END AS amount,
+              NULL::text AS allocationmethod,
+              m.movementtype AS sourcetype,
+              j.description AS remarks,
+              j.status AS postingstatus,
+              NULL::text AS bankcashaccountname,
+              NULL::text AS bankname,
+              0::numeric(18, 2) AS allocationamount,
+              0::numeric(18, 2) AS tdsamount,
+              0::numeric(18, 2) AS totalsettledamount,
+              ARRAY[]::varchar[] AS documentnumbers,
+              COALESCE(r.availableamount, 0) AS unappliedamount
+            FROM on_account_movements m
+            JOIN on_account_references r ON r.id = m.onaccountreferenceid
+            JOIN journal_entries j ON j.id = m.journalentryid
+            WHERE m.organizationid = $1
+              AND r.partytype = 'customer'
+              AND r.partyid = $2
+              AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out')
+              AND j.status = 'posted'
+            ORDER BY j.entrydate, j.posteddate, j.id
+            `,
+            [organizationId, customerId]
+          ),
       query(
         `
         SELECT
@@ -543,6 +586,7 @@ export module customerStatementService {
     const paymentRows = [
       ...paymentResult.rows,
       ...onAccountPaymentResult.rows,
+      ...(transferResult?.rows || []),
     ].flatMap((payment: any) => {
       const transactionDate = toCustomerStatementDate(payment.transactiondate);
       if (!transactionDate) return [];

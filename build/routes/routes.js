@@ -69,7 +69,7 @@ import { picklistConfigController } from "../controller/picklistConfig.controlle
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
-import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, applyCustomerOnAccountSchema, applySupplierOnAccountSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, postCustomerTransferSchema, replaceCustomerTransferSchema, } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
     const taskOrSessionAuth = async (request, reply) => {
@@ -381,6 +381,14 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/delivery-challans/:challanId/document', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
     fastify.get('/finance/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listAllTransactions);
+    fastify.get('/finance/on-account/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listCustomerOnAccountReferences);
+    fastify.get('/finance/on-account/customers/:referenceId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerOnAccountReference);
+    fastify.get('/finance/on-account/suppliers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSupplierOnAccountReferences);
+    fastify.get('/finance/on-account/suppliers/:referenceId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierOnAccountReference);
+    fastify.get('/finance/on-account/customers/:referenceId/application-context', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerOnAccountApplicationContext);
+    fastify.post('/finance/on-account/customers/applications', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applyCustomerOnAccountSchema)] }, financeAccountController.applyCustomerOnAccountToInvoices);
+    fastify.get('/finance/on-account/suppliers/:referenceId/application-context', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierOnAccountApplicationContext);
+    fastify.post('/finance/on-account/suppliers/applications', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applySupplierOnAccountSchema)] }, financeAccountController.applySupplierOnAccountToBills);
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
     fastify.post('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] }, financeAccountController.create);
     fastify.patch('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] }, financeAccountController.update);
@@ -401,6 +409,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
     fastify.post('/finance/journals/:journalId/post', { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] }, journalController.postDraft);
     fastify.post('/finance/journals/:journalId/reverse', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] }, journalController.reversePosted);
+    fastify.post('/finance/journals/transfer-customer-on-account', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(postCustomerTransferSchema)] }, journalController.postCustomerTransfer);
+    fastify.post('/finance/journals/replace-customer-on-account-transfer/:journalId', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(replaceCustomerTransferSchema)] }, journalController.replaceCustomerTransfer);
     // TDS Section Master foundation
     fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
     fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);
