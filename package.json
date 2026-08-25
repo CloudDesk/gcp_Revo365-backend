@@ -12,6 +12,7 @@
     "verify:trial-balance": "node build/scripts/verifyTrialBalanceReadOnly.js",
     "verify:tds-summary": "node build/scripts/verifyTdsSummaryReadOnly.js",
     "verify:tds-document-links": "node build/scripts/verifyTdsDocumentLinksReadOnly.js",
+    "test": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts src/tests/financeFoundation.test.ts src/tests/journalFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts src/tests/deliveryChallanDocumentTemplate.test.ts src/tests/journalOnAccountTransfer.test.ts",
     "test:service-estimation-stock": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts",
     "test:service-invoice-flow": "tsx --test src/tests/financeFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts",
     "verify:product-stock-api": "npx tsx src/scripts/verifyProductStockApi.ts",

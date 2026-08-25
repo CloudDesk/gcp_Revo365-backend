@@ -392,4 +392,39 @@ export const reverseJournalSchema = {
     },
     required: ["version", "reversaldate", "reason"],
 };
+export const postCustomerTransferSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        sourcecustomerid: { type: "integer", minimum: 1 },
+        sourcereferenceid: { type: "integer", minimum: 1 },
+        destinationcustomerid: { type: "integer", minimum: 1 },
+        amount: { type: "number", exclusiveMinimum: 0 },
+        entrydate: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+        },
+        description: { type: "string", minLength: 1, maxLength: 2000 },
+        idempotencykey: { type: "string", minLength: 8, maxLength: 100 },
+    },
+    required: [
+        "sourcecustomerid",
+        "sourcereferenceid",
+        "destinationcustomerid",
+        "amount",
+        "entrydate",
+        "description",
+        "idempotencykey",
+    ],
+};
+export const replaceCustomerTransferSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        version: { type: "integer", minimum: 1 },
+        replacementreferenceid: { type: "integer", minimum: 1 },
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    required: ["version", "replacementreferenceid"],
+};
 //# sourceMappingURL=finance.schema.js.map

@@ -56,6 +56,7 @@ import {
   createRetailReceiptSchema,
   createSupplierPaymentSchema,
 } from "../schemas/finance.schema.js";
+import { directExpenseBillSchema } from "../schemas/directBill.schema.js";
 import {
   FINANCE_SOURCE_TYPES,
   getCustomerReceiptSourceTypes,
@@ -819,6 +820,7 @@ describe("Chart of Accounts Phase 3", () => {
     );
   });
 });
+import { assertTransactionDateIsWithinAccountHistory } from "../utils/finance/bankTransactionBalance.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -845,6 +847,19 @@ describe("Cash and Bank foundation calculations", () => {
 });
 
 describe("Cash and Bank foundation validation", () => {
+  test("Backdated transactions after the opening balance date are allowed", () => {
+    assert.doesNotThrow(() =>
+      assertTransactionDateIsWithinAccountHistory("2026-08-01", "2026-01-01")
+    );
+  });
+
+  test("Transactions before the opening balance date are rejected", () => {
+    assert.throws(
+      () => assertTransactionDateIsWithinAccountHistory("2025-12-31", "2026-01-01"),
+      (error: any) => error instanceof FinanceValidationError
+    );
+  });
+
   test("Retail receipt schema accepts TDS allocation fields", () => {
     const allocationSchema = (createRetailReceiptSchema.properties.allocations as any)
       .items;
@@ -1076,6 +1091,52 @@ describe("Finance source classification", () => {
       "request-1001"
     );
   });
+});
+
+describe("Direct Expense Bill schema", () => {
+  test("allows an Expense Bill without PO or Supplier", () => {
+    const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema as any);
+    assert.equal(
+      validate({
+        billtype: "expense",
+        supplierid: null,
+        expenseaccountid: 22,
+        invoicenumber: "EXP-1001",
+        invoicedate: 1_787_184_000,
+        productdata: [{ name: "Internet subscription", quantity: 1, unitPrice: 999 }],
+      }),
+      true
+    );
+  });
+
+  test("does not require an Expense Account before Direct Bill journal posting is enabled", () => {
+    const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema as any);
+    assert.equal(
+      validate({
+        billtype: "expense",
+        invoicenumber: "EXP-1002",
+        invoicedate: 1_787_184_000,
+        productdata: [{ name: "Courier charges", quantity: 1, unitPrice: 250 }],
+      }),
+      true
+    );
+  });
+
+  test("does not allow a PO reference or inventory type", () => {
+    const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema as any);
+    assert.equal(
+      validate({
+        billtype: "inventory",
+        ponumber: "PO-1",
+        expenseaccountid: 22,
+        invoicenumber: "EXP-1001",
+        invoicedate: 1_787_184_000,
+        productdata: [{ name: "Internet subscription", quantity: 1, unitPrice: 999 }],
+      }),
+      false
+    );
+  });
+
 });
 
 describe("Supplier bill payment allocation", () => {

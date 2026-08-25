@@ -78,20 +78,26 @@ const selectSupplierBills = `
       ),
       0
     ) AS finance_settled_amount,
-    linked_po.supplierid,
+    CASE
+      WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+      ELSE linked_po.supplierid
+    END AS supplierid,
     supplier.suppliername,
     supplier.supplieremail,
     supplier.supplierphonenumber,
     supplier.suppliercode
   FROM poinvoice bill
-  JOIN LATERAL (
+  LEFT JOIN LATERAL (
     SELECT po.supplierid
     FROM purchaseorder po
     WHERE po.ponumber = bill.ponumber
     ORDER BY po.id DESC
     LIMIT 1
   ) linked_po ON TRUE
-  JOIN supplier ON supplier.id = linked_po.supplierid
+  JOIN supplier ON supplier.id = CASE
+    WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+    ELSE linked_po.supplierid
+  END
   WHERE COALESCE(supplier.isdeleted, FALSE) = FALSE
 `;
 
@@ -551,6 +557,10 @@ const postSupplierOnAccountPayment = async ({
 export module supplierPaymentFinanceService {
   export const listSuppliers = async (request: any) => {
     const search = String(request.query?.search || "").trim().toLowerCase();
+    const requestedLimit = Number(request.query?.limit);
+    const limit = Number.isSafeInteger(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 50)
+      : 50;
     const allocationMethod = resolveOnAccountAllocationMethod(
       request.query?.allocationmethod
     );
@@ -568,9 +578,9 @@ export module supplierPaymentFinanceService {
             OR LOWER(COALESCE(suppliercode::text, '')) LIKE '%' || $1 || '%'
           )
         ORDER BY LOWER(COALESCE(suppliername::text, '')), id
-        LIMIT 50
+        LIMIT $2
         `,
-        [search]
+        [search, limit]
       );
       return supplierResult.rows.map((supplier: any) => ({
         id: Number(supplier.id),
@@ -635,7 +645,10 @@ export module supplierPaymentFinanceService {
     }
     const result = await query(
       `${selectSupplierBills}
-       AND linked_po.supplierid = $1
+       AND (CASE
+         WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+         ELSE linked_po.supplierid
+       END) = $1
        ORDER BY COALESCE(bill.invoicedate, bill.createddate) ASC, bill.id ASC`,
       [supplierId]
     );
@@ -649,11 +662,15 @@ export module supplierPaymentFinanceService {
   export const postPayment = async (request: any) => {
     const { actor, organizationId } = resolveFinanceContext(request);
     const accountId = Number(request.params?.accountId);
-    const supplierId = Number(request.body?.supplierid);
+    const suppliedSupplierId = request.body?.supplierid;
+    const supplierId =
+      suppliedSupplierId == null || suppliedSupplierId === ""
+        ? null
+        : Number(suppliedSupplierId);
     if (!Number.isSafeInteger(accountId) || accountId <= 0) {
       throw new FinanceValidationError("A valid accountId is required.");
     }
-    if (!Number.isSafeInteger(supplierId) || supplierId <= 0) {
+    if (supplierId !== null && (!Number.isSafeInteger(supplierId) || supplierId <= 0)) {
       throw new FinanceValidationError("A valid supplierid is required.");
     }
 
@@ -678,6 +695,9 @@ export module supplierPaymentFinanceService {
       request.body?.allocationmethod
     );
     if (allocationMethod === "on_account") {
+      if (supplierId === null) {
+        throw new FinanceValidationError("Supplier On Account is not available for a Supplier-less Direct Expense Bill.");
+      }
       const requestedAllocations = Array.isArray(request.body?.allocations)
         ? request.body.allocations
         : [];
@@ -756,6 +776,9 @@ export module supplierPaymentFinanceService {
     const hasTdsAllocations = normalizedAllocations.some(
       (item) => item.tdsApplied
     );
+    if (supplierId === null && hasTdsAllocations) {
+      throw new FinanceValidationError("TDS allocation requires a Supplier-backed Bill.");
+    }
     const totalSettlementAmount = toMoney(amount + totalTdsAmount);
 
     const client = await pool.connect();
@@ -796,7 +819,7 @@ export module supplierPaymentFinanceService {
         );
       }
 
-      const supplierResult = await client.query(
+      const supplierResult = supplierId === null ? { rows: [] } : await client.query(
         `
         SELECT id, suppliername, supplieremail, supplierphonenumber, suppliercode
         FROM supplier
@@ -807,12 +830,13 @@ export module supplierPaymentFinanceService {
         [supplierId]
       );
       const supplier = supplierResult.rows[0];
-      if (!supplier) {
+      if (supplierId !== null && !supplier) {
         throw new FinanceValidationError("The selected supplier was not found.");
       }
       const supplierName =
-        String(supplier.suppliername || "").trim() ||
-        `Supplier ${supplierId}`;
+        supplierId === null
+          ? null
+          : String(supplier.suppliername || "").trim() || `Supplier ${supplierId}`;
 
       const billResult = await client.query(
         `
@@ -831,9 +855,12 @@ export module supplierPaymentFinanceService {
             ),
             0
           ) AS finance_settled_amount,
-          linked_po.supplierid
+          CASE
+            WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+            ELSE linked_po.supplierid
+          END AS supplierid
         FROM poinvoice bill
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
           SELECT po.supplierid
           FROM purchaseorder po
           WHERE po.ponumber = bill.ponumber
@@ -857,11 +884,15 @@ export module supplierPaymentFinanceService {
         const bill = billById.get(item.billId);
         if (
           !bill ||
-          Number(bill.supplierid) !== supplierId ||
+          (supplierId === null
+            ? !(String(bill.billtype || "inventory") === "expense" && bill.supplierid == null)
+            : Number(bill.supplierid) !== supplierId) ||
           !isSupplierBillOpen(bill)
         ) {
           throw new FinanceValidationError(
-            "All selected bills must be eligible outstanding bills for the selected supplier."
+            supplierId === null
+              ? "All selected bills must be eligible Supplier-less Direct Expense Bills."
+              : "All selected bills must be eligible outstanding bills for the selected supplier."
           );
         }
         return {
@@ -972,8 +1003,8 @@ export module supplierPaymentFinanceService {
       const epoch = nowEpoch();
       const defaultRemarks =
         preparedAllocations.length === 1
-          ? `Supplier payment against bill ${preparedAllocations[0].bill.invoicenumber}`
-          : `Supplier payment allocated across ${preparedAllocations.length} bills`;
+          ? `${supplierId === null ? "Direct Expense Bill" : "Supplier payment"} against bill ${preparedAllocations[0].bill.invoicenumber}`
+          : `${supplierId === null ? "Direct Expense Bill payment" : "Supplier payment"} allocated across ${preparedAllocations.length} bills`;
       const paymentRemarks = remarks || defaultRemarks;
       const sourceId = resolveAgainstDocumentSourceId(
         preparedAllocations.map(
@@ -1010,9 +1041,9 @@ export module supplierPaymentFinanceService {
           posteddate
         )
         VALUES (
-          $1, $2, $3, 'supplier', $4, $5, $6, 'credit',
-          $7, 0, $7, $8, 'against_document', $9, $10, $11,
-          $12, 'posted', 'manual', $13, $13, $14, $14
+          $1, $2, $3, $4, $5, $6, $7, 'credit',
+          $8, 0, $8, $9, 'against_document', $10, $11, $12,
+          $13, 'posted', 'manual', $14, $14, $15, $15
         )
         RETURNING *
         `,
@@ -1020,6 +1051,7 @@ export module supplierPaymentFinanceService {
           organizationId,
           accountId,
           transactionDate,
+          supplierId === null ? null : "supplier",
           supplierId,
           supplierName,
           accountsPayableId,
@@ -1080,12 +1112,13 @@ export module supplierPaymentFinanceService {
           description
         )
         VALUES
-          ($1, $2, 'supplier', $3, $4, 0, $5),
-          ($1, $6, 'supplier', $3, 0, $7, $5)
+          ($1, $2, $3, $4, $5, 0, $6),
+          ($1, $7, $3, $4, 0, $8, $6)
         `,
         [
           journalEntry.id,
           accountsPayableId,
+          supplierId === null ? null : "supplier",
           supplierId,
           totalSettlementAmount,
           paymentRemarks,

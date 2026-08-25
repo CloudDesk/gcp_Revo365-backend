@@ -31,6 +31,8 @@ import { generatePRSchema } from "../schemas/prgenerate.schema.js";
 import { prInsertSchema } from "../schemas/pr.schema.js";
 import { quoteController } from "../controller/quote.controller.js";
 import { poinvoicecontroller } from "../controller/poinvoice.controller.js";
+import { directBillController } from "../controller/directBill.controller.js";
+import { directExpenseBillPaymentTrackingSchema, directExpenseBillSchema } from "../schemas/directBill.schema.js";
 import { notesController } from "../controller/notes.controller.js";
 import { InventoryuserController } from "../controller/Inventoryuser.controller.js";
 import { ticketController } from "../controller/tickets.controller.js";
@@ -94,6 +96,8 @@ import {
     reverseJournalSchema,
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
+    postCustomerTransferSchema,
+    replaceCustomerTransferSchema,
 } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinanceModulePermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 
@@ -668,6 +672,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] },
         journalController.reversePosted
     );
+    fastify.post(
+        '/finance/journals/transfer-customer-on-account',
+        { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(postCustomerTransferSchema)] },
+        journalController.postCustomerTransfer
+    );
+    fastify.post(
+        '/finance/journals/replace-customer-on-account-transfer/:journalId',
+        { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(replaceCustomerTransferSchema)] },
+        journalController.replaceCustomerTransfer
+    );
 
     // Optimized Finance Dashboard and Reports. Dashboard KPIs are returned by
     // one aggregate request; reports load only the selected statement.
@@ -733,6 +747,15 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/poinvoice', { preHandler: [getSession] }, poinvoicecontroller.getPOInvoice);
     fastify.post('/poinvoice', { preHandler: [getSession, filesUpload] }, poinvoicecontroller.upsertPoInvoice);
     fastify.post('/v2/poinvoice', poinvoicecontroller.upsertGcpPoInvoice);
+
+    // Direct Expense Bills use the same poinvoice table but never enter the
+    // PO validation path above.
+    fastify.get('/direct-bills', { preHandler: [getSession] }, directBillController.listHistory);
+    fastify.get('/direct-bills/outstanding', { preHandler: [getSession] }, directBillController.listOutstanding);
+    fastify.get('/direct-bills/:id', { preHandler: [getSession] }, directBillController.getById);
+    fastify.post('/direct-bills', { preHandler: [getSession, validateRequestBody(directExpenseBillSchema)] }, directBillController.upsert);
+    fastify.post('/direct-bills/:id/attachment', { preHandler: [getSession, filesUpload] }, directBillController.attachFile);
+    fastify.post('/direct-bills/:id/payment-tracking', { preHandler: [getSession, validateRequestBody(directExpenseBillPaymentTrackingSchema)] }, directBillController.addPaymentTracking);
 
     //Gmail
     fastify.post('/gmail', { preHandler: [getSession, filesUpload] }, sendMail);
