@@ -60,6 +60,9 @@ const serializeReference = (row: any) => ({
   modifiedby: row.modifiedby || null,
   createddate: Number(row.createddate || 0),
   modifieddate: Number(row.modifieddate || 0),
+  transferredfromreferenceid: row.transferredfromreferenceid ? Number(row.transferredfromreferenceid) : null,
+  replacementreferenceid: row.replacementreferenceid ? Number(row.replacementreferenceid) : null,
+  reversaljournalentryid: row.reversaljournalentryid ? Number(row.reversaljournalentryid) : null,
   banktransaction: row.banktransactionid
     ? {
         id: Number(row.banktransactionid),
@@ -108,6 +111,9 @@ const serializeSupplierReference = (row: any) => ({
   modifiedby: row.modifiedby || null,
   createddate: Number(row.createddate || 0),
   modifieddate: Number(row.modifieddate || 0),
+  transferredfromreferenceid: row.transferredfromreferenceid ? Number(row.transferredfromreferenceid) : null,
+  replacementreferenceid: row.replacementreferenceid ? Number(row.replacementreferenceid) : null,
+  reversaljournalentryid: row.reversaljournalentryid ? Number(row.reversaljournalentryid) : null,
   banktransaction: row.banktransactionid
     ? {
         id: Number(row.banktransactionid),

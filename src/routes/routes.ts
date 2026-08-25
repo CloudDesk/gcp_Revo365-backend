@@ -94,6 +94,8 @@ import {
     reverseJournalSchema,
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
+    postCustomerTransferSchema,
+    replaceCustomerTransferSchema,
 } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 
@@ -667,6 +669,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/journals/:journalId/reverse',
         { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] },
         journalController.reversePosted
+    );
+    fastify.post(
+        '/finance/journals/transfer-customer-on-account',
+        { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(postCustomerTransferSchema)] },
+        journalController.postCustomerTransfer
+    );
+    fastify.post(
+        '/finance/journals/replace-customer-on-account-transfer/:journalId',
+        { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(replaceCustomerTransferSchema)] },
+        journalController.replaceCustomerTransfer
     );
 
     // TDS Section Master foundation

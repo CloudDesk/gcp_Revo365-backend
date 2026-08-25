@@ -1,4 +1,5 @@
 import { journalService } from "../services/journal.service.js";
+import { executeCustomerTransferOrchestration, replaceCustomerOnAccountTransfer } from "../services/journalTransfer.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module journalController {
@@ -76,6 +77,30 @@ export module journalController {
         success: true,
         message: "Journal reversed successfully.",
         data: await journalService.reversePosted(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const postCustomerTransfer = async (request: any, reply: any) => {
+    try {
+      return reply.status(201).send({
+        success: true,
+        message: "Customer on-account transfer posted successfully.",
+        data: await executeCustomerTransferOrchestration(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const replaceCustomerTransfer = async (request: any, reply: any) => {
+    try {
+      return reply.status(201).send({
+        success: true,
+        message: "Customer on-account transfer replaced successfully.",
+        data: await replaceCustomerOnAccountTransfer(request),
       });
     } catch (error) {
       return sendFinanceError(reply, error);
