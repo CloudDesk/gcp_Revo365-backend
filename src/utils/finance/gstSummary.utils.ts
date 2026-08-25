@@ -58,6 +58,37 @@ const normalizeTaxMode = (...values: unknown[]): string =>
     .map((value) => String(value || "").trim().toLowerCase())
     .find(Boolean) || "";
 
+const hasInvoiceSection = (value: Record<string, any>): boolean =>
+  (Array.isArray(value.items) && value.items.length > 0) ||
+  firstAmount(value.total, value.totalamount, value.taxableamount, value.taxamount) > 0;
+
+const resolveSectionGst = (section: Record<string, any>): GstSummary => {
+  const total = firstAmount(section.taxamount);
+  if (total <= 0) return emptyGstSummary();
+  const igstRate = firstAmount(section.igst);
+  const cgstRate = firstAmount(section.cgst);
+  const sgstRate = firstAmount(section.sgst);
+  const taxMode = normalizeTaxMode(section.taxmode, section.taxtype, section.taxlabel);
+  if (igstRate > 0 || taxMode === "igst" || taxMode.includes("inter")) {
+    return { igst: total, cgst: 0, sgst: 0, total };
+  }
+  const combinedRate = cgstRate + sgstRate;
+  const cgst = combinedRate > 0
+    ? toMoney(total * (cgstRate / combinedRate))
+    : toMoney(total / 2);
+  return { igst: 0, cgst, sgst: toMoney(total - cgst), total };
+};
+
+export const resolveInvoiceDocumentType = (invoice: any): string => {
+  const invoiceData = parseJsonObject(invoice?.invoicedata);
+  const serviceData = parseJsonObject(invoice?.servicedata);
+  const hasProducts = hasInvoiceSection(invoiceData);
+  const hasServices = hasInvoiceSection(serviceData);
+  if (hasProducts && hasServices) return "product + service";
+  if (hasServices) return "service";
+  return String(invoice?.invoicefor || (hasProducts ? "product" : "invoice")).trim().toLowerCase();
+};
+
 export const resolveInvoiceGst = (invoice: any): GstSummary => {
   const invoiceFor = String(invoice?.invoicefor || "").trim().toLowerCase();
   if (!new Set(["product", "rental", "service"]).has(invoiceFor)) {
@@ -65,8 +96,23 @@ export const resolveInvoiceGst = (invoice: any): GstSummary => {
   }
 
   const invoiceData = parseJsonObject(invoice?.invoicedata);
+  const serviceData = parseJsonObject(invoice?.servicedata);
   const summaryData = parseJsonObject(invoice?.summaryinvoicedata);
   const supportingData = parseJsonObject(invoice?.supportingdocumentdata);
+
+  // Service-request invoices may contain both a product section and a service
+  // section. Their top-level taxamount is legacy product tax, so summing the
+  // two section snapshots is the authoritative combined invoice GST.
+  if (hasInvoiceSection(serviceData)) {
+    const productGst = resolveSectionGst(invoiceData);
+    const serviceGst = resolveSectionGst(serviceData);
+    return {
+      igst: toMoney(productGst.igst + serviceGst.igst),
+      cgst: toMoney(productGst.cgst + serviceGst.cgst),
+      sgst: toMoney(productGst.sgst + serviceGst.sgst),
+      total: toMoney(productGst.total + serviceGst.total),
+    };
+  }
   const total = firstAmount(
     invoice?.taxamount,
     invoiceData.taxamount,
@@ -160,6 +206,33 @@ export const resolveBillGst = (bill: any): GstSummary => {
   const cgstRate = firstAmount(bill?.cgst);
   const sgstRate = firstAmount(bill?.sgst);
   if (igstRate > 0) return { igst: total, cgst: 0, sgst: 0, total };
+
+  const gstStateCode = (...values: unknown[]): string => {
+    for (const value of values) {
+      const normalized = String(value || "").trim().toUpperCase();
+      const match = normalized.match(/^(\d{2})[A-Z0-9]{13}$/);
+      if (match) return match[1];
+    }
+    return "";
+  };
+  const supplierState = gstStateCode(
+    bill?.suppliergstin,
+    bill?.partygstin,
+    bill?.suppliergstnumber
+  );
+  const destinationState = gstStateCode(
+    bill?.destinationgstin,
+    bill?.dt_gstnumber,
+    bill?.io_gstnumber,
+    bill?.companygstin
+  );
+
+  // Legacy Purchase Orders often stored 9% + 9% even when the supplier and
+  // receiving GST registrations were in different states. GSTIN state codes
+  // are stronger evidence than those legacy rate fields.
+  if (supplierState && destinationState && supplierState !== destinationState) {
+    return { igst: total, cgst: 0, sgst: 0, total };
+  }
 
   const combinedRate = cgstRate + sgstRate;
   if (combinedRate > 0) {

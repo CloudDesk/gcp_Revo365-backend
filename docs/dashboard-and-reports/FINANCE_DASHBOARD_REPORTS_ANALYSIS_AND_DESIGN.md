@@ -15,7 +15,9 @@ Design the next finance phase for Revo365 after Chart of Accounts, Cash/Bank Acc
 - TDS summary and transaction details.
 - Shared filters and Excel download.
 
-This document is an implementation specification and UI/component design. It does not implement the feature.
+This document is the implementation specification, UI/component design, agreed-scope record, and implementation-status reference. The final agreed scope and deployment evidence are recorded in section 31.
+
+> **Agreed scope note:** Challan-to-deduction allocation, partial-deposit compliance tracking, 26AS/AIS reconciliation, TDS certificate/PAN/TAN workflows, location accounting dimensions, and comparison-period reporting are explicitly outside this Dashboard/Reports deliverable. They are not completion blockers.
 
 ## 2. Existing Codebase Analysis
 
@@ -723,14 +725,202 @@ Use a `reportRegistry` to define label, permission, date mode, allowed filters, 
 
 ## 14. Permissions and Audit
 
-Add dedicated resources instead of inheriting broad dashboard access:
+Both components are restricted to the **Admin** and **Accountant** roles only:
+
+- Finance Dashboard (`/finance/dashboard`).
+- Finance Reports (`/finance/reports` and every nested report/export/drill-down endpoint).
+
+This is a hard product role allowlist, not a configurable grant for other roles. Store Manager, Technician, and all current or future roles must not see or access these two components unless this product requirement is formally changed.
+
+### 14.1 Role access matrix
+
+| Capability | Admin | Accountant | Store Manager | Technician | Any other role |
+|---|---:|---:|---:|---:|---:|
+| See Finance Dashboard navigation | Yes | Yes | No | No | No |
+| Open Finance Dashboard route | Yes | Yes | No | No | No |
+| Call Finance Dashboard APIs | Yes | Yes | No | No | No |
+| See Finance Reports navigation | Yes | Yes | No | No | No |
+| Open reports and drill-downs | Yes | Yes | No | No | No |
+| Download report Excel files | Yes | Yes | No | No | No |
+| View permitted sensitive TDS details | Yes | Yes | No | No | No |
+
+Role comparison must use the application’s canonical role constants (currently Admin/Accountant, normalized safely for comparison), not display labels typed independently in multiple components.
+
+### 14.2 Frontend enforcement
+
+- Add the Finance Dashboard and Finance Reports sidebar/menu items only when the authenticated role is Admin or Accountant.
+- Apply one shared guard such as `FinanceRoleGuard` to both top-level routes and all nested report routes.
+- Do not render KPI/report components and then hide them with CSS; unauthorized components must not mount or fetch data.
+- A direct unauthorized URL navigation shows the application’s standard `403 — You do not have access` state and provides a safe link back to the user’s permitted dashboard.
+- Loading/auth hydration must show a neutral route-loading state; it must not briefly flash finance navigation or amounts before the role is known.
+- Client-side checks improve UX but are never treated as security enforcement.
+
+Suggested frontend policy:
+
+```ts
+const FINANCE_ALLOWED_ROLES = new Set([ROLES.ADMIN, ROLES.ACCOUNTANT]);
+const canAccessFinance = (role: string) => FINANCE_ALLOWED_ROLES.has(role);
+```
+
+Use the same helper in sidebar route policy, route configuration, page guards, drill-down links, and export-button visibility.
+
+### 14.3 Backend enforcement
+
+- Every `/finance/dashboard/*`, `/finance/reports/*`, report detail, and export endpoint must run authenticated organization scoping and the Admin/Accountant role guard before its service/query executes.
+- Never accept a role supplied through request body, query string, or frontend headers as authority; use the authenticated server context.
+- Return HTTP `403` for an authenticated non-Admin/non-Accountant and `401` for an unauthenticated request.
+- Do not return aggregate totals, row counts, export job metadata, signed download links, filter options, party lookups, or error details to unauthorized roles.
+- Export/download authorization must be rechecked both when generating and when retrieving a file.
+- Stale permission records must not override the hard role allowlist.
+- Cache keys and cached responses must remain separated by organization and authorized role/access scope.
+
+Suggested backend guard:
+
+```ts
+const FINANCE_ALLOWED_ROLES = new Set(["admin", "accountant"]);
+
+if (!FINANCE_ALLOWED_ROLES.has(normalizeRole(authenticatedUser.role))) {
+  throw new ForbiddenError("Finance Dashboard and Reports are restricted.");
+}
+```
+
+Keep dedicated action resources for the two permitted roles instead of inheriting broad dashboard access:
 
 - `finance_dashboard.read`
 - `finance_reports.read`
-- `finance_reports.export`
-- Optional `finance_reports.view_sensitive`
+- Future extension: `finance_reports.export`
+- Future extension: `finance_reports.view_sensitive`
 
-Recommended defaults: Admin and Accountant can read/export; other roles only by explicit grant and location scope. Every export should create a finance audit event with user, report key, filters, row count, and generated timestamp.
+The current User Permissions editor supports standard CRUD actions only. The first implementation therefore uses `read` for page/API access and fixes `create`, `edit`, and `delete` to false. Export and sensitive-data actions should be introduced when the editor supports custom actions; until then, export inherits Finance Reports read access plus the hard Admin/Accountant role check. Every export should create a finance audit event with user, role, organization, report key, filters, row count, and generated timestamp.
+
+### 14.4 Unauthorized and role-change scenarios
+
+- Store Manager/Technician login: neither Finance menu item is present and no finance request is made.
+- Unauthorized direct route: display 403; never redirect to a page that could reveal finance state in its title, breadcrumb, or cached content.
+- Unauthorized direct API/export URL: return 403 without report metadata.
+- User role changes from Admin/Accountant to another role during a session: invalidate/refresh auth state, remove menu entries, clear finance query caches, cancel in-flight finance requests where possible, and block the next API call.
+- User role changes to Admin/Accountant: finance navigation appears only after refreshed authenticated claims/context confirm the role.
+- Browser Back after logout/role downgrade: route guard and API guard prevent cached sensitive data from being displayed.
+- Shared computer/browser cache: finance responses use appropriate private/no-store caching policy where sensitive data could persist.
+- Admin/Accountant without export action permission: reports remain readable but the export action is absent and export APIs return 403.
+- Accountant without sensitive-TDS permission: TDS totals remain visible if permitted, while PAN/TAN/certificate-sensitive columns are masked or omitted on screen and in Excel.
+
+### 14.5 Permission acceptance tests
+
+- Test sidebar visibility for Admin, Accountant, Store Manager, Technician, missing role, unknown role, mixed-case legacy role, and expired authentication.
+- Test both top-level routes and every nested report route for all roles.
+- Test every dashboard/report/filter/lookup/export/download endpoint for 401/403 behavior.
+- Verify unauthorized requests execute no report SQL and create no export file/job.
+- Verify role downgrade clears already-loaded finance data from client query/state caches.
+- Verify Admin and Accountant still receive organization/location-scoped results only.
+- Verify permissions cannot be bypassed by changing query parameters, local storage, route state, or request payloads.
+
+### 14.6 Existing User Permissions integration
+
+The two components must be added to the existing `permissions.permissionset` JSONB structure used by User Permissions. Do not create a second permission framework.
+
+Canonical permission objects:
+
+```json
+{
+  "object": "Finance Dashboard",
+  "objectAPI": "finance_dashboard",
+  "permissions": {
+    "read": true,
+    "create": false,
+    "edit": false,
+    "delete": false
+  }
+}
+```
+
+```json
+{
+  "object": "Finance Reports",
+  "objectAPI": "finance_reports",
+  "permissions": {
+    "read": true,
+    "create": false,
+    "edit": false,
+    "delete": false
+  }
+}
+```
+
+Permission defaults by role:
+
+| Permission object/action | Admin | Accountant | Every other role |
+|---|---:|---:|---:|
+| `finance_dashboard.read` | `true` | `true` | `false` |
+| `finance_reports.read` | `true` | `true` | `false` |
+| Both resources: `create/edit/delete` | `false` | `false` | `false` |
+
+The User Permissions editor may display both permission objects for every role so its data shape remains consistent. For roles outside Admin and Accountant, these actions must remain false/disabled because the hard role allowlist cannot be overridden from the permission editor. For Admin and Accountant, action permissions may be edited only if the existing product policy allows action-level restriction; removing an action may reduce access but never grant it to another role.
+
+Mapping to UI behavior:
+
+| Permission | UI/API behavior |
+|---|---|
+| `finance_dashboard.read` | Show Finance Dashboard navigation, allow route, and allow dashboard APIs. |
+| `finance_reports.read` | Show Finance Reports navigation, allow report routes, lookups, drill-downs, and report APIs. |
+| `finance_reports.read` + Admin/Accountant role | Initial export authorization until a custom `export` action is added to the permission editor. |
+
+The effective-access rule is:
+
+```text
+effective access = authenticated role is Admin or Accountant
+                   AND required permission action is true
+```
+
+### 14.7 Permission data migration design
+
+Create an additive, idempotent migration following the existing Journal permission migrations. Recommended file:
+
+```text
+src/database/migrations/20260821_finance_dashboard_reports.sql
+```
+
+Recommended schema version:
+
+```text
+20260821_finance_dashboard_reports_permissions_v1
+```
+
+Migration responsibilities:
+
+1. Normalize a null `permissionset` to an empty JSONB array.
+2. Create exactly one canonical `finance_dashboard` object.
+3. Create exactly one canonical `finance_reports` object.
+4. Seed `read` as true only for `LOWER(TRIM(role)) IN ('admin', 'accountant')`; seed false for all other roles and fix `create/edit/delete` to false.
+5. Replace duplicate legacy entries with one canonical entry during the first application.
+6. Preserve unrelated permission objects and their order.
+7. Preserve an intentionally disabled Admin/Accountant action on later reruns after the migration has already been applied; migration reruns must not continually reset user configuration.
+8. Force all actions false for non-Admin/non-Accountant roles to satisfy the hard role restriction.
+9. Insert an idempotent entry in `finance_schema_versions`.
+10. Run safely when roles use legacy capitalization such as `Admin`, `Accountant`, or `Storemanager`.
+
+Important migration behavior:
+
+- The initial migration seeds the canonical defaults.
+- The migration runner executes SQL files repeatedly, so the schema-version record or equivalent conditional logic must distinguish first-time seeding from routine reruns.
+- Do not use a simple unconditional JSON merge that resets Admin/Accountant choices every deployment.
+- Preserve all unrelated permission objects and remove duplicates only for the two owned canonical `objectAPI` values.
+
+### 14.8 Migration verification scenarios
+
+- New database containing Admin, Accountant, Store Manager, Technician, and Vendor roles.
+- Existing database where neither object exists.
+- Existing database where only one of the two objects exists.
+- Existing database with null or empty `permissionset`.
+- Existing object missing one of the standard CRUD keys.
+- Existing Admin/Accountant action intentionally changed to false after first deployment.
+- Existing non-Admin action incorrectly set to true; migration/role guard must make it ineffective and normalize it to false.
+- Legacy mixed-case and whitespace-padded role values.
+- Repeated migration execution produces no duplicate objects or changed user configuration.
+- User Permissions list/edit API returns both canonical objects.
+- Frontend permission editor renders their labels and actions using existing controls.
+- Admin and Accountant navigation/API behavior matches the stored actions.
+- Every other role remains blocked even if frontend state/local storage is manipulated.
 
 ## 15. Data Quality and Reconciliation
 
@@ -1138,9 +1328,10 @@ The feature is ready only when all of the following are true:
 - GST totals reconcile to eligible source documents and unsupported cases are identified.
 - Every report has relevant filters, URL persistence, loading/empty/error states, mobile behavior, and Excel export.
 - Screen and Excel totals match for identical filters and generation version.
-- Permissions and location scope are tested at API level.
+- Finance module permissions are tested at API level.
+- Finance Dashboard and Finance Reports are visible and accessible only to Admin and Accountant; all other roles are rejected by both route and API guards.
 - Reversal, cancellation, partial payment, return, credit note, TDS, advance, and historical as-of scenarios are covered.
-- Customer-deducted TDS, company-deducted TDS, government deposits, partial allocations, and 26AS/AIS reconciliation are covered.
+- Customer-deducted TDS, company-deducted TDS, government deposits, TDS Receivable and TDS Payable are covered.
 - Performance is measured on expected production volumes.
 - Admin/Accountant user acceptance testing signs off metric definitions and presentation.
 
@@ -1159,6 +1350,7 @@ This section maps the original request to the exact design decision in this docu
 | Income without GST | Complete with explicit source decision | 3, 4.3, 21.1 | Both invoice-based Net Sales and optional uninvoiced Order Net Sales are defined without GST. |
 | Expense/all bills without GST | Complete with accounting warning | 3, 4.4, 5, 21.2 | Taxable bill value is defined; Inventory Purchases are separated from operating Expense for correct P&L treatment. |
 | Reports component design | Complete | 7, 8, 13, 20 | Report shell, navigation, hierarchy, shared primitives, responsive behavior, and report-specific components are covered. |
+| Admin/Accountant-only access | Complete | 14 | Sidebar visibility, route/API/export guards, role-change cases, sensitive TDS access, audit, and permission tests are specified. |
 | Sales Invoices report | Complete | 8.1, 19, 21.1 | Summary, columns, filters, lifecycle cases, and drill-down are specified. |
 | Supplier Bills report | Complete | 5, 8.2, 19, 21.2 | Bill type/category, summary, columns, filters, lifecycle cases, and drill-down are specified. |
 | Expense Bill Type | Complete | 5, 21.2 | `inventory`/`expense`, ledger mapping, form behavior, posting templates, and edit restrictions are specified. |
@@ -1168,7 +1360,7 @@ This section maps the original request to the exact design decision in this docu
 | Profit & Loss Account | Complete | 3.2, 8.5, 19, 21.5 | Ledger basis, formulas, groups, comparison, drill-down, and reconciliation are specified. |
 | Balance Sheet | Complete | 3.2, 8.6, 19, 21.5 | As-of rules, retained earnings, balance equation, warnings, and comparison are specified. |
 | Trial Balance | Complete | 3.2, 8.7, 19, 21.5 | Opening/period/closing columns, formulas, zero-account behavior, and debit/credit checks are specified. |
-| TDS details | Complete | 4.6, 6, 8.8, 19, 21.7 | Customer deductions, company deductions, government deposits, payable/receivable, posting, allocations, reconciliation, filters, and details are specified. |
+| TDS details | Complete for agreed scope | 4.6, 6, 8.8, 19, 21.7, 31 | Customer deductions, company deductions, government deposits, payable/receivable, posting, filters, and details are implemented. Allocation and statutory reconciliation workflows are explicitly excluded. |
 | Download Excel | Complete | 11, 24 | Backend generation, workbook design, same-filter guarantee, security, empty/large exports, and lifecycle states are covered. |
 | Filters | Complete | 9, 19 | Shared behavior and an exact filter matrix for every dashboard/report screen are specified. |
 | All major scenarios | Complete for the defined first-release scope | 16, 21–28 | Accounting, GST, lifecycle, UI states, navigation, export, accessibility, performance, security, and production acceptance are covered. |
@@ -1179,12 +1371,12 @@ The design is complete, but these business choices cannot be safely guessed duri
 
 1. **Dashboard Income source:** recommended `issued invoices excluding GST`; alternatively include confirmed but uninvoiced orders through an explicit `includeUninvoicedOrders` filter. Never include both without deduplication.
 2. **Dashboard Expense wording:** recommended card title `Bills excluding GST`, with Inventory Purchases and Operating Expenses shown separately. Calling all inventory bills “Expense” would make the dashboard disagree with P&L.
-3. **Location accounting:** confirm whether journals are location-specific. If `journal_entries`/`journal_lines` do not store a reliable location dimension, location-filtered Trial Balance, P&L, and Balance Sheet must remain unavailable until that dimension is added.
+3. **Location accounting:** excluded from the agreed deliverable. Location-filtered statements require a future journal dimension.
 4. **GST first-release scope:** confirm whether only normal domestic taxable IGST/CGST/SGST is required, or whether RCM, exempt, nil-rated, zero-rated/export, and blocked input credit must be implemented immediately.
 5. **Accounting basis:** this document recommends accrual accounting. Cash-basis P&L is not included unless separately requested.
 6. **Inventory and COGS:** confirm whether COGS is posted at delivery/invoice time using actual stock cost, weighted average, or another valuation method. P&L gross profit cannot be authoritative until this is defined.
 7. **Legacy start date:** define the first reliable accounting/reporting date and how opening balances/legacy unposted documents will be migrated.
-8. **Comparative periods:** confirm whether comparison is required in the first release for both P&L and Balance Sheet or may follow the initial release.
+8. **Comparative periods:** excluded from the agreed deliverable and may be implemented later.
 
 ### 29.2 Explicitly out of initial scope unless approved
 
@@ -1196,5 +1388,200 @@ The design is complete, but these business choices cannot be safely guessed duri
 - Consolidation across multiple legal entities.
 - Statutory GST return filing/API submission; the design provides summaries, not a promise of GSTR filing compliance.
 - Automated year-end closing workflow.
+- Challan-to-individual-TDS-deduction allocation and partial-deposit compliance tracking.
+- Form 26AS/AIS reconciliation and TDS certificate/PAN/TAN workflows.
+- Location accounting dimensions and comparison-period reports.
 
 These exclusions prevent ambiguous implementation scope. The underlying component/report design can be extended for them later.
+
+## 30. Implementation Progress
+
+### Completed — Permission foundation
+
+- Added consolidated idempotent migration `20260821_finance_dashboard_reports.sql`.
+- Added canonical `finance_dashboard` and `finance_reports` permission resources.
+- Seeded `read=true` for Admin and Accountant and `read=false` for every other role.
+- Fixed unsupported `create/edit/delete` actions to false.
+- Exposed both virtual resources through the existing table/permission metadata response.
+- Reused the existing User Permissions editor instead of creating another permission system.
+- Disabled finance permissions in the editor for roles outside Admin and Accountant.
+- Added backend normalization so a modified request cannot grant finance access to another role.
+- Preserved an intentional Admin/Accountant read restriction on later permission saves.
+- Added focused permission tests for role normalization, defaults, denial, duplicate cleanup, and preservation.
+- Added frontend protected-route resource types for the two future component routes.
+
+### Verification completed
+
+- Backend TypeScript check passes.
+- Frontend TypeScript check passes.
+- Five focused finance permission tests pass.
+
+### Completed — Functional components
+
+- Added guarded `/finance/dashboard` and `/finance/reports` frontend routes.
+- Added permission-derived sidebar entries, including compatibility with saved legacy menu ordering.
+- Added `GET /finance/dashboard/summary`, returning all primary KPI values in one aggregate response.
+- Added selected-only `GET /finance/reports/:reportKey` for Sales Invoices, Supplier Bills, Inward GST, Outward GST, Trial Balance, Profit & Loss, Balance Sheet, and TDS Summary.
+- Added `GET /finance/dashboard/insights` for trends, ageing, GST position, cash/bank position, and journal exceptions without a browser-side API cascade.
+- Added server-generated filtered Excel workbooks through `GET /finance/reports/:reportKey/export` and wired browser download states.
+- Added supplier-bill `inventory`/`expense` persistence fields, direct-supplier/expense-account support, validation, and migration.
+- Added a partial posted-journal database index for the reporting hot path.
+- Added primary Finance Dashboard KPI request plus one independently recoverable insights request, with filters, Income/Expense/Net Profit, TDS, GST, ageing, trend, liquidity, and exception components.
+- Added one-request-per-selected-report workspace with date/search filters, server pagination, report-specific tables, totals, and reconciliation variance.
+- Added stale-response protection so rapid filter/report changes do not replace newer data.
+- Backend and frontend TypeScript checks pass after integration.
+
+### Deployment requirements and accounting boundaries
+
+- Run the single consolidated Finance Dashboard/Reports migration listed in section 31.6 before enabling the routes. The code does not run migrations automatically.
+- Financial statements are ledger-first and include posted journal entries only. Their accuracy therefore depends on complete invoice, bill, receipt, payment, TDS, and opening-balance posting.
+- Dashboard income/expense and all statement reports exclude GST by deriving values from account classification or taxable document values.
+- TDS Summary distinguishes customer-deducted TDS, company-deducted TDS and government challan deposits. Statutory allocation/reconciliation extensions are outside the agreed deliverable.
+- Supplier expense bills accept direct supplier and expense-account mapping, and the bill-entry form exposes Inventory/Expense type, Laptop/Mobile category and Expense Ledger fields.
+- GST reports are summaries from stored document tax fields and are not statutory return-filing integrations.
+
+## 31. Agreed Implementation Scope and Final Status — 2026-08-21
+
+### 31.1 Agreed scope
+
+The agreed deliverable is the Chart of Accounts–based Finance Dashboard and Finance Reports workspace:
+
+- Total Receivables and Total Payables.
+- Net Sales and Supplier Bills excluding GST.
+- Inventory Purchases separated from Operating Expense Bills.
+- Posted-ledger Income, Expense and Net Profit/Loss.
+- Sales Invoices and Supplier Bills reports.
+- Inward GST and Outward GST summaries.
+- Profit & Loss, Balance Sheet and Trial Balance.
+- TDS deducted by customers, TDS deducted by the company, TDS Receivable and TDS Payable.
+- TDS government challan/deposit entry and reporting.
+- Shared relevant filters, URL persistence, server pagination and backend Excel export.
+- Admin/Accountant-only sidebar, route, API and export access.
+- Responsive Dashboard and Reports components with loading, empty and error states.
+
+### 31.2 Explicitly not required for this deliverable
+
+The following compliance and accounting-dimension extensions are not part of the agreed Dashboard/Reports scope and are not completion blockers:
+
+- Challan-to-individual-TDS-deduction allocation.
+- Partial-deposit compliance and statutory overdue tracking.
+- Form 26AS/AIS reconciliation.
+- TDS certificate and PAN/TAN workflow.
+- Location accounting dimensions and location-filtered financial statements.
+- Comparison-period reporting.
+
+These may be implemented later as separate statutory-compliance or accounting-dimension modules. They do not belong directly inside Chart of Accounts.
+
+### 31.3 Completed implementation
+
+- Added guarded `/finance/dashboard` and `/finance/reports` routes and permission-derived sidebar entries.
+- Added `finance_dashboard` and `finance_reports` permission resources. Admin and Accountant may receive read access; other roles are rejected by frontend and backend guards.
+- Dashboard cards use eligible invoice and bill documents excluding GST. Posted Income/Expense remain separately visible for P&L reconciliation.
+- Inventory Purchases and Operating Expense Bills are separately calculated and displayed.
+- Added trends, ageing, GST position, Cash/Bank position, TDS position and journal-exception widgets.
+- Dashboard summary and insights use independent stale-request counters and do not issue one API request per KPI.
+- Added Sales Invoices, Supplier Bills, Inward GST, Outward GST, P&L, Balance Sheet, Trial Balance and TDS reports.
+- Document report totals are independent all-matching-row aggregates rather than current-page totals.
+- Added server-backed date, search, status, invoice type, bill type, Laptop/Mobile expense category and TDS direction filters.
+- Dashboard KPI cards drill into the relevant report. Dashboard and report filter state is persisted in URL query parameters.
+- P&L and Balance Sheet use grouped statement presentation. Trial Balance retains opening, movement and closing debit/credit columns.
+- Added backend-generated Excel workbooks using identical applied filters, with formula-injection protection.
+- Supplier Bill entry supports Inventory/Expense type, conditional Laptop/Mobile category, Expense Ledger selection, conditional product validation and matching backend validation.
+- Added `finance_tds_deposits` as the government challan source with challan, deposit date, FY, quarter, section, CIN, BSR, payment reference and separated tax/interest/fee/penalty values.
+- Posting a TDS deposit atomically creates the challan, bank-credit transaction, posted balanced journal, audit event and bank-balance update.
+- TDS tax debits `SYS-TDS-PAYABLE`; interest, late fee and penalty debit dedicated expense ledgers; the complete payment credits Bank.
+- TDS reports provide Deducted by Customers, Deducted by Us and Deposited by Us views. The Dashboard includes period deposits and ledger-derived payable/receivable balances.
+
+### 31.4 Performance and responsive-design hardening
+
+- Dashboard data is intentionally split into only two independently recoverable requests: one KPI summary request and one insights request. It does not make an API call per card or widget.
+- Dashboard insight queries select only the invoice and bill columns required for calculations instead of loading complete document rows and unrelated JSON payloads.
+- Reporting hot paths have partial indexes for posted journals and active invoice/bill effective dates (`COALESCE(document_date, created_date)`).
+- Each selected report uses one server request, server pagination, stale-response protection and debounced search so rapid filter changes cannot create a request cascade or render older results.
+- Excel export executes one filtered report query with a 10,000-row safety limit instead of repeatedly recalculating report totals page by page. A truncated export is explicitly identified in the workbook so the user can refine filters.
+- Report navigation becomes a horizontally scrollable tab strip on small screens and a vertical report menu on large screens.
+- Filters use a single-column mobile layout, then progressively expand from the `sm` breakpoint. Tables retain horizontal scrolling so accounting columns are not compressed or hidden.
+- Statement report rendering is memoized, preventing a large Trial Balance, P&L or Balance Sheet from rendering again while the user is only typing or changing draft filters.
+- Dashboard date controls use a full-width single-column mobile layout, touch-safe 40-pixel controls, a three-column tablet layout and a content-width desktop layout.
+- Pagination stacks on mobile, action controls retain touch-safe widths, and the TDS deposit dialog uses a full-screen mobile layout with a bounded desktop modal.
+- Dashboard cards and charts use responsive grids with explicit loading, empty and recoverable error states.
+
+### 31.5 Verification
+
+- Backend TypeScript check passes.
+- Backend production build passes.
+- Frontend TypeScript check passes.
+- The compiled backend regression suite passes all 141 tests across 34 top-level suites, including existing invoice, supplier-bill allocation, On Account, journal, delivery-challan, service-invoice and stock-policy boundaries.
+- All five focused finance-permission tests are included in the passing compiled regression suite. Running the same sources through `tsx` remains environment-blocked by Windows `uv_os_get_passwd ENOMEM`, so compiled JavaScript was used to verify the complete suite without the failing loader.
+- The optional Expense Ledger lookup is failure-isolated: an unavailable or unauthorized finance-account request cannot prevent the established Inventory Bill form from opening or being used.
+- Final scenario audit confirms January–March defaults use the prior April financial-year start; invalid/reversed dates are rejected; cancelled and void documents are consistently excluded; and legacy invoice totals fall back from `totalorderamount` to `invoiceamount`.
+- TDS deposit posting now verifies that FY and quarter match Deposit Date, the selected TDS Section is active and belongs to the session organization, and the payment account is an active Bank account in the same organization.
+- A failed insights request is presented as a recoverable warning with retry and is not displayed as legitimate zero-valued financial data.
+- Frontend Vite bundling and rendered-browser validation are blocked in the current desktop environment by an esbuild parent-directory access error. This is an environment verification limitation, not additional product scope.
+
+### 31.6 Deployment requirements
+
+Run this single consolidated idempotent migration before enabling the pages:
+
+1. `20260821_finance_dashboard_reports.sql`
+
+This one file contains the permission seed, supplier expense-bill columns, TDS government-deposit table/system accounts and all Dashboard/Reports performance indexes in dependency-safe order. The earlier four separate migration files were removed so this feature has one deployment unit.
+
+The codebase does not automatically apply these migrations through the UI. Financial statements remain ledger-first and include posted journal entries only, so production accuracy depends on complete opening balances and source-document posting.
+
+## 32. Chart of Accounts Integration — Fully Implemented
+
+The Finance Dashboard and Finance Reports are integrated with the existing Chart of Accounts and posted Journal foundation. The implementation deliberately separates ledger balances from operational document analysis so financial statements remain auditable while invoice and GST reports retain document-level information.
+
+### 32.1 Dashboard Chart of Accounts mapping
+
+| Dashboard component | Accounting source | Calculation basis |
+|---|---|---|
+| Total Receivables | `accounts_receivable` account subtype | Posted Journal debits minus credits through the selected To date |
+| Total Payables | `accounts_payable` account subtype | Posted Journal credits minus debits through the selected To date |
+| Posted Income | All active Income accounts | Posted period credits minus debits |
+| Posted Expense | All active Expense accounts | Posted period debits minus credits |
+| Net Profit/Loss | Income and Expense accounts | Posted Income minus Posted Expense |
+| TDS Receivable | `tds_receivable` account subtype | Posted debit balance through the selected To date |
+| TDS Payable | `tds_payable` account subtype | Posted credit balance through the selected To date |
+| Cash and Bank position | Bank/Cash accounts linked to finance accounts | Current balances for the session organization |
+| Monthly Income versus Expense | Income and Expense accounts | Posted Journal movement grouped by accounting month |
+| Accounting Exceptions | Journal Entries and Journal Lines | Draft journals and any posted debit/credit variance |
+
+Net Sales, Supplier Bills, Inventory Purchases, Operating Expense Bills and GST widgets are document-derived analytical metrics. They are shown separately from posted-ledger Income and Expense so users can identify unposted or incorrectly mapped source documents instead of silently treating documents as ledger entries.
+
+### 32.2 Reports Chart of Accounts mapping
+
+| Report | Chart of Accounts usage |
+|---|---|
+| Profit & Loss | Groups posted period movements for every Income and Expense account and calculates Net Profit/Loss |
+| Balance Sheet | Groups closing balances for Asset, Liability and Equity accounts and includes calculated Current Earnings |
+| Trial Balance | Displays every Chart of Accounts ledger with Opening Debit/Credit, Period Debit/Credit and Closing Debit/Credit |
+| TDS Summary | Reconciles TDS transaction activity with `SYS-TDS-RECEIVABLE` and `SYS-TDS-PAYABLE` balances |
+| TDS Government Deposits | Debits `SYS-TDS-PAYABLE`, debits dedicated charge Expense accounts and credits the selected Bank finance account |
+| Supplier Expense Bills | Stores the selected Expense Ledger through `expenseaccountid` for accounting classification |
+
+Sales Invoices, Supplier Bills, Inward GST and Outward GST remain document-level reports because invoice number, party, GSTIN, taxable value, tax components, settlement and document status are not Chart of Accounts attributes. Their totals exclude cancelled and void documents and their taxable values exclude GST.
+
+### 32.3 TDS posting accounts
+
+- Deposited tax debits `SYS-TDS-PAYABLE`; therefore only the tax portion reduces the TDS liability.
+- Interest debits `SYS-TDS-INTEREST-EXPENSE`.
+- Late fee debits `SYS-TDS-LATE-FEE-EXPENSE`.
+- Penalty debits `SYS-TDS-PENALTY-EXPENSE`.
+- The complete challan payment credits the selected Bank account.
+- The resulting Journal is balanced, posted and linked to the TDS deposit and Bank transaction in the same database transaction.
+
+### 32.4 Accounting and reconciliation boundaries
+
+- Only posted Journal Entries contribute to the Dashboard ledger metrics, P&L, Balance Sheet and Trial Balance.
+- Draft, reversed or otherwise unposted Journals do not affect financial statements.
+- Receivables, Payables, TDS Receivable and TDS Payable are as-of balances through the selected To date.
+- Income, Expense and Net Profit/Loss are movements within the selected From/To period.
+- Document reports and GST summaries use the selected document period and retain server-side filters and pagination.
+- A difference between document-derived totals and posted-ledger totals indicates an unposted, incomplete or incorrectly classified accounting source and must not be hidden by the Dashboard.
+- Opening balances and complete source-document posting are required before production financial statements can be considered final.
+
+### 32.5 Final implementation statement
+
+Within the agreed scope, the Finance Dashboard and Finance Reports are fully implemented with Chart of Accounts integration, Admin/Accountant permissions, filters, responsive UI, optimized API behavior, Excel export, supplier expense classification and TDS government-deposit accounting. The statutory extensions explicitly excluded in section 31.2 remain separate future modules and are not required for completion of these two components.

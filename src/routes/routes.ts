@@ -78,6 +78,8 @@ import { picklistConfigController } from "../controller/picklistConfig.controlle
 import { financeAccountController } from "../controller/financeAccount.controller.js";
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
+import { financeDashboardReportsController } from "../controller/financeDashboardReports.controller.js";
+import { tdsDepositController } from "../controller/tdsDeposit.controller.js";
 import {
     createBankCashAccountSchema,
     createChartAccountSchema,
@@ -93,7 +95,7 @@ import {
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
 } from "../schemas/finance.schema.js";
-import { requireDeliveryChallanPermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
+import { requireDeliveryChallanPermission, requireFinanceModulePermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -665,6 +667,44 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/journals/:journalId/reverse',
         { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] },
         journalController.reversePosted
+    );
+
+    // Optimized Finance Dashboard and Reports. Dashboard KPIs are returned by
+    // one aggregate request; reports load only the selected statement.
+    fastify.get(
+        '/finance/dashboard/summary',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] },
+        financeDashboardReportsController.getDashboardSummary
+    );
+    fastify.get(
+        '/finance/dashboard/insights',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] },
+        financeDashboardReportsController.getDashboardInsights
+    );
+    fastify.get(
+        '/finance/dashboard/ageing-details',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] },
+        financeDashboardReportsController.getDashboardAgeingDetails
+    );
+    fastify.get(
+        '/finance/reports/:reportKey',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] },
+        financeDashboardReportsController.getReport
+    );
+    fastify.get(
+        '/finance/reports/:reportKey/export',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] },
+        financeDashboardReportsController.exportReport
+    );
+    fastify.get(
+        '/finance/tds-deposits',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] },
+        tdsDepositController.list
+    );
+    fastify.post(
+        '/finance/tds-deposits',
+        { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] },
+        tdsDepositController.create
     );
 
     // TDS Section Master foundation

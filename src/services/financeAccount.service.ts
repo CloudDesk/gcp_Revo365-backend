@@ -129,7 +129,10 @@ const ensureSystemAccounts = async (
       ($1, 'SYS-CUSTOMER-ADVANCE', 'Customer Advances', 'liability', 'customer_advance', 'INR', TRUE, 'active', $2, $2),
       ($1, 'SYS-SUPPLIER-ADVANCE', 'Supplier Advances', 'asset', 'supplier_advance', 'INR', TRUE, 'active', $2, $2),
       ($1, 'SYS-TDS-RECEIVABLE', 'TDS Receivable', 'asset', 'tds_receivable', 'INR', TRUE, 'active', $2, $2),
-      ($1, 'SYS-TDS-PAYABLE', 'TDS Payable', 'liability', 'tds_payable', 'INR', TRUE, 'active', $2, $2)
+      ($1, 'SYS-TDS-PAYABLE', 'TDS Payable', 'liability', 'tds_payable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-INTEREST-EXPENSE', 'TDS Interest Expense', 'expense', 'tds_interest', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-LATE-FEE-EXPENSE', 'TDS Late Fee Expense', 'expense', 'tds_late_fee', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-PENALTY-EXPENSE', 'TDS Penalty Expense', 'expense', 'tds_penalty', 'INR', TRUE, 'active', $2, $2)
     ON CONFLICT DO NOTHING
     `,
     [organizationId, actor]
@@ -681,7 +684,6 @@ export module financeAccountService {
       ) ledger_totals ON TRUE
       WHERE f.id = $1
         AND f.organizationid = $2
-        AND f.isusercreatedchartaccount = TRUE
       LIMIT 1
       `,
       [accountId, organizationId]
@@ -730,7 +732,6 @@ export module financeAccountService {
        FROM finance_accounts
        WHERE id = $1
          AND organizationid = $2
-         AND isusercreatedchartaccount = TRUE
        LIMIT 1`,
       [accountId, organizationId]
     );

@@ -66,6 +66,8 @@ import {
   getBillGstSummary,
   getInvoiceGstSummary,
   parseGstMoney,
+  resolveBillGst,
+  resolveInvoiceDocumentType,
   resolveInvoiceGst,
 } from "../utils/finance/gstSummary.utils.js";
 import {
@@ -688,6 +690,29 @@ describe("Chart of Accounts Phase 2", () => {
     );
   });
 
+  test("classifies interstate supplier Bill tax as IGST from GSTIN state codes", () => {
+    assert.deepEqual(
+      resolveBillGst({
+        payabletaxamount: 103680,
+        cgst: 9,
+        sgst: 9,
+        suppliergstin: "29ABCDE1234F1Z5",
+        destinationgstin: "33ABCDE1234F1Z5",
+      }),
+      { igst: 103680, cgst: 0, sgst: 0, total: 103680 }
+    );
+    assert.deepEqual(
+      resolveBillGst({
+        payabletaxamount: 126000,
+        cgst: 9,
+        sgst: 9,
+        suppliergstin: "33AAGCM7654K1Z8",
+        destinationgstin: "33ABCDE1234F1Z5",
+      }),
+      { igst: 0, cgst: 63000, sgst: 63000, total: 126000 }
+    );
+  });
+
   test("reads only the first amount from legacy formatted tax text", () => {
     assert.equal(parseGstMoney("₹6,896.55 (CGST ₹3,448.28)"), 6896.55);
     assert.deepEqual(
@@ -698,6 +723,69 @@ describe("Chart of Accounts Phase 2", () => {
       }),
       { igst: 0, cgst: 3448.28, sgst: 3448.27, total: 6896.55 }
     );
+  });
+
+  test("combines product and service GST stored in one sales invoice", () => {
+    const invoice = {
+      invoicefor: "service",
+      totalorderamount: 128608.2,
+      // Legacy top-level tax contains only the product tax and must not win.
+      taxamount: 17638.2,
+      invoicedata: {
+        items: [{ productname: "Lenovo IdeaPad" }],
+        total: 115628.2,
+        taxamount: 17638.2,
+        cgst: 9,
+        sgst: 9,
+        igst: 0,
+      },
+      servicedata: {
+        items: [{ description: "service" }],
+        total: 12980,
+        taxamount: 1980,
+        cgst: 9,
+        sgst: 9,
+        igst: 0,
+      },
+    };
+
+    assert.deepEqual(resolveInvoiceGst(invoice), {
+      igst: 0,
+      cgst: 9809.1,
+      sgst: 9809.1,
+      total: 19618.2,
+    });
+    assert.equal(resolveInvoiceDocumentType(invoice), "product + service");
+    assert.equal(toMoney(invoice.totalorderamount - resolveInvoiceGst(invoice).total), 108990);
+  });
+
+  test("supports service-only and interstate mixed sales invoices", () => {
+    assert.deepEqual(
+      resolveInvoiceGst({
+        invoicefor: "service",
+        invoicedata: { items: [], taxamount: 0 },
+        servicedata: {
+          items: [{ description: "repair" }],
+          taxamount: 1800,
+          cgst: 9,
+          sgst: 9,
+        },
+      }),
+      { igst: 0, cgst: 900, sgst: 900, total: 1800 }
+    );
+
+    const interstate = {
+      invoicefor: "service",
+      invoicedata: { items: [{}], taxamount: 1800, igst: 18, cgst: 0, sgst: 0 },
+      servicedata: { items: [{}], taxamount: 900, igst: 18, cgst: 0, sgst: 0 },
+    };
+    assert.deepEqual(resolveInvoiceGst(interstate), {
+      igst: 2700,
+      cgst: 0,
+      sgst: 0,
+      total: 2700,
+    });
+    assert.equal(resolveInvoiceDocumentType(interstate), "product + service");
   });
 });
 

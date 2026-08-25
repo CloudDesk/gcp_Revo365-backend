@@ -1,4 +1,33 @@
 import { query } from "../database/postgres.js";
+export const requireFinanceModulePermission = (objectAPI, permission = "read") => {
+    return async (request, reply) => {
+        const role = String(request.session?.role || "").trim().toLowerCase();
+        if (!["admin", "accountant"].includes(role)) {
+            return reply.status(403).send({
+                success: false,
+                error: {
+                    code: "FINANCE_MODULE_ACCESS_DENIED",
+                    message: "Finance Dashboard and Reports are restricted to Admin and Accountant roles.",
+                },
+            });
+        }
+        const result = await query(`SELECT item->'permissions' AS permissions
+       FROM permissions p
+       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.permissionset, '[]'::jsonb)) item
+       WHERE LOWER(TRIM(p.role)) = $1
+         AND item->>'objectAPI' = $2
+       LIMIT 1`, [role, objectAPI]);
+        if (result.rows[0]?.permissions?.[permission] === true)
+            return;
+        return reply.status(403).send({
+            success: false,
+            error: {
+                code: "FINANCE_MODULE_ACCESS_DENIED",
+                message: `You do not have ${permission} permission for this finance module.`,
+            },
+        });
+    };
+};
 export const requireJournalPermission = (permission) => {
     return async (request, reply) => {
         const role = String(request.session?.role || "").trim().toLowerCase();
