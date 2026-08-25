@@ -471,6 +471,49 @@ export module journalService {
        ORDER BY createddate DESC, id DESC`,
       [organizationId, journalId]
     );
+    const transferResult = await query(
+      `SELECT source_ref.id AS sourcereferenceid,
+              source_ref.referencenumber AS sourcereferencenumber,
+              source_ref.partyid AS sourcecustomerid,
+              COALESCE(NULLIF(CONCAT_WS(' ', source_user.firstname, source_user.lastname), ''), source_user.useremail, 'Customer ' || source_user.id::text) AS sourcecustomername,
+              destination_ref.id AS destinationreferenceid,
+              destination_ref.referencenumber AS destinationreferencenumber,
+              destination_ref.partyid AS destinationcustomerid,
+              COALESCE(NULLIF(CONCAT_WS(' ', destination_user.firstname, destination_user.lastname), ''), destination_user.useremail, 'Customer ' || destination_user.id::text) AS destinationcustomername,
+              destination_ref.originalamount AS transferamount,
+              destination_ref.currencycode,
+              destination_ref.status AS destinationstatus,
+              destination_ref.replacementreferenceid,
+              replacement_ref.referencenumber AS replacementreferencenumber,
+              destination_ref.reversaljournalentryid,
+              source_movement.id AS sourcemovementid,
+              destination_movement.id AS destinationmovementid
+       FROM on_account_references destination_ref
+       JOIN on_account_references source_ref
+         ON source_ref.id = destination_ref.transferredfromreferenceid
+        AND source_ref.organizationid = destination_ref.organizationid
+       JOIN users source_user ON source_user.id = source_ref.partyid
+       JOIN users destination_user ON destination_user.id = destination_ref.partyid
+       LEFT JOIN on_account_references replacement_ref
+         ON replacement_ref.id = destination_ref.replacementreferenceid
+        AND replacement_ref.organizationid = destination_ref.organizationid
+       LEFT JOIN on_account_movements source_movement
+         ON source_movement.organizationid = destination_ref.organizationid
+        AND source_movement.onaccountreferenceid = source_ref.id
+        AND source_movement.journalentryid = $2
+        AND source_movement.movementtype = 'journal_transfer_out'
+       LEFT JOIN on_account_movements destination_movement
+         ON destination_movement.organizationid = destination_ref.organizationid
+        AND destination_movement.onaccountreferenceid = destination_ref.id
+        AND destination_movement.journalentryid = $2
+        AND destination_movement.movementtype = 'journal_transfer_in'
+       WHERE destination_ref.organizationid = $1
+         AND destination_ref.sourcejournalentryid = $2
+         AND destination_ref.sourcetype = 'on_account_transfer'
+       LIMIT 1`,
+      [organizationId, journalId]
+    );
+    const transfer = transferResult.rows[0];
     return {
       ...serializeHeader(headerResult.rows[0]),
       lines: lineResult.rows.map((row: any) => ({
@@ -489,6 +532,18 @@ export module journalService {
           : {},
         createddate: Number(row.createddate),
       })),
+      transfer: transfer ? {
+        ...transfer,
+        sourcereferenceid: Number(transfer.sourcereferenceid),
+        sourcecustomerid: Number(transfer.sourcecustomerid),
+        destinationreferenceid: Number(transfer.destinationreferenceid),
+        destinationcustomerid: Number(transfer.destinationcustomerid),
+        transferamount: Number(transfer.transferamount),
+        replacementreferenceid: transfer.replacementreferenceid == null ? null : Number(transfer.replacementreferenceid),
+        reversaljournalentryid: transfer.reversaljournalentryid == null ? null : Number(transfer.reversaljournalentryid),
+        sourcemovementid: transfer.sourcemovementid == null ? null : Number(transfer.sourcemovementid),
+        destinationmovementid: transfer.destinationmovementid == null ? null : Number(transfer.destinationmovementid),
+      } : null,
     };
   };
 

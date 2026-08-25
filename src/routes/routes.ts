@@ -670,12 +670,22 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.post(
         '/finance/journals/transfer-customer-on-account',
-        { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(postCustomerTransferSchema)] },
+        { preHandler: [getSession, requireJournalPermission('transfer'), validateRequestBody(postCustomerTransferSchema)] },
         journalController.postCustomerTransfer
+    );
+    fastify.get(
+        '/finance/journals/customer-on-account-transfer/context',
+        { preHandler: [getSession, requireJournalPermission('transfer')] },
+        journalController.getCustomerTransferContext
+    );
+    fastify.get(
+        '/finance/journals/:journalId/customer-on-account-replacement/context',
+        { preHandler: [getSession, requireJournalPermission('replace')] },
+        journalController.getCustomerTransferReplacementContext
     );
     fastify.post(
         '/finance/journals/replace-customer-on-account-transfer/:journalId',
-        { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(replaceCustomerTransferSchema)] },
+        { preHandler: [getSession, requireJournalPermission('replace'), validateRequestBody(replaceCustomerTransferSchema)] },
         journalController.replaceCustomerTransfer
     );
 

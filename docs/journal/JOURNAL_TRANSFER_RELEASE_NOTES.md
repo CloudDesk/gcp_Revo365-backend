@@ -1,52 +1,68 @@
-# Revo365 On-Account Transfer Integration Release Notes
+# Journal and On Account Integration Release Notes
 
-## Features Delivered
-- **Phase 1-4:** Standardized Journal architecture, movement auditing, and baseline integration framework.
-- **Phase 5:** Support for complex Invoice Allocations involving Transferred On-Account balances. Re-routing Customer Statements to transparently display transferred amounts in the statement timeline without duplicating entries.
-- **Phase 6:** Safe "Replace with Payment" workflow, allowing Customer On-Account transfers to be systematically unwound, un-clearing downstream invoice allocations, and seamlessly restoring the source customer balance via replacing the transfer with an actual collected bank receipt.
+## Delivered scope
 
-## Migration & Deployment Strategy
-The backend code requires no database schema changes (using existing JSONB structures). However, you **must run the regression tests** and create a full database snapshot immediately prior to deployment.
+- Guided Customer-to-Customer transfer using an eligible, versioned On Account reference.
+- Balanced, party-aware system Journal with paired immutable transfer movements.
+- Separate Manual, System-Generated, and All Journal views.
+- Cross-links among Journal details, source/destination On Account references, movements, and replacement records.
+- Destination-customer Invoice allocation through the existing On Account/TDS flow.
+- Explicit replacement with a later destination-customer Bank-origin reference.
+- Atomic un-clearing of only transfer-funded Invoice allocations, paired replacement movements, restored source availability, idempotency, and audit links.
+- Customer Statement support for original and compensating transfer movements.
 
-```bash
-# Snapshot the DB
-pg_dump -U postgres -d revo365 -Fc > pre_release_backup.dump
-```
+## Required migration
 
-## Backout / Rollback Procedure
-If critical production flaws are found post-deployment:
-1. Revert backend and frontend to the previous commit tags.
-2. The core tables `journal_entries`, `journal_lines`, `on_account_references`, `on_account_movements`, and `finance_audit_events` are append-only or version-controlled. If corrupted transactions occurred during the bad deployment, the safest and only supported rollback mechanism is restoring from the `pre_release_backup.dump`.
-3. If minimal bad data was created, an accountant can manually invoke "Reverse Journal" on any created transfer to neutralize its effect on the ledgers, but manual DB updates should be avoided due to the interconnected nature of Invoice allocations and TDS calculations.
+Run all migrations before deploying application code. The integration specifically requires:
 
-## Monitoring & Integrity Queries
+- `20260819_journal_on_account_phase2.sql`
+- `20260825_journal_on_account_transfer_contract.sql`
 
-### 1. Monitor Transfer Volume
-Run this query to track how many transfers are occurring:
+The latter expands the immutable movement constraint and adds the Journal request-idempotency column/index. Do not deploy the new backend before this migration is applied.
+
+## Pre-release procedure
+
+1. Take and verify a restorable database backup.
+2. Run `npm run migrate` using the target release artifact and target environment configuration.
+3. Run `npm run verify:journal-on-account-baseline`.
+4. Run backend tests/build and frontend type-check/build.
+5. Complete the approved end-to-end and negative manual test matrix.
+
+## Backout procedure
+
+If the migration succeeds but application validation fails, stop transfer/replacement access and redeploy the previous application build. Do not drop the additive column, index, or expanded constraint while transfer records may exist. If a posted financial effect is incorrect, do not use a generic Journal reverse or manual SQL update; isolate the organization and record IDs, preserve evidence, and restore the approved backup or use a reviewed compensating-accounting procedure.
+
+## Monitoring queries
+
+Run the verifier first. For focused operational checks:
+
 ```sql
-SELECT
-  COUNT(*) as transfer_count,
-  SUM(amount) as total_volume_transferred
-FROM on_account_movements
-WHERE movementtype = 'journal_transfer_out';
+SELECT j.id, j.journalnumber, SUM(l.debitamount) AS debit, SUM(l.creditamount) AS credit
+FROM journal_entries j
+JOIN journal_lines l ON l.journalentryid = j.id
+WHERE j.sourcetype IN ('on_account_transfer', 'on_account_transfer_reversal')
+GROUP BY j.id, j.journalnumber
+HAVING SUM(l.debitamount) <> SUM(l.creditamount);
 ```
 
-### 2. Orphaned Reversal Check (Data Integrity)
-Run this query to ensure no Transfer Reversals were orphaned without updating the replacement reference:
 ```sql
-SELECT oam.id, oam.journalentryid, oar.status, oar.replacementreferenceid
-FROM on_account_movements oam
-JOIN on_account_references oar ON oam.onaccountreferenceid = oar.id
-WHERE oam.movementtype = 'journal_transfer_reversal'
-AND (oar.status != 'reversed' OR oar.replacementreferenceid IS NULL);
+SELECT reversal.id, reversal.journalnumber
+FROM journal_entries reversal
+LEFT JOIN on_account_references destination
+  ON destination.organizationid = reversal.organizationid
+ AND destination.reversaljournalentryid = reversal.id
+WHERE reversal.sourcetype = 'on_account_transfer_reversal'
+  AND (destination.status <> 'reversed' OR destination.replacementreferenceid IS NULL);
 ```
-**Expected Result:** 0 rows. Any rows returned indicate a broken transaction boundary.
 
-## Post-Release Verification Checklist
-- [ ] Log in as an Administrator.
-- [ ] Create a Draft manual journal and post it successfully.
-- [ ] Process a test Customer Advance Receipt.
-- [ ] Transfer ₹10 of the Advance to another Customer.
-- [ ] Navigate to the destination customer and verify ₹10 is available.
-- [ ] Allocate the ₹10 to an open Invoice.
-- [ ] View the Customer Statement for both the Source and Destination customers to ensure the transfer appears correctly and the running balances are accurate.
+Both queries must return zero rows.
+
+## Post-release reconciliation
+
+- Source availability decreases once on transfer and is restored once on replacement.
+- Destination transferred reference is owned by the selected destination Customer.
+- Transfer and replacement Journals each balance to zero.
+- Cash/Bank transaction count and balance do not change during transfer or replacement.
+- The selected later Bank-origin reference remains unchanged and available.
+- Reversed allocations remain in history; affected Invoices reopen by the exact settlement funded by the transferred reference.
+- Customer statements show the original transfer and compensating replacement with correct signs.

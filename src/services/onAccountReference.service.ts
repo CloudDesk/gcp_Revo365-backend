@@ -61,6 +61,7 @@ const serializeReference = (row: any) => ({
   createddate: Number(row.createddate || 0),
   modifieddate: Number(row.modifieddate || 0),
   transferredfromreferenceid: row.transferredfromreferenceid ? Number(row.transferredfromreferenceid) : null,
+  transferredtoreferenceid: row.transferredtoreferenceid ? Number(row.transferredtoreferenceid) : null,
   replacementreferenceid: row.replacementreferenceid ? Number(row.replacementreferenceid) : null,
   reversaljournalentryid: row.reversaljournalentryid ? Number(row.reversaljournalentryid) : null,
   banktransaction: row.banktransactionid
@@ -150,6 +151,11 @@ const buildReferenceSelect = (conditions: string[]) => `
   )
   SELECT
     r.*,
+    (SELECT transferred.id
+       FROM on_account_references transferred
+      WHERE transferred.organizationid = r.organizationid
+        AND transferred.transferredfromreferenceid = r.id
+      ORDER BY transferred.id DESC LIMIT 1) AS transferredtoreferenceid,
     COALESCE(
       NULLIF(CONCAT_WS(' ', NULLIF(TRIM(u.firstname), ''), NULLIF(TRIM(u.lastname), '')), ''),
       NULLIF(TRIM(u.useremail), ''),
