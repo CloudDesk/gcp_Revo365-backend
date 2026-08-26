@@ -1,9 +1,29 @@
-import { FinanceValidationError, nowEpoch } from "../utils/finance/finance.utils.js";
+import { FinanceValidationError, nowEpoch, toMoney } from "../utils/finance/finance.utils.js";
 import { lockOnAccountReferences, allocateOnAccountReferenceNumber } from "./onAccountFoundation.service.js";
 import { normalizeOnAccountPartyType } from "../utils/finance/onAccount.utils.js";
 
 type QueryClient = {
   query: (text: string, values?: unknown[]) => Promise<{ rows: any[] }>;
+};
+
+export const requireTransferAmount = (value: unknown) => {
+  const parsed = Number(value);
+  const amount = toMoney(value, "amount");
+  if (amount <= 0) {
+    throw new FinanceValidationError(
+      "Transfer amount must be greater than zero.",
+      400,
+      "TRANSFER_AMOUNT_INVALID"
+    );
+  }
+  if (Math.abs(parsed - amount) > 0.0000001) {
+    throw new FinanceValidationError(
+      "Transfer amount cannot have more than two decimal places.",
+      400,
+      "TRANSFER_AMOUNT_PRECISION"
+    );
+  }
+  return amount;
 };
 
 /**
@@ -15,22 +35,46 @@ export const lockAndValidateSourceReference = async (
   organizationId: number,
   sourceReferenceId: number,
   expectedCustomerId: number,
+  expectedVersion: number,
   expectedCurrency: string,
   transferAmount: number
 ) => {
   const [sourceRef] = await lockOnAccountReferences(client, organizationId, [sourceReferenceId]);
   
   if (sourceRef.partytype !== 'customer' || Number(sourceRef.partyid) !== expectedCustomerId) {
-    throw new FinanceValidationError("Source reference does not belong to the selected customer.");
+    throw new FinanceValidationError(
+      "Source reference does not belong to the selected customer.",
+      400,
+      "TRANSFER_SOURCE_CUSTOMER_MISMATCH"
+    );
+  }
+  if (Number(sourceRef.version) !== expectedVersion) {
+    throw new FinanceValidationError(
+      "The source On Account reference changed after you opened it. Refresh and try again.",
+      409,
+      "TRANSFER_SOURCE_STALE"
+    );
   }
   if (sourceRef.currencycode !== expectedCurrency) {
-    throw new FinanceValidationError(`Transfer must be in the same currency (${expectedCurrency}).`);
+    throw new FinanceValidationError(
+      `The source reference currency is ${sourceRef.currencycode}, not ${expectedCurrency}. Refresh and try again.`,
+      409,
+      "TRANSFER_CURRENCY_MISMATCH"
+    );
   }
   if (Number(sourceRef.availableamount) < transferAmount) {
-    throw new FinanceValidationError("Source reference has insufficient available balance.");
+    throw new FinanceValidationError(
+      "Source reference has insufficient available balance.",
+      409,
+      "TRANSFER_INSUFFICIENT_AVAILABLE"
+    );
   }
   if (['reversed', 'fully_applied'].includes(sourceRef.status)) {
-    throw new FinanceValidationError("Source reference is no longer available for transfer.");
+    throw new FinanceValidationError(
+      "Source reference is no longer available for transfer.",
+      409,
+      "TRANSFER_SOURCE_UNAVAILABLE"
+    );
   }
 
   return sourceRef;
@@ -158,5 +202,5 @@ export const executeTransferInbound = async (
       `${idempotencyKey}-in`, description, actor, now
     ]
   );
-  return movementResult.rows[0].id;
+  return Number(movementResult.rows[0].id);
 };

@@ -1,5 +1,5 @@
 import { journalService } from "../services/journal.service.js";
-import { executeCustomerTransferOrchestration, replaceCustomerOnAccountTransfer } from "../services/journalTransfer.service.js";
+import { executeCustomerTransferOrchestration, getCustomerTransferContext as loadCustomerTransferContext, getCustomerTransferReplacementContext as loadCustomerTransferReplacementContext, replaceCustomerOnAccountTransfer } from "../services/journalTransfer.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
 
 export module journalController {
@@ -90,6 +90,22 @@ export module journalController {
         message: "Customer on-account transfer posted successfully.",
         data: await executeCustomerTransferOrchestration(request),
       });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getCustomerTransferContext = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await loadCustomerTransferContext(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getCustomerTransferReplacementContext = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await loadCustomerTransferReplacementContext(request) });
     } catch (error) {
       return sendFinanceError(reply, error);
     }

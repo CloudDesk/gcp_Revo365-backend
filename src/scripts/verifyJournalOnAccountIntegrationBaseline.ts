@@ -15,6 +15,7 @@ const expectedColumns: Record<string, string[]> = {
     "relatedjournalentryid",
     "reversalofid",
     "version",
+    "requestidempotencykey",
   ],
   journal_lines: [
     "id",
@@ -71,6 +72,7 @@ const requiredSchemaVersions = [
   "20260818_journal_post_reverse_v1",
   "20260818_journal_related_accounting_entry_v1",
   "20260818_on_account_phase1_foundation_v1",
+  "20260825_journal_on_account_transfer_contract_v1",
 ];
 
 const approvedJournalPermissions = [
@@ -201,23 +203,61 @@ const verify = async () => {
     );
   }
 
-  const prematureIntegrationResult = await query(
-    `SELECT
-       (SELECT COUNT(*) FROM journal_entries
-        WHERE sourcetype IN ('on_account_transfer', 'on_account_transfer_reversal'))::integer
-         AS transferjournals,
-       (SELECT COUNT(*) FROM on_account_movements
-        WHERE movementtype IN ('journal_transfer_in', 'journal_transfer_out'))::integer
-         AS transfermovements`
+  const transferIntegrityResult = await query(
+    `SELECT COUNT(*)::integer AS mismatchcount
+       FROM journal_entries journal
+       LEFT JOIN on_account_references destination
+         ON destination.organizationid = journal.organizationid
+        AND destination.sourcejournalentryid = journal.id
+        AND destination.sourcetype = 'on_account_transfer'
+       LEFT JOIN on_account_movements outbound
+         ON outbound.organizationid = journal.organizationid
+        AND outbound.journalentryid = journal.id
+        AND outbound.movementtype = 'journal_transfer_out'
+       LEFT JOIN on_account_movements inbound
+         ON inbound.organizationid = journal.organizationid
+        AND inbound.journalentryid = journal.id
+        AND inbound.movementtype = 'journal_transfer_in'
+       WHERE journal.sourcetype = 'on_account_transfer'
+         AND (destination.id IS NULL OR outbound.id IS NULL OR inbound.id IS NULL
+              OR outbound.amount <> inbound.amount
+              OR inbound.relatedmovementid <> outbound.id)`
   );
-  const premature = prematureIntegrationResult.rows[0] || {};
-  if (
-    Number(premature.transferjournals || 0) > 0 ||
-    Number(premature.transfermovements || 0) > 0
-  ) {
-    failures.push(
-      "Journal/On Account transfer records exist before the Phase 2 contract and Phase 3 posting orchestration are approved."
-    );
+  if (Number(transferIntegrityResult.rows[0]?.mismatchcount || 0) > 0) {
+    failures.push(`${transferIntegrityResult.rows[0].mismatchcount} transfer Journals have missing or mismatched reference/movement links.`);
+  }
+
+  const balanceResult = await query(
+    `SELECT COUNT(*)::integer AS mismatchcount
+       FROM journal_entries journal
+       JOIN LATERAL (
+         SELECT COALESCE(SUM(line.debitamount), 0) AS debit,
+                COALESCE(SUM(line.creditamount), 0) AS credit
+           FROM journal_lines line WHERE line.journalentryid = journal.id
+       ) totals ON TRUE
+       WHERE journal.sourcetype IN ('on_account_transfer', 'on_account_transfer_reversal')
+         AND totals.debit <> totals.credit`
+  );
+  if (Number(balanceResult.rows[0]?.mismatchcount || 0) > 0) {
+    failures.push(`${balanceResult.rows[0].mismatchcount} transfer or replacement Journals are unbalanced.`);
+  }
+
+  const reversalIntegrityResult = await query(
+    `SELECT COUNT(*)::integer AS mismatchcount
+       FROM journal_entries reversal
+       LEFT JOIN journal_entries original
+         ON original.id = reversal.reversalofid
+        AND original.organizationid = reversal.organizationid
+       LEFT JOIN on_account_references destination
+         ON destination.reversaljournalentryid = reversal.id
+        AND destination.organizationid = reversal.organizationid
+       WHERE reversal.sourcetype = 'on_account_transfer_reversal'
+         AND (original.sourcetype <> 'on_account_transfer'
+              OR destination.status <> 'reversed'
+              OR destination.replacementreferenceid IS NULL)`
+  );
+  if (Number(reversalIntegrityResult.rows[0]?.mismatchcount || 0) > 0) {
+    failures.push(`${reversalIntegrityResult.rows[0].mismatchcount} transfer replacements have incomplete linkage.`);
   }
 
   if (failures.length > 0) {
@@ -228,7 +268,7 @@ const verify = async () => {
   }
 
   console.log(
-    "[Journal + On Account Phase 1] Merged schema, permissions, balances, manual-Journal boundary, and integration gate verified successfully."
+    "[Journal + On Account] Schema, permissions, balances, transfer pairs, replacements, and manual-Journal boundary verified successfully."
   );
 };
 
