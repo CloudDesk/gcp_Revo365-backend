@@ -126,42 +126,127 @@ const customerDisplayNameFor = (alias: string) => customerDisplayNameSql.split("
 
 export const getCustomerTransferContext = async (request: any) => {
   const { organizationId } = resolveFinanceContext(request);
+  const lookup = String(request.query?.lookup || "").trim().toLowerCase();
+  if (!new Set(["references", "customers"]).has(lookup)) {
+    throw new FinanceValidationError(
+      "lookup must be references or customers.",
+      400,
+      "TRANSFER_LOOKUP_INVALID"
+    );
+  }
   const search = String(request.query?.search || "").trim();
+  if (search.length > 100) {
+    throw new FinanceValidationError(
+      "search must not exceed 100 characters.",
+      400,
+      "TRANSFER_LOOKUP_SEARCH_INVALID"
+    );
+  }
+  const page = Math.max(Number(request.query?.page) || 1, 1);
+  const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 50);
+  if (!Number.isSafeInteger(page) || !Number.isSafeInteger(count)) {
+    throw new FinanceValidationError(
+      "page and count must be whole numbers.",
+      400,
+      "TRANSFER_LOOKUP_PAGINATION_INVALID"
+    );
+  }
+  const offset = (page - 1) * count;
   const pattern = `%${search}%`;
-  const [referenceResult, customerResult] = await Promise.all([
-    pool.query(
-      `SELECT r.id, r.referencenumber, r.partyid AS customerid,
-              ${customerDisplayNameSql} AS customername,
-              u.useremail AS customeremail, r.currencycode,
-              r.originalamount, r.usedamount, r.availableamount, r.status, r.version
-       FROM on_account_references r
-       JOIN users u ON u.id = r.partyid
-       WHERE r.organizationid = $1
-         AND r.partytype = 'customer'
-         AND r.status IN ('open', 'partially_applied')
-         AND r.availableamount > 0
-         AND ($2 = '' OR r.referencenumber ILIKE $3 OR ${customerDisplayNameSql} ILIKE $3 OR COALESCE(u.useremail, '') ILIKE $3)
-       ORDER BY r.createddate DESC, r.id DESC
-       LIMIT 200`,
-      [organizationId, search, pattern]
-    ),
+
+  if (lookup === "references") {
+    const [recordsResult, totalResult] = await Promise.all([
+      pool.query(
+        `SELECT r.id, r.referencenumber, r.partyid AS customerid,
+                ${customerDisplayNameSql} AS customername,
+                u.useremail AS customeremail, r.currencycode,
+                r.originalamount, r.usedamount, r.availableamount, r.status, r.version
+         FROM on_account_references r
+         JOIN users u ON u.id = r.partyid
+         WHERE r.organizationid = $1
+           AND r.partytype = 'customer'
+           AND r.status IN ('open', 'partially_applied')
+           AND r.availableamount > 0
+           AND ($2 = '' OR r.referencenumber ILIKE $3 OR ${customerDisplayNameSql} ILIKE $3 OR COALESCE(u.useremail, '') ILIKE $3)
+         ORDER BY r.createddate DESC, r.id DESC
+         LIMIT $4 OFFSET $5`,
+        [organizationId, search, pattern, count, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::integer AS total
+         FROM on_account_references r
+         JOIN users u ON u.id = r.partyid
+         WHERE r.organizationid = $1
+           AND r.partytype = 'customer'
+           AND r.status IN ('open', 'partially_applied')
+           AND r.availableamount > 0
+           AND ($2 = '' OR r.referencenumber ILIKE $3 OR ${customerDisplayNameSql} ILIKE $3 OR COALESCE(u.useremail, '') ILIKE $3)`,
+        [organizationId, search, pattern]
+      ),
+    ]);
+    return {
+      lookup,
+      records: recordsResult.rows.map((row: any) => ({
+        ...row,
+        id: Number(row.id),
+        customerid: Number(row.customerid),
+        version: Number(row.version),
+        originalamount: Number(row.originalamount),
+        usedamount: Number(row.usedamount),
+        availableamount: Number(row.availableamount),
+      })),
+      total: Number(totalResult.rows[0]?.total || 0),
+      page,
+      count,
+    };
+  }
+
+  const customerConditions = [
+    `($1 = '' OR ${customerDisplayNameSql} ILIKE $2 OR COALESCE(u.useremail, '') ILIKE $2 OR COALESCE(u.usermobilenumber::text, '') ILIKE $2)`,
+  ];
+  const customerParams: any[] = [search, pattern];
+  if (
+    request.query?.excludeCustomerId != null &&
+    String(request.query.excludeCustomerId).trim() !== ""
+  ) {
+    const excludeCustomerId = Number(request.query.excludeCustomerId);
+    if (!Number.isSafeInteger(excludeCustomerId) || excludeCustomerId <= 0) {
+      throw new FinanceValidationError(
+        "A valid excludeCustomerId is required.",
+        400,
+        "TRANSFER_LOOKUP_EXCLUSION_INVALID"
+      );
+    }
+    customerParams.push(excludeCustomerId);
+    customerConditions.push(`u.id <> $${customerParams.length}`);
+  }
+  const recordParams = [...customerParams, count, offset];
+  const [recordsResult, totalResult] = await Promise.all([
     pool.query(
       `SELECT u.id, ${customerDisplayNameSql} AS customername,
               u.useremail AS customeremail, u.usermobilenumber AS customermobile
        FROM users u
-       WHERE ($1 = '' OR ${customerDisplayNameSql} ILIKE $2 OR COALESCE(u.useremail, '') ILIKE $2 OR COALESCE(u.usermobilenumber::text, '') ILIKE $2)
+       WHERE ${customerConditions.join(" AND ")}
        ORDER BY customername, u.id
-       LIMIT 200`,
-      [search, pattern]
+       LIMIT $${recordParams.length - 1} OFFSET $${recordParams.length}`,
+      recordParams
+    ),
+    pool.query(
+      `SELECT COUNT(*)::integer AS total
+       FROM users u
+       WHERE ${customerConditions.join(" AND ")}`,
+      customerParams
     ),
   ]);
   return {
-    references: referenceResult.rows.map((row: any) => ({
+    lookup,
+    records: recordsResult.rows.map((row: any) => ({
       ...row,
-      id: Number(row.id), customerid: Number(row.customerid), version: Number(row.version),
-      originalamount: Number(row.originalamount), usedamount: Number(row.usedamount), availableamount: Number(row.availableamount),
+      id: Number(row.id),
     })),
-    customers: customerResult.rows.map((row: any) => ({ ...row, id: Number(row.id) })),
+    total: Number(totalResult.rows[0]?.total || 0),
+    page,
+    count,
   };
 };
 

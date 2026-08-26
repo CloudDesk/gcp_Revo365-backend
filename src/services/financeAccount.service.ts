@@ -1759,6 +1759,18 @@ export module financeAccountService {
     const params: any[] = [organizationId];
     const conditions = ["t.organizationid = $1"];
 
+    if (
+      queryData.transactionid != null &&
+      String(queryData.transactionid).trim() !== ""
+    ) {
+      const transactionId = Number(queryData.transactionid);
+      if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+        throw new FinanceValidationError("A valid transactionid is required.");
+      }
+      params.push(transactionId);
+      conditions.push(`t.id = $${params.length}`);
+    }
+
     if (accountIdParam != null) {
       const bankCashAccountId = Number(accountIdParam);
       if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
