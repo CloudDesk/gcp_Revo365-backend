@@ -93,6 +93,8 @@ export const auditFinanceReport = (reportKey: string, report: any): FinanceAudit
       if (!equalMoney(report.summary.netIncome, netIncome)) add(reportKey, "Reported Net Income does not match Income account movements");
       if (!equalMoney(report.summary.netExpense, netExpense)) add(reportKey, "Reported Net Expense does not match Expense account movements");
       if (!equalMoney(report.summary.netProfit, netIncome - netExpense)) add(reportKey, "Net Profit does not equal Net Income - Net Expense");
+      if (report.summary.totalIncome != null && !equalMoney(report.summary.totalIncome, netIncome - amount(report.summary.cogs)))
+        add(reportKey, "Net Income does not equal Total Income - COGS");
       if (!equalMoney(amount(report.summary.expenseDebits) - amount(report.summary.expenseCredits), report.summary.netExpense))
         add(reportKey, "Expense Debits - Expense Credits does not equal Net Expense");
     }

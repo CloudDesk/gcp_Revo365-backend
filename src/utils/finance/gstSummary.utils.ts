@@ -79,6 +79,26 @@ const resolveSectionGst = (section: Record<string, any>): GstSummary => {
   return { igst: 0, cgst, sgst: toMoney(total - cgst), total };
 };
 
+export const buildNetGstBalanceSheetRow = (netGstValue: unknown): Record<string, any> | null => {
+  const netGst = toMoney(Number(netGstValue) || 0);
+  if (netGst === 0) return null;
+  if (netGst < 0) {
+    const amount = Math.abs(netGst);
+    return {
+      accountId: -3, accountCode: "CALCULATED-GST-ITC", accountName: "GST Input Tax Credit",
+      accountType: "asset", accountSubtype: "gst_input_tax_credit", openingDebit: 0, openingCredit: 0,
+      periodDebit: amount, periodCredit: 0, closingDebit: amount, closingCredit: 0,
+      balance: amount, calculationNote: "Input GST exceeds Output GST",
+    };
+  }
+  return {
+    accountId: -4, accountCode: "CALCULATED-GST-PAYABLE", accountName: "GST Payable",
+    accountType: "liability", accountSubtype: "gst_payable", openingDebit: 0, openingCredit: 0,
+    periodDebit: 0, periodCredit: netGst, closingDebit: 0, closingCredit: netGst,
+    balance: -netGst, calculationNote: "Output GST exceeds Input GST",
+  };
+};
+
 export const resolveInvoiceDocumentType = (invoice: any): string => {
   const invoiceData = parseJsonObject(invoice?.invoicedata);
   const serviceData = parseJsonObject(invoice?.servicedata);
@@ -87,6 +107,11 @@ export const resolveInvoiceDocumentType = (invoice: any): string => {
   if (hasProducts && hasServices) return "product + service";
   if (hasServices) return "service";
   return String(invoice?.invoicefor || (hasProducts ? "product" : "invoice")).trim().toLowerCase();
+};
+
+export const invoiceIncludesCogs = (invoice: any): boolean => {
+  const documentType = resolveInvoiceDocumentType(invoice);
+  return documentType === "product" || documentType === "product + service";
 };
 
 export const resolveInvoiceGst = (invoice: any): GstSummary => {

@@ -1,9 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { auditFinanceDashboard, auditFinanceReport } from "../utils/finance/financeReportAudit.utils.js";
-import { resolveBillGst } from "../utils/finance/gstSummary.utils.js";
+import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, resolveBillGst } from "../utils/finance/gstSummary.utils.js";
 import { fillMonthlyFinanceTrend, listFinanceMonths, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
+import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
+
+test("builds the statutory Outward IST portal categories without populating fixed-zero rows", () => {
+  const rows = buildOutwardIstPortalRows([
+    { isbusinessuser: true, invoicefor: "product", totalorderamount: 118000, taxamount: 18000, invoicedata: { taxmode: "cgst_sgst", cgstamount: 9000, sgstamount: 9000 } },
+    { isbusinessuser: false, customerstate: "Karnataka", invoicefor: "product", totalorderamount: 118001, taxamount: 18001, invoicedata: { taxmode: "igst", igstamount: 18001, ordername: "Online" } },
+    { isbusinessuser: false, customerstate: "Tamil Nadu", invoicefor: "service", totalorderamount: 59000, taxamount: 9000, invoicedata: { taxtype: "intra_state", cgst: 9, sgst: 9 } },
+  ]);
+  assert.equal(rows.length, 11);
+  assert.deepEqual(rows[0], { code: "b2b", description: rows[0].description, igstAmount: 0, cgstAmount: 9000, sgstAmount: 9000, invoiceTotal: 118000 });
+  assert.equal(rows[1].igstAmount, 18001); assert.equal(rows[1].invoiceTotal, 118001);
+  assert.ok(rows.slice(2, 8).every(row => row.igstAmount === 0 && row.cgstAmount === 0 && row.sgstAmount === 0 && row.invoiceTotal === 0));
+  assert.equal(rows[8].invoiceTotal, 118000); assert.equal(rows[9].invoiceTotal, 177001);
+  assert.equal(rows[10].igstAmount, 18001);
+});
+
+test("Outward IST drill-down invoices reconcile to every clickable amount", () => {
+  const invoices = [
+    { id: 1, invoicenumber: "B2B-1", isbusinessuser: true, invoicefor: "product", totalorderamount: 118000, taxamount: 18000, invoicedata: { taxmode: "cgst_sgst", cgstamount: 9000, sgstamount: 9000 } },
+    { id: 2, invoicenumber: "B2C-1", isbusinessuser: false, customerstate: "Karnataka", invoicefor: "product", totalorderamount: 118001, taxamount: 18001, invoicedata: { taxmode: "igst", igstamount: 18001, ordername: "Online" } },
+  ];
+  const rows = buildOutwardIstPortalRows(invoices);
+  const details = buildOutwardIstPortalDetails(invoices);
+  for (const row of rows.filter(row => ["b2b", "b2cl", "hsn-b2b", "hsn-b2c", "ecommerce"].includes(row.code))) {
+    for (const key of ["igstAmount", "cgstAmount", "sgstAmount", "invoiceTotal"] as const) {
+      assert.equal(details[row.code].reduce((sum, detail) => sum + Number(detail[key] || 0), 0), row[key]);
+    }
+  }
+});
 
 test("values Balance Sheet stock using available catalogue and owned rental units only", () => {
   const stock = buildInventoryStockValuation([
@@ -26,6 +55,21 @@ test("values Balance Sheet stock using available catalogue and owned rental unit
     rentalAvailableAmount: 8000,
     rentalSoldAmount: 2000,
   });
+});
+
+test("classifies Net GST on exactly one Balance Sheet side", () => {
+  const credit = buildNetGstBalanceSheetRow(-180713.24);
+  assert.equal(credit?.accountType, "asset"); assert.equal(credit?.closingDebit, 180713.24); assert.equal(credit?.closingCredit, 0);
+  const payable = buildNetGstBalanceSheetRow(1250.5);
+  assert.equal(payable?.accountType, "liability"); assert.equal(payable?.closingDebit, 0); assert.equal(payable?.closingCredit, 1250.5);
+  assert.equal(buildNetGstBalanceSheetRow(0), null);
+});
+
+test("includes only product sales in COGS", () => {
+  assert.equal(invoiceIncludesCogs({ invoicefor: "product", invoicedata: { items: [{ quantity: 1 }] } }), true);
+  assert.equal(invoiceIncludesCogs({ invoicefor: "service", servicedata: { items: [{ quantity: 1 }] } }), false);
+  assert.equal(invoiceIncludesCogs({ invoicefor: "rental", invoicedata: { items: [{ quantity: 1 }] } }), false);
+  assert.equal(invoiceIncludesCogs({ invoicefor: "service", invoicedata: { items: [{ quantity: 1 }] }, servicedata: { items: [{ quantity: 1 }] } }), true);
 });
 
 test("normalizes legacy seconds and current millisecond invoice dates", () => {
@@ -166,9 +210,10 @@ test("audits P&L expense credits, signed net expense and net profit formula", ()
     { accountType: "income", periodDebit: 0, periodCredit: 10000 },
     { accountType: "expense", periodDebit: 87000, periodCredit: 100000 },
   ];
-  const summary = { incomeCredits: 10000, incomeDebits: 0, netIncome: 10000, expenseDebits: 87000, expenseCredits: 100000, netExpense: -13000, netProfit: 23000 };
+  const summary = { incomeCredits: 10000, incomeDebits: 0, netIncome: 10000, cogs: 4000, totalIncome: 6000, expenseDebits: 87000, expenseCredits: 100000, netExpense: -13000, netProfit: 23000 };
   assert.deepEqual(auditFinanceReport("profit-loss", { rows, summary }), []);
   assert.ok(auditFinanceReport("profit-loss", { rows, summary: { ...summary, netProfit: -3000 } }).some(issue => issue.message.includes("Net Profit")));
+  assert.ok(auditFinanceReport("profit-loss", { rows, summary: { ...summary, totalIncome: 7000 } }).some(issue => issue.message.includes("Net Income")));
 });
 
 test("detects Balance Sheet wrong account types and variance", () => {

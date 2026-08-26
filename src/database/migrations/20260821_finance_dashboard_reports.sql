@@ -207,3 +207,24 @@ VALUES (
     'Posted journal index for Finance Dashboard and Reports'
 )
 ON CONFLICT (version) DO NOTHING;
+
+-- 5. Product cost basis used by Profit & Loss COGS and stock valuation.
+-- Existing products default to zero until their actual purchase price is
+-- entered; reporting must never invent a historical cost.
+
+ALTER TABLE product_revo
+    ADD COLUMN IF NOT EXISTS purchaseprice NUMERIC(14,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE product_revo
+    DROP CONSTRAINT IF EXISTS chk_product_revo_purchaseprice_nonnegative;
+
+ALTER TABLE product_revo
+    ADD CONSTRAINT chk_product_revo_purchaseprice_nonnegative
+    CHECK (purchaseprice >= 0);
+
+INSERT INTO finance_schema_versions (version, description)
+VALUES (
+    '20260821_finance_dashboard_reports_product_purchase_price_v1',
+    'Product purchase price cost basis for COGS and inventory valuation'
+)
+ON CONFLICT (version) DO NOTHING;

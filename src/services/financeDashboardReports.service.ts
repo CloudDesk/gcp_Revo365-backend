@@ -4,11 +4,12 @@ import {
   resolveFinanceContext,
   toMoney,
 } from "../utils/finance/finance.utils.js";
-import { resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
+import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
 import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
 import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
+import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -27,6 +28,17 @@ const getFilters = (request: any) => {
 };
 
 const money = (value: unknown) => toMoney(Number(value) || 0);
+const jsonObject = (value: unknown): Record<string, any> => {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value !== "string") return {};
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; }
+};
+const taxableSectionAmount = (sectionValue: unknown) => {
+  const section = jsonObject(sectionValue);
+  const gross = parseGstMoney(section.total ?? section.totalamount ?? section.grandtotal);
+  const tax = parseGstMoney(section.taxamount);
+  return money(Math.max(gross - tax, 0));
+};
 const epochRange = (from: string, to: string) => ({
   fromEpoch: Math.floor(new Date(`${from}T00:00:00.000Z`).getTime() / 1000),
   toEpoch: Math.floor(new Date(`${to}T23:59:59.999Z`).getTime() / 1000),
@@ -40,7 +52,11 @@ const REVO_INVOICE_DATE_SECONDS = `CASE
     THEN FLOOR(COALESCE(r.invoicedate, r.createddate) / 1000.0)
   ELSE COALESCE(r.invoicedate, r.createddate)
 END`;
-
+const REVO_BILL_DATE_SECONDS = `CASE
+  WHEN COALESCE(b.invoicedate, b.createddate) >= 100000000000
+    THEN FLOOR(COALESCE(b.invoicedate, b.createddate) / 1000.0)
+  ELSE COALESCE(b.invoicedate, b.createddate)
+END`;
 const getPage = (request: any) => ({
   page: Math.max(Number(request.query?.page) || 1, 1),
   count: Math.min(
@@ -212,7 +228,7 @@ export module financeDashboardReportsService {
     const { organizationId } = resolveFinanceContext(request);
     const { from, to } = getFilters(request);
     const { fromEpoch, toEpoch } = epochRange(from, to);
-    const [trendResult, invoiceResult, billResult, cashResult, exceptionResult] = await Promise.all([
+    const [trendResult, invoiceResult, billResult, cashResult, exceptionResult, topExpenseResult] = await Promise.all([
       query(
         `SELECT TO_CHAR(DATE_TRUNC('month', je.entrydate), 'YYYY-MM') AS period,
                 COALESCE(SUM(CASE WHEN fa.accounttype='income' THEN jl.creditamount-jl.debitamount ELSE 0 END),0) AS income,
@@ -262,6 +278,19 @@ export module financeDashboardReportsService {
          WHERE je.organizationid=$1`,
         [organizationId]
       ),
+      query(
+        `SELECT fa.id, fa.accountname AS name,
+                COALESCE(SUM(jl.debitamount - jl.creditamount), 0) AS amount
+         FROM journal_entries je
+         JOIN journal_lines jl ON jl.journalentryid=je.id
+         JOIN finance_accounts fa ON fa.id=jl.financeaccountid
+         WHERE je.organizationid=$1 AND je.status='posted'
+           AND je.entrydate BETWEEN $2 AND $3 AND fa.accounttype='expense'
+         GROUP BY fa.id, fa.accountname
+         HAVING ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) >= 0.01
+         ORDER BY ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) DESC, fa.accountname ASC`,
+        [organizationId, from, to]
+      ),
     ]);
 
     const ageing = (rows: any[], stateResolver: (row: any) => any) => {
@@ -289,6 +318,7 @@ export module financeDashboardReportsService {
     return {
       meta: { from, to, currency: "INR", generatedAt: new Date().toISOString() },
       trend: fillMonthlyFinanceTrend(from, to, trendResult.rows.map((row: any) => ({ period: row.period, income: money(row.income), expense: money(row.expense) }))),
+      topExpenses: topExpenseResult.rows.map((row: any) => ({ id: Number(row.id), name: String(row.name || "Expense"), amount: money(row.amount) })),
       receivablesAgeing: receivablesAgeing.buckets,
       payablesAgeing: payablesAgeing.buckets,
       receivablesAgeingCounts: receivablesAgeing.counts,
@@ -305,13 +335,14 @@ export module financeDashboardReportsService {
     const { toEpoch } = epochRange(to, to);
     const kind = String(request.query?.kind || "").trim().toLowerCase();
     const bucket = String(request.query?.bucket || "").trim().toLowerCase();
-    const allowedBuckets = new Set(["current", "1-30", "31-60", "61-90", "90+"]);
+    const allowedBuckets = new Set(["all", "current", "1-30", "31-60", "61-90", "90+"]);
     if (!['receivables', 'payables'].includes(kind) || !allowedBuckets.has(bucket)) {
       throw new Error('Select a valid ageing type and period.');
     }
     const page = Math.max(Number(request.query?.page) || 1, 1);
-    const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 25);
-    const isBucket = (age: number) => bucket === 'current' ? age <= 0
+    const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), bucket === 'all' ? 10000 : 25);
+    const isBucket = (age: number) => bucket === 'all' ? true
+      : bucket === 'current' ? age <= 0
       : bucket === '1-30' ? age >= 1 && age <= 30
       : bucket === '31-60' ? age >= 31 && age <= 60
       : bucket === '61-90' ? age >= 61 && age <= 90
@@ -362,6 +393,26 @@ export module financeDashboardReportsService {
     const { from, to } = getFilters(request);
     const { page, count } = getPage(request);
     const reportKey = String(request.params?.reportKey || "").trim();
+    if (reportKey === "outward-ist-portal") {
+      const { fromEpoch, toEpoch } = epochRange(from, to);
+      const result = await query(
+        `SELECT r.*, COALESCE(u.isbusinessuser, FALSE) AS isbusinessuser,
+                CONCAT_WS(' ', u.firstname, u.lastname) AS partyname,
+                latest_address.state AS customerstate
+         FROM revoinvoice r
+         LEFT JOIN users u ON u.id = r.customerid
+         LEFT JOIN LATERAL (
+           SELECT a.state FROM address a WHERE a.userid = u.id
+           ORDER BY a.modifieddate DESC NULLS LAST, a.id DESC LIMIT 1
+         ) latest_address ON TRUE
+         WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+           AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')`,
+        [fromEpoch, toEpoch]
+      );
+      const rows = buildOutwardIstPortalRows(result.rows);
+      const details = buildOutwardIstPortalDetails(result.rows);
+      return { meta: { reportKey, from, to, currency: "INR", generatedAt: new Date().toISOString(), totalsScope: "statutory_categories" }, rows, details, total: rows.length };
+    }
     if (["sales-invoices", "supplier-bills", "gst-inward", "gst-outward", "tds-summary"].includes(reportKey)) {
       return getDocumentReport(request, reportKey, from, to, organizationId);
     }
@@ -422,52 +473,90 @@ export module financeDashboardReportsService {
     });
 
     let rows = allRows;
+    let operationalProfitLoss: any = null;
     if (reportKey === "profit-loss") {
       rows = allRows.filter((row: any) => ["income", "expense"].includes(row.accountType));
+      const { fromEpoch, toEpoch } = epochRange(from, to);
+      const [invoiceResult, productResult] = await Promise.all([
+        query(`SELECT r.* FROM revoinvoice r WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+          AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')`, [fromEpoch, toEpoch]),
+        query(`SELECT id,puc,productname,COALESCE(purchaseprice,0) AS purchaseprice FROM product_revo`, []),
+      ]);
+      const byId = new Map(productResult.rows.map((product: any) => [String(product.id), Number(product.purchaseprice || 0)]));
+      const byPuc = new Map(productResult.rows.map((product: any) => [String(product.puc || "").trim(), Number(product.purchaseprice || 0)]));
+      const byName = new Map(productResult.rows.map((product: any) => [String(product.productname || "").trim().toLowerCase(), Number(product.purchaseprice || 0)]));
+      operationalProfitLoss = invoiceResult.rows.reduce((sum: any, invoice: any) => {
+        const productSection = jsonObject(invoice.invoicedata);
+        const serviceSection = jsonObject(invoice.servicedata);
+        const documentType = resolveInvoiceDocumentType(invoice);
+        const hasProductSale = invoiceIncludesCogs(invoice);
+        const hasServiceSale = documentType === "service" || documentType === "product + service";
+        let productTaxable = taxableSectionAmount(productSection);
+        let serviceTaxable = taxableSectionAmount(serviceSection);
+        if (productTaxable === 0 && serviceTaxable === 0) {
+          const payment = getRetailInvoicePaymentState(invoice);
+          const taxable = money(Math.max(payment.invoiceAmount - resolveInvoiceGst(invoice).total, 0));
+          if (String(invoice.invoicefor || "").toLowerCase() === "service") serviceTaxable = taxable;
+          else productTaxable = taxable;
+        }
+        if (hasProductSale) sum.salesIncome += productTaxable;
+        if (hasServiceSale) sum.serviceIncome += serviceTaxable;
+        if (hasProductSale) {
+          for (const item of Array.isArray(productSection.items) ? productSection.items : []) {
+            const quantity = Math.max(Number(item.quantity ?? item.qty ?? 1) || 0, 0);
+            const purchasePrice = Number(item.purchaseprice ?? item.purchasePrice ?? byId.get(String(item.productid ?? item.productId ?? item.id ?? "")) ?? byPuc.get(String(item.puc ?? item.productcode ?? "").trim()) ?? byName.get(String(item.productname ?? item.name ?? "").trim().toLowerCase()) ?? 0);
+            sum.cogs += purchasePrice * quantity;
+          }
+        }
+        return sum;
+      }, { salesIncome: 0, serviceIncome: 0, cogs: 0 });
+      Object.keys(operationalProfitLoss).forEach(key => operationalProfitLoss[key] = money(operationalProfitLoss[key]));
+      const calculatedRows = [
+        { accountId: -101, accountCode: "CALC-SALES-INCOME", accountName: "Sales Income (excluding GST)", accountType: "income", accountSubtype: "sales_income", openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: operationalProfitLoss.salesIncome, closingDebit: 0, closingCredit: operationalProfitLoss.salesIncome, balance: -operationalProfitLoss.salesIncome },
+        { accountId: -102, accountCode: "CALC-SERVICE-INCOME", accountName: "Service Income (excluding GST)", accountType: "income", accountSubtype: "service_income", openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: operationalProfitLoss.serviceIncome, closingDebit: 0, closingCredit: operationalProfitLoss.serviceIncome, balance: -operationalProfitLoss.serviceIncome },
+        { accountId: -103, accountCode: "CALC-COGS", accountName: "Cost of Goods Sold", accountType: "expense", accountSubtype: "cost_of_goods_sold", openingDebit: 0, openingCredit: 0, periodDebit: operationalProfitLoss.cogs, periodCredit: 0, closingDebit: operationalProfitLoss.cogs, closingCredit: 0, balance: operationalProfitLoss.cogs },
+      ];
+      rows = [...calculatedRows, ...rows];
     } else if (reportKey === "balance-sheet") {
       rows = allRows.filter((row: any) => ["asset", "liability", "equity"].includes(row.accountType));
-      const stockResult = await query(
-        `SELECT
-           s.stocktype,
-           s.stockstatus,
-           COUNT(s.id) AS quantity,
-           COALESCE(SUM(COALESCE(p.price, 0)), 0) AS amount
-         FROM stock_revo s
-         JOIN product_revo p ON p.puc = s.puc
+      const { fromEpoch, toEpoch } = epochRange(from, to);
+      const [stockResult, gstInvoiceResult, gstBillResult] = await Promise.all([query(
+        `SELECT s.stocktype, s.stockstatus, COUNT(s.id) AS quantity,
+                COALESCE(SUM(COALESCE(p.price, 0)), 0) AS amount
+         FROM stock_revo s JOIN product_revo p ON p.puc = s.puc
          WHERE COALESCE(s.isdeleted, FALSE) = FALSE
            AND COALESCE(s.isarchive, FALSE) = FALSE
            AND COALESCE(s.removefromrecyclebin, FALSE) = FALSE
            AND COALESCE(s.ewaste, FALSE) = FALSE
-           AND (
-             (s.stocktype IN ('on_catalogue_product', 'off_catalogue_product') AND s.stockstatus = 'Available')
-             OR
-             (s.stocktype = 'rental_product' AND s.stockstatus IN ('Available', 'Rental Sold'))
-           )
-         GROUP BY s.stocktype, s.stockstatus`,
-        []
-      );
+           AND ((s.stocktype IN ('on_catalogue_product', 'off_catalogue_product') AND s.stockstatus = 'Available')
+             OR (s.stocktype = 'rental_product' AND s.stockstatus IN ('Available', 'Rental Sold')))
+         GROUP BY s.stocktype, s.stockstatus`, []
+      ), query(
+        `SELECT r.* FROM revoinvoice r WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+           AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
+      ), query(
+        `SELECT b.*, COALESCE(b.suppliergstin, po.suppliergstnumber) AS suppliergstin,
+                COALESCE(po.dt_gstnumber, po.io_gstnumber) AS destinationgstin
+         FROM poinvoice b
+         LEFT JOIN LATERAL (SELECT suppliergstnumber, dt_gstnumber, io_gstnumber FROM purchaseorder WHERE ponumber=b.ponumber ORDER BY id DESC LIMIT 1) po ON TRUE
+         WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
+           AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
+      )]);
       const stock = buildInventoryStockValuation(stockResult.rows);
-      const existingStockRow = rows.find((row: any) =>
-        String(row.accountSubtype || "").trim().toLowerCase().replace(/[ -]+/g, "_") === "stock"
-      );
+      const outputGst = money(gstInvoiceResult.rows.reduce((sum: number, invoice: any) => sum + resolveInvoiceGst(invoice).total, 0));
+      const inputGst = money(gstBillResult.rows.reduce((sum: number, bill: any) => sum + resolveBillGst(bill).total, 0));
+      const netGst = money(outputGst - inputGst);
+      const existingStockRow = rows.find((row: any) => String(row.accountSubtype || "").trim().toLowerCase().replace(/[ -]+/g, "_") === "stock");
       rows = rows.filter((row: any) => row !== existingStockRow);
       rows.push({
-        accountId: existingStockRow?.accountId ?? -2,
-        accountCode: existingStockRow?.accountCode || "CALCULATED-STOCK",
-        accountName: existingStockRow?.accountName || "Stock on Hand",
-        accountType: "asset",
-        accountSubtype: "stock",
-        openingDebit: 0,
-        openingCredit: 0,
-        periodDebit: 0,
-        periodCredit: 0,
-        closingDebit: stock.amount,
-        closingCredit: 0,
-        balance: stock.amount,
-        stockQuantity: stock.quantity,
-        stockBreakdown: stock.breakdown,
+        accountId: existingStockRow?.accountId ?? -2, accountCode: existingStockRow?.accountCode || "CALCULATED-STOCK",
+        accountName: existingStockRow?.accountName || "Stock on Hand", accountType: "asset", accountSubtype: "stock",
+        openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: stock.amount, closingCredit: 0,
+        balance: stock.amount, stockQuantity: stock.quantity, stockBreakdown: stock.breakdown,
         valuationMethod: "Product price × included stock quantity",
       });
+      const netGstRow = buildNetGstBalanceSheetRow(netGst);
+      if (netGstRow) rows.push(netGstRow);
       const incomeThroughDate = allRows
         .filter((row: any) => row.accountType === "income")
         .reduce((sum: number, row: any) => sum + row.closingCredit - row.closingDebit, 0);
@@ -525,6 +614,10 @@ export module financeDashboardReportsService {
             expenseDebits,
             expenseCredits,
             netExpense,
+            salesIncome: operationalProfitLoss?.salesIncome || 0,
+            serviceIncome: operationalProfitLoss?.serviceIncome || 0,
+            cogs: operationalProfitLoss?.cogs || 0,
+            totalIncome: money(netIncome - (operationalProfitLoss?.cogs || 0)),
             netProfit: money(netIncome - netExpense),
           };
         })()
