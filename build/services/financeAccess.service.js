@@ -49,10 +49,10 @@ export const requireJournalPermission = (permission) => {
                 },
             });
         }
-        // Journal access is intentionally full for both approved roles. The
-        // permission record remains useful to clients for action visibility, while
-        // the backend role rule prevents stale permission JSON from blocking a
-        // newly deployed Journal capability.
+        // Journal capabilities are deliberately granted as one Finance policy to
+        // both approved roles. Routes still declare the exact capability
+        // (transfer/replace/etc.) so the UI and audit boundary remain explicit.
+        void permission;
         return;
     };
 };

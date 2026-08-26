@@ -413,8 +413,10 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
     fastify.post('/finance/journals/:journalId/post', { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] }, journalController.postDraft);
     fastify.post('/finance/journals/:journalId/reverse', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] }, journalController.reversePosted);
-    fastify.post('/finance/journals/transfer-customer-on-account', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(postCustomerTransferSchema)] }, journalController.postCustomerTransfer);
-    fastify.post('/finance/journals/replace-customer-on-account-transfer/:journalId', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(replaceCustomerTransferSchema)] }, journalController.replaceCustomerTransfer);
+    fastify.post('/finance/journals/transfer-customer-on-account', { preHandler: [getSession, requireJournalPermission('transfer'), validateRequestBody(postCustomerTransferSchema)] }, journalController.postCustomerTransfer);
+    fastify.get('/finance/journals/customer-on-account-transfer/context', { preHandler: [getSession, requireJournalPermission('transfer')] }, journalController.getCustomerTransferContext);
+    fastify.get('/finance/journals/:journalId/customer-on-account-replacement/context', { preHandler: [getSession, requireJournalPermission('replace')] }, journalController.getCustomerTransferReplacementContext);
+    fastify.post('/finance/journals/replace-customer-on-account-transfer/:journalId', { preHandler: [getSession, requireJournalPermission('replace'), validateRequestBody(replaceCustomerTransferSchema)] }, journalController.replaceCustomerTransfer);
     // Optimized Finance Dashboard and Reports. Dashboard KPIs are returned by
     // one aggregate request; reports load only the selected statement.
     fastify.get('/finance/dashboard/summary', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeDashboardReportsController.getDashboardSummary);

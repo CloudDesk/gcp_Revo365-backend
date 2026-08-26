@@ -38,7 +38,11 @@ export module financeDashboardReportsController {
   export const exportReport = async (request: any, reply: any) => {
     try {
       const originalQuery = { ...(request.query || {}) };
-      request.query = { ...originalQuery, page: 1, count: 10_000, export: "true" };
+      const allowedViews = new Set(["sales-invoices", "supplier-bills", "gst-inward", "gst-outward", "outward-ist-portal", "profit-loss", "balance-sheet", "trial-balance", "tds-receivable", "tds-payable"]);
+      const rawRequestedView = String(originalQuery.view || "").trim().toLowerCase();
+      const requestedView = allowedViews.has(rawRequestedView) ? rawRequestedView : "";
+      const tdsDirection = requestedView === "tds-receivable" ? "customer" : requestedView === "tds-payable" ? "company" : originalQuery.direction;
+      request.query = { ...originalQuery, direction: tdsDirection, page: 1, count: 10_000, export: "true" };
       const report: any = await financeDashboardReportsService.getReport(request);
       const allRows: any[] = (report.rows || []).slice(0, 10_000);
       request.query = originalQuery;
@@ -46,9 +50,16 @@ export module financeDashboardReportsController {
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "Revo365 Finance";
       workbook.created = new Date();
-      const reportKey = String(request.params?.reportKey || "finance-report");
+      const apiReportKey = String(request.params?.reportKey || "finance-report");
+      const reportKey = requestedView || apiReportKey;
       const reportTitle = reportKey.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
-      const totals = Object.entries(report.summary || report.totals || {});
+      const rawTotals = report.summary || report.totals || {};
+      const selectedTotals = reportKey === "tds-receivable"
+        ? { tdsReceivable: Number(rawTotals.deductedByCustomers || 0) }
+        : reportKey === "tds-payable"
+          ? { tdsPayable: Number(rawTotals.deductedByUs || 0) }
+          : rawTotals;
+      const totals = Object.entries(selectedTotals);
       const friendlyLabel = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/^./, (value) => value.toUpperCase()).trim();
       const excludedExportKeys = new Set(["id", "accountid", "documenturl"]);
       const isDateKey = (key: string) => /date$/i.test(key);
@@ -72,15 +83,16 @@ export module financeDashboardReportsController {
       const navy = "FF173F7F"; const blue = "FF245493"; const paleBlue = "FFEDF4FF"; const border = "FFD7DFEB"; const slate = "FF60728F";
       if (reportKey === "outward-ist-portal") {
         const sheet = workbook.addWorksheet("Outward Supplies");
-        sheet.mergeCells("A1:E1"); sheet.getCell("A1").value = "Summary of Outward Supplies";
-        sheet.getCell("A1").font = { bold: true, size: 18 }; sheet.getCell("A1").alignment = { horizontal: "center" };
-        sheet.mergeCells("A2:E2"); sheet.getCell("A2").value = "TEQIT"; sheet.getCell("A2").font = { bold: true, size: 13 }; sheet.getCell("A2").alignment = { horizontal: "center" };
-        sheet.mergeCells("A3:E3"); sheet.getCell("A3").value = `From ${report.meta?.from || ""} To ${report.meta?.to || ""}`; sheet.getCell("A3").alignment = { horizontal: "center" };
+        sheet.mergeCells("A1:E1"); sheet.getCell("A1").value = "TEQIT · Outward IST Portal";
+        sheet.getCell("A1").font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } }; sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; sheet.getCell("A1").alignment = { vertical: "middle" }; sheet.getRow(1).height = 32;
+        sheet.mergeCells("A2:E2"); sheet.getCell("A2").value = `${report.meta?.from || ""} to ${report.meta?.to || ""}  |  ${allRows.length} record(s)`; sheet.getCell("A2").font = { color: { argb: slate } }; sheet.getCell("A2").fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } }; sheet.getRow(2).height = 22;
+        sheet.addRow([]);
         const header = sheet.addRow(["Description", "IGST Amount", "CGST Amount", "SGST Amount", "Invoice Total"]);
-        header.font = { bold: true }; header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E8E8" } };
+        header.font = { bold: true, color: { argb: "FFFFFFFF" } }; header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: blue } }; header.height = 26;
         header.eachCell((cell, column) => { cell.alignment = { horizontal: column === 1 ? "left" : "right", vertical: "middle" }; });
-        allRows.forEach((record) => {
+        allRows.forEach((record, rowIndex) => {
           const row = sheet.addRow([record.description, Number(record.igstAmount || 0), Number(record.cgstAmount || 0), Number(record.sgstAmount || 0), Number(record.invoiceTotal || 0)]);
+          if (rowIndex % 2) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F7FC" } };
           row.eachCell((cell, column) => { cell.alignment = { horizontal: column === 1 ? "left" : "right", vertical: "middle", wrapText: true }; cell.border = { bottom: { style: "thin", color: { argb: border } } }; if (column > 1) cell.numFmt = '₹#,##0.00;[Red]-₹#,##0.00;₹0.00'; });
           row.height = 32;
         });
@@ -126,7 +138,7 @@ export module financeDashboardReportsController {
         const combined = sheet.addRow(["", "TOTAL LIABILITIES AND EQUITY", "", "", "", "", "", "", "", "", Number(sectionTotals.liability || 0) + Number(sectionTotals.equity || 0)]);
         combined.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } }; combined.fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; combined.getCell(11).numFmt = moneyFormat; combined.getCell(11).alignment = { horizontal: "right" };
         [8, 44, 24, 24, 17, 17, 17, 17, 17, 17, 20].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
-        sheet.views = [{ state: "frozen", ySplit: 2 }]; sheet.pageSetup = { orientation: "landscape", paperSize: 8, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.2, right: 0.2, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 } }; sheet.headerFooter.oddFooter = "TEQIT Finance - Balance Sheet - Page &P of &N";
+        sheet.views = [{ state: "frozen", ySplit: 2 }]; sheet.pageSetup = { orientation: "landscape", paperSize: 8 as ExcelJS.PaperSize, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.2, right: 0.2, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 } }; sheet.headerFooter.oddFooter = "TEQIT Finance - Balance Sheet - Page &P of &N";
         const buffer = await workbook.xlsx.writeBuffer();
         const name = `TEQIT_balance_sheet_${report.meta?.from || ""}_to_${report.meta?.to || ""}.xlsx`;
         return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${name}"`).send(Buffer.from(buffer));
@@ -261,21 +273,96 @@ export module financeDashboardReportsController {
       summary.views = [{ state: "frozen", ySplit: 2 }];
 
       const details = workbook.addWorksheet("Report");
-      const keys = allRows.length ? Object.keys(allRows[0]).filter((key) => !excludedExportKeys.has(key.toLowerCase())) : [];
+      const tdsSectionLabel = (record: any) => {
+        const nature = String(record.natureofpayment || "").trim();
+        const code = String(record.sectioncode || "").trim();
+        const rawRate = String(record.rate ?? "").trim().replace(/^\(|\)$/g, "");
+        const numericRate = Number(rawRate);
+        const normalizedRate = Number.isFinite(numericRate) && numericRate > 0 ? String(Number(numericRate.toFixed(4))) : rawRate;
+        const rate = normalizedRate ? `(${normalizedRate.includes("%") ? normalizedRate : `${normalizedRate}%`})` : "";
+        return [nature, code ? `${code}${rate}` : rate].filter(Boolean).join(" ") || "—";
+      };
+      const exportRows = reportKey.startsWith("tds-") ? allRows.map((record, index) => ({
+        serialNumber: index + 1,
+        date: record.date,
+        party: record.partyname || `${record.partytype || ""} ${record.partyid || ""}`.trim() || "—",
+        direction: record.documenttype === "sales_invoice" ? "Customer deducted" : record.documenttype === "deposit" ? "Deposited by us" : "Deducted by us",
+        document: record.documentnumber || "—",
+        tdsSection: tdsSectionLabel(record),
+        allocation: Number(record.allocationamount || 0),
+        tds: Number(record.tdsamount || 0),
+        status: record.status || "—",
+      })) : reportKey === "trial-balance" ? allRows.map((record, index) => ({
+        serialNumber: index + 1,
+        accountName: record.accountName || "—",
+        accountCode: record.accountCode || "—",
+        accountType: record.accountType || "—",
+        accountSubtype: record.accountSubtype || "—",
+        openingDebit: Number(record.openingDebit || 0),
+        openingCredit: Number(record.openingCredit || 0),
+        periodDebit: Number(record.periodDebit || 0),
+        periodCredit: Number(record.periodCredit || 0),
+        closingDebit: Number(record.closingDebit || 0),
+        closingCredit: Number(record.closingCredit || 0),
+      })) : ["gst-inward", "gst-outward"].includes(reportKey) ? allRows.map((record, index) => ({
+        serialNumber: index + 1,
+        date: record.date,
+        number: record.number || "—",
+        party: record.partyName || "—",
+        gstin: record.partyGstin || "No GSTIN",
+        type: record.documentType || "—",
+        taxable: Number(record.taxableValue || 0),
+        cgst: Number(record.cgst || 0),
+        sgst: Number(record.sgst || 0),
+        igst: Number(record.igst || 0),
+        totalGst: Number(record.tax || 0),
+      })) : ["sales-invoices", "supplier-bills"].includes(reportKey) ? allRows.map((record, index) => ({
+        serialNumber: index + 1,
+        date: record.date,
+        number: record.number || "—",
+        party: record.partyName || "—",
+        gstin: record.partyGstin || "No GSTIN",
+        type: record.documentType || "—",
+        taxable: Number(record.taxableValue || 0),
+        cgst: Number(record.cgst || 0),
+        sgst: Number(record.sgst || 0),
+        igst: Number(record.igst || 0),
+        totalGst: Number(record.tax || 0),
+        grossAmount: Number(record.grossAmount || 0),
+        paidAmount: Number(record.paidAmount || 0),
+        balanceAmount: Number(record.balanceAmount || 0),
+      })) : allRows;
+      const keys = exportRows.length ? Object.keys(exportRows[0]).filter((key) => !excludedExportKeys.has(key.toLowerCase())) : [];
       const columnCount = Math.max(keys.length, 2);
       details.mergeCells(1, 1, 1, columnCount); details.getCell(1, 1).value = `TEQIT · ${reportTitle}`; details.getCell(1, 1).font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } }; details.getCell(1, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; details.getCell(1, 1).alignment = { vertical: "middle" }; details.getRow(1).height = 32;
       details.mergeCells(2, 1, 2, columnCount); details.getCell(2, 1).value = `${report.meta?.from || ""} to ${report.meta?.to || ""}  |  ${report.total ?? allRows.length} matching record(s)`; details.getCell(2, 1).font = { color: { argb: slate } }; details.getCell(2, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } };
-      const headerRow = details.getRow(4); keys.forEach((key, index) => { const cell = headerRow.getCell(index + 1); cell.value = friendlyLabel(key).toUpperCase(); cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: blue } }; cell.alignment = { vertical: "middle", wrapText: true }; }); headerRow.height = 24;
-      allRows.forEach((record, rowIndex) => { const row = details.addRow(keys.map((key) => exportValue(key, record[key]))); row.height = 21; if (rowIndex % 2) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F7FC" } }; row.eachCell((cell) => { cell.alignment = { vertical: "middle", wrapText: true }; if (typeof cell.value === "number") cell.numFmt = '₹#,##0.00;[Red]-₹#,##0.00'; }); });
+      const exactLabels: Record<string, string> = { serialNumber: "S.NO", accountName: "ACCOUNT NAME", accountCode: "ACCOUNT CODE", accountType: "TYPE", accountSubtype: "SUBTYPE", openingDebit: "OPENING DR", openingCredit: "OPENING CR", periodDebit: "PERIOD DR", periodCredit: "PERIOD CR", closingDebit: "CLOSING DR", closingCredit: "CLOSING CR", tdsSection: "TDS SECTION", gstin: "GSTIN", totalGst: "TOTAL GST", grossAmount: "GROSS AMOUNT", paidAmount: "PAID AMOUNT", balanceAmount: "BALANCE AMOUNT" };
+      const headerRow = details.getRow(4); keys.forEach((key, index) => { const cell = headerRow.getCell(index + 1); cell.value = exactLabels[key] || friendlyLabel(key).toUpperCase(); cell.font = { bold: true, color: { argb: "FFFFFFFF" } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: blue } }; cell.alignment = { horizontal: /Debit|Credit|Amount$|^(allocation|tds|taxable|cgst|sgst|igst|totalGst)$/i.test(key) ? "right" : /^(serialNumber|date|status)$/i.test(key) ? "center" : "left", vertical: "middle", wrapText: true }; }); headerRow.height = 28;
+      exportRows.forEach((record, rowIndex) => { const row = details.addRow(keys.map((key) => exportValue(key, record[key]))); row.height = reportKey.startsWith("tds-") ? 28 : 22; if (rowIndex % 2) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F7FC" } }; row.eachCell((cell, columnNumber) => { const key = keys[columnNumber - 1]; const horizontal = /^(serialNumber|date|status)$/i.test(key) ? "center" : /Debit|Credit|Amount$|^(allocation|tds|taxable|cgst|sgst|igst|totalGst)$/i.test(key) ? "right" : "left"; cell.alignment = { horizontal, vertical: "middle", wrapText: true }; if (typeof cell.value === "number" && !/^serialNumber$/i.test(key)) cell.numFmt = '₹#,##0.00;[Red]-₹#,##0.00'; }); });
       if (!allRows.length) { details.mergeCells(5, 1, 5, columnCount); details.getCell(5, 1).value = "No matching records."; details.getCell(5, 1).alignment = { horizontal: "center" }; details.getCell(5, 1).font = { color: { argb: slate } }; }
       const totalsStart = Math.max(6, 5 + allRows.length + 2); details.mergeCells(totalsStart, 1, totalsStart, columnCount); details.getCell(totalsStart, 1).value = "REPORT TOTALS"; details.getCell(totalsStart, 1).font = { bold: true, color: { argb: "FFFFFFFF" } }; details.getCell(totalsStart, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } };
       totals.forEach(([key, value], index) => { const rowNumber = totalsStart + 1 + Math.floor(index / 4); const pair = index % 4; const labelColumn = pair * 2 + 1; if (labelColumn + 1 > columnCount) return; const labelCell = details.getCell(rowNumber, labelColumn); const valueCell = details.getCell(rowNumber, labelColumn + 1); labelCell.value = friendlyLabel(key); valueCell.value = Number(value) || 0; valueCell.numFmt = '₹#,##0.00;[Red]-₹#,##0.00'; labelCell.font = { bold: true, color: { argb: slate } }; valueCell.font = { bold: true, color: { argb: "FF10284E" } }; [labelCell, valueCell].forEach((cell) => { cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } }; }); });
-      keys.forEach((key, index) => { details.getColumn(index + 1).width = Math.min(Math.max(friendlyLabel(key).length + 5, /name|party|document|account/i.test(key) ? 24 : 14), 34); });
+      keys.forEach((key, index) => {
+        const tdsWidths: Record<string, number> = { serialNumber: 12, date: 14, party: 28, direction: 20, document: 25, tdsSection: 42, allocation: 18, tds: 16, status: 14 };
+        const trialWidths: Record<string, number> = { serialNumber: 9, accountName: 30, accountCode: 24, accountType: 14, accountSubtype: 20, openingDebit: 17, openingCredit: 17, periodDebit: 17, periodCredit: 17, closingDebit: 17, closingCredit: 17 };
+        const gstWidths: Record<string, number> = { serialNumber: 9, date: 14, number: 25, party: 28, gstin: 20, type: 20, taxable: 18, cgst: 16, sgst: 16, igst: 16, totalGst: 18 };
+        details.getColumn(index + 1).width = ["gst-inward", "gst-outward", "sales-invoices", "supplier-bills"].includes(reportKey) && gstWidths[key]
+          ? gstWidths[key]
+          : reportKey === "trial-balance" && trialWidths[key]
+          ? trialWidths[key]
+          : reportKey.startsWith("tds-") && tdsWidths[key]
+          ? tdsWidths[key]
+          : Math.min(Math.max(friendlyLabel(key).length + 5, /name|party|document|account/i.test(key) ? 24 : 14), 34);
+      });
       details.views = [{ state: "frozen", ySplit: 4 }];
       details.autoFilter = keys.length ? { from: { row: 4, column: 1 }, to: { row: 4, column: keys.length } } : undefined;
       details.eachRow((row, rowNumber) => row.eachCell((cell) => { if (rowNumber >= 4) cell.border = { bottom: { style: "thin", color: { argb: border } } }; }));
       details.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
       details.headerFooter.oddFooter = `TEQIT Finance · ${reportTitle} · Page &P of &N`;
+      // Keep the downloaded file focused on the exact on-screen table. Report
+      // totals are already appended below the rows, so a separate Summary tab
+      // only hides the requested details when the workbook first opens.
+      workbook.removeWorksheet(summary.id);
       const buffer = await workbook.xlsx.writeBuffer();
       const name = `TEQIT_${reportKey.replace(/-/g, "_")}_${report.meta?.from || ""}_to_${report.meta?.to || ""}.xlsx`;
       return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${name}"`).send(Buffer.from(buffer));
