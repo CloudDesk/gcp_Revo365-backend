@@ -6,6 +6,27 @@ import { fillMonthlyFinanceTrend, listFinanceMonths, normalizeFinanceEpochSecond
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
 import { classifyM4Document, requiredM4Movement } from "../utils/finance/m4Reconciliation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
+import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
+
+test("validates report-specific Sales Invoice and Supplier Bill statuses", () => {
+  for (const status of ["pending", "partially_paid", "paid"]) {
+    assert.equal(normalizeFinanceReportStatus("sales-invoices", status), status);
+    assert.equal(normalizeFinanceReportStatus("gst-outward", status), status);
+  }
+  for (const status of ["in_progress", "complete", "overdue", "overdue_complete"]) {
+    assert.equal(normalizeFinanceReportStatus("supplier-bills", status), status);
+    assert.equal(normalizeFinanceReportStatus("gst-inward", status), status);
+  }
+  assert.equal(normalizeFinanceReportStatus("sales-invoices", ""), "");
+  assert.throws(
+    () => normalizeFinanceReportStatus("sales-invoices", "complete"),
+    /not supported/,
+  );
+  assert.throws(
+    () => normalizeFinanceReportStatus("supplier-bills", "paid"),
+    /not supported/,
+  );
+});
 
 test("builds the statutory Outward IST portal categories without populating fixed-zero rows", () => {
   const rows = buildOutwardIstPortalRows([
