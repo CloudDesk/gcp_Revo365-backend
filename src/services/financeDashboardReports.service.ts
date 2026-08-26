@@ -10,6 +10,7 @@ import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils
 import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
+import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -655,7 +656,7 @@ export module financeDashboardReportsService {
     const offset = (page - 1) * count;
     const search = String(request.query?.search || "").trim();
     const searchPattern = `%${search}%`;
-    const status = String(request.query?.status || "").trim().toLowerCase();
+    const status = normalizeFinanceReportStatus(reportKey, request.query?.status);
     const documentType = String(request.query?.documentType || request.query?.billType || "").trim().toLowerCase();
     const category = String(request.query?.category || "").trim().toLowerCase();
     const direction = String(request.query?.direction || "").trim().toLowerCase();
