@@ -7,6 +7,7 @@ import { buildInventoryStockValuation } from "../utils/finance/inventoryStockVal
 import { classifyM4Document, requiredM4Movement } from "../utils/finance/m4Reconciliation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
+import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentation.utils.js";
 
 test("validates report-specific Sales Invoice and Supplier Bill statuses", () => {
   for (const status of ["pending", "partially_paid", "paid"]) {
@@ -261,6 +262,60 @@ test("audits standard Balance Sheet presentation equation", () => {
   ];
   assert.deepEqual(auditFinanceReport("balance-sheet", { rows, variance: 0 }), []);
   assert.ok(auditFinanceReport("balance-sheet", { rows: [{ ...rows[0], closingDebit: 7068563 }, ...rows.slice(1)], variance: 0 }).some(issue => issue.message.includes("Assets")));
+});
+
+test("shows posted Stock and Input GST ledger assets without adding operational valuation", () => {
+  // Supplier purchase journal:
+  //   Dr Stock / Inventory       100,000
+  //   Dr GST Input Tax Credit     18,000
+  //      Cr Supplier Payable             118,000
+  const rows = [
+    { accountId: 101, accountCode: "INVENTORY", accountName: "Stock / Inventory", accountType: "asset", closingDebit: 100000, closingCredit: 0 },
+    { accountId: 102, accountCode: "GST-INPUT", accountName: "GST Input Tax Credit", accountType: "asset", closingDebit: 18000, closingCredit: 0 },
+    { accountId: 201, accountCode: "SUPPLIER-PAYABLE", accountName: "Supplier Payable", accountType: "liability", closingDebit: 0, closingCredit: 118000 },
+  ];
+  const report = {
+    rows,
+    variance: 0,
+    details: {
+      // This operational value is deliberately different. It is a disclosure
+      // for reconciliation and must never be inserted into statement rows.
+      reconciliation: [{ stockValue: 125000, inputGst: 18000, outputGst: 0, netGst: -18000 }],
+    },
+  };
+
+  assert.deepEqual(auditFinanceReport("balance-sheet", report), []);
+  assert.equal(rows.filter(row => row.accountType === "asset").reduce((sum, row) => sum + row.closingDebit - row.closingCredit, 0), 118000);
+  assert.equal(rows.filter(row => ["liability", "equity"].includes(row.accountType)).reduce((sum, row) => sum + row.closingCredit - row.closingDebit, 0), 118000);
+  assert.ok(rows.every(row => !String(row.accountCode).startsWith("CALCULATED-")));
+});
+
+test("presents posted net GST on exactly one Balance Sheet side", () => {
+  const base = [
+    { accountId: 1, accountCode: "SYS-CGST-INPUT", accountName: "CGST Input", accountType: "asset", accountSubtype: "gst_input", closingDebit: 256800, closingCredit: 0 },
+    { accountId: 2, accountCode: "SYS-SGST-INPUT", accountName: "SGST Input", accountType: "asset", accountSubtype: "gst_input", closingDebit: 256800, closingCredit: 0 },
+    { accountId: 3, accountCode: "SYS-IGST-INPUT", accountName: "IGST Input", accountType: "asset", accountSubtype: "gst_input", closingDebit: 103680, closingCredit: 0 },
+    { accountId: 4, accountCode: "SYS-GST-OUTPUT", accountName: "GST Output Payable", accountType: "liability", accountSubtype: "gst_payable", closingDebit: 0, closingCredit: 436566.76 },
+    { accountId: 5, accountCode: "SYS-AP", accountName: "Supplier Payable", accountType: "liability", accountSubtype: "accounts_payable", closingDebit: 0, closingCredit: 10 },
+  ];
+
+  const receivable = netPostedGstLedgerRows(base);
+  const receivableRow = receivable.find(row => row.ledgerNetted);
+  assert.equal(receivableRow?.accountType, "asset");
+  assert.equal(receivableRow?.closingDebit, 180713.24);
+  assert.equal(receivableRow?.closingCredit, 0);
+  assert.equal(receivable.filter(row => row.ledgerNetted).length, 1);
+  assert.ok(receivable.some(row => row.accountCode === "SYS-AP"));
+
+  const payable = netPostedGstLedgerRows(base.map(row => row.accountId === 4 ? { ...row, closingCredit: 700000 } : row));
+  const payableRow = payable.find(row => row.ledgerNetted);
+  assert.equal(payableRow?.accountType, "liability");
+  assert.equal(payableRow?.closingDebit, 0);
+  assert.equal(payableRow?.closingCredit, 82720);
+
+  const zero = netPostedGstLedgerRows(base.map(row => row.accountId === 4 ? { ...row, closingCredit: 617280 } : row));
+  assert.equal(zero.some(row => row.ledgerNetted), false);
+  assert.equal(zero.some(row => String(row.accountCode).includes("GST")), false);
 });
 
 test("detects Trial Balance period, closing and reported variance failures", () => {

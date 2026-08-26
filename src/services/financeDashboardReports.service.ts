@@ -4,11 +4,12 @@ import {
   resolveFinanceContext,
   toMoney,
 } from "../utils/finance/finance.utils.js";
-import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
+import { invoiceIncludesCogs, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
 import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
 import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
+import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
 
@@ -627,17 +628,21 @@ export module financeDashboardReportsService {
       const outputGst = money(gstInvoiceResult.rows.reduce((sum: number, invoice: any) => sum + resolveInvoiceGst(invoice).total, 0));
       const inputGst = money(gstBillResult.rows.reduce((sum: number, bill: any) => sum + resolveBillGst(bill).total, 0));
       const netGst = money(outputGst - inputGst);
-      const existingStockRow = rows.find((row: any) => String(row.accountSubtype || "").trim().toLowerCase().replace(/[ -]+/g, "_") === "stock");
-      rows = rows.filter((row: any) => row !== existingStockRow);
-      rows.push({
-        accountId: existingStockRow?.accountId ?? -2, accountCode: existingStockRow?.accountCode || "CALCULATED-STOCK",
-        accountName: existingStockRow?.accountName || "Stock on Hand", accountType: "asset", accountSubtype: "stock",
-        openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: stock.amount, closingCredit: 0,
-        balance: stock.amount, stockQuantity: stock.quantity, stockBreakdown: stock.breakdown,
+      // Stock and GST source records are operational subledger information. They
+      // remain available under details for reconciliation, but must not be added
+      // to the statement because the Balance Sheet is driven exclusively by
+      // balanced, posted journal entries. Adding them here would double-count
+      // amounts already represented by Inventory and GST ledger accounts.
+      balanceSheetDetails.reconciliation = [{
+        stockValue: stock.amount,
+        stockQuantity: stock.quantity,
+        stockBreakdown: stock.breakdown,
         valuationMethod: "Purchase price × included stock quantity",
-      });
-      const netGstRow = buildNetGstBalanceSheetRow(netGst);
-      if (netGstRow) rows.push(netGstRow);
+        outputGst,
+        inputGst,
+        netGst,
+      }];
+      rows = netPostedGstLedgerRows(rows);
       const incomeThroughDate = allRows
         .filter((row: any) => row.accountType === "income")
         .reduce((sum: number, row: any) => sum + row.closingCredit - row.closingDebit, 0);
