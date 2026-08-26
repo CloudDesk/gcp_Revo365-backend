@@ -4,6 +4,7 @@ import { auditFinanceDashboard, auditFinanceReport } from "../utils/finance/fina
 import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, resolveBillGst } from "../utils/finance/gstSummary.utils.js";
 import { fillMonthlyFinanceTrend, listFinanceMonths, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
+import { classifyM4Document, requiredM4Movement } from "../utils/finance/m4Reconciliation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 
 test("builds the statutory Outward IST portal categories without populating fixed-zero rows", () => {
@@ -55,6 +56,16 @@ test("values Balance Sheet stock using available catalogue and owned rental unit
     rentalAvailableAmount: 8000,
     rentalSoldAmount: 2000,
   });
+});
+
+test("classifies M4 document exceptions and derives safe control-account movement", () => {
+  assert.equal(classifyM4Document({difference:0.01,directJournalCount:1,hasRelatedControlLine:true,hasOtherSource:false,reversed:false}),"matched");
+  assert.equal(classifyM4Document({difference:-100,directJournalCount:0,hasRelatedControlLine:true,hasOtherSource:false,reversed:false}),"missing");
+  assert.equal(classifyM4Document({difference:100,directJournalCount:2,hasRelatedControlLine:true,hasOtherSource:false,reversed:false}),"duplicated");
+  assert.equal(classifyM4Document({difference:100,directJournalCount:0,hasRelatedControlLine:false,hasOtherSource:true,reversed:false}),"misclassified");
+  assert.equal(classifyM4Document({difference:100,directJournalCount:1,hasRelatedControlLine:true,hasOtherSource:false,reversed:true}),"reversed");
+  assert.deepEqual(requiredM4Movement("ar",-2876723.25),{amount:2876723.25,side:"debit"});
+  assert.deepEqual(requiredM4Movement("ap",-3082163),{amount:3082163,side:"credit"});
 });
 
 test("classifies Net GST on exactly one Balance Sheet side", () => {

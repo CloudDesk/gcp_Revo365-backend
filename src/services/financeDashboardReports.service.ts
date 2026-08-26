@@ -104,13 +104,14 @@ export module financeDashboardReportsService {
               supportingdocumentdata, taxamount, totalorderamount,
               paidamount, paymentdata, paymentstatus
        FROM revoinvoice
-       WHERE CASE
+       WHERE organizationid = $2
+         AND CASE
                WHEN COALESCE(invoicedate, createddate) >= 100000000000
                  THEN FLOOR(COALESCE(invoicedate, createddate) / 1000.0)
                ELSE COALESCE(invoicedate, createddate)
              END <= $1
          AND LOWER(COALESCE(paymentstatus, 'pending')) NOT IN ('cancelled', 'void')`,
-      [toEpoch]
+      [toEpoch, organizationId]
     ),
     query(
       `SELECT b.id, b.invoicedate, b.createddate, b.paymentduedate,
@@ -124,9 +125,10 @@ export module financeDashboardReportsService {
          SELECT suppliergstnumber, dt_gstnumber, io_gstnumber
          FROM purchaseorder WHERE ponumber=b.ponumber ORDER BY id DESC LIMIT 1
        ) po ON TRUE
-       WHERE COALESCE(b.invoicedate, b.createddate) <= $1
+       WHERE b.organizationid = $2
+         AND ${REVO_BILL_DATE_SECONDS} <= $1
          AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled', 'void')`,
-      [toEpoch]
+      [toEpoch, organizationId]
     ),
     query(
       `SELECT
@@ -243,12 +245,13 @@ export module financeDashboardReportsService {
                     totalorderamount,paidamount,paymentdata,taxamount,
                     invoicedata,servicedata,summaryinvoicedata,supportingdocumentdata
              FROM revoinvoice
-             WHERE LOWER(COALESCE(paymentstatus,'pending')) NOT IN ('cancelled','void')
+             WHERE organizationid=$2
+               AND LOWER(COALESCE(paymentstatus,'pending')) NOT IN ('cancelled','void')
                AND CASE
                      WHEN COALESCE(invoicedate,createddate) >= 100000000000
                        THEN FLOOR(COALESCE(invoicedate,createddate) / 1000.0)
                      ELSE COALESCE(invoicedate,createddate)
-                   END <= $1`, [toEpoch]),
+                   END <= $1`, [toEpoch,organizationId]),
       query(`SELECT b.id,b.invoicedate,b.createddate,b.paymentduedate,b.invoicestatus,
                     b.invoiceamount,b.balanceamount,b.paymentdata,b.payabletaxamount,b.igst,b.cgst,b.sgst,
                     COALESCE(b.suppliergstin,po.suppliergstnumber) AS suppliergstin,
@@ -258,8 +261,9 @@ export module financeDashboardReportsService {
                SELECT suppliergstnumber,dt_gstnumber,io_gstnumber
                FROM purchaseorder WHERE ponumber=b.ponumber ORDER BY id DESC LIMIT 1
              ) po ON TRUE
-             WHERE LOWER(COALESCE(b.invoicestatus,'in_progress')) NOT IN ('cancelled','void')
-               AND COALESCE(b.invoicedate,b.createddate) <= $1`, [toEpoch]),
+             WHERE b.organizationid=$2
+               AND LOWER(COALESCE(b.invoicestatus,'in_progress')) NOT IN ('cancelled','void')
+               AND ${REVO_BILL_DATE_SECONDS} <= $1`, [toEpoch,organizationId]),
       query(`SELECT COALESCE(SUM(currentbalance) FILTER (WHERE status='active'),0) AS total,
                     COUNT(*) FILTER (WHERE status='active')::int AS accounts,
                     (SELECT COALESCE(JSON_AGG(top_account),'[]'::json) FROM (
@@ -474,17 +478,42 @@ export module financeDashboardReportsService {
 
     let rows = allRows;
     let operationalProfitLoss: any = null;
+    let profitLossDetails: any[] | undefined;
+    let balanceSheetDetails: any | undefined;
+    let trialBalanceDetails: any | undefined;
+    if (reportKey === "trial-balance") {
+      const journalDetailResult = await query(
+        `SELECT jl.financeaccountid AS accountid, je.entrydate, je.journalnumber,
+                je.sourcetype, je.description AS entrydescription,
+                jl.description AS linedescription, jl.debitamount, jl.creditamount
+         FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journalentryid
+         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.entrydate <= $2
+         ORDER BY je.entrydate DESC, je.id DESC, jl.id ASC`,
+        [organizationId, to]
+      );
+      trialBalanceDetails = {
+        journalLines: journalDetailResult.rows.map((detail: any) => ({
+          accountId: Number(detail.accountid), date: detail.entrydate,
+          reference: detail.journalnumber, sourceType: detail.sourcetype,
+          description: detail.linedescription || detail.entrydescription || "Posted journal entry",
+          debit: money(Number(detail.debitamount || 0)), credit: money(Number(detail.creditamount || 0)),
+        })),
+      };
+    }
     if (reportKey === "profit-loss") {
       rows = allRows.filter((row: any) => ["income", "expense"].includes(row.accountType));
       const { fromEpoch, toEpoch } = epochRange(from, to);
       const [invoiceResult, productResult] = await Promise.all([
-        query(`SELECT r.* FROM revoinvoice r WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+        query(`SELECT r.*, CONCAT_WS(' ', u.firstname, u.lastname) AS partyname
+          FROM revoinvoice r LEFT JOIN users u ON u.id = r.customerid
+          WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
           AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')`, [fromEpoch, toEpoch]),
         query(`SELECT id,puc,productname,COALESCE(purchaseprice,0) AS purchaseprice FROM product_revo`, []),
       ]);
       const byId = new Map(productResult.rows.map((product: any) => [String(product.id), Number(product.purchaseprice || 0)]));
       const byPuc = new Map(productResult.rows.map((product: any) => [String(product.puc || "").trim(), Number(product.purchaseprice || 0)]));
       const byName = new Map(productResult.rows.map((product: any) => [String(product.productname || "").trim().toLowerCase(), Number(product.purchaseprice || 0)]));
+      profitLossDetails = [];
       operationalProfitLoss = invoiceResult.rows.reduce((sum: any, invoice: any) => {
         const productSection = jsonObject(invoice.invoicedata);
         const serviceSection = jsonObject(invoice.servicedata);
@@ -501,13 +530,25 @@ export module financeDashboardReportsService {
         }
         if (hasProductSale) sum.salesIncome += productTaxable;
         if (hasServiceSale) sum.serviceIncome += serviceTaxable;
+        let invoiceCogs = 0;
         if (hasProductSale) {
           for (const item of Array.isArray(productSection.items) ? productSection.items : []) {
             const quantity = Math.max(Number(item.quantity ?? item.qty ?? 1) || 0, 0);
             const purchasePrice = Number(item.purchaseprice ?? item.purchasePrice ?? byId.get(String(item.productid ?? item.productId ?? item.id ?? "")) ?? byPuc.get(String(item.puc ?? item.productcode ?? "").trim()) ?? byName.get(String(item.productname ?? item.name ?? "").trim().toLowerCase()) ?? 0);
-            sum.cogs += purchasePrice * quantity;
+            invoiceCogs += purchasePrice * quantity;
           }
         }
+        sum.cogs += invoiceCogs;
+        profitLossDetails!.push({
+          id: Number(invoice.id),
+          date: normalizeFinanceEpochSeconds(invoice.invoicedate || invoice.createddate),
+          number: invoice.invoicenumber || `INV-${invoice.id}`,
+          partyName: String(invoice.partyname || "").trim() || `Customer ${invoice.customerid || "—"}`,
+          documentType,
+          salesIncome: money(hasProductSale ? productTaxable : 0),
+          serviceIncome: money(hasServiceSale ? serviceTaxable : 0),
+          cogs: money(invoiceCogs),
+        });
         return sum;
       }, { salesIncome: 0, serviceIncome: 0, cogs: 0 });
       Object.keys(operationalProfitLoss).forEach(key => operationalProfitLoss[key] = money(operationalProfitLoss[key]));
@@ -521,8 +562,10 @@ export module financeDashboardReportsService {
       rows = allRows.filter((row: any) => ["asset", "liability", "equity"].includes(row.accountType));
       const { fromEpoch, toEpoch } = epochRange(from, to);
       const [stockResult, gstInvoiceResult, gstBillResult] = await Promise.all([query(
-        `SELECT s.stocktype, s.stockstatus, COUNT(s.id) AS quantity,
-                COALESCE(SUM(COALESCE(p.price, 0)), 0) AS amount
+        `SELECT s.stocktype, s.stockstatus, p.puc, p.productname,
+                COALESCE(s.createddate, s.modifieddate) AS stockdate,
+                COALESCE(p.purchaseprice, 0) AS purchaseprice, COUNT(s.id) AS quantity,
+                COALESCE(SUM(COALESCE(p.purchaseprice, 0)), 0) AS amount
          FROM stock_revo s JOIN product_revo p ON p.puc = s.puc
          WHERE COALESCE(s.isdeleted, FALSE) = FALSE
            AND COALESCE(s.isarchive, FALSE) = FALSE
@@ -530,7 +573,8 @@ export module financeDashboardReportsService {
            AND COALESCE(s.ewaste, FALSE) = FALSE
            AND ((s.stocktype IN ('on_catalogue_product', 'off_catalogue_product') AND s.stockstatus = 'Available')
              OR (s.stocktype = 'rental_product' AND s.stockstatus IN ('Available', 'Rental Sold')))
-         GROUP BY s.stocktype, s.stockstatus`, []
+         GROUP BY s.stocktype, s.stockstatus, p.puc, p.productname, p.purchaseprice,
+                  COALESCE(s.createddate, s.modifieddate)`, []
       ), query(
         `SELECT r.* FROM revoinvoice r WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
            AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
@@ -543,6 +587,42 @@ export module financeDashboardReportsService {
            AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
       )]);
       const stock = buildInventoryStockValuation(stockResult.rows);
+      const journalDetailResult = await query(
+        `SELECT jl.financeaccountid AS accountid, je.entrydate, je.journalnumber,
+                je.sourcetype, je.description AS entrydescription,
+                jl.description AS linedescription, jl.debitamount, jl.creditamount
+         FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journalentryid
+         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.entrydate <= $2
+         ORDER BY je.entrydate DESC, je.id DESC, jl.id ASC`,
+        [organizationId, to]
+      );
+      balanceSheetDetails = {
+        journalLines: journalDetailResult.rows.map((detail: any) => ({
+          accountId: Number(detail.accountid), date: detail.entrydate,
+          reference: detail.journalnumber, sourceType: detail.sourcetype,
+          description: detail.linedescription || detail.entrydescription || "Posted journal entry",
+          debit: money(Number(detail.debitamount || 0)), credit: money(Number(detail.creditamount || 0)),
+        })),
+        stock: stockResult.rows.map((detail: any) => ({
+          puc: detail.puc, productName: detail.productname || detail.puc,
+          date: normalizeFinanceEpochSeconds(detail.stockdate),
+          stockType: detail.stocktype, stockStatus: detail.stockstatus,
+          purchasePrice: money(Number(detail.purchaseprice || 0)), quantity: Number(detail.quantity || 0),
+          amount: money(Number(detail.amount || 0)),
+        })),
+        gst: [
+          ...gstInvoiceResult.rows.map((invoice: any) => ({
+            kind: "output", date: normalizeFinanceEpochSeconds(invoice.invoicedate || invoice.createddate),
+            reference: invoice.invoicenumber || `INV-${invoice.id}`,
+            description: "Output GST from sales invoice", amount: money(resolveInvoiceGst(invoice).total),
+          })),
+          ...gstBillResult.rows.map((bill: any) => ({
+            kind: "input", date: normalizeFinanceEpochSeconds(bill.invoicedate || bill.createddate),
+            reference: bill.invoicenumber || `BILL-${bill.id}`,
+            description: "Input GST from supplier bill", amount: money(resolveBillGst(bill).total),
+          })),
+        ].filter((detail: any) => detail.amount !== 0),
+      };
       const outputGst = money(gstInvoiceResult.rows.reduce((sum: number, invoice: any) => sum + resolveInvoiceGst(invoice).total, 0));
       const inputGst = money(gstBillResult.rows.reduce((sum: number, bill: any) => sum + resolveBillGst(bill).total, 0));
       const netGst = money(outputGst - inputGst);
@@ -553,7 +633,7 @@ export module financeDashboardReportsService {
         accountName: existingStockRow?.accountName || "Stock on Hand", accountType: "asset", accountSubtype: "stock",
         openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0, closingDebit: stock.amount, closingCredit: 0,
         balance: stock.amount, stockQuantity: stock.quantity, stockBreakdown: stock.breakdown,
-        valuationMethod: "Product price × included stock quantity",
+        valuationMethod: "Purchase price × included stock quantity",
       });
       const netGstRow = buildNetGstBalanceSheetRow(netGst);
       if (netGstRow) rows.push(netGstRow);
@@ -633,6 +713,9 @@ export module financeDashboardReportsService {
       totals,
       ...(reportKey === "trial-balance" ? { total: rows.length, page, count } : {}),
       ...(profitLossSummary ? { summary: profitLossSummary } : {}),
+      ...(profitLossDetails ? { details: { invoices: profitLossDetails } } : {}),
+      ...(balanceSheetDetails ? { details: balanceSheetDetails } : {}),
+      ...(trialBalanceDetails ? { details: trialBalanceDetails } : {}),
       variance: money(
         reportKey === "trial-balance"
           ? totals.periodDebit - totals.periodCredit

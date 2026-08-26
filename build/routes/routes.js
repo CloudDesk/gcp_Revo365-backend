@@ -72,6 +72,7 @@ import { financeAccountController } from "../controller/financeAccount.controlle
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
 import { financeDashboardReportsController } from "../controller/financeDashboardReports.controller.js";
+import { financeM4ReconciliationController } from "../controller/financeM4Reconciliation.controller.js";
 import { tdsDepositController } from "../controller/tdsDeposit.controller.js";
 import { createBankCashAccountSchema, createChartAccountSchema, createDirectBankTransactionSchema, applyCustomerOnAccountSchema, applySupplierOnAccountSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, createJournalDraftSchema, postJournalSchema, reverseJournalSchema, updateJournalDraftSchema, updateBankCashAccountSchema, postCustomerTransferSchema, replaceCustomerTransferSchema, } from "../schemas/finance.schema.js";
 import { requireDeliveryChallanPermission, requireFinanceModulePermission, requireFinancePermission, requireJournalPermission } from "../services/financeAccess.service.js";
@@ -422,6 +423,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/dashboard/summary', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeDashboardReportsController.getDashboardSummary);
     fastify.get('/finance/dashboard/insights', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeDashboardReportsController.getDashboardInsights);
     fastify.get('/finance/dashboard/ageing-details', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeDashboardReportsController.getDashboardAgeingDetails);
+    fastify.get('/finance/dashboard/m4-reconciliation', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.analyze);
+    fastify.get('/finance/dashboard/m4-reconciliation/runs', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.listRuns);
+    fastify.post('/finance/dashboard/m4-reconciliation/dry-run', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.createDryRun);
+    fastify.post('/finance/dashboard/m4-reconciliation/runs/:runId/approve', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.approve);
+    fastify.post('/finance/dashboard/m4-reconciliation/runs/:runId/post', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.postApproved);
     fastify.get('/finance/reports/:reportKey', { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] }, financeDashboardReportsController.getReport);
     fastify.get('/finance/reports/:reportKey/export', { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] }, financeDashboardReportsController.exportReport);
     fastify.get('/finance/tds-deposits', { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] }, tdsDepositController.list);

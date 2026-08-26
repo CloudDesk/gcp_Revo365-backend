@@ -10,6 +10,7 @@ import {
 
 export module poinvoiceservice {
   const poInvoiceFieldNames = new Set([
+    "organizationid",
     "invoiceamount",
     "ponumber",
     "invoicedate",
@@ -528,8 +529,8 @@ export module poinvoiceservice {
         fieldValues[findindex] = null
       }
       if (id) {
-        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-        params = [...fieldValues, id];
+        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
+        params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
       } else {
         querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
         params = fieldValues;
@@ -568,8 +569,8 @@ export module poinvoiceservice {
         fieldValues[findindex] = null
       }
       if (id) {
-        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-        params = [...fieldValues, id];
+        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
+        params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
       } else {
         querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
         params = fieldValues;

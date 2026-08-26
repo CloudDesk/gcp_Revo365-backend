@@ -1,5 +1,6 @@
 import { revoinvoiceservice } from "../services/revoinvoice.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 
 
 export module revoinvoicecontroller {
@@ -29,7 +30,8 @@ export module revoinvoicecontroller {
 
     export const upsertRevoInvoice = async (request: any, reply: any) => {
         try {
-            let upsertRevoInvoiceResult = await revoinvoiceservice.upsertRevoInvoice(request.body);
+            const { organizationId } = resolveFinanceContext(request);
+            let upsertRevoInvoiceResult = await revoinvoiceservice.upsertRevoInvoice({ ...request.body, organizationid: organizationId });
             console.log(request.body, "request.body in upsertRevoInvoice controller");
             if (upsertRevoInvoiceResult.command === "UPDATE" || upsertRevoInvoiceResult.command === "INSERT") {
                 let message: any = {};

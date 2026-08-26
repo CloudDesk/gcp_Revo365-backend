@@ -81,6 +81,7 @@ import { financeAccountController } from "../controller/financeAccount.controlle
 import { journalController } from "../controller/journal.controller.js";
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
 import { financeDashboardReportsController } from "../controller/financeDashboardReports.controller.js";
+import { financeM4ReconciliationController } from "../controller/financeM4Reconciliation.controller.js";
 import { tdsDepositController } from "../controller/tdsDeposit.controller.js";
 import {
     createBankCashAccountSchema,
@@ -710,6 +711,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] },
         financeDashboardReportsController.getDashboardAgeingDetails
     );
+    fastify.get('/finance/dashboard/m4-reconciliation', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.analyze);
+    fastify.get('/finance/dashboard/m4-reconciliation/runs', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.listRuns);
+    fastify.post('/finance/dashboard/m4-reconciliation/dry-run', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.createDryRun);
+    fastify.post('/finance/dashboard/m4-reconciliation/runs/:runId/approve', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.approve);
+    fastify.post('/finance/dashboard/m4-reconciliation/runs/:runId/post', { preHandler: [getSession, requireFinanceModulePermission('finance_dashboard')] }, financeM4ReconciliationController.postApproved);
     fastify.get(
         '/finance/reports/:reportKey',
         { preHandler: [getSession, requireFinanceModulePermission('finance_reports')] },

@@ -791,8 +791,8 @@ export module revoinvoiceservice {
                 console.log('inside if')
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
-                    .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-                params = [...fieldValues, id];
+                    .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
+                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
             } else {
                 console.log('inside else')
                 querydata = `INSERT INTO revoinvoice (${fieldNames.join(
