@@ -6,6 +6,12 @@ import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
+import {
+    getRetailInvoicePaymentState,
+    isRentalInvoice,
+    isRetailStoreProductOrder,
+} from "../utils/finance/retailReceipt.utils.js";
+import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -216,40 +222,61 @@ const appendPaymentIfMissing = (paymentEntries: any[], nextPayment: any) => {
     ];
 };
 
-const getOrderPaymentForInvoice = async (orderid: any, invoiceAmount: number) => {
-    if (!orderid || invoiceAmount <= 0) return null;
+const getInvoiceOrderContext = async (orderid: any) => {
+    if (!orderid) return null;
 
-    const orderPaymentResult = await query(
+    const orderContextResult = await query(
         `
         WITH order_refs AS (
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orders
             WHERE orderid = $1
             UNION
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orderline
             WHERE uniqueorderid = $1
             UNION
-            SELECT merchanttransactionid, NULL::varchar AS paymentmethod
+            SELECT
+                merchanttransactionid,
+                NULL::varchar AS paymentmethod,
+                NULL::varchar AS ordername,
+                NULL::varchar AS invoicefor
             FROM thirdpartyorders
             WHERE orderid = $1
         )
         SELECT
-            t.transactionid,
-            t.amount,
-            t.createddate,
-            t.transactiondata,
-            t.razorpay_payment_id,
-            t.razorpay_order_id,
-            order_refs.paymentmethod
+            merchanttransactionid,
+            paymentmethod,
+            ordername,
+            invoicefor
         FROM order_refs
-        JOIN transaction t
-          ON t.merchanttransactionid = order_refs.merchanttransactionid
-        WHERE order_refs.merchanttransactionid IS NOT NULL
-        ORDER BY t.createddate DESC NULLS LAST, t.id DESC
+        WHERE merchanttransactionid IS NOT NULL
         LIMIT 1
         `,
         [String(orderid)]
+    );
+
+    return orderContextResult.rows[0] || null;
+};
+
+const getOrderPaymentForInvoice = async (orderContext: any, invoiceAmount: number) => {
+    if (!orderContext?.merchanttransactionid || invoiceAmount <= 0) return null;
+
+    const orderPaymentResult = await query(
+        `
+        SELECT
+            transactionid,
+            amount,
+            createddate,
+            transactiondata,
+            razorpay_payment_id,
+            razorpay_order_id
+        FROM transaction
+        WHERE merchanttransactionid = $1
+        ORDER BY createddate DESC NULLS LAST, id DESC
+        LIMIT 1
+        `,
+        [orderContext.merchanttransactionid]
     );
 
     const transactionRow = orderPaymentResult.rows[0];
@@ -261,7 +288,7 @@ const getOrderPaymentForInvoice = async (orderid: any, invoiceAmount: number) =>
             ? "cash"
             : transactionRow.razorpay_payment_id
                 ? "razorpay"
-                : transactionRow.paymentmethod;
+                : orderContext.paymentmethod;
     const transactionAmount = toNumber(transactionRow.amount);
 
     return {
@@ -307,11 +334,33 @@ const applyInvoicePaymentSummary = async (upsertFields: any, id?: any) => {
 
     let paymentEntries = normalizePaymentEntries(invoiceSnapshot.paymentdata);
     const invoiceAmount = getInvoiceAmount(invoiceSnapshot);
+    const rentalInvoice = isRentalInvoice(invoiceSnapshot);
 
-    if (!id && paymentEntries.length === 0) {
-        const orderPayment = await getOrderPaymentForInvoice(invoiceSnapshot.orderid, invoiceAmount);
-        if (orderPayment) {
-            paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+    // A historical migration copied originating order transactions into some
+    // rental invoices. Rental receivables are settled only through Cash & Bank,
+    // so remove those legacy entries while preserving genuine receipt entries.
+    if (rentalInvoice) {
+        paymentEntries = paymentEntries.filter(
+            (payment: any) => normalizeText(payment?.source) !== "order_payment"
+        );
+    }
+
+    if (!id) {
+        const orderContext = await getInvoiceOrderContext(invoiceSnapshot.orderid);
+
+        // In-store product and rental billing invoices are settled through the
+        // Cash & Bank customer-receipt flow. The originating order transaction
+        // remains operational history and must not pre-settle a new receivable.
+        if (
+            isRetailStoreProductOrder(orderContext) ||
+            rentalInvoice
+        ) {
+            paymentEntries = [];
+        } else if (paymentEntries.length === 0) {
+            const orderPayment = await getOrderPaymentForInvoice(orderContext, invoiceAmount);
+            if (orderPayment) {
+                paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+            }
         }
     }
 
@@ -442,6 +491,86 @@ const enrichRentalInvoiceAssets = async (invoiceRows: any[]) => {
 };
 
 export module revoinvoiceservice {
+    export const getPaymentSummariesByCustomerIds = async (
+        customerIds: any[]
+    ) => {
+        const normalizedCustomerIds = Array.from(
+            new Set(
+                customerIds
+                    .map((customerId) => Number(customerId))
+                    .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
+                    .map((customerId) => Math.trunc(customerId))
+            )
+        );
+
+        if (normalizedCustomerIds.length === 0) {
+            return {};
+        }
+
+        const invoiceResult = await query(
+            `
+            SELECT *
+            FROM revoinvoice
+            WHERE customerid = ANY($1::int[])
+            ORDER BY customerid, id
+            `,
+            [normalizedCustomerIds]
+        );
+
+        const summaryByCustomer = new Map<number, any>();
+        invoiceResult.rows.forEach((invoice: any) => {
+            const customerId = Number(invoice?.customerid);
+            if (!Number.isFinite(customerId)) return;
+
+            const paymentState = getRetailInvoicePaymentState(invoice);
+            const summary = summaryByCustomer.get(customerId) || {
+                invoicecount: 0,
+                invoiceamount: 0,
+                paidamount: 0,
+                balanceamount: 0,
+            };
+
+            summary.invoicecount += 1;
+            summary.invoiceamount = Number(
+                (summary.invoiceamount + paymentState.invoiceAmount).toFixed(2)
+            );
+            summary.paidamount = Number(
+                (summary.paidamount + paymentState.paidAmount).toFixed(2)
+            );
+            summary.balanceamount = Number(
+                (summary.balanceamount + paymentState.outstandingAmount).toFixed(2)
+            );
+            summaryByCustomer.set(customerId, summary);
+        });
+
+        return Object.fromEntries(
+            normalizedCustomerIds.map((customerId) => {
+                const summary = summaryByCustomer.get(customerId) || {
+                    invoicecount: 0,
+                    invoiceamount: 0,
+                    paidamount: 0,
+                    balanceamount: 0,
+                };
+                const paymentstatus =
+                    summary.invoicecount === 0
+                        ? "no_invoices"
+                        : summary.invoiceamount > 0 && summary.balanceamount === 0
+                            ? "paid"
+                            : summary.paidamount > 0
+                                ? "partially_paid"
+                                : "pending";
+
+                return [
+                    customerId,
+                    {
+                        ...summary,
+                        paymentstatus,
+                    },
+                ];
+            })
+        );
+    };
+
     export const getRentalAssetCountsByCustomerIds = async (
         customerIds: any[],
         options: { activeOnly?: boolean; invoiceForValues?: string[] } = {}
@@ -593,6 +722,21 @@ export module revoinvoiceservice {
 
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
+            datatypeCheckResult = datatypeCheckResult.map((invoice: any) => {
+                if (!isRentalInvoice(invoice)) return invoice;
+                const paymentState = getRetailInvoicePaymentState(invoice);
+                return {
+                    ...invoice,
+                    paidamount: paymentState.paidAmount,
+                    balanceamount: paymentState.outstandingAmount,
+                    paymentstatus:
+                        paymentState.invoiceAmount > 0 && paymentState.outstandingAmount === 0
+                            ? "paid"
+                            : paymentState.paidAmount > 0
+                                ? "partially_paid"
+                                : "pending",
+                };
+            });
             if (shouldEnrichRentalAssets(request.query.invoicefor)) {
                 datatypeCheckResult = await enrichRentalInvoiceAssets(datatypeCheckResult);
             }
@@ -687,6 +831,7 @@ export module revoinvoiceservice {
             console.log(result, "result in upsertRevoInvoice");
             if (result && result.rows.length > 0) {
                 const row = result.rows[0];
+                await ecommercePaymentFinanceService.safelyLinkInvoice(Number(row.id));
                 if (row.invoicefor === 'service' && row.ticketnumber && row.invoiceurl) {
                     await fireInvoiceReadyEmail(row.ticketnumber, row.invoiceurl);
                 }
