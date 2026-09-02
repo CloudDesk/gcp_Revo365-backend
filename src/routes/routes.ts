@@ -419,9 +419,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //in-store customer quotations
     fastify.get('/store-quotation', { preHandler: [getSession] }, storeQuotationController.getStoreQuotations);
     fastify.post('/store-quotation', { preHandler: [getSession] }, storeQuotationController.upsertStoreQuotation);
+    fastify.post('/store-quotation/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
     fastify.get('/store-quotation/:id/versions', { preHandler: [getSession] }, storeQuotationController.getStoreQuotationVersions);
     fastify.post('/store-quotation/:id/finalize', { preHandler: [getSession] }, storeQuotationController.finalizeStoreQuotation);
     fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
+    fastify.post('/store-quotation/:id/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
 
     // Cash and Bank Account foundation
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
