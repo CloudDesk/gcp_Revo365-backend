@@ -46,8 +46,12 @@ const ESTIMATION_FIELDS = new Set([
     "servicetaxamount",
     "servicetotal",
     "totalpayableamount",
+    "roundoffamount",
     "customerstate",
     "taxtype",
+    "billingaddresssnapshot",
+    "shippingaddressid",
+    "shippingaddresssnapshot",
 ]);
 
 const ESTIMATION_FILTER_FIELDS = new Set([
@@ -136,14 +140,18 @@ const getTicketContext = async (ticketnumber: string) => {
         `SELECT
             t.id,
             t.ticketnumber,
+            t.userid,
+            t.productid,
             t.walkintickets,
             t.proceedwithvalueservice,
             t.servicetype,
             t.addressid,
             t.location,
+            product.subcategory AS productfamily,
             ticket_address.state AS ticketaddressstate,
             latest_customer_address.state AS latestcustomeraddressstate
          FROM tickets t
+         LEFT JOIN product_revo product ON product.id = t.productid
          LEFT JOIN address ticket_address ON ticket_address.id = t.addressid
          LEFT JOIN LATERAL (
             SELECT customer_address.state
@@ -173,6 +181,16 @@ const getTicketContext = async (ticketnumber: string) => {
     };
 };
 
+// Service Cost Estimation has one statutory SAC classification. It is not a
+// product-family setting, and the API deliberately ignores any client value.
+const SERVICE_COST_ESTIMATION_SAC_CODE = "998713";
+
+const resolveServiceRequestSacCode = async (_ticketContext?: any) =>
+    SERVICE_COST_ESTIMATION_SAC_CODE;
+
+const resolveProductFamilySacCode = async (_rawProductFamily?: any) =>
+    SERVICE_COST_ESTIMATION_SAC_CODE;
+
 const getExistingEstimation = async (id: any) => {
     if (!id) return null;
     const result = await query(
@@ -193,6 +211,7 @@ const getProductsByIds = async (productIds: number[]) => {
             product.id,
             product.puc,
             product.productname,
+            product.subcategory AS productfamily,
             product.hsncode,
             product.price,
             COUNT(stock.id)::int AS availablequantity
@@ -223,6 +242,7 @@ const getProductsByIds = async (productIds: number[]) => {
             product.id,
             product.puc,
             product.productname,
+            product.subcategory,
             product.hsncode,
             product.price`,
         [
@@ -383,6 +403,7 @@ const prepareProductRows = async (rows: any[], requireSelectedProduct: boolean) 
             productid: product ? Number(product.id) : productId || null,
             puc: product?.puc ?? row?.puc ?? null,
             productname: product?.productname ?? row?.productname ?? "",
+            productfamily: product?.productfamily ?? row?.productfamily ?? "",
             description: String(row?.description ?? "").trim(),
             assetstockid: selectedAsset
                 ? Number(selectedAsset.id)
@@ -424,7 +445,11 @@ const prepareProductRows = async (rows: any[], requireSelectedProduct: boolean) 
     return preparedRows;
 };
 
-const prepareServiceRows = (rows: any[], requireSacCode: boolean) => {
+const prepareServiceRows = (
+    rows: any[],
+    requireSacCode: boolean,
+    resolvedSacCode?: string
+) => {
     const activeRows = rows.filter((row) =>
         Boolean(
             String(row?.description ?? "").trim() ||
@@ -435,7 +460,11 @@ const prepareServiceRows = (rows: any[], requireSacCode: boolean) => {
 
     return activeRows.map((row, index) => {
         const description = String(row?.description ?? "").trim();
-        const sacCode = String(row?.saccode ?? "").trim();
+        // SAC is derived exclusively from the Service Request's linked product family.
+        // Never accept a manually supplied SAC value from the client.
+        const sacCode = requireSacCode
+            ? String(resolvedSacCode ?? "").trim()
+            : String(row?.saccode ?? "").trim();
         const unitPrice = asNumber(row?.unitprice);
 
         if (!description) {
@@ -485,13 +514,75 @@ const prepareCostEstimation = async (rawInput: any) => {
     ).trim();
     const taxContext = getServiceEstimationTaxContext(customerState);
 
+    const normalizeAddressSnapshot = (value: any) => {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+        const fields = ["name", "mobilenumber", "doornumber", "landmark", "address", "city", "state", "pincode"];
+        return fields.reduce((snapshot: Record<string, string>, field) => {
+            snapshot[field] = String(parsed[field] ?? "").trim();
+            return snapshot;
+        }, {});
+    };
+    let billingAddressSnapshot: any = null;
+    try {
+        billingAddressSnapshot = normalizeAddressSnapshot(merged.billingaddresssnapshot);
+    } catch {
+        throw validationError("Billing address contains invalid data");
+    }
+    const selectedShippingAddressId = Number(merged.shippingaddressid);
+    let shippingAddressId: number | null = null;
+    let shippingAddressSnapshot: any = null;
+    if (Number.isInteger(selectedShippingAddressId) && selectedShippingAddressId > 0) {
+        const addressResult = await query(
+            `SELECT id, name, mobilenumber, doornumber, landmark,
+                    address, city, state, pincode
+             FROM address
+             WHERE id = $1 AND userid = $2
+             LIMIT 1`,
+            [selectedShippingAddressId, ticketContext.userid]
+        );
+        if (!addressResult.rows[0]) {
+            throw validationError("Select a valid shipping address for this customer");
+        }
+        shippingAddressId = selectedShippingAddressId;
+        shippingAddressSnapshot = addressResult.rows[0];
+    } else {
+        try {
+            shippingAddressSnapshot = normalizeAddressSnapshot(merged.shippingaddresssnapshot);
+        } catch {
+            throw validationError("Shipping address contains invalid data");
+        }
+        if (!shippingAddressSnapshot && !isNew) {
+            shippingAddressSnapshot = existing?.shippingaddresssnapshot ?? null;
+        }
+    }
+    if (!billingAddressSnapshot && !isNew) {
+        billingAddressSnapshot = existing?.billingaddresssnapshot ?? null;
+    }
+    if (!shippingAddressSnapshot && !isNew) {
+        shippingAddressId = existing?.shippingaddressid ?? null;
+    }
+
     const incomingProductRows = parseCollection(merged.productdata);
     const incomingServiceRows = parseCollection(merged.servicedata);
     const productRows = isNew
         ? await prepareProductRows(incomingProductRows, true)
         : incomingProductRows;
+    const hasServiceRows = incomingServiceRows.some((row) =>
+        Boolean(
+            String(row?.description ?? "").trim() ||
+            String(row?.saccode ?? "").trim() ||
+            asNumber(row?.unitprice) > 0
+        )
+    );
+    const selectedProductFamily = productRows.find((row: any) => row?.productfamily)?.productfamily;
+    const resolvedSacCode = isNew && hasServiceRows
+        ? ticketContext?.productid
+            ? await resolveServiceRequestSacCode(ticketContext)
+            : await resolveProductFamilySacCode(selectedProductFamily)
+        : undefined;
     const serviceRows = isNew
-        ? prepareServiceRows(incomingServiceRows, true)
+        ? prepareServiceRows(incomingServiceRows, true, resolvedSacCode)
         : incomingServiceRows;
 
     if (productRows.length === 0 && serviceRows.length === 0) {
@@ -584,11 +675,15 @@ const prepareCostEstimation = async (rawInput: any) => {
             merged.servicetotal,
             roundMoney(serviceSubtotal + serviceTaxAmount)
         );
+    const preRoundTotal = roundMoney(productTotal + serviceTotal);
+    const roundoffAmount = isNew
+        ? roundMoney(Math.round(preRoundTotal) - preRoundTotal)
+        : asStoredNumber(merged.roundoffamount, 0);
     const totalPayableAmount = isNew
-        ? roundMoney(productTotal + serviceTotal)
+        ? Math.round(preRoundTotal)
         : asStoredNumber(
             merged.totalpayableamount,
-            roundMoney(productTotal + serviceTotal)
+            roundMoney(preRoundTotal + roundoffAmount)
         );
     const storedHasIgst = productIgst > 0 || serviceIgst > 0;
     const storedHasSplitGst =
@@ -640,9 +735,13 @@ const prepareCostEstimation = async (rawInput: any) => {
         servicetaxamount: serviceTaxAmount,
         servicetotal: serviceTotal,
         totalpayableamount: totalPayableAmount,
+        roundoffamount: roundoffAmount,
         customerstate: taxContext.customerstate,
         taxtype: resolvedTaxType,
         estimationstatus: estimationStatus,
+        billingaddresssnapshot: billingAddressSnapshot,
+        shippingaddressid: shippingAddressId,
+        shippingaddresssnapshot: shippingAddressSnapshot,
     };
 
     if (merged.estimationurl) prepared.estimationurl = merged.estimationurl;
@@ -1428,6 +1527,7 @@ export module costEstimationService {
                 product.id,
                 product.puc,
                 product.productname,
+                product.subcategory AS productfamily,
                 product.hsncode,
                 COUNT(stock.id)::int AS availablequantity,
                 COALESCE(product.price, 0) AS price
@@ -1465,6 +1565,7 @@ export module costEstimationService {
                 product.id,
                 product.puc,
                 product.productname,
+                product.subcategory,
                 product.hsncode,
                 product.price,
                 product.modifieddate
@@ -1480,15 +1581,48 @@ export module costEstimationService {
         );
 
         let customerState = "Tamil Nadu";
+        let customerAddresses: any[] = [];
+        let billingAddressId: number | null = null;
+        let defaultShippingAddressId: number | null = null;
+        let serviceSacCode: string | null = null;
+        let serviceSacResolutionError: string | null = null;
         if (ticketnumber) {
             const ticketContext = await getTicketContext(ticketnumber);
             customerState = String(ticketContext.customerstate || customerState);
+            const addressResult = await query(
+                `SELECT id, name, mobilenumber, doornumber, landmark,
+                        address, city, state, pincode
+                 FROM address
+                 WHERE userid = $1
+                 ORDER BY modifieddate DESC NULLS LAST, id DESC`,
+                [ticketContext.userid]
+            );
+            customerAddresses = addressResult.rows;
+            billingAddressId = customerAddresses.some(
+                (address) => Number(address.id) === Number(ticketContext.addressid)
+            )
+                ? Number(ticketContext.addressid)
+                : Number(customerAddresses[0]?.id) || null;
+            defaultShippingAddressId = customerAddresses.some(
+                (address) => Number(address.id) === Number(ticketContext.addressid)
+            )
+                ? Number(ticketContext.addressid)
+                : Number(customerAddresses[0]?.id) || null;
+            try {
+                serviceSacCode = await resolveServiceRequestSacCode(ticketContext);
+            } catch (error: any) {
+                // Loading the product lookup must continue for existing product-only
+                // estimates. The create endpoint still enforces SAC when a service row exists.
+                serviceSacResolutionError = error?.message || "Unable to resolve SAC code";
+            }
         }
         const taxContext = getServiceEstimationTaxContext(customerState);
 
         return {
             products: await dataTypeCheck(productsResult),
             customerstate: taxContext.customerstate,
+            serviceSacCode,
+            serviceSacResolutionError,
             taxtype: taxContext.taxtype,
             taxlabel: taxContext.taxlabel,
             rates: {
@@ -1496,6 +1630,9 @@ export module costEstimationService {
                 sgst: taxContext.sgst,
                 igst: taxContext.igst,
             },
+            customeraddresses: customerAddresses,
+            billingaddressid: billingAddressId,
+            defaultshippingaddressid: defaultShippingAddressId,
         };
     };
 

@@ -75,6 +75,17 @@ import { accessController } from "../controller/access.controller.js";
 import { consolidatedInvoiceController } from "../controller/consolidatedInvoice.controller.js";
 import { storeQuotationController } from "../controller/storeQuotation.controller.js";
 import { picklistConfigController } from "../controller/picklistConfig.controller.js";
+import { financeAccountController } from "../controller/financeAccount.controller.js";
+import { tdsSectionController } from "../controller/tdsSection.controller.js";
+import {
+    createBankCashAccountSchema,
+    createDirectBankTransactionSchema,
+    createRetailReceiptSchema,
+    createSupplierPaymentSchema,
+    createTdsSectionSchema,
+    updateBankCashAccountSchema,
+} from "../schemas/finance.schema.js";
+import { requireFinancePermission } from "../services/financeAccess.service.js";
 
 const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     const taskOrSessionAuth = async (request: any, reply: any) => {
@@ -408,9 +419,80 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     //in-store customer quotations
     fastify.get('/store-quotation', { preHandler: [getSession] }, storeQuotationController.getStoreQuotations);
     fastify.post('/store-quotation', { preHandler: [getSession] }, storeQuotationController.upsertStoreQuotation);
+    fastify.post('/store-quotation/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
     fastify.get('/store-quotation/:id/versions', { preHandler: [getSession] }, storeQuotationController.getStoreQuotationVersions);
     fastify.post('/store-quotation/:id/finalize', { preHandler: [getSession] }, storeQuotationController.finalizeStoreQuotation);
     fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
+    fastify.post('/store-quotation/:id/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
+
+    // Cash and Bank Account foundation
+    fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
+    fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
+    fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
+    fastify.post(
+        '/finance/bank-accounts',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] },
+        financeAccountController.create
+    );
+    fastify.patch(
+        '/finance/bank-accounts/:accountId',
+        { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] },
+        financeAccountController.update
+    );
+    fastify.get(
+        '/finance/bank-accounts/:accountId/transactions',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listTransactions
+    );
+    fastify.get(
+        '/finance/retail/customers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listRetailCustomers
+    );
+    fastify.get(
+        '/finance/retail/customers/:customerId/outstanding-invoices',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listRetailOutstandingInvoices
+    );
+    fastify.post(
+        '/finance/bank-accounts/:accountId/transactions/retail-receipt',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createRetailReceiptSchema)] },
+        financeAccountController.postRetailReceipt
+    );
+    fastify.get(
+        '/finance/suppliers',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listSuppliers
+    );
+    fastify.get(
+        '/finance/suppliers/:supplierId/outstanding-bills',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listSupplierOutstandingBills
+    );
+    fastify.post(
+        '/finance/bank-accounts/:accountId/transactions/supplier-payment',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] },
+        financeAccountController.postSupplierPayment
+    );
+    fastify.post(
+        '/finance/bank-accounts/:accountId/transactions/direct-ledger',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] },
+        financeAccountController.postDirectLedgerTransaction
+    );
+
+    // TDS Section Master foundation
+    fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
+    fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);
+    fastify.post(
+        '/finance/tds-sections',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createTdsSectionSchema)] },
+        tdsSectionController.create
+    );
+    fastify.patch(
+        '/finance/tds-sections/:sectionId',
+        { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(createTdsSectionSchema)] },
+        tdsSectionController.update
+    );
 
     //notes
     fastify.get('/note', { preHandler: [getSession] }, notesController.getnotes);

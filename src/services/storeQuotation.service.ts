@@ -386,4 +386,53 @@ export module storeQuotationService {
       return await ErrorHandler.handleQueryError(error);
     }
   };
+
+  export const updateStoreQuotationUrl = async (data: any) => {
+    try {
+      const quotationId = data?.quotationid || data?.id;
+      const versionId = data?.versionid || data?.quotationversionid;
+      const quoteUrl = data?.quoteurl;
+      const epoch = nowEpoch();
+
+      if (!quoteUrl) {
+        return { errorMessage: "quoteurl is mandatory", statusCode: 400 };
+      }
+
+      if (versionId) {
+        const result = await query(
+          `
+          UPDATE store_quotation_versions
+          SET quoteurl = $1, modifieddate = $2
+          WHERE id = $3
+          RETURNING *
+          `,
+          [quoteUrl, epoch, Number(versionId)]
+        );
+        return { command: "UPDATE", rows: result.rows };
+      }
+
+      if (quotationId) {
+        const result = await query(
+          `
+          UPDATE store_quotation_versions
+          SET quoteurl = $1, modifieddate = $2
+          WHERE id = (
+            SELECT id FROM store_quotation_versions
+            WHERE quotationid = $3
+            ORDER BY versionnumber DESC
+            LIMIT 1
+          )
+          RETURNING *
+          `,
+          [quoteUrl, epoch, Number(quotationId)]
+        );
+        return { command: "UPDATE", rows: result.rows };
+      }
+
+      return { errorMessage: "quotationid or versionid is mandatory", statusCode: 400 };
+    } catch (error) {
+      console.error("Query Execution Error: IN updateStoreQuotationUrl", error);
+      return await ErrorHandler.handleQueryError(error);
+    }
+  };
 }

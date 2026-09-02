@@ -128,6 +128,18 @@ export const purchaseorderInsertSchema = {
                 type: 'cgst should be number'
             }
         },
+        igst: {
+            type: ['number', 'null'],
+            errorMessage: {
+                type: 'igst should be number'
+            }
+        },
+        taxmode: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'taxmode should be string'
+            }
+        },
         payabletaxamount: {
             type: ['number', 'null'],
             errorMessage: {

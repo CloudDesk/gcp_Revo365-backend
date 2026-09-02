@@ -2,7 +2,7 @@ import { PROTOCOL } from "../config/config.js";
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
-import { purchaseOrderService } from "./purchaseorder.service.js";
+import { assertSupplierBillCanBeModified, assertSupplierBillTotalWithinPurchaseOrder, validateSupplierBillProductInput, } from "../utils/finance/supplierBill.utils.js";
 export var poinvoiceservice;
 (function (poinvoiceservice) {
     const poInvoiceFieldNames = new Set([
@@ -11,11 +11,8 @@ export var poinvoiceservice;
         "invoicedate",
         "invoicenumber",
         "invoiceurl",
-        "paymentdata",
-        "balanceamount",
         "iscreditpayment",
         "paymentduedate",
-        "invoicestatus",
         "pototal",
         "purchaseorderstatus",
         "productdata",
@@ -23,6 +20,8 @@ export var poinvoiceservice;
         "discount",
         "sgst",
         "cgst",
+        "igst",
+        "taxmode",
         "payabletaxamount",
     ]);
     const parseJsonArray = (value) => {
@@ -60,11 +59,72 @@ export var poinvoiceservice;
     const serializeJsonArrayFields = (upsertFields) => {
         ["productdata", "paymentdata"].forEach((field) => {
             if (Object.prototype.hasOwnProperty.call(upsertFields, field)) {
-                // node-postgres converts JavaScript arrays into PostgreSQL array
-                // literals, which are invalid values for JSONB columns.
+                // node-postgres serializes JavaScript arrays as PostgreSQL array
+                // literals. These columns are JSONB, so send valid JSON text instead.
                 upsertFields[field] = JSON.stringify(parseJsonArray(upsertFields[field]));
             }
         });
+    };
+    const isTrue = (value) => value === true || value === "true";
+    const getBillTransactionState = async (id) => {
+        const result = await query(`SELECT
+         EXISTS (
+           SELECT 1
+           FROM bank_transaction_allocations allocation
+           JOIN bank_transactions bank_tx
+             ON bank_tx.id = allocation.banktransactionid
+           WHERE allocation.documenttype = 'purchase_bill'
+             AND allocation.documentid = bill.id
+             AND allocation.status = 'applied'
+             AND bank_tx.postingstatus = 'posted'
+         ) AS hastransactions
+       FROM poinvoice bill
+       WHERE bill.id = $1`, [id]);
+        if (!result.rows[0]) {
+            throw new Error(`Supplier bill ${id} was not found`);
+        }
+        return result.rows[0].hastransactions === true;
+    };
+    const assertBillHasNoTransactions = async (id) => {
+        assertSupplierBillCanBeModified(await getBillTransactionState(id));
+    };
+    const resolveBillStatus = (balanceAmount, isCreditPayment, paymentDueDate) => {
+        const dueDate = Number(paymentDueDate);
+        const isOverdue = isTrue(isCreditPayment) &&
+            Number.isFinite(dueDate) &&
+            dueDate > 0 &&
+            Math.floor(Date.now() / 1000) > dueDate;
+        if (balanceAmount === 0) {
+            return isOverdue ? "overdue_complete" : "complete";
+        }
+        return isOverdue ? "overdue" : "in_progress";
+    };
+    const applyCashAccountSettlementState = async (upsertFields, id) => {
+        if (!id) {
+            const invoiceAmount = toNumber(upsertFields.invoiceamount);
+            upsertFields.paymentdata = [];
+            upsertFields.balanceamount = invoiceAmount;
+            upsertFields.invoicestatus = resolveBillStatus(invoiceAmount, upsertFields.iscreditpayment, upsertFields.paymentduedate);
+            return;
+        }
+        const existingResult = await query(`SELECT invoiceamount, balanceamount, iscreditpayment, paymentduedate
+       FROM poinvoice
+       WHERE id = $1`, [id]);
+        const existingBill = existingResult?.rows?.[0];
+        if (!existingBill) {
+            throw new Error(`Supplier bill ${id} was not found`);
+        }
+        const invoiceAmount = Object.prototype.hasOwnProperty.call(upsertFields, "invoiceamount")
+            ? toNumber(upsertFields.invoiceamount)
+            : toNumber(existingBill.invoiceamount);
+        const settledAmount = Math.max(toNumber(existingBill.invoiceamount) -
+            toNumber(existingBill.balanceamount), 0);
+        if (invoiceAmount < settledAmount) {
+            throw new Error(`Bill amount cannot be less than the settled Cash and Bank amount ${settledAmount}`);
+        }
+        const balanceAmount = Number((invoiceAmount - settledAmount).toFixed(2));
+        upsertFields.balanceamount = balanceAmount;
+        upsertFields.invoicestatus = resolveBillStatus(balanceAmount, upsertFields.iscreditpayment ?? existingBill.iscreditpayment, upsertFields.paymentduedate ?? existingBill.paymentduedate);
     };
     const validateAndNormalizeProductData = async (upsertFields, id) => {
         const hasProductData = Object.prototype.hasOwnProperty.call(upsertFields, "productdata");
@@ -81,7 +141,11 @@ export var poinvoiceservice;
         if (!billProducts.length) {
             throw new Error("At least one bill product is required");
         }
-        const purchaseOrderResult = await query(`SELECT product, subtotal, discount, sgst, cgst FROM purchaseorder WHERE ponumber = $1`, [ponumber]);
+        const purchaseOrderResult = await query(`SELECT po.product, po.subtotal, po.discount, po.sgst, po.cgst,
+              supplier.state AS supplierstate
+       FROM purchaseorder po
+       LEFT JOIN supplier ON supplier.id = po.supplierid
+       WHERE po.ponumber = $1`, [ponumber]);
         const purchaseOrder = purchaseOrderResult?.rows?.[0];
         const purchaseOrderProducts = parseJsonArray(purchaseOrder?.product);
         if (!purchaseOrderProducts.length) {
@@ -90,8 +154,13 @@ export var poinvoiceservice;
         const purchaseOrderSubtotal = toNumber(purchaseOrder?.subtotal) ||
             purchaseOrderProducts.reduce((sum, product) => sum + toNumber(product?.unitPrice) * toNumber(product?.quantity), 0);
         const purchaseOrderDiscount = Math.min(Math.max(toNumber(purchaseOrder?.discount), 0), purchaseOrderSubtotal);
-        upsertFields.sgst = toNumber(purchaseOrder?.sgst);
-        upsertFields.cgst = toNumber(purchaseOrder?.cgst);
+        const supplierState = String(purchaseOrder?.supplierstate || "").trim().toLowerCase();
+        const isInterstate = Boolean(supplierState) && supplierState !== "tamil nadu" && supplierState !== "tamilnadu" && supplierState !== "tn";
+        const gstRate = toNumber(purchaseOrder?.sgst) + toNumber(purchaseOrder?.cgst) || 18;
+        upsertFields.sgst = isInterstate ? 0 : toNumber(purchaseOrder?.sgst);
+        upsertFields.cgst = isInterstate ? 0 : toNumber(purchaseOrder?.cgst);
+        upsertFields.igst = isInterstate ? gstRate : 0;
+        upsertFields.taxmode = isInterstate ? "igst" : "cgst_sgst";
         const purchaseOrderProductMap = new Map();
         purchaseOrderProducts.forEach((product, index) => {
             const lineid = getProductLineId(product, index);
@@ -124,28 +193,25 @@ export var poinvoiceservice;
             if (!purchaseOrderProduct) {
                 throw new Error(`Bill product ${product?.name || lineid} is not part of this purchase order`);
             }
-            const quantity = toNumber(product.quantity);
-            if (!Number.isInteger(quantity) || quantity < 0) {
-                throw new Error(`Bill quantity for ${purchaseOrderProduct.name} must be a whole number`);
-            }
+            const { productName, quantity } = validateSupplierBillProductInput(product?.name, product?.quantity, purchaseOrderProduct.name);
             const alreadyBilledQuantity = billedQuantityByLine.get(lineid) || 0;
             const remainingQuantity = purchaseOrderProduct.quantity - alreadyBilledQuantity;
             if (quantity > remainingQuantity) {
                 throw new Error(`Bill quantity for ${purchaseOrderProduct.name} cannot exceed remaining quantity ${remainingQuantity}`);
             }
-            if (quantity > 0) {
-                const unitPrice = toNumber(product.unitPrice ?? purchaseOrderProduct.unitPrice);
-                normalizedProducts.push({
-                    id: purchaseOrderProduct.id,
-                    lineid,
-                    name: product?.name || purchaseOrderProduct.name,
-                    originalname: purchaseOrderProduct.name,
-                    unitPrice,
-                    poquantity: purchaseOrderProduct.quantity,
-                    quantity,
-                    total: Number((unitPrice * quantity).toFixed(2)),
-                });
-            }
+            // Bill pricing is always inherited from the PO. Never trust a client
+            // supplied unit price when enforcing the PO amount ceiling.
+            const unitPrice = purchaseOrderProduct.unitPrice;
+            normalizedProducts.push({
+                id: purchaseOrderProduct.id,
+                lineid,
+                name: productName,
+                originalname: purchaseOrderProduct.name,
+                unitPrice,
+                poquantity: purchaseOrderProduct.quantity,
+                quantity,
+                total: Number((unitPrice * quantity).toFixed(2)),
+            });
         });
         if (!normalizedProducts.length) {
             throw new Error("At least one bill product quantity should be greater than 0");
@@ -165,23 +231,50 @@ export var poinvoiceservice;
         const discount = toNumber(upsertFields.discount);
         const sgst = toNumber(upsertFields.sgst);
         const cgst = toNumber(upsertFields.cgst);
+        const igst = toNumber(upsertFields.igst);
         if (discount < 0) {
             throw new Error("Bill discount cannot be negative");
         }
         if (discount > subtotal) {
             throw new Error("Bill discount cannot exceed subtotal");
         }
-        if (sgst < 0 || cgst < 0) {
+        if (sgst < 0 || cgst < 0 || igst < 0) {
             throw new Error("Bill GST percentage cannot be negative");
         }
         const taxableAmount = Math.max(subtotal - discount, 0);
-        const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst) / 100));
+        const payabletaxamount = Math.round(taxableAmount * ((sgst + cgst + igst) / 100));
         upsertFields.subtotal = subtotal;
         upsertFields.discount = discount;
         upsertFields.sgst = sgst;
         upsertFields.cgst = cgst;
+        upsertFields.igst = igst;
+        upsertFields.taxmode = igst > 0 ? "igst" : "cgst_sgst";
         upsertFields.payabletaxamount = payabletaxamount;
         upsertFields.invoiceamount = Math.round(taxableAmount + payabletaxamount);
+    };
+    const validateBillAmountWithinPurchaseOrder = async (upsertFields, id) => {
+        const ponumber = upsertFields.ponumber;
+        const purchaseOrderResult = await query(`SELECT total
+       FROM purchaseorder
+       WHERE ponumber = $1
+       ORDER BY id DESC
+       LIMIT 1`, [ponumber]);
+        const purchaseOrderTotal = toNumber(purchaseOrderResult?.rows?.[0]?.total);
+        if (purchaseOrderTotal <= 0) {
+            throw new Error("Purchase order total is not available for bill validation");
+        }
+        const existingParams = [ponumber];
+        let existingWhere = `ponumber = $1 AND COALESCE(invoicestatus, '') != 'cancelled'`;
+        if (id) {
+            existingParams.push(id);
+            existingWhere += ` AND id != $2`;
+        }
+        const existingBillResult = await query(`SELECT COALESCE(SUM(invoiceamount), 0) AS total
+       FROM poinvoice
+       WHERE ${existingWhere}`, existingParams);
+        const existingBillTotal = toNumber(existingBillResult?.rows?.[0]?.total);
+        const currentBillTotal = toNumber(upsertFields.invoiceamount);
+        assertSupplierBillTotalWithinPurchaseOrder(purchaseOrderTotal, existingBillTotal, currentBillTotal);
     };
     poinvoiceservice.getPoInvoiceData = async (request) => {
         try {
@@ -220,7 +313,19 @@ export var poinvoiceservice;
             const baseConditions = ``;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-            let queryText = `SELECT * FROM poinvoice ${whereClause} ${orderByClause}`;
+            let queryText = `SELECT
+        poinvoice.*,
+        EXISTS (
+          SELECT 1
+          FROM bank_transaction_allocations allocation
+          JOIN bank_transactions bank_tx
+            ON bank_tx.id = allocation.banktransactionid
+          WHERE allocation.documenttype = 'purchase_bill'
+            AND allocation.documentid = poinvoice.id
+            AND allocation.status = 'applied'
+            AND bank_tx.postingstatus = 'posted'
+        ) AS hastransactions
+        FROM poinvoice ${whereClause} ${orderByClause}`;
             if (pageNumber && recordCount) {
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
@@ -241,18 +346,18 @@ export var poinvoiceservice;
             let params;
             const { id, ...rawUpsertFields } = poinvocedata;
             const upsertFields = pickPoInvoiceFields(rawUpsertFields);
+            if (id)
+                await assertBillHasNoTransactions(id);
             for (const file of files || []) {
                 upsertFields.invoiceurl = PROTOCOL + "://" + host + "/" + file.filename;
             }
-            let amount = 0;
-            parseJsonArray(upsertFields.paymentdata).forEach((e) => {
-                amount += toNumber(e.paymentamount);
-            });
             await validateAndNormalizeProductData(upsertFields, id);
             if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
                 normalizeBillTaxFields(upsertFields);
+                await validateBillAmountWithinPurchaseOrder(upsertFields, id);
             }
-            upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount;
+            // upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+            await applyCashAccountSettlementState(upsertFields, id);
             serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
@@ -269,7 +374,6 @@ export var poinvoiceservice;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            const updatedValue = await poinvoiceservice.updateInvoiceStatus(result.rows[0]);
             return result;
         }
         catch (error) {
@@ -284,15 +388,15 @@ export var poinvoiceservice;
             let params;
             const { id, ...rawUpsertFields } = poinvocedata;
             const upsertFields = pickPoInvoiceFields(rawUpsertFields);
-            let amount = 0;
-            parseJsonArray(upsertFields.paymentdata).forEach((e) => {
-                amount += toNumber(e.paymentamount);
-            });
+            if (id)
+                await assertBillHasNoTransactions(id);
             await validateAndNormalizeProductData(upsertFields, id);
             if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
                 normalizeBillTaxFields(upsertFields);
+                await validateBillAmountWithinPurchaseOrder(upsertFields, id);
             }
-            upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount;
+            // upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+            await applyCashAccountSettlementState(upsertFields, id);
             serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
@@ -309,7 +413,6 @@ export var poinvoiceservice;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            const updatedValue = await poinvoiceservice.updateInvoiceStatus(result.rows[0]);
             return result;
         }
         catch (error) {
@@ -318,58 +421,9 @@ export var poinvoiceservice;
             return ErrorMessage;
         }
     };
-    poinvoiceservice.updateInvoiceStatus = async (poinvocedata) => {
-        try {
-            let { id, invoiceamount, paymentdata, paymentduedate, invoicestatus, iscreditpayment, } = poinvocedata;
-            let total = 0;
-            const parsedPaymentData = paymentdata;
-            for (let i = 0; i < parsedPaymentData.length; i++) {
-                total += parsedPaymentData[i].paymentamount || 0;
-            }
-            const currentUTCDate = new Date();
-            const indiaOffset = 5.5 * 60 * 60 * 1000;
-            const currentISTDate = new Date(currentUTCDate.getTime() + indiaOffset);
-            const unixTimestampInSeconds = Math.floor(currentISTDate.getTime() / 1000);
-            if (invoicestatus === "cancelled") {
-                const paidAmount = paymentdata.reduce((sum, payment) => sum + payment.paymentamount, 0);
-                const remainingAmount = total - paidAmount;
-                paymentdata.forEach(payment => {
-                    payment.paymentamount = remainingAmount;
-                });
-                let modifiedPaymentData = JSON.stringify(paymentdata);
-                const result = await query(`UPDATE poinvoice 
-               SET invoicestatus = 'cancelled', balanceamount = 0,
-               paymentdata = '${modifiedPaymentData}'::jsonb 
-               WHERE id = ${id}`, []);
-            }
-            else if (Number(invoiceamount) - total === 0) {
-                if (unixTimestampInSeconds > Number(paymentduedate) &&
-                    iscreditpayment === true) {
-                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'overdue_complete' where id =${id}`, []);
-                }
-                else {
-                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'complete' where id =${id}`, []);
-                }
-            }
-            else if (total - Number(invoiceamount) !== 0) {
-                if (unixTimestampInSeconds > Number(paymentduedate) &&
-                    iscreditpayment === true) {
-                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'overdue' where id =${id}`, []);
-                }
-                else {
-                    const result = await query(`UPDATE poinvoice SET invoicestatus = 'in_progress' where id =${id}`, []);
-                }
-            }
-            const posetstatus = await purchaseOrderService.updatePoStatus(poinvocedata.ponumber, poinvocedata.pototal, poinvocedata.purchaseorderstatus);
-            return 'PO Bill Status Updated Success';
-        }
-        catch (error) {
-            console.error("An error in updateInvoiceStatus:", error);
-            throw error; // Re-throw the error to handle it at a higher level
-        }
-    };
     poinvoiceservice.deletePoInvoice = async (id) => {
         try {
+            await assertBillHasNoTransactions(id);
             const invoiceResult = await query(`SELECT invoiceurl FROM poinvoice WHERE id = $1`, [id]);
             const invoiceUrl = invoiceResult.rows[0].invoiceurl;
             const result = await query(`DELETE FROM poinvoice WHERE id = $1`, [
