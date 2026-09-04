@@ -353,6 +353,80 @@ export module stockRevoService {
         }
     }
 
+    export const searchStockRevoData = async (request: any) => {
+        try {
+            const searchValue = String(request.query?.search ?? "").trim();
+            const pageNumber = Math.max(parseInt(request.query?.page) || 1, 1);
+            const recordCount = Math.min(
+                Math.max(parseInt(request.query?.count) || 10, 1),
+                5000
+            );
+
+            if (!searchValue) {
+                return [];
+            }
+
+            const queryParams: any[] = [`%${searchValue}%`];
+            const whereClauses = [
+                `(
+                    COALESCE(s.serialnumber::text, '') ILIKE $1
+                    OR COALESCE(s.rfid::text, '') ILIKE $1
+                    OR COALESCE(s.puc::text, '') ILIKE $1
+                )`,
+            ];
+            const supportedFilters: Record<string, string> = {
+                location: "s.location",
+                stockstatus: "s.stockstatus",
+                stocktype: "s.stocktype",
+                ecompublish: "s.ecompublish",
+                ecomvisible: "p.ecomvisible",
+            };
+
+            Object.entries(supportedFilters).forEach(([filterName, columnName]) => {
+                const rawValue = request.query?.[filterName];
+                const filterValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+                const populatedValues = filterValues.filter(
+                    (value) => value !== undefined && value !== null && value !== ""
+                );
+
+                if (populatedValues.length === 0) {
+                    return;
+                }
+
+                const placeholders = populatedValues.map((value) => {
+                    queryParams.push(value);
+                    return `$${queryParams.length}`;
+                });
+                whereClauses.push(`(${columnName} IN (${placeholders.join(", ")}))`);
+            });
+
+            whereClauses.push(
+                `(s.isarchive = FALSE OR s.isarchive IS NULL)`,
+                `(s.isdeleted = FALSE OR s.isdeleted IS NULL)`,
+                `(s.removefromrecyclebin = FALSE OR s.removefromrecyclebin IS NULL)`
+            );
+
+            const offset = (pageNumber - 1) * recordCount;
+            queryParams.push(offset, recordCount);
+            const offsetParameter = `$${queryParams.length - 1}`;
+            const limitParameter = `$${queryParams.length}`;
+            const queryText = `
+                SELECT s.*, p.id AS productid, p.hsncode, p.saccode
+                FROM stock_revo s
+                INNER JOIN product_revo p ON s.puc = p.puc
+                WHERE ${whereClauses.join(" AND ")}
+                ORDER BY s.modifieddate DESC
+                OFFSET ${offsetParameter}
+                LIMIT ${limitParameter}`;
+
+            const result = await query(queryText, queryParams);
+            return await dataTypeCheck(result);
+        } catch (error) {
+            console.error("Query Execution Error: IN searchStockRevoData", error);
+            return await ErrorHandler.handleQueryError(error);
+        }
+    };
+
     export const getEachStockRevoData = async (request: any) => {
         try {
             const { id } = request.params

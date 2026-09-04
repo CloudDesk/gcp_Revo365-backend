@@ -11,6 +11,25 @@ export module stockRevoController {
             reply.send(error.message);
         }
     };
+    export const searchStockRevoData = async (request: any, reply: any) => {
+        try {
+            const searchValue = String(request.query?.search ?? "").trim();
+
+            if (!searchValue) {
+                return reply.status(400).send({
+                    message: "The search query parameter is required.",
+                });
+            }
+
+            const result = await stockRevoService.searchStockRevoData(request);
+            return reply.status(200).send(result);
+        } catch (error) {
+            console.error("Error in searchStockRevoData", error);
+            return reply.status(500).send({
+                message: "Unable to search stock records.",
+            });
+        }
+    };
     export const getEachStockRevoData = async (request: any, reply: any) => {
         try {
             let result = await stockRevoService.getEachStockRevoData(request);
