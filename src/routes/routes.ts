@@ -161,6 +161,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
 
     //version 2 -> stock  (ecomvisible is query-param driven: ?ecomvisible=true / ?ecomvisible=false)
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
+    fastify.get('/v2/stock/search', { preHandler: [getSession] }, stockRevoController.searchStockRevoData);
     fastify.get('/v2/stock/barcode/next', { preHandler: [getSession] }, stockRevoController.getNextStockBarcodeNumber);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);

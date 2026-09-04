@@ -31,7 +31,7 @@ const vendorPermissionScopes = {
         assignment: "assigned_to_me",
         customerType: "business",
         invoiceFor: ["rental", "service"],
-        allowedPaths: ["/manual-invoice"],
+        allowedPaths: [],
     },
     rental_agreement: {
         assignment: "assigned_to_me",
