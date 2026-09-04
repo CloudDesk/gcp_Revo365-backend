@@ -8,6 +8,15 @@ import { stockrevoSchema } from "../schemas/stockRevo.schema.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
 //  export const stocklocationdataajv = [];
+const normalizeStockImportHeader = (key) => String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+const isUploadedBarcodeField = (key) => ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
+const removeUploadedBarcodeFields = (row) => {
+    Object.keys(row || {}).forEach((key) => {
+        if (isUploadedBarcodeField(key)) {
+            delete row[key];
+        }
+    });
+};
 export var dataLoaderService;
 (function (dataLoaderService) {
     dataLoaderService.getDataLoaderData = async (request) => {
@@ -18,6 +27,7 @@ export var dataLoaderService;
             let failuredata = [];
             await Promise.all(jsonresult.map(async (e, index) => {
                 try {
+                    removeUploadedBarcodeFields(e);
                     for (let [key, value] of Object.entries(e)) {
                         if (!value) {
                             e[key] = null;
@@ -115,7 +125,17 @@ export var dataLoaderService;
                             e[key] = null;
                         }
                         else {
-                            if (stockInteger.includes(key)) {
+                            // Normalize stocktype field: convert variations to "rental_product"
+                            if (key === "stocktype" && typeof value === "string") {
+                                const normalizedValue = value.toLowerCase().replace(/\s+/g, "_");
+                                if (normalizedValue === "rental_product") {
+                                    e[key] = "rental_product";
+                                }
+                                else {
+                                    e[key] = value;
+                                }
+                            }
+                            else if (stockInteger.includes(key)) {
                                 let valueconvert = Number(value);
                                 if (isNaN(valueconvert)) {
                                     e[key] = value;
@@ -125,7 +145,6 @@ export var dataLoaderService;
                                 }
                             }
                             else if (stockBoolean.includes(key)) {
-                                console.log(e[key]);
                                 if (e[key] === "FALSE" ||
                                     e[key] === "false" ||
                                     e[key] === "False") {
@@ -168,7 +187,8 @@ export var dataLoaderService;
                             }
                         }
                     }
-                    if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
+                    // Force ecompublish = false if stocktype is rental_product
+                    if (e.stocktype === "rental_product") {
                         e.ecompublish = false;
                     }
                     let validationresult = await validateDataLoader(stockrevoSchema, e);
@@ -201,7 +221,6 @@ export var dataLoaderService;
         catch (error) {
             console.error("Query Execution Error: IN getDataLoaderDataStock", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

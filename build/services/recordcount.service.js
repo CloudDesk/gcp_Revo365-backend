@@ -1,13 +1,15 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { revoinvoiceservice } from "./revoinvoice.service.js";
+import { accessScopeService } from "./accessScope.service.js";
 export var recordCountService;
 (function (recordCountService) {
     recordCountService.getRecordCount = async (objectName, request) => {
         try {
             const keys = Object.keys(request.query);
             const values = Object.values(request.query);
-            let whereClause = '';
-            let whereClausearchive = '';
+            let whereClause = "";
+            let whereClausearchive = "";
             let globalCount = false;
             let archieveCount = false;
             let archieveCountFilter = false;
@@ -16,24 +18,33 @@ export var recordCountService;
             let parameterIndex = 1;
             const queryParams = [];
             let whereClauses = [];
-            console.log('data');
             keys.forEach(async (key, index) => {
-                console.log(key, 'Key is ');
-                if (key !== "globalSearch" && key !== "Archive" && key !== "archieveCountFilter" && key !== "recyclebin" && key !== 'productecom') {
-                    const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
-                    console.log(paramValues, ' Param values are ');
-                    if (key === "displaysize" || key === "price" || key === "createddate") {
-                        let rangeWhereClause = paramValues.map(range => {
-                            const [lowerBound, upperBound] = range.split('-');
+                if (key !== "globalSearch" &&
+                    key !== "Archive" &&
+                    key !== "archieveCountFilter" &&
+                    key !== "recyclebin" &&
+                    key !== "productecom") {
+                    const paramValues = Array.isArray(values[index])
+                        ? values[index]
+                        : [values[index]];
+                    if (key === "displaysize" ||
+                        key === "price" ||
+                        key === "createddate") {
+                        let rangeWhereClause = paramValues
+                            .map((range) => {
+                            const [lowerBound, upperBound] = range.split("-");
                             queryParams.push(lowerBound, upperBound);
                             const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                             parameterIndex += 2;
                             return clause;
-                        }).join(" OR ");
+                        })
+                            .join(" OR ");
                         whereClauses.push(`(${rangeWhereClause})`);
                     }
                     else {
-                        whereClauses.push(`(${paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`).join(" OR ")})`);
+                        whereClauses.push(`(${paramValues
+                            .map((_, idx) => `${key} = $${parameterIndex + idx}`)
+                            .join(" OR ")})`);
                         queryParams.push(...paramValues);
                         parameterIndex += paramValues.length;
                     }
@@ -51,14 +62,14 @@ export var recordCountService;
                     productecom = true;
                 }
             });
-            console.log(globalCount, ' Global Count ');
+            console.log(globalCount, " Global Count ");
             let getcount;
-            console.log(whereClauses, 'WHere Clauses');
-            whereClause = whereClauses.length > 0 ? `${whereClauses.join(' AND ')}` : whereClause;
-            console.log(whereClause, '----');
-            console.log(productecom);
+            console.log(whereClauses, "WHere Clauses");
+            whereClause =
+                whereClauses.length > 0 ? `${whereClauses.join(" AND ")}` : whereClause;
+            console.log(whereClause, "----");
             if (whereClause && productecom === false) {
-                if (objectName === 'products') {
+                if (objectName === "products") {
                     let querystring = `select count(*) from ${objectName} where  (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false  AND ${whereClause}`;
                     getcount = await query(querystring, queryParams);
                 }
@@ -68,8 +79,7 @@ export var recordCountService;
                 }
             }
             else if (whereClause && productecom) {
-                console.log('DISTINCT');
-                if (objectName === 'products') {
+                if (objectName === "products") {
                     let querystring = `select count(DISTINCT  puc) from ${objectName} where  (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ecompublish = TRUE  AND ${whereClause}`;
                     getcount = await query(querystring, queryParams);
                 }
@@ -91,45 +101,50 @@ export var recordCountService;
             }
             else if (globalCount) {
                 const result = await query(`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'products';`, []);
-                const searchQueries = result.rows.map(row => `SELECT count(*) as ${row.table_name}_${row.column_name}_count FROM ${row.table_name} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ${row.column_name}::text ILIKE $1`);
-                const combinedSearchQuery = searchQueries.join(' UNION ALL ');
-                const combinedSearchResult = await query(combinedSearchQuery, [`%${values}%`]);
+                const searchQueries = result.rows.map((row) => `SELECT count(*) as ${row.table_name}_${row.column_name}_count FROM ${row.table_name} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ${row.column_name}::text ILIKE $1`);
+                const combinedSearchQuery = searchQueries.join(" UNION ALL ");
+                const combinedSearchResult = await query(combinedSearchQuery, [
+                    `%${values}%`,
+                ]);
                 const totalCount = combinedSearchResult.rows.reduce((total, row) => {
                     const count = parseInt(row[Object.keys(row)[0]]);
                     return total + count;
                 }, 0);
-                console.log('Total record count:', totalCount);
+                console.log("Total record count:", totalCount);
                 getcount = getcount = {
-                    "rows": [
+                    rows: [
                         {
-                            "count": totalCount
-                        }
+                            count: totalCount,
+                        },
                     ],
                 };
             }
             else {
-                console.log('else');
-                if (objectName === 'products' && !productecom) {
-                    console.log('prod');
+                console.log("else");
+                if (objectName === "products" && !productecom) {
                     getcount = await query(`select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`, []);
                 }
-                else if (objectName === 'products' && productecom) {
-                    console.log('prod');
+                else if (objectName === "products" && productecom) {
                     getcount = await query(`select count(DISTINCT puc) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ecompublish = TRUE`, []);
                 }
-                else if (objectName === 'supplier') {
+                else if (objectName === "supplier") {
                     getcount = await query(`select count(*) from ${objectName} WHERE (isdeleted = FALSE or isdeleted IS NULL)`, []);
                 }
-                else if (objectName === 'cart') {
+                else if (objectName === "cart") {
                     getcount = await query(`select count(*) from ${objectName}`, []);
                 }
-                else if (objectName === 'orders') {
-                    console.log('orders section');
+                else if (objectName === "orders") {
+                    console.log("orders section");
                     getcount = await query(`select count(*) from ${objectName}`, []);
                 }
-                else if (objectName === 'stock') {
-                    console.log('stock section');
+                else if (objectName === "stock") {
+                    console.log("stock section");
                     getcount = await query(`select count(*) from ${objectName}`, []);
+                }
+                else if (objectName === "revoinvoice") {
+                    console.log("revoinvoice section");
+                    getcount = await query(`select count(*) from ${objectName}`, []);
+                    console.log("ObjectName", objectName);
                 }
             }
             return getcount.rows[0].count;
@@ -146,8 +161,184 @@ export var recordCountService;
             const { query: queryParams } = request;
             const keys = Object.keys(queryParams);
             const values = Object.values(queryParams);
-            console.log(objectName, 'Object Name');
-            let whereClause = '';
+            console.log(objectName, "Object Name");
+            const targetObj = objectName.toLowerCase().trim();
+            const getCountQuery = async (queryStr, params) => {
+                const result = await query(queryStr, params);
+                return result.rows[0].count;
+            };
+            // 🚨 Handle KUBB Tickets search specifically
+            if (targetObj === "kubb_tickets") {
+                const { search, searchTerm } = request.query;
+                const finalSearch = search || searchTerm || "";
+                if (finalSearch) {
+                    return await getCountQuery(`select count(*) from kubb_tickets WHERE name ILIKE $1 OR email ILIKE $1 OR phone::text ILIKE $1`, [`%${finalSearch}%`]);
+                }
+                // If no search, return total count for KUBB immediately
+                return await getCountQuery(`select count(*) from kubb_tickets`, []);
+            }
+            if (targetObj === "buyback_enquiries") {
+                const { search, searchTerm } = request.query;
+                const finalSearch = search || searchTerm || "";
+                if (finalSearch) {
+                    return await getCountQuery(`select count(*) from buyback_enquiries
+             WHERE name ILIKE $1
+                OR email ILIKE $1
+                OR phone ILIKE $1
+                OR device_type ILIKE $1
+                OR device_model ILIKE $1
+                OR status ILIKE $1`, [`%${finalSearch}%`]);
+                }
+                return await getCountQuery(`select count(*) from buyback_enquiries`, []);
+            }
+            if (targetObj === "service_enquiries") {
+                const { search, searchTerm, status } = request.query;
+                const finalSearch = String(search || searchTerm || "").trim();
+                const finalStatus = String(status || "").trim();
+                const clauses = [];
+                const params = [];
+                let paramIndex = 1;
+                if (finalSearch) {
+                    clauses.push(`
+            (
+              customer_name ILIKE $${paramIndex}
+              OR email ILIKE $${paramIndex}
+              OR phone ILIKE $${paramIndex}
+              OR device_type ILIKE $${paramIndex}
+              OR device_model ILIKE $${paramIndex}
+              OR status ILIKE $${paramIndex}
+              OR issue_description ILIKE $${paramIndex}
+              OR notes ILIKE $${paramIndex}
+            )
+          `);
+                    params.push(`%${finalSearch}%`);
+                    paramIndex++;
+                }
+                if (finalStatus) {
+                    clauses.push(`status = $${paramIndex}`);
+                    params.push(finalStatus);
+                }
+                return await getCountQuery(`select count(*) from service_enquiries${clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""}`, params);
+            }
+            if (targetObj === "users") {
+                const { search, searchTerm, isbusinessuser, includeRentalTotal, paymentstatusfilter, } = request.query;
+                const finalSearch = String(search || searchTerm || "").trim();
+                const clauses = [];
+                const params = [];
+                let paramIndex = 1;
+                const shouldIncludeRentalTotal = String(includeRentalTotal ?? "").toLowerCase() === "true";
+                const paymentStatusFilter = String(paymentstatusfilter || "all").toLowerCase();
+                const shouldFilterPaymentStatus = [
+                    "paid",
+                    "partially_paid",
+                    "pending",
+                    "no_invoices",
+                ].includes(paymentStatusFilter);
+                if (finalSearch) {
+                    clauses.push(`(u.firstname ILIKE $${paramIndex}
+              OR u.lastname ILIKE $${paramIndex}
+              OR CONCAT(COALESCE(u.firstname, ''), ' ', COALESCE(u.lastname, '')) ILIKE $${paramIndex}
+              OR u.useremail ILIKE $${paramIndex}
+              OR u.usermobilenumber::text ILIKE $${paramIndex}
+              OR u.gstnumber ILIKE $${paramIndex}
+              OR EXISTS (
+                SELECT 1
+                FROM address a
+                WHERE a.userid = u.id
+                  AND a.city ILIKE $${paramIndex}
+              ))`);
+                    params.push(`%${finalSearch}%`);
+                    paramIndex++;
+                }
+                if (isbusinessuser !== undefined && isbusinessuser !== "") {
+                    clauses.push(`u.isbusinessuser = $${paramIndex}`);
+                    params.push(String(isbusinessuser).toLowerCase() === "true");
+                    paramIndex++;
+                }
+                paramIndex = await accessScopeService.appendVendorBusinessCustomerScope(request, clauses, params, paramIndex, { customerAlias: "u", customerIdColumn: "id" });
+                const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+                if (shouldIncludeRentalTotal || shouldFilterPaymentStatus) {
+                    const userIdsResult = await query(`
+            SELECT u.id
+            FROM users u
+            ${whereSql}
+            `, params);
+                    let filteredUserIds = userIdsResult.rows.map((row) => row.id);
+                    if (shouldFilterPaymentStatus) {
+                        const paymentSummaries = await revoinvoiceservice.getPaymentSummariesByCustomerIds(filteredUserIds);
+                        filteredUserIds = filteredUserIds.filter((userId) => (paymentSummaries[userId]?.paymentstatus || "no_invoices") ===
+                            paymentStatusFilter);
+                    }
+                    if (!shouldIncludeRentalTotal) {
+                        return filteredUserIds.length;
+                    }
+                    const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(filteredUserIds, { activeOnly: true });
+                    const rentalProductTotal = Object.values(rentalCounts).reduce((total, count) => total + Number(count || 0), 0);
+                    return {
+                        count: filteredUserIds.length,
+                        rentalproducttotal: rentalProductTotal,
+                    };
+                }
+                return await getCountQuery(`select count(*) from users u ${whereSql}`, params);
+            }
+            if (targetObj === "tickets") {
+                const clauses = [];
+                const params = [];
+                let paramIndex = 1;
+                keys.forEach((key, index) => {
+                    if (["page", "count", "sortby"].includes(key)) {
+                        return;
+                    }
+                    const paramValues = Array.isArray(values[index])
+                        ? values[index]
+                        : [values[index]];
+                    if (key === "range") {
+                        const rangeClauses = paramValues.map((range) => {
+                            const [lowerBound, upperBound] = range.split("-");
+                            params.push(lowerBound, upperBound);
+                            const clause = `(t.${key} BETWEEN $${paramIndex} AND $${paramIndex + 1})`;
+                            paramIndex += 2;
+                            return clause;
+                        });
+                        clauses.push(`(${rangeClauses.join(" OR ")})`);
+                        return;
+                    }
+                    const qualifiedKey = key.includes(".") ? key : `t.${key}`;
+                    const normalClauses = [];
+                    const notClauses = [];
+                    const nullClauses = [];
+                    paramValues.forEach((value) => {
+                        const stringValue = String(value);
+                        if (stringValue.startsWith("NOT ") || stringValue.startsWith("not ")) {
+                            notClauses.push(`${qualifiedKey} != $${paramIndex}`);
+                            params.push(stringValue.slice(4));
+                            paramIndex++;
+                        }
+                        else if (stringValue === "NULL" || stringValue === "null") {
+                            nullClauses.push(`${qualifiedKey} IS NULL`);
+                        }
+                        else {
+                            normalClauses.push(`${qualifiedKey} = $${paramIndex}`);
+                            params.push(value);
+                            paramIndex++;
+                        }
+                    });
+                    const combinedClauses = [
+                        ...normalClauses,
+                        ...notClauses,
+                        ...nullClauses,
+                    ];
+                    if (combinedClauses.length > 0) {
+                        clauses.push(`(${combinedClauses.join(" OR ")})`);
+                    }
+                });
+                clauses.push(`(t.isarchive = FALSE OR t.isarchive IS NULL)`);
+                clauses.push(`(t.isdeleted = FALSE OR t.isdeleted IS NULL)`);
+                clauses.push(`(t.removefromrecyclebin = FALSE OR t.removefromrecyclebin IS NULL)`);
+                paramIndex = await accessScopeService.appendVendorTicketScope(request, clauses, params, paramIndex, { ticketAlias: "t", customerColumn: "userid" });
+                return await getCountQuery(`SELECT COUNT(*) FROM tickets t WHERE ${clauses.join(" AND ")}`, params);
+            }
+            let whereClause = "";
             let globalCount = false;
             let archieveCount = false;
             let recyclebin = false;
@@ -157,21 +348,36 @@ export var recordCountService;
             const queryParamsList = [];
             const whereClauses = [];
             keys.forEach((key, index) => {
-                const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
+                // Skip custom search params that are handled above.
+                if ((targetObj === "kubb_tickets" || targetObj === "buyback_enquiries") &&
+                    (key.toLowerCase() === "search" || key.toLowerCase() === "searchterm")) {
+                    return;
+                }
+                const paramValues = Array.isArray(values[index])
+                    ? values[index]
+                    : [values[index]];
                 console.log(key);
-                if (["displaysize", "price", "createddate",
-                    "delivereddate"
-                ].includes(key)) {
-                    const rangeWhereClause = paramValues.map(range => {
-                        const [lowerBound, upperBound] = range.split('-');
+                if (["displaysize", "price", "createddate", "delivereddate"].includes(key)) {
+                    const rangeWhereClause = paramValues
+                        .map((range) => {
+                        const [lowerBound, upperBound] = range.split("-");
                         queryParamsList.push(lowerBound, upperBound);
                         const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                         parameterIndex += 2;
                         return clause;
-                    }).join(" OR ");
+                    })
+                        .join(" OR ");
                     whereClauses.push(`(${rangeWhereClause})`);
                 }
-                else if (!["globalSearch", "Archive", "recyclebin", "productecom", "ewaste"].includes(key)) {
+                else if (![
+                    "globalSearch",
+                    "Archive",
+                    "recyclebin",
+                    "productecom",
+                    "ewaste",
+                    "search",
+                    "searchTerm"
+                ].includes(key)) {
                     const normalClauses = [];
                     const notClauses = [];
                     const nullClauses = [];
@@ -182,7 +388,7 @@ export var recordCountService;
                             queryParamsList.push(cleanValue);
                             parameterIndex++;
                         }
-                        else if (value === 'NULL' || value === 'null') {
+                        else if (value === "NULL" || value === "null") {
                             nullClauses.push(`${key} IS NULL`);
                         }
                         else {
@@ -194,7 +400,7 @@ export var recordCountService;
                     const combinedClauses = [
                         ...normalClauses,
                         ...notClauses,
-                        ...nullClauses
+                        ...nullClauses,
                     ];
                     whereClauses.push(`(${combinedClauses.join(" OR ")})`);
                 }
@@ -207,89 +413,119 @@ export var recordCountService;
                         recyclebin = true;
                     if (key === "productecom")
                         productecom = true;
-                    if (key === 'ewaste')
+                    if (key === "ewaste")
                         ewaste = true;
                 }
             });
-            console.log(archieveCount, 'archive count');
-            console.log(productecom, 'PRoduct ecom is');
-            whereClause = whereClauses.length > 0 ? whereClauses.join(' AND ') : '';
-            console.log(objectName, 'object Name is');
-            console.log(objectName.toLowerCase(), 'object name is ');
-            console.log(objectName === 'stock_revo');
-            const getCountQuery = async (queryStr, params) => {
-                console.log(queryStr, 'query string');
-                const result = await query(queryStr, params);
-                return result.rows[0].count;
-            };
-            console.log(whereClause, 'where clause is ~');
-            if (whereClause && !productecom && !archieveCount && !recyclebin && !globalCount && !ewaste) {
-                console.log('1 st condition');
-                const baseQuery = `select count(*) from ${objectName} where ${objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? 'removefromrecyclebin = false AND ' : ''} ${whereClause}`;
+            if (targetObj === "orders") {
+                parameterIndex = await accessScopeService.appendVendorCustomerColumnScope(request, whereClauses, queryParamsList, parameterIndex, { tableAlias: "orders", customerColumn: "userid" });
+            }
+            console.log(archieveCount, "archive count");
+            console.log(productecom, "PRoduct ecom is");
+            whereClause = whereClauses.length > 0 ? whereClauses.join(" AND ") : "";
+            console.log(objectName, "object Name is");
+            console.log(objectName.toLowerCase(), "object name is ");
+            console.log(whereClause, "where clause is ~");
+            if (whereClause &&
+                !productecom &&
+                !archieveCount &&
+                !recyclebin &&
+                !globalCount &&
+                !ewaste) {
+                console.log("1 st condition");
+                const baseQuery = `select count(*) from ${objectName} where ${objectName.toLowerCase() === "product_revo" ||
+                    objectName.toLowerCase() === "stock_revo"
+                    ? "removefromrecyclebin = false AND "
+                    : ""} ${whereClause}`;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
-                return await getCountQuery(objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
+                let dat = await getCountQuery(objectName.toLowerCase() === "product_revo" ||
+                    objectName.toLowerCase() === "stock_revo"
+                    ? `${baseQuery}${productsQuery}`
+                    : baseQuery, queryParamsList);
+                console.log(dat, "dat value");
+                return dat;
             }
             if (whereClause && productecom) {
-                console.log('2 nd condition');
+                console.log("2 nd condition");
                 const baseQuery = `select count(*) from ${objectName} where removefromrecyclebin = false AND ${whereClause}`;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
-                return await getCountQuery(objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
+                return await getCountQuery(objectName.toLowerCase() === "product_revo" ||
+                    objectName.toLowerCase() === "stock_revo"
+                    ? `${baseQuery}${productsQuery}`
+                    : baseQuery, queryParamsList);
             }
-            if (!whereClause && productecom && objectName.toLocaleLowerCase() === 'stock_revo') {
-                console.log('3rd condition');
+            if (!whereClause &&
+                productecom &&
+                objectName.toLocaleLowerCase() === "stock_revo") {
+                console.log("3rd condition");
                 const baseQuery = `select count(*) from ${objectName} where removefromrecyclebin = false AND ecompublish = TRUE`;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
-                return await getCountQuery(objectName.toLocaleLowerCase() === 'stock_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
+                return await getCountQuery(objectName.toLocaleLowerCase() === "stock_revo"
+                    ? `${baseQuery}${productsQuery}`
+                    : baseQuery, queryParamsList);
             }
-            if (!whereClause && productecom || objectName.toLocaleLowerCase() === 'product_revo') {
-                console.log('4th condition');
+            if ((!whereClause && productecom) ||
+                objectName.toLocaleLowerCase() === "product_revo") {
+                console.log("4th condition");
                 const baseQuery = `select count(*) from ${objectName} where removefromrecyclebin = false`;
                 const productsQuery = ` AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)`;
-                return await getCountQuery(objectName.toLocaleLowerCase() === 'product_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
+                return await getCountQuery(objectName.toLocaleLowerCase() === "product_revo"
+                    ? `${baseQuery}${productsQuery}`
+                    : baseQuery, queryParamsList);
             }
-            if (!whereClause && !productecom && !archieveCount && !recyclebin && !globalCount && !ewaste) {
-                console.log('insidde new ');
-                console.log('5th condition');
+            if (!whereClause &&
+                !productecom &&
+                !archieveCount &&
+                !recyclebin &&
+                !globalCount &&
+                !ewaste) {
+                console.log("5th condition");
                 const baseQuery = `select count(*) from ${objectName} `;
                 const productsQuery = ` where removefromrecyclebin = false AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (ewaste = FALSE or ewaste IS NULL)`;
-                return await getCountQuery(objectName.toLowerCase() === 'product_revo' || objectName.toLowerCase() === 'stock_revo' ? `${baseQuery}${productsQuery}` : baseQuery, queryParamsList);
+                return await getCountQuery(objectName.toLowerCase() === "product_revo" ||
+                    objectName.toLowerCase() === "stock_revo"
+                    ? `${baseQuery}${productsQuery}`
+                    : baseQuery, queryParamsList);
             }
             if (archieveCount) {
-                console.log('inside archive count');
-                console.log(queryParamsList, 'query params list');
-                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + 'AND' : ""} isarchive = true AND removefromrecyclebin = false`, queryParamsList);
+                console.log("inside archive count");
+                console.log(queryParamsList, "query params list");
+                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""} isarchive = true AND removefromrecyclebin = false`, queryParamsList);
             }
             if (recyclebin) {
-                console.log('Inside recyclebin');
-                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + 'AND' : ""} isdeleted = TRUE AND removefromrecyclebin = false`, queryParamsList);
+                console.log("Inside recyclebin");
+                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""} isdeleted = TRUE AND removefromrecyclebin = false`, queryParamsList);
             }
             if (ewaste) {
-                console.log('Inside ewaste');
-                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + 'AND' : ""} isdeleted = false AND removefromrecyclebin = false AND ewaste = TRUE`, queryParamsList);
+                console.log("Inside ewaste");
+                return await getCountQuery(`select count(*) from ${objectName} where ${whereClause && whereClause.length > 0 ? whereClause + "AND" : ""} isdeleted = false AND removefromrecyclebin = false AND ewaste = TRUE`, queryParamsList);
             }
             if (globalCount) {
                 const columnQuery = `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_Revo';`;
                 const columnsResult = await query(columnQuery, []);
-                const searchQueries = columnsResult.rows.map(row => `SELECT count(*) as ${row.table_name}_${row.column_name}_count FROM ${row.table_name} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ${row.column_name}::text ILIKE $1`);
-                const combinedSearchQuery = searchQueries.join(' UNION ALL ');
+                const searchQueries = columnsResult.rows.map((row) => `SELECT count(*) as ${row.table_name}_${row.column_name}_count FROM ${row.table_name} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND removefromrecyclebin = false AND ${row.column_name}::text ILIKE $1`);
+                const combinedSearchQuery = searchQueries.join(" UNION ALL ");
                 const combinedSearchResult = await query(combinedSearchQuery, [`%${values}%`]);
                 const totalCount = combinedSearchResult.rows.reduce((total, row) => total + parseInt(row[Object.keys(row)[0]]), 0);
                 return totalCount;
             }
             const defaultQueries = {
-                'product_Revo': `select count(*) from ${'product_Revo'} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
-                'supplier': `select count(*) from ${objectName} WHERE (isdeleted = FALSE or isdeleted IS NULL)`,
-                'cart': `select count(*) from ${objectName}`,
-                'orders': `select count(*) from ${objectName}`,
-                'stock_Revo': `select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`
+                product_Revo: `select count(*) from ${"product_Revo"} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
+                supplier: `select count(*) from ${objectName} WHERE (isdeleted = FALSE or isdeleted IS NULL)`,
+                cart: `select count(*) from ${objectName}`,
+                orders: `select count(*) from ${objectName}`,
+                stock_Revo: `select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`,
+                kubb_tickets: `select count(*) from ${objectName}`,
+                buyback_enquiries: `select count(*) from ${objectName}`,
+                service_enquiries: `select count(*) from ${objectName}`,
             };
-            if (productecom && objectName === 'product_Revo') {
+            if (productecom && objectName === "product_Revo") {
                 return await getCountQuery(`select count(*) from ${objectName} WHERE (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL) AND (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`, []);
             }
             if (defaultQueries[objectName]) {
                 return await getCountQuery(defaultQueries[objectName], []);
             }
-            throw new Error('Unhandled case in getRecordCount');
+            throw new Error("Unhandled case in getRecordCount");
         }
         catch (error) {
             console.error("Query Execution Error: IN getRecordCountRevo", error);
@@ -302,30 +538,27 @@ export var recordCountService;
         try {
             const keys = Object.keys(request.query);
             const values = Object.values(request.query);
-            console.log(keys);
-            console.log(values);
-            let whereClause = '';
-            let whereClausearchive = '';
-            let globalCount = false;
-            let archieveCount = false;
-            let archieveCountFilter = false;
-            let recyclebin = false;
+            let whereClause = "";
             let parameterIndex = 1;
             const queryParams = [];
             keys.forEach(async (key, index) => {
-                console.log(key, 'Key is ');
-                const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
-                console.log(paramValues, ' Param values are ');
+                console.log(key, "Key is ");
+                const paramValues = Array.isArray(values[index])
+                    ? values[index]
+                    : [values[index]];
+                console.log(paramValues, " Param values are ");
                 if (index !== 0) {
-                    whereClause += ' AND ';
+                    whereClause += " AND ";
                 }
-                whereClause += `(${paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`).join(' OR ')})`;
+                whereClause += `(${paramValues
+                    .map((_, idx) => `${key} = $${parameterIndex + idx}`)
+                    .join(" OR ")})`;
                 parameterIndex += paramValues.length;
                 queryParams.push(...paramValues);
             });
             let getcount;
-            console.log(whereClause, '----');
-            console.log('inside where');
+            console.log(whereClause, "----");
+            console.log("inside where");
             let querystring = `select count(*) from ${objectName} where isarchive = true AND ${whereClause}`;
             console.log(querystring);
             getcount = await query(querystring, queryParams);
@@ -348,26 +581,32 @@ export var recordCountService;
             let parameterIndex = 2;
             for (let i = 0; i < keys.length; i++) {
                 const key = keys[i];
-                const paramValues = Array.isArray(values[i]) ? values[i] : [values[i]];
+                const paramValues = Array.isArray(values[i])
+                    ? values[i]
+                    : [values[i]];
                 if (key === "createddate" || key === "delivereddate") {
-                    let rangeWhereClause = paramValues.map(range => {
-                        const [lowerBound, upperBound] = range.split('-');
+                    let rangeWhereClause = paramValues
+                        .map((range) => {
+                        const [lowerBound, upperBound] = range.split("-");
                         queryParams.push(lowerBound, upperBound);
                         const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                         parameterIndex += 2;
                         return clause;
-                    }).join(" OR ");
+                    })
+                        .join(" OR ");
                     whereClauses.push(`(${rangeWhereClause})`);
                 }
                 else if (key !== "createddate" && key !== "delivereddate") {
-                    const clause = paramValues.map(_ => `${key} = $${parameterIndex++}`).join(' OR ');
+                    const clause = paramValues
+                        .map((_) => `${key} = $${parameterIndex++}`)
+                        .join(" OR ");
                     whereClauses.push(`(${clause})`);
                     queryParams.push(...paramValues);
                 }
             }
             let querystring;
             if (whereClauses.length > 0) {
-                querystring = `SELECT COUNT(*) FROM ${objectName} WHERE userId = $1 AND ${whereClauses.join(' AND ')}`;
+                querystring = `SELECT COUNT(*) FROM ${objectName} WHERE userId = $1 AND ${whereClauses.join(" AND ")}`;
             }
             else {
                 querystring = `SELECT COUNT(*) FROM ${objectName} WHERE userId = $1`;
@@ -378,23 +617,21 @@ export var recordCountService;
         catch (error) {
             console.error("Query Execution Error: IN getRecordCountWithUserId", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     recordCountService.getGlobalProductDataCount = async (request, reply) => {
         try {
             const { globalsearch, subcategory } = request.query;
-            const searchTerms = globalsearch.split(' ').join(' & ');
-            let newSearch = globalsearch.split(' ');
-            console.log(newSearch.length, 'newSearch length');
+            const searchTerms = globalsearch.split(" ").join(" & ");
+            let newSearch = globalsearch.split(" ");
             if (newSearch.length === 1) {
-                newSearch = newSearch[0] + ':*';
+                newSearch = newSearch[0] + ":*";
             }
             else {
-                newSearch = newSearch.join(':* & ') + ':*';
+                newSearch = newSearch.join(":* & ") + ":*";
             }
-            console.log(newSearch, 'newSearch data count');
+            console.log(newSearch, "newSearch data count");
             let countQueryText = `
             SELECT COUNT(*) 
             FROM product_revo 
@@ -405,16 +642,15 @@ export var recordCountService;
                 countQueryText += ` AND subcategory = $${params.length + 1}`;
                 params.push(subcategory);
             }
-            console.log('Final count query:', countQueryText);
-            console.log('Params:', params);
+            console.log("Final count query:", countQueryText);
+            console.log("Params:", params);
             const resultData = await query(countQueryText, params);
-            console.log('Count result:', resultData.rows[0].count);
+            console.log("Count result:", resultData.rows[0].count);
             return parseInt(resultData.rows[0].count);
         }
         catch (error) {
             console.error("Query Execution Error: IN getGlobalProductDataCount", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

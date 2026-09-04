@@ -19,17 +19,15 @@ export var fileservice;
                 let querydata;
                 let params = [];
                 if (id) {
-                    // If id is provided, update the existing file
                     querydata = `UPDATE files SET ${fieldNames
                         .map((field, index) => `${field} = $${index + 1}`)
                         .join(", ")} WHERE id = $${fieldNames.length + 1}`;
                     params = [...fieldValues, id];
                 }
                 else {
-                    // If id is not provided, insert a new file
                     querydata = `INSERT INTO files (${fieldNames.join(", ")}) VALUES (${fieldNames
                         .map((_, index) => `$${index + 1}`)
-                        .join(", ")}) RETURNING *`; // Return inserted row
+                        .join(", ")}) RETURNING *`;
                     params = fieldValues;
                 }
                 const result = await query(querydata, params);

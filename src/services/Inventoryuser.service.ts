@@ -1,7 +1,6 @@
 import { query } from "../database/postgres.js";
-// import { saveSession } from "../database/redis.session.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { hashGenerate, hashValidator } from "../utils/hashing/hashing.js";
 import { v4 as uuidv4 } from "uuid";
@@ -60,7 +59,7 @@ export module userInventoryService {
       let datatypeCheckResult = await dataTypeCheck(result);
       return datatypeCheckResult;
     } catch (error) {
-      console.error("Query Execution Error: IN Get Inventory User", error);
+      console.error("Query Execution Error: IN getInventoryUsersData", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
       return ErrorMessage;
     }
@@ -68,22 +67,17 @@ export module userInventoryService {
 
   export const userlogout = async (request, reply) => {
     try {
-      // Make a DELETE request to the Cloudflare Worker to delete the session
-
-      // Clear the sessionId cookie from the client
       let sessionId = request.cookies.sessionId;
       reply.send({ status: "Session deleted" });
     } catch (error) {
-      console.error("Query Execution Error: IN deleteUser", error);
+      console.error("Query Execution Error: IN userlogout", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
 
   export const getInventoryUsersDataTickets = async (request: any) => {
     try {
-      console.log("get Inventory User Tickets function call");
       const role = request.query.role || "Service";
       const location = request.query.location || "head_office";
 
@@ -117,25 +111,33 @@ export module userInventoryService {
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
 
   export const getLoggedInInventoryUsersData = async (request, reply) => {
+    const useremail = request?.body?.useremail ?? request?.params?.useremail;
+    const userpassword =
+      request?.body?.userpassword ?? request?.params?.userpassword;
+
+    if (!useremail || !userpassword) {
+      return "user Credentials are wrong please try again";
+    }
+
     try {
-      const queryString = `SELECT * FROM Inventoryusers where useremail = '${request.params.useremail}'`;
-      const result = await query(queryString, []);
+      const queryString = `SELECT * FROM Inventoryusers WHERE LOWER(useremail) = LOWER($1)`;
+      const result = await query(queryString, [useremail]);
       if (result && result.rows.length > 0) {
         let validatepassword = await hashValidator(
-          request.params.userpassword,
+          userpassword,
           result.rows[0].userpassword
         );
         if (validatepassword) {
           const sessionId = uuidv4();
           const sessionData = {
-            useremail: request.params.useremail,
-            userpassword: request.params.userpassword,
+            id: result.rows[0].id,           // ← needed for hiddenby, adminreplyby etc.
+            useremail,
+            role: result.rows[0].role,
           };
           let sessionsaved = await saveSession(sessionId, sessionData);
           if (sessionsaved) {
@@ -151,11 +153,10 @@ export module userInventoryService {
       }
     } catch (error) {
       console.error(
-        "Query Execution Error: IN getLoggedIn Inventory UsersData",
+        "Query Execution Error: IN getLoggedInInventoryUsersData",
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -172,9 +173,8 @@ export module userInventoryService {
         return `User not found with id ${id}`;
       }
     } catch (error) {
-      console.error("Query Execution Error: IN delete Inventory User", error);
+      console.error("Query Execution Error: IN deleteInventoryUser", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };
@@ -235,9 +235,7 @@ if (userExists.rows.length === 0) {
 
 const updateData: any = {};
 
-// Handle all fields from updateFields
 for (const [key, value] of Object.entries(updateFields)) {
-  // Skip empty or undefined values
   if (value !== undefined && value !== '') {
     if (key === 'userpassword') {
       updateData[key] = await hashGenerate(value);
@@ -285,10 +283,17 @@ return {
           "Your otp code to Reset Password For Revo Site is " + generatedotp;
         request.body.to = request.body.useremail;
         let otpsave = await saveOtp(request.query.useremail, generatedotp);
-        console.log(otpsave);
         let finduser = await getInventoryUsersData(request, reply);
         if (finduser && finduser.length > 0) {
-          let emailresult = await sendMail(request, generatedotp);
+          try {
+            await sendTransactionalMail({
+              to: request.body.useremail,
+              subject: 'OTP Verification Code',
+              text: `Your OTP to reset your Revo password is: ${generatedotp}. It is valid for 10 minutes.`,
+            });
+          } catch (mailErr: any) {
+            console.error('[forgotuser] OTP email failed:', mailErr?.message || mailErr);
+          }
           return { status: "success", message: "OTP sent Successfuly" };
         } else {
           return {
@@ -299,7 +304,6 @@ return {
         }
       } else if (request.body.otp) {
         let finduser = await getInventoryUsersData(request, reply);
-        console.log('DAAAN',generatedotp,'==',Number(request.body.otp))
         let optmatch = await getOtp(request.query.useremail, request.body.otp);
         if (optmatch) {
           return {
@@ -316,9 +320,8 @@ return {
         }
       }
     } catch (error) {
-      console.error("Query Execution Error: IN getproductsData", error);
+      console.error("Query Execution Error: IN forgotuser", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

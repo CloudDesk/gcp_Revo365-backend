@@ -1,6 +1,6 @@
 import { revoinvoiceservice } from "../services/revoinvoice.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import exp from "constants";
+
 
 export module revoinvoicecontroller {
     export const getRevoInvoiceData = async (request: any, reply: any) => {
@@ -9,6 +9,7 @@ export module revoinvoicecontroller {
             reply.send(getRevoInvoiceDataResult);
 
         } catch (error) {
+            console.error("Query Execution Error: IN getRevoInvoiceData controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -20,6 +21,7 @@ export module revoinvoicecontroller {
             reply.send(getRevoInvoiceDataByIdResult);
 
         } catch (error) {
+            console.error("Query Execution Error: IN getRevoInvoiceDataById controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -28,6 +30,7 @@ export module revoinvoicecontroller {
     export const upsertRevoInvoice = async (request: any, reply: any) => {
         try {
             let upsertRevoInvoiceResult = await revoinvoiceservice.upsertRevoInvoice(request.body);
+            console.log(request.body, "request.body in upsertRevoInvoice controller");
             if (upsertRevoInvoiceResult.command === "UPDATE" || upsertRevoInvoiceResult.command === "INSERT") {
                 let message: any = {};
                 message = {
@@ -41,6 +44,7 @@ export module revoinvoicecontroller {
                 reply.status(500).send(upsertRevoInvoiceResult);
             }
         } catch (error) {
+            console.error("Query Execution Error: IN upsertRevoInvoice controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

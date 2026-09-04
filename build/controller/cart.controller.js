@@ -8,7 +8,7 @@ export var cartController;
             reply.send(getCartDataResult);
         }
         catch (error) {
-            console.log("ERROR IN Controller getCartData");
+            console.log("ERROR IN Controller getCartData", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -19,7 +19,7 @@ export var cartController;
             reply.send(getCartDataResult);
         }
         catch (error) {
-            console.log("ERROR IN  Controller getUserCartData");
+            console.log("ERROR IN  Controller getUserCartData", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -33,7 +33,7 @@ export var cartController;
             reply.send(deleteCartResult);
         }
         catch (error) {
-            console.log("ERROR IN Controller deleteCart");
+            console.log("ERROR IN Controller deleteCart", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -42,14 +42,12 @@ export var cartController;
         try {
             const cartData = request.body;
             let upsertCartResult = await cartservice.upsertCart(cartData);
-            console.log(upsertCartResult);
             if (upsertCartResult.command === "UPDATE" ||
                 upsertCartResult.command === "INSERT") {
-                let message = {};
-                message = {
-                    message: upsertCartResult.command === "UPDATE"
-                        ? `Product Added to Cart `
-                        : `Product Added to Cart `,
+                const isWishlist = cartData.iswishlist === true || cartData.iswishlist === 'true';
+                const label = isWishlist ? "Wishlist" : "Cart";
+                const message = {
+                    message: `Product Added to ${label} successfully`,
                 };
                 reply.status(200).send(message);
             }
@@ -58,7 +56,7 @@ export var cartController;
             }
         }
         catch (error) {
-            console.log("ERROR IN Controller upsertCart");
+            console.log("ERROR IN Controller upsertCart", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -69,7 +67,7 @@ export var cartController;
             reply.send(result);
         }
         catch (error) {
-            console.log("ERROR IN Controller UPDATE CART QUANTITY");
+            console.log("ERROR IN Controller UPDATE CART QUANTITY", error);
             let errordata = await ErrorHandler.handleQueryError(error);
             return errordata;
         }

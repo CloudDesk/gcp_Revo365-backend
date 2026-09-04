@@ -1,0 +1,146 @@
+{
+  "bindings": [
+    {
+      "members": [
+        "serviceAccount:revo-dev-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revo-test-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revodevbackend@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/artifactregistry.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-artifactregistry.iam.gserviceaccount.com"
+      ],
+      "role": "roles/artifactregistry.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-binaryauthorization.iam.gserviceaccount.com"
+      ],
+      "role": "roles/binaryauthorization.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:1004893667696@cloudbuild.gserviceaccount.com"
+      ],
+      "role": "roles/cloudbuild.builds.builder"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudbuild.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcf-admin-robot.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudfunctions.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:revodevbackend@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudtasks.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+      ],
+      "role": "roles/cloudtasks.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@compute-system.iam.gserviceaccount.com"
+      ],
+      "role": "roles/compute.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@container-engine-robot.iam.gserviceaccount.com"
+      ],
+      "role": "roles/container.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@container-analysis.iam.gserviceaccount.com"
+      ],
+      "role": "roles/containeranalysis.ServiceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@containerregistry.iam.gserviceaccount.com"
+      ],
+      "role": "roles/containerregistry.ServiceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:1004893667696-compute@developer.gserviceaccount.com",
+        "serviceAccount:1004893667696@cloudservices.gserviceaccount.com",
+        "serviceAccount:revo-dev-and-test@appspot.gserviceaccount.com"
+      ],
+      "role": "roles/editor"
+    },
+    {
+      "members": [
+        "serviceAccount:revo-dev-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revo-test-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revodevbackend@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/logging.logWriter"
+    },
+    {
+      "members": [
+        "serviceAccount:1004893667696-compute@developer.gserviceaccount.com",
+        "user:sachi.on.cloud@gmail.com"
+      ],
+      "role": "roles/owner"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-pubsub.iam.gserviceaccount.com"
+      ],
+      "role": "roles/pubsub.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:revo-dev-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revo-test-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@serverless-robot-prod.iam.gserviceaccount.com"
+      ],
+      "role": "roles/run.serviceAgent"
+    },
+    {
+      "members": [
+        "serviceAccount:service-1004893667696@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+      ],
+      "role": "roles/secretmanager.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:revo-test-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revodevbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.admin"
+    },
+    {
+      "members": [
+        "serviceAccount:revo-dev-fileupload@revo-dev-and-test.iam.gserviceaccount.com",
+        "serviceAccount:revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      ],
+      "role": "roles/storage.objectAdmin"
+    }
+  ],
+  "etag": "BwYrHPGAmj4=",
+  "version": 3
+}

@@ -7,12 +7,14 @@ export var purcahseRequestController;
             reply.send(getPurchaseRequestResult);
         }
         catch (error) {
+            console.error("Error in 'getPurchaseRequestData':", error);
             reply.status(404).send(error.message);
         }
     };
     purcahseRequestController.upsertPurchaseRequestData = async (request, reply) => {
         try {
             const prData = request.body;
+            console.log("Request Body in upsertPurchaseRequestData:", prData);
             let upsertPurchaseRequest = await purchaseRequestService.upsertPurchaseRequestData(prData);
             if (upsertPurchaseRequest.command === "UPDATE" || upsertPurchaseRequest.command === "INSERT") {
                 let message = {};
@@ -25,12 +27,11 @@ export var purcahseRequestController;
                 reply.status(200).send(message);
             }
             else {
-                console.log("else upsertPurchaseRequest");
-                console.log(upsertPurchaseRequest);
                 reply.status(404).send({ error: [upsertPurchaseRequest] });
             }
         }
         catch (error) {
+            console.error("Error in 'upsertPurchaseRequestData':", error);
             reply.status(404).send(error.message);
         }
     };

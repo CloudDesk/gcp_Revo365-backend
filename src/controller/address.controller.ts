@@ -13,7 +13,7 @@ export module addressController {
             let getAddressDataResult = await addressService.getAddressData(request)
             reply.send(getAddressDataResult)
         } catch (error) {
-            console.log('ERROR IN  Controller getAddressData');
+            console.log('ERROR IN  Controller getAddressData',error);
             let errordata  = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);
         }
@@ -23,7 +23,7 @@ export module addressController {
             let getAddressDataResult = await addressService.getUserAddressData(request)
             reply.send(getAddressDataResult)
         } catch (error) {
-            console.log('ERROR IN  Controller getUserAddressData');
+            console.log('ERROR IN  Controller getUserAddressData', error);
             let errordata  = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);     
            }
@@ -35,7 +35,7 @@ export module addressController {
             let deleteAddressResult = await addressService.deleteAddress(Number(id));
             reply.send(deleteAddressResult);
         } catch (error) {
-            console.log('ERROR IN  Controller deleteAddress');
+            console.log('ERROR IN  Controller deleteAddress', error);
             let errordata  = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);           }
     }
@@ -43,7 +43,9 @@ export module addressController {
     export const upsertAddress = async (request: any, reply: any) => {
         try {
             const addressData = request.body;
+            console.log("[DEBUG][POST /address] request payload:", addressData);
             let upsertAddressResult = await addressService.upsertAddress(addressData);
+            console.log("[DEBUG][POST /address] service response command:", upsertAddressResult?.command);
             if (upsertAddressResult.command === "UPDATE" || upsertAddressResult.command === "INSERT") {
                 let message: any = {};
                 message = {
@@ -56,7 +58,7 @@ export module addressController {
                 reply.status(404).send(upsertAddressResult);
             }
         } catch (error) {
-            console.log('ERROR IN  Controller upsertAddress');
+            console.log('ERROR IN  Controller upsertAddress', error);
             let errordata  = await ErrorHandler.handleQueryError(error)
             reply.status(404).send(errordata);           }
     }

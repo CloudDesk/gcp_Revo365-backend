@@ -23,6 +23,20 @@ import { json } from "stream/consumers";
 import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
 //  export const stocklocationdataajv = [];
 
+const normalizeStockImportHeader = (key: string) =>
+  String(key ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+
+const isUploadedBarcodeField = (key: string) =>
+  ["rfid", "barcode", "barcodenumber"].includes(normalizeStockImportHeader(key));
+
+const removeUploadedBarcodeFields = (row: any) => {
+  Object.keys(row || {}).forEach((key) => {
+    if (isUploadedBarcodeField(key)) {
+      delete row[key];
+    }
+  });
+};
+
 export module dataLoaderService {
   export const getDataLoaderData = async (request) => {
     try {
@@ -33,6 +47,8 @@ export module dataLoaderService {
       await Promise.all(
         jsonresult.map(async (e: any, index: number) => {
           try {
+            removeUploadedBarcodeFields(e);
+
             for (let [key, value] of Object.entries(e)) {
               if (!value) {
                 e[key] = null;
@@ -130,7 +146,15 @@ export module dataLoaderService {
               if (!value) {
                 e[key] = null;
               } else {
-                if (stockInteger.includes(key)) {
+                // Normalize stocktype field: convert variations to "rental_product"
+                if (key === "stocktype" && typeof value === "string") {
+                  const normalizedValue = value.toLowerCase().replace(/\s+/g, "_");
+                  if (normalizedValue === "rental_product") {
+                    e[key] = "rental_product";
+                  } else {
+                    e[key] = value;
+                  }
+                } else if (stockInteger.includes(key)) {
                   let valueconvert: any = Number(value);
                   if (isNaN(valueconvert)) {
                     e[key] = value;
@@ -138,7 +162,6 @@ export module dataLoaderService {
                     e[key] = valueconvert;
                   }
                 } else if (stockBoolean.includes(key)) {
-                  console.log(e[key]);
                   if (
                     e[key] === "FALSE" ||
                     e[key] === "false" ||
@@ -177,7 +200,8 @@ export module dataLoaderService {
                 }
               }
             }
-            if (e.rfid === null || e.rfid === undefined || e.rfid === "") {
+            // Force ecompublish = false if stocktype is rental_product
+            if (e.stocktype === "rental_product") {
               e.ecompublish = false;
             }
             let validationresult = await validateDataLoader(stockrevoSchema, e);
@@ -210,7 +234,6 @@ export module dataLoaderService {
     } catch (error) {
       console.error("Query Execution Error: IN getDataLoaderDataStock", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

@@ -24,7 +24,6 @@ export var purchaseOrderService;
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
                     whereClauses.push(`(${key} != $${parameterIndex} OR ${key} IS NULL)`);
-                    console.log(whereClauses, 'whereClause');
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
@@ -43,8 +42,6 @@ export var purchaseOrderService;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
@@ -52,7 +49,6 @@ export var purchaseOrderService;
         catch (error) {
             console.error("Query Execution Error: IN getPurchaseOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -61,14 +57,12 @@ export var purchaseOrderService;
             const { id } = request.params;
             const queryText = `SELECT * FROM purchaseorder where id = $${1}`;
             const result = await query(queryText, [id]);
-            // console.log(result);
             let datatypecheckResult = await dataTypeCheck(result);
             return datatypecheckResult;
         }
         catch (error) {
             console.error("Query Execution Error: IN getEachPurchaseOrderData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -79,9 +73,7 @@ export var purchaseOrderService;
             request.files.forEach((element) => {
                 let fileurl = request.protocol + "://" + request.headers.host + '/' + element.filename;
                 fileurlarray.push(fileurl);
-                console.log(fileurl, 'File url is');
             });
-            console.log(fileurlarray);
             const fetchQuery = `
             SELECT invoiceurl
             FROM purchaseorder
@@ -97,77 +89,50 @@ export var purchaseOrderService;
             WHERE id = $2;
             `;
             let params = [combinedUrls, id];
-            console.log(updateQuery);
             let data = await query(updateQuery, params);
             return data;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertInvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     purchaseOrderService.updatePoStatus = async (ponumber, total, po_status) => {
         try {
-            console.log("Inside update PO status");
-            // console.log('PONUMBER:',ponumber)
-            // console.log('POSTATUS:',po_status)
-            // console.log('TOTAL Amount to Paid:',total)
             const purchaseordernumber = ponumber;
             const poinvoiceData = await query(`SELECT paymentdata FROM poinvoice WHERE ponumber = $1`, [purchaseordernumber]);
             let paymentData = poinvoiceData.rows;
             const allPaymentAmounts = paymentData.flatMap((item) => item.paymentdata.map((payment) => payment.paymentamount));
             const paidAmount = allPaymentAmounts.reduce((sum, amount) => sum + amount, 0);
-            console.log("All Payment Amounts:", allPaymentAmounts);
-            console.log("paid Amount:", paidAmount);
-            console.log("PO STATUS:", po_status);
             if (po_status === "cancelled") {
-                console.log("INSIDE CANCEl");
                 const result = await query(`UPDATE purchaseorder SET po_status = 'cancelled' WHERE ponumber ='${purchaseordernumber}'`, []);
-                console.log("Result:", result.command);
             }
             else if (po_status === "void") {
-                console.log("INSIDE VOID");
                 const result = await query(`UPDATE purchaseorder SET po_status = 'void' WHERE ponumber ='${purchaseordernumber}'`, []);
-                console.log("Result:", result.command);
             }
             else {
-                // console.log("INSIDE IF")
                 if (paidAmount === Number(total)) {
-                    console.log("INSIDE FULLFILL");
-                    // po_status = 'fulfilled'
-                    console.log("----", purchaseordernumber);
                     const result = await query(`UPDATE purchaseorder SET po_status = 'fulfilled' WHERE ponumber ='${purchaseordernumber}'`, []);
-                    console.log("RESULT:", result.command);
                 }
                 else if (paidAmount === 0 || po_status === null) {
-                    console.log("INSIDE in_progress");
                     const result = await query(`UPDATE purchaseorder SET po_status = 'in_progress' WHERE ponumber ='${purchaseordernumber}'`, []);
-                    console.log("Result", result.command);
                 }
                 else if (paidAmount < Number(total)) {
-                    console.log("INSIDE PART FULL FILL");
-                    // po_status = 'partially_fulfilled'
-                    console.log("----", purchaseordernumber);
                     const result = await query(`UPDATE purchaseorder SET po_status = 'partially_fulfilled' WHERE ponumber ='${purchaseordernumber}'`, []);
-                    console.log("RESULT:", result.command);
                 }
             }
             return "Purchase Order Status Updated Successfully";
         }
-        catch (error) { }
+        catch (error) {
+            console.error("Query Execution Error: IN updatePoStatus", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error);
+            return ErrorMessage;
+        }
     };
     purchaseOrderService.upsertGcpInvoice = async (request) => {
         try {
             const { id } = request.params;
-            // let fileurlarray = [];
-            // request.files.forEach((element) => {
-            //     let fileurl = request.protocol + "://" + request.headers.host + '/' + element.filename;
-            //     fileurlarray.push(fileurl);
-            //     console.log(fileurl, 'File url is');
-            // });
-            // console.log(fileurlarray);
             const fetchQuery = `
             SELECT invoiceurl
             FROM purchaseorder
@@ -183,14 +148,12 @@ export var purchaseOrderService;
             WHERE id = $2;
             `;
             let params = [combinedUrls, id];
-            console.log(updateQuery);
             let data = await query(updateQuery, params);
             return data;
         }
         catch (error) {
-            console.error("Query Execution Error: IN upsertInvoice", error);
+            console.error("Query Execution Error: IN upsertGcpInvoice", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -204,14 +167,12 @@ export var purchaseOrderService;
             WHERE id = $2;
             `;
             let params = [invoiceUrl, id];
-            console.log(updateQuery);
             let data = await query(updateQuery, params);
             return data;
         }
         catch (error) {
             console.error("Query Execution Error: IN deleteUrl", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -228,20 +189,61 @@ export var purchaseOrderService;
         catch (error) {
             console.error("Query Execution Error: IN deletePurchaseOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
+    // export const upsertPurchaseOrder = async (purchaseorderData: any) => {
+    //     try {
+    //         console.log("Received purchaseorderData:", purchaseorderData);
+    //         let querydata: string;
+    //         let params: any[];
+    //         const { id, product, ...upsertFields } = purchaseorderData;
+    //         if (product) {
+    //             upsertFields.product = JSON.stringify(product);
+    //         }
+    //         const fieldNames = Object.keys(upsertFields);
+    //         const fieldValues = Object.values(upsertFields);
+    //         if (id) {
+    //             querydata = `UPDATE purchaseorder SET ${fieldNames
+    //                 .map((field, index) => `${field} = $${index + 1}`)
+    //                 .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+    //             params = [...fieldValues, id];
+    //         } else {
+    //             querydata = `INSERT INTO purchaseorder (${fieldNames.join(
+    //                 ", "
+    //             )}) VALUES (${fieldNames
+    //                 .map((_, index) => `$${index + 1}`)
+    //                 .join(", ")}) RETURNING *`;
+    //             params = fieldValues;
+    //         }
+    //         const result = await query(querydata, params);
+    //         console.log("Query Result in upsertPurchaseOrder:", result.rows);
+    //         const pr = result.rows[0].prnumber;
+    //         const drStatus = result.rows[0].po_status;
+    //         const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
+    //         console.log("Query Result in upsertQuote:", queryPr.rows);
+    //         if(queryPr.rows.length>0 && queryPr.rows[0].isdemandrequest === true){
+    //             const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, queryPr.rows[0].demandrequestid]);
+    //             console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
+    //             console.log("Quote Upserted Successfully");
+    //         }
+    //         return result;
+    //     } catch (error) {
+    //         console.error("Query Execution Error: IN upsertPurchaseOrder", error);
+    //         let ErrorMessage = await ErrorHandler.handleQueryError(error)
+    //         return ErrorMessage
+    //     }
+    // }
     purchaseOrderService.upsertPurchaseOrder = async (purchaseorderData) => {
         try {
-            console.log(purchaseorderData, 'data in purchase order is ');
+            console.log("Received purchaseorderData:", purchaseorderData);
             let querydata;
             let params;
             const { id, product, ...upsertFields } = purchaseorderData;
+            // Always store product as a string (database consistency)
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
-            console.log(upsertFields);
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
@@ -257,13 +259,70 @@ export var purchaseOrderService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            console.log(result.command, 'Result is');
+            console.log("Query Result in upsertPurchaseOrder:", result.rows);
+            if (!result.rows.length)
+                throw new Error("No rows returned from po upsert.");
+            const row = result.rows[0];
+            const ponumber = row.ponumber;
+            const poid = row.id;
+            const pr = row.prnumber;
+            const drStatus = row.po_status;
+            // Find related demand request via purchasing request table
+            const queryPr = await query(`SELECT demandrequestid, isdemandrequest FROM purchaserequest WHERE prnumber = $1`, [pr]);
+            console.log("Query Result in upsertQuote:", queryPr.rows);
+            if (queryPr.rows.length > 0 &&
+                queryPr.rows[0].isdemandrequest === true) {
+                const demandRequestId = queryPr.rows[0].demandrequestid;
+                // Update postatus on demandrequest (as before)
+                const updateDR = await query(`UPDATE demandrequest SET postatus = $1 WHERE id = $2 RETURNING *`, [drStatus, demandRequestId]);
+                console.log("Update Demand Request Result in upsertQuote:", updateDR.rows);
+                // Fetch demandrequestdata array
+                const demandReqRes = await query(`SELECT demandrequestdata FROM demandrequest WHERE id = $1`, [demandRequestId]);
+                if (!demandReqRes.rows.length)
+                    throw new Error(`Demand request ${demandRequestId} not found.`);
+                let demandrequestdata = demandReqRes.rows[0].demandrequestdata;
+                if (!demandrequestdata)
+                    demandrequestdata = [];
+                if (typeof demandrequestdata === "string") {
+                    try {
+                        demandrequestdata = JSON.parse(demandrequestdata);
+                    }
+                    catch {
+                        demandrequestdata = [];
+                    }
+                }
+                // Patch ponumber, poid, and postatus ONLY for matching prnumber inside demandrequestdata.prdata
+                let updated = false;
+                if (Array.isArray(demandrequestdata)) {
+                    demandrequestdata = demandrequestdata.map(item => {
+                        if (Array.isArray(item.prdata)) {
+                            const newPrdata = item.prdata.map(pritem => {
+                                if (pritem.prnumber === pr) {
+                                    updated = true;
+                                    return {
+                                        ...pritem,
+                                        ponumber,
+                                        poid,
+                                        postatus: drStatus
+                                    };
+                                }
+                                return pritem;
+                            });
+                            return { ...item, prdata: newPrdata };
+                        }
+                        return item;
+                    });
+                }
+                if (updated) {
+                    await query(`UPDATE demandrequest SET demandrequestdata = $1 WHERE id = $2`, [JSON.stringify(demandrequestdata), demandRequestId]);
+                    console.log("Updated demandrequestdata.prdata with ponumber, poid, and postatus for prnumber:", pr);
+                }
+            }
             return result;
         }
         catch (error) {
             console.error("Query Execution Error: IN upsertPurchaseOrder", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

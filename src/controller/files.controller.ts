@@ -8,6 +8,7 @@ export module fileController {
             let insertFileResult = await fileservice.insertFile(request)
             return insertFileResult
         } catch (error) {
+            console.error('ERROR IN  Controller insertFile', error);
             reply.send(error.message)
         }
     }

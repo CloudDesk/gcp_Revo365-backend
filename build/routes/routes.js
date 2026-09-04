@@ -6,7 +6,6 @@ import { recordCount } from "../controller/recordcount.controller.js";
 import { globalSearchController } from "../controller/globalsearch.controller.js";
 import { recycleBinController } from "../controller/recyclebin.controller.js";
 import { cartController } from "../controller/cart.controller.js";
-import { wishListController } from "../controller/wishlist.controller.js";
 import { userController } from "../controller/user.controller.js";
 import { supplierController } from "../controller/supplier.controller.js";
 import { addressController } from "../controller/address.controller.js";
@@ -37,15 +36,53 @@ import { constEstimationController } from "../controller/costestimation.controll
 import { revoinvoicecontroller } from "../controller/revoinvoice.controller.js";
 import { tablecontoller } from "../controller/table.controller.js";
 import { permissionscontroller } from "../controller/permissions.controller.js";
-import { inventoryusersSchema } from "../schemas/inventoryusers.schema.js";
+import { addressInsertSchema } from "../schemas/address.schema.js";
 import { notesSchema } from "../schemas/notes.schems.js";
 import { locationhistrorycontroller } from "../controller/locationhistory.controller.js";
 import { getSession } from "../services/session.service.js";
 import { sessionController } from "../controller/session.controller.js";
-// import { getSession } from "../database/redis.session.js";
-// import { getSession } from "../cloudflare/cloudflare.session.js";
+import { sendPushNotification } from "../firebase/firebasepushmessage.js";
+import { thirdPartyController } from "../controller/thirdparty.controller.js";
+import { demandrequestController } from "../controller/demandrequest.controller.js";
+import { runShiprocketDiagnostics, shiprocketShippingService } from "../services/shiprocket.service.js";
+import { bannerController } from "../controller/banner.controller.js";
+import { googlereviewController } from "../controller/googlereview.controller.js";
+import { blogscontroller } from "../controller/blogs.controller.js";
+import { enquiryController } from "../controller/enquiry.controller.js";
+import { enquiryExportController } from "../controller/enquiryExport.controller.js";
+import { buybackEnquiriesController } from "../controller/buybackEnquiries.controller.js";
+import { serviceEnquiriesController } from "../controller/serviceEnquiries.controller.js";
+import { orderReturnsController } from "../controller/orderReturns.controller.js";
+import { refundsController } from "../controller/refunds.controller.js";
+import { ENV_INTERNAL_TASK_SECRET } from "../config/config.js";
+import { ticketReplacementController } from "../controller/ticketReplacement.controller.js";
+import { initiateRentalReplacementSchema, receiveOldAssetSchema, assignTechnicalReplacementSchema, assignCommercialReplacementSchema, rejectReplacementSchema, returnRentalAssetSchema, stopRentalSchema, markRentalAssetLostSchema, assessRentalDamageSchema, linkPenaltyInvoiceSchema, renewRentalContractSchema, generateRentalLossDeclarationSchema, finalizeRentalLossDeclarationSchema } from "../schemas/ticketReplacement.schema.js";
+import { rentalAgreementController } from "../controller/rentalAgreement.controller.js";
+import { createRentalAgreementSchema, regenerateRentalAgreementPdfSchema } from "../schemas/rentalAgreement.schema.js";
+import { kubbTicketsController } from "../controller/kubbTickets.controller.js";
+import { rentalInvoiceDocumentController } from "../controller/rentalInvoiceDocument.controller.js";
+import { vendorCustomerAssignmentController } from "../controller/vendorCustomerAssignment.controller.js";
+import { accessController } from "../controller/access.controller.js";
+import { consolidatedInvoiceController } from "../controller/consolidatedInvoice.controller.js";
+import { storeQuotationController } from "../controller/storeQuotation.controller.js";
+import { picklistConfigController } from "../controller/picklistConfig.controller.js";
+import { financeAccountController } from "../controller/financeAccount.controller.js";
+import { tdsSectionController } from "../controller/tdsSection.controller.js";
+import { createBankCashAccountSchema, createDirectBankTransactionSchema, createRetailReceiptSchema, createSupplierPaymentSchema, createTdsSectionSchema, updateBankCashAccountSchema, } from "../schemas/finance.schema.js";
+import { requireFinancePermission } from "../services/financeAccess.service.js";
 const Revo365Routes = async function (fastify, opts) {
-    console.log('Routes called ');
+    const taskOrSessionAuth = async (request, reply) => {
+        const taskSecretHeader = request.headers["x-task-secret"];
+        const receivedTaskSecret = Array.isArray(taskSecretHeader)
+            ? taskSecretHeader[0]
+            : taskSecretHeader;
+        if (ENV_INTERNAL_TASK_SECRET &&
+            receivedTaskSecret &&
+            String(receivedTaskSecret) === String(ENV_INTERNAL_TASK_SECRET)) {
+            return;
+        }
+        return getSession(request, reply);
+    };
     //product version 1
     // fastify.get('/product/:pageNumber/:recordCount', productController.getProducts);
     // fastify.get('/product/Archieve/:pageNumber/:recordCount', productController.getArcheivedProducts);
@@ -62,14 +99,34 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/loaderio-f7191720e20ac18e9783086e50fb0ed5/', (req, reply) => {
         reply.send('loaderio-f7191720e20ac18e9783086e50fb0ed5');
     });
-    fastify.get('/test', { preHandler: [getSession] }, (req, reply) => {
-        reply.status(200).send('test');
+    fastify.get('/fcmnotification', async (req, reply) => {
+        // reply.status(200).send('test')
+        console.log("first");
+        const messageData = {
+            title: "Hello there! 👋",
+            body: "Hope you're having a great day!"
+        };
+        let fcmId = req.query.token; // Fetch from query params
+        if (!fcmId) {
+            console.error("No FCM token provided");
+            return reply.status(400).send({ error: "FCM token is required" });
+        }
+        try {
+            await sendPushNotification(fcmId, messageData);
+            return reply.status(200).send({ success: "Notification sent successfully" });
+        }
+        catch (error) {
+            console.error("Error in testSendFCMNotification:", error);
+            return reply.status(500).send({ error: "Failed to send notification" });
+        }
     });
-    // verison 2 -> product
-    fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getProductsrevoData);
+    // version 2 -> product
+    fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getAdminProductsrevoData);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);
     fastify.get('/v2/product/Archieve', { preHandler: [getSession] }, productrevoController.getArcheivedProductsRevo);
-    fastify.get('/v2/product-ecom/:id', productrevoController.getEachProductsRevo);
+    fastify.get('/v2/product/component-options', { preHandler: [getSession] }, productrevoController.getProductComponentOptions);
+    fastify.get('/v2/product/:id/bom', { preHandler: [getSession] }, productrevoController.getProductBom);
+    fastify.get('/v2/product-ecom/:id', productrevoController.getEachEcomProductsRevo);
     fastify.get('/v2/product/:id', { preHandler: [getSession] }, productrevoController.getEachProductsRevo);
     fastify.post('/v2/product', { preHandler: [getSession] }, /* { preHandler: [validateRequestBody(productInsertSchema)] } ,*/ productrevoController.upsertProductrevo);
     fastify.delete('/v2/product/:id', { preHandler: [getSession] }, /* { preHandler: validateRequestBody(deleteProductSchema) } , */ productrevoController.deleteProductrevo);
@@ -81,12 +138,22 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/v2/product-similar', { preHandler: [getSession] }, productrevoController.getSimilarProducts);
     fastify.get('/v2/product-ecom-similar', productrevoController.getSimilarProducts);
     fastify.post('/v2/product/lockqty', { preHandler: [getSession] }, productrevoController.upsertlockqty);
-    //version 2 -> stock
+    fastify.post('/v2/product/bulk/validate', { preHandler: [getSession] }, productrevoController.validateBulkProduct);
+    fastify.post('/v2/product/bulk', { preHandler: [getSession] }, productrevoController.insertBulkProduct);
+    fastify.get('/v2/product/bulk/template', { preHandler: [getSession] }, productrevoController.downloadBulkProductTemplate);
+    // Product lifecycle toggle: PATCH /v2/product/:id/ecom-visibility  body: { ecomvisible: true|false }
+    fastify.patch('/v2/product/:id/ecom-visibility', { preHandler: [getSession] }, productrevoController.toggleEcomVisible);
+    //version 2 -> stock  (ecomvisible is query-param driven: ?ecomvisible=true / ?ecomvisible=false)
     fastify.get('/v2/stock', { preHandler: [getSession] }, stockRevoController.getStockRevoData);
+    fastify.get('/v2/stock/search', { preHandler: [getSession] }, stockRevoController.searchStockRevoData);
+    fastify.get('/v2/stock/barcode/next', { preHandler: [getSession] }, stockRevoController.getNextStockBarcodeNumber);
     fastify.get('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.getEachStockRevoData);
     fastify.post('/v2/stock', { preHandler: [getSession, validateRequestBody(stockrevoSchema)] }, stockRevoController.upsertStockRevoData);
+    fastify.post('/v2/stock/:id/release-service-hold', { preHandler: [getSession] }, stockRevoController.releaseServiceHoldStockToAvailable);
+    fastify.post('/v2/stock/:id/mark-found', { preHandler: [getSession] }, stockRevoController.markLostStockAsFound);
+    fastify.post('/v2/stock/:id/mark-repaired', { preHandler: [getSession] }, stockRevoController.markDamagedStockAsRepaired);
     // fastify.post('/v2/stock',stockRevoController.upsertStockRevoData);
-    fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
+    // fastify.delete('/v2/stock/:id', { preHandler: [getSession] }, stockRevoController.deleteStockRevoData);
     fastify.get('/v2/stock/Archieve', { preHandler: [getSession] }, stockRevoController.getArcheivedStocksRevo);
     fastify.get('/stock/updaterecyclebin', { preHandler: [getSession] }, stockRevoController.updateRemovedFromRecyclebinRevo);
     fastify.delete('/v2/stock/isdelete', { preHandler: [validateRequestBody(deletestockrevoSchema), getSession] }, stockRevoController.upsertStockRevoDatadelete);
@@ -99,6 +166,19 @@ const Revo365Routes = async function (fastify, opts) {
     //picklistfields
     fastify.get('/picklist/:objectName', picklistControler.getPicklistforobject);
     fastify.get('/picklist', { preHandler: [getSession] }, picklistControler.getAllPicklist);
+    fastify.get('/picklist-config/definitions', { preHandler: [getSession] }, picklistConfigController.getDefinitions);
+    fastify.post('/picklist-config/definitions', { preHandler: [getSession] }, picklistConfigController.upsertDefinition);
+    fastify.get('/picklist-config/values', { preHandler: [getSession] }, picklistConfigController.getValues);
+    fastify.get('/picklist-config/definitions/:definitionCode/values', { preHandler: [getSession] }, picklistConfigController.getValues);
+    fastify.post('/picklist-config/values', { preHandler: [getSession] }, picklistConfigController.upsertValue);
+    fastify.post('/picklist-config/relations', { preHandler: [getSession] }, picklistConfigController.upsertRelation);
+    fastify.delete('/picklist-config/relations/:id', { preHandler: [getSession] }, picklistConfigController.deleteRelation);
+    fastify.get('/picklist-config/field-mappings', { preHandler: [getSession] }, picklistConfigController.getFieldMappings);
+    fastify.post('/picklist-config/field-mappings', { preHandler: [getSession] }, picklistConfigController.upsertFieldMapping);
+    fastify.get('/picklist-config/bundle-templates', { preHandler: [getSession] }, picklistConfigController.getBundleTemplates);
+    fastify.post('/picklist-config/bundle-templates', { preHandler: [getSession] }, picklistConfigController.upsertBundleTemplate);
+    fastify.post('/picklist-config/bundle-items', { preHandler: [getSession] }, picklistConfigController.upsertBundleItem);
+    fastify.get('/picklists/resolve', { preHandler: [getSession] }, picklistConfigController.resolvePicklists);
     //count of totalRecord
     fastify.get('/count/:objectName', { preHandler: [getSession] }, recordCount.getRecordCount);
     fastify.get('/v2/count/:objectName', recordCount.getRecordCountRevo);
@@ -119,44 +199,74 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.delete('/cart/:id', { preHandler: [getSession] }, cartController.deleteCart);
     fastify.post('/cart', { preHandler: [getSession, validateRequestBody(cartInsertSchema)] }, cartController.upsertCart);
     fastify.post('/cart/quantity', { preHandler: [getSession] }, cartController.updateCartQuantity);
-    //wishlist
-    fastify.get('/wishlist', { preHandler: [getSession] }, wishListController.getWishlistData);
-    fastify.get('/wishlist/:userId', { preHandler: [getSession] }, wishListController.getUserWishlistData);
-    fastify.delete('/wishlist/:id', { preHandler: [getSession] }, wishListController.deleteFromWishlist);
-    fastify.post('/wishlist', { preHandler: [getSession] }, wishListController.upsertToWishlist);
+    fastify.get('/demandrequest', { preHandler: [getSession] }, demandrequestController.getDemandRequest);
+    fastify.post('/demandrequest', { preHandler: [getSession] }, demandrequestController.upsertDemandRequest);
+    //wishlist (using consolidated cartController)
+    fastify.get('/wishlist', { preHandler: [getSession] }, cartController.getCartData);
+    fastify.get('/wishlist/:userId', { preHandler: [getSession] }, cartController.getUserCartData);
+    fastify.delete('/wishlist/:id', { preHandler: [getSession] }, cartController.deleteCart);
+    fastify.post('/wishlist', { preHandler: [getSession] }, cartController.upsertCart);
     //users
     fastify.get('/users', { preHandler: [getSession] }, userController.getUsersData);
+    fastify.get('/whatsapp/users', userController.getUsersData);
     fastify.get('/users/:useremail/:userpassword', userController.getLoggedInUsersData);
+    fastify.post('/users/login', userController.getLoggedInUsersData);
+    fastify.post('/users/google-login', userController.getGoogleLoggedInUserData);
     fastify.post('/users', userController.upsertUser);
     fastify.post('/users/fcmid', userController.upsertFcmidUser);
     fastify.get('/users/logout', userController.userlogout);
+    fastify.post('/customers', userController.getCustomersData);
     fastify.delete('/users/:id', userController.deleteUserData);
     fastify.post('/user-forgot', userController.forgotuser);
     //Invetroyusers
     fastify.get('/inventoryusers', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersData);
     fastify.get('/inventoryusers/tickets', { preHandler: [getSession] }, InventoryuserController.getInventoryUsersDataTickets);
+    fastify.get('/whatsapp/inventoryusers/tickets', InventoryuserController.getInventoryUsersDataTickets);
     fastify.get('/inventoryusers/:useremail/:userpassword', InventoryuserController.getLoggedInInventoryUsersData);
+    fastify.post('/inventoryusers/login', InventoryuserController.getLoggedInInventoryUsersData);
     fastify.post('/inventoryusers', InventoryuserController.upsertInventoryUser);
     fastify.delete('/inventoryusers/:id', InventoryuserController.deleteInventoryUserData);
     fastify.post('/inventoryusers-forgot', InventoryuserController.forgotuser);
     fastify.get('/inventoryusers/logout', InventoryuserController.userlogout);
+    fastify.get('/me/access', { preHandler: [getSession] }, accessController.getMyAccess);
+    fastify.get('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.getAssignments);
+    fastify.post('/vendor-customer-assignments', { preHandler: [getSession] }, vendorCustomerAssignmentController.replaceAssignments);
     //address
     fastify.get('/address', { preHandler: [getSession] }, addressController.getAddressData);
     fastify.get('/address/:userId', { preHandler: [getSession] }, addressController.getUserAddressData);
-    fastify.post('/address', { preHandler: [getSession, validateRequestBody(inventoryusersSchema)] }, addressController.upsertAddress);
+    fastify.post('/address', { preHandler: [validateRequestBody(addressInsertSchema)] }, addressController.upsertAddress);
     fastify.delete('/address/:id', { preHandler: [getSession] }, addressController.deleteAddress);
     //orders
     // fastify.get('/orders', ordersController.getOrderData)
     fastify.get('/orders', { preHandler: [getSession] }, ordersController.getUserOrderData);
     fastify.get('/orders/overall', { preHandler: [getSession] }, ordersController.getOrderData);
     fastify.get('/orderline', { preHandler: [getSession] }, ordersController.getorderlinedata);
+    fastify.get('/whatsapp/orderline', ordersController.getorderlinedata);
     fastify.get('/orderline/Inventory', { preHandler: [getSession] }, ordersController.getInvorderlinedata);
     fastify.get('/customer/orderline', { preHandler: [getSession] }, ordersController.getOrderlineDynamicData);
     fastify.post('/orderline', { preHandler: [getSession] }, ordersController.updateorderlineitem);
+    fastify.get('/orderline/return-request', { preHandler: [getSession] }, orderReturnsController.getReturnRequests);
+    fastify.post('/orderline/return-request', { preHandler: [getSession] }, orderReturnsController.createReturnRequest);
+    fastify.post('/orderline/return-request/approve', { preHandler: [getSession] }, orderReturnsController.approveReturnRequest);
+    fastify.post('/orderline/return-request/reject', { preHandler: [getSession] }, orderReturnsController.rejectReturnRequest);
+    fastify.post('/orderline/return-request/receive', { preHandler: [getSession] }, orderReturnsController.receiveReturnRequest);
+    fastify.post('/orderline/return-request/finalize', { preHandler: [getSession] }, orderReturnsController.finalizeReturnRequest);
+    fastify.get('/orderline/return-reasons', { preHandler: [getSession] }, orderReturnsController.getReturnReasons);
+    fastify.post('/orderline/return-reasons', { preHandler: [getSession] }, orderReturnsController.upsertReturnReason);
+    fastify.get('/orderline/refund-eligibility', { preHandler: [getSession] }, refundsController.getRefundEligibility);
+    fastify.get('/orderline/refund', { preHandler: [getSession] }, refundsController.getRefunds);
+    fastify.post('/orderline/refund', { preHandler: [getSession] }, refundsController.initiateRefund);
+    fastify.post('/orderline/refund/sync', { preHandler: [getSession] }, refundsController.syncRefund);
     fastify.get('/v2/orders', { preHandler: [getSession] }, ordersController.getUserOrderData1);
     fastify.post('/orders', { preHandler: [getSession] }, ordersController.upsertOrder);
     fastify.post('/v2/orders', { preHandler: [getSession] }, ordersController.upsertOrderv2);
     fastify.delete('/orders/:id', { preHandler: [getSession] }, ordersController.deleteOrder);
+    fastify.post('/v2/orders/transactions', { preHandler: [getSession] }, ordersController.getInvoiceDataForOrderid);
+    //third party orders - inventory
+    fastify.get('/thirdpartyorders', { preHandler: [getSession] }, thirdPartyController.getThirdpartyOrderData);
+    // Admin: mark 3rd-party order as dispatched / shipped / delivered / cancelled
+    // body: { id: number, orderstatus: 'dispatched'|'shipped'|'delivered'|'cancelled' }
+    fastify.post('/thirdpartyorders/status', { preHandler: [getSession] }, thirdPartyController.updateThirdPartyOrderStatus);
     fastify.post('/test/task', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray);
     fastify.post('/test/updateorderquantity', { preHandler: [getSession] }, productrevoController.updateOrderedQuantityarray);
     //supplier
@@ -197,10 +307,39 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/rating-image/delete', { preHandler: [getSession] }, ratingController.deleteImageRating);
     // phonepe
     fastify.post('/payment', { preHandler: [getSession] }, transactionController.paymentInitialization);
+    fastify.post('/payment/razorpay', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpay);
+    fastify.post('/payment/razorpay/ticket', { preHandler: [getSession] }, transactionController.paymentInitializationRazorpayTicket);
+    fastify.post('/payment/confirmation-razorpay', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpay);
+    fastify.post('/payment/razorpay/webhook', { config: { rawBody: true } }, transactionController.paymentWebhookRazorpay);
+    fastify.post('/payment/shiprocket/webhook', transactionController.paymentWebhookShiprocket);
+    // Alias path without provider keywords for Shiprocket URL validator restrictions.
+    fastify.post('/payment/shipment/webhook', transactionController.paymentWebhookShiprocket);
+    fastify.post('/payment/shiprocket/sync', { preHandler: [getSession] }, transactionController.syncShiprocketShipmentStatus);
+    fastify.get('/payment/shiprocket/settings', { preHandler: [getSession] }, transactionController.getShiprocketSettings);
+    fastify.post('/payment/shiprocket/settings', { preHandler: [getSession] }, transactionController.updateShiprocketSettings);
+    fastify.get('/payment/shiprocket/pickups', { preHandler: [getSession] }, transactionController.getShiprocketPickupLocations);
+    fastify.post('/payment/shiprocket/create', { preHandler: [getSession] }, transactionController.createShiprocketShipment);
+    fastify.post('/payment/shiprocket/cancel', { preHandler: [getSession] }, transactionController.cancelShiprocketShipment);
+    fastify.post('/payment/confirmation-razorpay/tickets', { preHandler: [getSession] }, transactionController.paymentConfirmationRazorpayTicket);
     fastify.post('/payment/status', transactionController.paymentConfirmation);
     //transaction
     fastify.get('/transaction', { preHandler: [getSession] }, transactionController.getTransactionData);
     fastify.post('/transaction', { preHandler: [getSession] }, transactionController.inserttransaction);
+    // ecom enquiry (public)
+    fastify.post('/enquiry-corporate', enquiryController.enquiryCorporate);
+    fastify.post('/enquiry-individual', enquiryController.enquiryIndividual);
+    // enquiry export — downloads Excel with Corporate + Individual sheets (session-protected)
+    fastify.get('/enquiry-export', { preHandler: [getSession] }, enquiryExportController.downloadEnquiryExcel);
+    // buyback enquiries (public create, protected admin views)
+    fastify.post('/buyback-enquiries', buybackEnquiriesController.createEnquiry);
+    fastify.get('/buyback-enquiries/:pageNumber/:recordCount', { preHandler: [getSession] }, buybackEnquiriesController.getAllEnquiries);
+    fastify.get('/buyback-enquiries/single/:id', { preHandler: [getSession] }, buybackEnquiriesController.getSingleEnquiry);
+    fastify.post('/buyback-enquiries/update/:id', { preHandler: [getSession] }, buybackEnquiriesController.updateEnquiry);
+    // service enquiries (protected admin views)
+    fastify.post('/service-enquiries', serviceEnquiriesController.createEnquiry);
+    fastify.get('/service-enquiries/:pageNumber/:recordCount', { preHandler: [getSession] }, serviceEnquiriesController.getAllEnquiries);
+    fastify.get('/service-enquiries/single/:id', { preHandler: [getSession] }, serviceEnquiriesController.getSingleEnquiry);
+    fastify.post('/service-enquiries/update/:id', { preHandler: [getSession] }, serviceEnquiriesController.updateEnquiry);
     //purchase Request
     fastify.get('/purchase-request', { preHandler: [getSession] }, purcahseRequestController.getPurchaseRequestData);
     fastify.post('/purchase-request', { preHandler: [getSession, validateRequestBody(prInsertSchema)] }, purcahseRequestController.upsertPurchaseRequestData);
@@ -210,6 +349,33 @@ const Revo365Routes = async function (fastify, opts) {
     //quote
     fastify.get('/quote', { preHandler: [getSession] }, quoteController.getQuotes);
     fastify.post('/quote', { preHandler: [getSession] }, quoteController.upsertQuotes);
+    //in-store customer quotations
+    fastify.get('/store-quotation', { preHandler: [getSession] }, storeQuotationController.getStoreQuotations);
+    fastify.post('/store-quotation', { preHandler: [getSession] }, storeQuotationController.upsertStoreQuotation);
+    fastify.post('/store-quotation/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
+    fastify.get('/store-quotation/:id/versions', { preHandler: [getSession] }, storeQuotationController.getStoreQuotationVersions);
+    fastify.post('/store-quotation/:id/finalize', { preHandler: [getSession] }, storeQuotationController.finalizeStoreQuotation);
+    fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
+    fastify.post('/store-quotation/:id/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
+    // Cash and Bank Account foundation
+    fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
+    fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
+    fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
+    fastify.post('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createBankCashAccountSchema)] }, financeAccountController.create);
+    fastify.patch('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(updateBankCashAccountSchema)] }, financeAccountController.update);
+    fastify.get('/finance/bank-accounts/:accountId/transactions', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listTransactions);
+    fastify.get('/finance/retail/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listRetailCustomers);
+    fastify.get('/finance/retail/customers/:customerId/outstanding-invoices', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listRetailOutstandingInvoices);
+    fastify.post('/finance/bank-accounts/:accountId/transactions/retail-receipt', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createRetailReceiptSchema)] }, financeAccountController.postRetailReceipt);
+    fastify.get('/finance/suppliers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSuppliers);
+    fastify.get('/finance/suppliers/:supplierId/outstanding-bills', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listSupplierOutstandingBills);
+    fastify.post('/finance/bank-accounts/:accountId/transactions/supplier-payment', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] }, financeAccountController.postSupplierPayment);
+    fastify.post('/finance/bank-accounts/:accountId/transactions/direct-ledger', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] }, financeAccountController.postDirectLedgerTransaction);
+    // TDS Section Master foundation
+    fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
+    fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);
+    fastify.post('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createTdsSectionSchema)] }, tdsSectionController.create);
+    fastify.patch('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('edit'), validateRequestBody(createTdsSectionSchema)] }, tdsSectionController.update);
     //notes
     fastify.get('/note', { preHandler: [getSession] }, notesController.getnotes);
     fastify.post('/note', { preHandler: [getSession, validateRequestBody(notesSchema)] }, notesController.upsertnotes);
@@ -228,12 +394,40 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/order-rfid/line', { preHandler: [getSession] }, ordersController.upsertOrderlinerfid);
     //tickets
     fastify.get('/tickets', { preHandler: [getSession] }, ticketController.getTicketsData);
+    fastify.get('/whatsapp/tickets', ticketController.getTicketsData);
     fastify.get('/customer/tickets', { preHandler: [getSession] }, ticketController.getTicketDynamicData);
     fastify.get('/tickets/queue', { preHandler: [getSession] }, ticketController.getQueueTicketsData);
+    fastify.get('/tickets/:id/rental-replacement/context', { preHandler: [getSession] }, ticketReplacementController.getRentalReplacementContext);
+    fastify.get('/tickets/:id/rental-replacement/history', { preHandler: [getSession] }, ticketReplacementController.getRentalReplacementHistory);
+    fastify.post('/tickets/:id/rental-replacement/initiate', { preHandler: [getSession, validateRequestBody(initiateRentalReplacementSchema)] }, ticketReplacementController.initiateRentalReplacement);
+    fastify.post('/tickets/:id/rental-replacement/receive-old-asset', { preHandler: [getSession, validateRequestBody(receiveOldAssetSchema)] }, ticketReplacementController.receiveOldAsset);
+    fastify.post('/tickets/:id/rental-replacement/assign-technical', { preHandler: [getSession, validateRequestBody(assignTechnicalReplacementSchema)] }, ticketReplacementController.assignTechnicalReplacement);
+    fastify.post('/tickets/:id/rental-replacement/assign-commercial', { preHandler: [getSession, validateRequestBody(assignCommercialReplacementSchema)] }, ticketReplacementController.assignCommercialReplacement);
+    fastify.post('/tickets/:id/rental-replacement/reject', { preHandler: [getSession, validateRequestBody(rejectReplacementSchema)] }, ticketReplacementController.rejectReplacement);
+    fastify.post('/tickets/:id/rental-replacement/return', { preHandler: [getSession, validateRequestBody(returnRentalAssetSchema)] }, ticketReplacementController.returnRentalAsset);
+    fastify.post('/tickets/:id/rental-replacement/mark-lost', { preHandler: [getSession, validateRequestBody(markRentalAssetLostSchema)] }, ticketReplacementController.markRentalAssetLost);
+    fastify.post('/tickets/:id/rental-replacement/generate-loss-declaration', { preHandler: [getSession, validateRequestBody(generateRentalLossDeclarationSchema)] }, ticketReplacementController.generateRentalLossDeclaration);
+    fastify.post('/tickets/:id/rental-replacement/finalize-loss-declaration', { preHandler: [getSession, validateRequestBody(finalizeRentalLossDeclarationSchema)] }, ticketReplacementController.finalizeRentalLossDeclaration);
+    fastify.post('/tickets/:id/rental-replacement/assess-damage', { preHandler: [getSession, validateRequestBody(assessRentalDamageSchema)] }, ticketReplacementController.assessRentalDamage);
+    fastify.post('/tickets/:id/rental-replacement/link-penalty', { preHandler: [getSession, validateRequestBody(linkPenaltyInvoiceSchema)] }, ticketReplacementController.linkPenaltyInvoice);
+    fastify.post('/tickets/:id/rental-replacement/renew', { preHandler: [getSession, validateRequestBody(renewRentalContractSchema)] }, ticketReplacementController.renewRentalContract);
+    fastify.post('/tickets/:id/rental-replacement/stop-rental', { preHandler: [getSession, validateRequestBody(stopRentalSchema)] }, ticketReplacementController.stopRental);
+    fastify.get('/rental-agreements/create-context', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementCreateContext);
+    fastify.get('/rental-agreements', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreements);
+    fastify.get('/rental-agreements/:id', { preHandler: [getSession] }, rentalAgreementController.getRentalAgreementById);
+    fastify.post('/rental-agreements', { preHandler: [getSession, validateRequestBody(createRentalAgreementSchema)] }, rentalAgreementController.createRentalAgreement);
+    fastify.post('/rental-agreements/:id/generate-pdf', { preHandler: [getSession, validateRequestBody(regenerateRentalAgreementPdfSchema)] }, rentalAgreementController.regenerateRentalAgreementPdf);
     fastify.post('/tickets', { preHandler: [getSession, filesUpload] }, ticketController.upsertTickets);
+    fastify.post('/whatsapp/tickets', { preHandler: [filesUpload] }, ticketController.upsertTicketsWhatsapp);
     fastify.post('/v2/tickets', ticketController.upsertGcpTickets);
+    // KUBB Tickets (New)
+    fastify.post('/kubb_tickets', kubbTicketsController.createTicket);
+    fastify.get('/kubb_tickets/:pageNumber/:recordCount', { preHandler: [getSession] }, kubbTicketsController.getAllTickets);
+    fastify.get('/kubb_tickets/single/:id', { preHandler: [getSession] }, kubbTicketsController.getSingleTicket);
+    fastify.post('/kubb_tickets/update/:id', { preHandler: [getSession] }, kubbTicketsController.updateTicket);
     // Merchant Transaction Id - 
-    fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId);
+    // fastify.post('/delete/merchantid', { preHandler: [getSession] }, ordersController.deleteBasedOnMerchantId)
+    fastify.post('/delete/merchantid', { preHandler: [taskOrSessionAuth] }, ordersController.deleteFailedOrder);
     // Dashboard
     // orders - product_revo
     fastify.get('/dashboard/totalsales', { preHandler: [getSession] }, dashboardController.getPerMonthSalesData);
@@ -267,16 +461,37 @@ const Revo365Routes = async function (fastify, opts) {
     // any table
     // fastify.get('/dashboard/:objectName', dashboardController.getCountData)
     fastify.get('/dashboard/count-orderstatus', { preHandler: [getSession] }, dashboardController.getCountData);
+    fastify.get('/rental-invoice/:uniqueorderid', { preHandler: [getSession] }, ordersController.getInvoiceGeneratedData);
+    fastify.post('/rental-invoice', { preHandler: [getSession] }, ordersController.updateInvoiceGeneratedData);
     //service estimation
+    fastify.get('/service-estimation/products', { preHandler: [getSession] }, constEstimationController.getEstimationProducts);
+    fastify.get('/service-estimation/product-assets', { preHandler: [getSession] }, constEstimationController.getEstimationProductAssets);
+    fastify.get('/service-estimation/:id/stock-restoration', { preHandler: [getSession] }, constEstimationController.getStockRestorationStatus);
+    fastify.post('/service-estimation/:id/restore-stock', { preHandler: [getSession] }, constEstimationController.restoreApprovedEstimationStock);
     fastify.get('/service-estimation', { preHandler: [getSession] }, constEstimationController.getCostEstimationData);
     fastify.post('/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertCostEstimation);
     fastify.post('/v2/service-estimation', { preHandler: [getSession] }, constEstimationController.upsertGcpCostEstimation);
     // fastify.post('/service-estimation',{preHandler:[validateRequestBody(servicecostestimationSchema)]},constEstimationController.upsertCostEstimation);
+    // banner
+    fastify.get('/banner', bannerController.getAllBanner);
+    fastify.post('/banner', bannerController.upsertBanner);
+    fastify.delete('/banner/:id', { preHandler: [getSession] }, bannerController.deleteBanner);
+    //blogs
+    fastify.get('/blogs', blogscontroller.getAllBlogs);
+    fastify.post('/blogs', blogscontroller.upsertBlogs);
+    fastify.delete('/blog/:id', { preHandler: [getSession] }, blogscontroller.deleteBlog);
+    // Google Review
+    fastify.get('/reviews', googlereviewController.getReviewsHandler);
     //invoicedata
     fastify.post('/generate/invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceDataById);
     //revo-invoice
     fastify.get('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.getRevoInvoiceData);
+    fastify.get('/whatsapp/revo-invoice', revoinvoicecontroller.getRevoInvoiceData);
     fastify.post('/revo-invoice', { preHandler: [getSession] }, revoinvoicecontroller.upsertRevoInvoice);
+    fastify.post('/revo-invoice/:id/rental-documents', { preHandler: [getSession] }, rentalInvoiceDocumentController.generateRentalInvoiceDocuments);
+    fastify.post('/consolidated-invoice/list', { preHandler: [getSession] }, consolidatedInvoiceController.listConsolidatedInvoices);
+    fastify.post('/consolidated-invoice/preview', { preHandler: [getSession] }, consolidatedInvoiceController.previewConsolidatedInvoice);
+    fastify.post('/consolidated-invoice/generate', { preHandler: [getSession] }, consolidatedInvoiceController.generateConsolidatedInvoice);
     //Query Table
     fastify.get('/table', { preHandler: [getSession] }, tablecontoller.getTable);
     //userbased tables
@@ -287,6 +502,56 @@ const Revo365Routes = async function (fastify, opts) {
     //location History
     fastify.get('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.getLocationHistoryData);
     fastify.post('/locationhistory', { preHandler: [getSession] }, locationhistrorycontroller.upsertLocatonData);
+    //shiprocket
+    fastify.post('/calculate-shipping', { preHandler: [getSession] }, async (request, reply) => {
+        try {
+            const { deliveryPincode, weight, cod } = request.body;
+            if (!deliveryPincode) {
+                return reply.status(400).send({
+                    success: false,
+                    message: "Delivery pincode is required",
+                });
+            }
+            const shippingInfo = await shiprocketShippingService.getLowestShippingCost(deliveryPincode, weight || 1, cod || false);
+            return reply.status(200).send({
+                success: true,
+                data: shippingInfo,
+            });
+        }
+        catch (error) {
+            console.error("Error in calculate-shipping route:", error);
+            return reply.status(500).send({
+                success: false,
+                message: error.message || "Failed to calculate shipping",
+            });
+        }
+    });
+    fastify.get('/test-shiprocket-diagnostics', async (request, reply) => {
+        await runShiprocketDiagnostics();
+        return reply.send({
+            message: 'Diagnostics completed. Check your server console for detailed output.'
+        });
+    });
+    // ─────────────────────────────────────────────────────────────────────
+    // PRODUCT REVIEWS (rating table extended)
+    // ─────────────────────────────────────────────────────────────────────
+    // Customer-facing — open reads
+    fastify.get('/products/:productId/reviews', ratingController.getReviewsForProduct);
+    fastify.get('/products/:productId/reviews/stats', ratingController.getReviewStats);
+    // Customer-facing — session required
+    fastify.post('/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createReview);
+    fastify.put('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.updateReview);
+    fastify.delete('/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewCustomer);
+    fastify.post('/reviews/:reviewId/report', { preHandler: [getSession] }, ratingController.reportReview);
+    fastify.post('/reviews/:reviewId/helpful', { preHandler: [getSession] }, ratingController.markHelpful);
+    // Admin-facing — session required
+    fastify.get('/admin/reviews', { preHandler: [getSession] }, ratingController.getAdminReviews);
+    fastify.post('/admin/products/:productId/reviews', { preHandler: [getSession] }, ratingController.createAdminReview);
+    fastify.post('/admin/products/:productId/reviews/bulk', { preHandler: [getSession] }, ratingController.bulkCreateAdminReviews);
+    fastify.patch('/admin/reviews/:reviewId/hide', { preHandler: [getSession] }, ratingController.hideReview);
+    fastify.patch('/admin/reviews/:reviewId/unhide', { preHandler: [getSession] }, ratingController.unhideReview);
+    fastify.post('/admin/reviews/:reviewId/reply', { preHandler: [getSession] }, ratingController.addAdminReply);
+    fastify.delete('/admin/reviews/:reviewId', { preHandler: [getSession] }, ratingController.deleteReviewAdmin);
 };
 export default Revo365Routes;
 //# sourceMappingURL=routes.js.map

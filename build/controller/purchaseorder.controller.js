@@ -7,6 +7,7 @@ export var purchaseOrderController;
             reply.send(getPurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in getPurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -16,6 +17,7 @@ export var purchaseOrderController;
             reply.send(getPurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in getPurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -26,6 +28,7 @@ export var purchaseOrderController;
             reply.send(deletePurchaseOrderResult);
         }
         catch (error) {
+            console.error("Error in deletePurchaseOrder", error);
             reply.send(error.message);
         }
     };
@@ -36,17 +39,17 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in upsertInvoice", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -57,17 +60,17 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Added successfully`
-                        : `Inovice Added successfully`
+                        ? `Bill Added successfully`
+                        : `Bill Added successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in upsertGcpInvoice", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -78,17 +81,17 @@ export var purchaseOrderController;
                 let message = {};
                 message = {
                     "Purchase Order": productUpsertResult.command === "UPDATE"
-                        ? `Inovice Removed Successfully`
-                        : `Inovice Removed Successfully`
+                        ? `Bill Removed Successfully`
+                        : `Bill Removed Successfully`
                 };
                 reply.status(200).send(message);
             }
             else {
-                reply.status(404).send('Error when uploading Invoice please contact Admin');
+                reply.status(404).send('Error when uploading Bill please contact Admin');
             }
         }
         catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.error("Error in deleteUrl", error);
             reply.send(` Error in upsert Product : ${error.message}`);
         }
     };
@@ -111,6 +114,7 @@ export var purchaseOrderController;
             }
         }
         catch (error) {
+            console.error("Error in upsertPurchaseOrder", error);
             reply.send(error.message);
         }
     };

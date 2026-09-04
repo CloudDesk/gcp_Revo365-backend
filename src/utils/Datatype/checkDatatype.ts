@@ -1,10 +1,38 @@
-import { ARRAY, ARRAYOFOBJECT, BIG_INT, BOOLEAN, INTEGER, NUMERIC, TEXT, TEXTA, TEXTB, VARCHAR, _VARCHAR, tsvector } from "./dataTypeconfig.js";
+import { ARRAY, ARRAYOFOBJECT, BIG_INT, BOOLEAN, DATE, INTEGER, NUMERIC, TEXT, TEXTA, TEXTB, TIMESTAMP, TIMESTAMPTZ, VARCHAR, _VARCHAR, tsvector } from "./dataTypeconfig.js";
+
+const STORAGE_CONSOLE_URL = "https://storage.cloud.google.com/";
+const STORAGE_PUBLIC_URL = "https://storage.googleapis.com/";
+
+const normalizeStorageUrls = (value: any): any => {
+  if (typeof value === "string") {
+    return value.split(STORAGE_CONSOLE_URL).join(STORAGE_PUBLIC_URL);
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeStorageUrls(entry));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeStorageUrls(entry)])
+    );
+  }
+
+  return value;
+};
+
 const dataTypeCheck = async (result: any) => {
   try {
     const columns = result.fields;
     // console.log(JSON.stringify(columns), 'COLUMNS');
     for (let row of result.rows) {
       for (let [key, value] of Object.entries(row)) {
+        row[key] = normalizeStorageUrls(value);
+        value = row[key];
         const column = columns.find((col: any) => col.name === key);
         const columnType = column ? column.dataTypeID : null;
         switch (columnType) {
@@ -28,6 +56,9 @@ const dataTypeCheck = async (result: any) => {
           case TEXTB:
           case ARRAY:
           case BOOLEAN:
+          case DATE:
+          case TIMESTAMP:
+          case TIMESTAMPTZ:
           case _VARCHAR:
           case ARRAYOFOBJECT:
           case tsvector:

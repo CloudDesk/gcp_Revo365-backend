@@ -1,5 +1,7 @@
-import Ajv from "ajv";
-import ajvErrors from "ajv-errors";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const Ajv = require("ajv");
+const ajvErrors = require("ajv-errors");
 const ajv = new Ajv({ allErrors: true });
 ajvErrors(ajv);
 // Function to validate the uploaded fil

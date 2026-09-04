@@ -8,6 +8,7 @@ export var permissionscontroller;
             reply.send(getPermissionsResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getPermissions', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }
@@ -30,6 +31,7 @@ export var permissionscontroller;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertPermission', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

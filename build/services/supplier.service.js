@@ -15,29 +15,20 @@ export var supplierSerivce;
             const queryParams = [];
             keys.forEach((key, index) => {
                 if (key !== 'page' && key !== 'count') {
-                    console.log(key);
-                    console.log(values[index]);
                     const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
-                    console.log(paramValues, " Param values are ");
                     if (index !== 0) {
                         whereClause += " AND ";
                     }
                     whereClause += `(${paramValues.map((_, idx) => `${key} = $${parameterIndex + idx}`).join(" OR ")})`;
                     parameterIndex += paramValues.length;
-                    console.log(whereClause, 'ultimate where clause');
                     queryParams.push(...paramValues);
                 }
             });
-            console.log(whereClause, " Where clause is ");
             if (pageNumber && recordcount) {
                 offset = (pageNumber - 1) * recordcount;
             }
             let queryText = `SELECT * FROM supplier`;
-            console.log(whereClause);
-            console.log(offset);
-            console.log(recordcount);
             if (whereClause && offset >= 0 && recordcount) {
-                console.log('inside where clause');
                 queryText += ` WHERE ${whereClause} ORDER BY modifieddate DESC OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
             }
             else if (offset >= 0 && recordcount && !whereClause) {
@@ -46,40 +37,31 @@ export var supplierSerivce;
             else {
                 queryText += ` ORDER BY modifieddate DESC Limit 500`;
             }
-            console.log(offset);
-            console.log(recordcount);
             if (offset >= 0 && recordcount) {
                 queryParams.push(offset, recordcount);
             }
-            // console.log(queryText, "Query Text is ");
-            // console.log(queryParams, " query Params data ");
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
-            // console.log(datatypecheckResult, 'Data Type Check Result');
             return datatypecheckResult;
         }
         catch (error) {
             console.error("Query Execution Error: IN getSupplierData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
     supplierSerivce.getSupplierProductdata = async (id) => {
         try {
             const queryString = `SELECT * from supplier where id = $1 `;
-            console.log(queryString);
             const result = await query(queryString, [id]);
             return result.rows;
         }
         catch (error) {
             console.error("Query Execution Error: IN getSupplierProductdata", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
-    //lookup
     supplierSerivce.getSupplierName = async (querydata) => {
         try {
             let { suppliername } = querydata;
@@ -98,7 +80,6 @@ export var supplierSerivce;
         catch (error) {
             console.error("Query Execution Error: IN getSupplierName", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -127,7 +108,7 @@ export var supplierSerivce;
         catch (error) {
             console.error("Query Execution Error: IN upsertSupplierData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
+            console.log(ErrorMessage, "errormessaage from catch");
             return ErrorMessage;
         }
     };
@@ -144,7 +125,6 @@ export var supplierSerivce;
         catch (error) {
             console.error("Query Execution Error: IN deleteSupplierData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
