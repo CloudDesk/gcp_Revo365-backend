@@ -285,6 +285,13 @@ export module purchaseOrderService {
         let params: any[];
         const { id, product, ...upsertFields } = purchaseorderData;
 
+        // Tax columns are NOT NULL. Older clients can send null for the tax
+        // component that does not apply, so normalize those values at the API
+        // boundary before building the dynamic insert/update query.
+        upsertFields.sgst = Number(upsertFields.sgst ?? 0) || 0;
+        upsertFields.cgst = Number(upsertFields.cgst ?? 0) || 0;
+        upsertFields.igst = Number(upsertFields.igst ?? 0) || 0;
+
         // Always store product as a string (database consistency)
         if (product) {
             upsertFields.product = JSON.stringify(product);
