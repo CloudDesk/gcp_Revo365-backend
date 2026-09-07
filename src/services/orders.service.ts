@@ -1285,7 +1285,9 @@ export module ordersService {
             const baseConditions = ``;
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
-            let queryText = `SELECT orderline.*, invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
+            let queryText = `SELECT orderline.*,
+            COALESCE(NULLIF(TRIM(CAST(orderline.assetnumber AS TEXT)), ''), sr_asset.stock_assetnumber) AS assetnumber,
+            invoice.invoiceurl, revorating.starrating, revorating.comments AS rating_comments,revorating.url AS rating_images,
             revorating.id AS ratingids,a.name AS address_name,a.mobilenumber AS address_mobilenumber,a.pincode address_pincode,a.doornumber AS address_doornumber,
             a.address AS address_address,a.landmark AS address_landmark,a.state AS address_state ,a.city AS address_city,
             p."large" AS products_large, p.warranty AS products_warranty,
@@ -1302,6 +1304,11 @@ JOIN  address a on orderline.addressid = a.id
 LEFT JOIN product_revo p ON p.id = orderline.productid
 LEFT JOIN orders oh ON oh.orderid = orderline.uniqueorderid
 LEFT JOIN thirdpartyorders th ON th.orderid = orderline.uniqueorderid
+LEFT JOIN LATERAL (
+    SELECT string_agg(DISTINCT COALESCE(sr.rfid, sr.assetnumber), ', ') AS stock_assetnumber
+    FROM stock_revo sr
+    WHERE sr.orderlinenumber = orderline.orderlinenumber
+) AS sr_asset ON TRUE
 LEFT JOIN (
     SELECT orderid, invoiceurl, createddate AS invoicecreateddate
     FROM (
@@ -2044,10 +2051,24 @@ ${whereClause} ${orderByClause}`;
             const ordersToUpdate = updateStock.result.rows.filter(e => e.orderlinenumber);
 
             if (ordersToUpdate.length > 0) {
+                const rfidsByOrderLine = new Map<string, string[]>();
+                ordersToUpdate.forEach((e: any) => {
+                    const list = rfidsByOrderLine.get(e.orderlinenumber) || [];
+                    const val = String(e.rfid || e.assetnumber || "").trim();
+                    if (val && !list.includes(val)) list.push(val);
+                    rfidsByOrderLine.set(e.orderlinenumber, list);
+                });
+
                 let querydata = `
                     UPDATE orderline 
                     SET 
                         orderstatus = 'ready_to_dispatch',
+                        assetnumber = CASE 
+                            ${Array.from(rfidsByOrderLine.entries()).map(([ordNo, rfids]) =>
+                                `WHEN orderlinenumber = '${ordNo}' THEN '${rfids.join(', ')}'`
+                            ).join(' ')}
+                            ELSE assetnumber
+                        END,
                         deliveryfrom = CASE 
                             ${ordersToUpdate.map((e, idx) =>
                                 `WHEN orderlinenumber = $${idx + 1} THEN '${e.location}'`

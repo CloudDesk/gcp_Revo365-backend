@@ -5,6 +5,8 @@ import GenerateDocx from "../utils/DocXGenerator/GenerateDocx.js";
 import { sendTransactionalMail } from "../Gmail/gmail.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { getRetailInvoicePaymentState, isRentalInvoice, isRetailStoreProductOrder, } from "../utils/finance/retailReceipt.utils.js";
+import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 const fireInvoiceReadyEmail = async (ticketnumber, invoiceurl) => {
     try {
@@ -145,6 +147,19 @@ const serializeRevoInvoiceJsonFields = (upsertFields) => {
         upsertFields[fieldName] = JSON.stringify(fieldValue);
     });
 };
+const buildRentalReferenceNumber = (invoice) => {
+    const orderKey = String(invoice?.orderid || invoice?.customerid || "RENTAL")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(-16) || "RENTAL";
+    const rawDate = Number(invoice?.invoicedate);
+    const date = Number.isFinite(rawDate) && rawDate > 0
+        ? new Date(String(Math.trunc(rawDate)).length <= 10 ? rawDate * 1000 : rawDate)
+        : new Date();
+    const dateKey = Number.isNaN(date.getTime())
+        ? "UNDATED"
+        : `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+    return `RENTAL-REF-${orderKey}-${dateKey}`;
+};
 const summarizeInvoicePayments = (invoiceAmount, paymentEntries) => {
     const paidAmount = Number(paymentEntries
         .reduce((sum, payment) => sum + getPaymentAmount(payment), 0)
@@ -183,38 +198,54 @@ const appendPaymentIfMissing = (paymentEntries, nextPayment) => {
         },
     ];
 };
-const getOrderPaymentForInvoice = async (orderid, invoiceAmount) => {
-    if (!orderid || invoiceAmount <= 0)
+const getInvoiceOrderContext = async (orderid) => {
+    if (!orderid)
         return null;
-    const orderPaymentResult = await query(`
+    const orderContextResult = await query(`
         WITH order_refs AS (
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orders
             WHERE orderid = $1
             UNION
-            SELECT merchanttransactionid, paymentmethod
+            SELECT merchanttransactionid, paymentmethod, ordername, invoicefor
             FROM orderline
             WHERE uniqueorderid = $1
             UNION
-            SELECT merchanttransactionid, NULL::varchar AS paymentmethod
+            SELECT
+                merchanttransactionid,
+                NULL::varchar AS paymentmethod,
+                NULL::varchar AS ordername,
+                NULL::varchar AS invoicefor
             FROM thirdpartyorders
             WHERE orderid = $1
         )
         SELECT
-            t.transactionid,
-            t.amount,
-            t.createddate,
-            t.transactiondata,
-            t.razorpay_payment_id,
-            t.razorpay_order_id,
-            order_refs.paymentmethod
+            merchanttransactionid,
+            paymentmethod,
+            ordername,
+            invoicefor
         FROM order_refs
-        JOIN transaction t
-          ON t.merchanttransactionid = order_refs.merchanttransactionid
-        WHERE order_refs.merchanttransactionid IS NOT NULL
-        ORDER BY t.createddate DESC NULLS LAST, t.id DESC
+        WHERE merchanttransactionid IS NOT NULL
         LIMIT 1
         `, [String(orderid)]);
+    return orderContextResult.rows[0] || null;
+};
+const getOrderPaymentForInvoice = async (orderContext, invoiceAmount) => {
+    if (!orderContext?.merchanttransactionid || invoiceAmount <= 0)
+        return null;
+    const orderPaymentResult = await query(`
+        SELECT
+            transactionid,
+            amount,
+            createddate,
+            transactiondata,
+            razorpay_payment_id,
+            razorpay_order_id
+        FROM transaction
+        WHERE merchanttransactionid = $1
+        ORDER BY createddate DESC NULLS LAST, id DESC
+        LIMIT 1
+        `, [orderContext.merchanttransactionid]);
     const transactionRow = orderPaymentResult.rows[0];
     if (!transactionRow)
         return null;
@@ -223,7 +254,7 @@ const getOrderPaymentForInvoice = async (orderid, invoiceAmount) => {
         ? "cash"
         : transactionRow.razorpay_payment_id
             ? "razorpay"
-            : transactionRow.paymentmethod;
+            : orderContext.paymentmethod;
     const transactionAmount = toNumber(transactionRow.amount);
     return {
         paymentamount: Math.min(invoiceAmount, transactionAmount || invoiceAmount),
@@ -260,10 +291,27 @@ const applyInvoicePaymentSummary = async (upsertFields, id) => {
     }
     let paymentEntries = normalizePaymentEntries(invoiceSnapshot.paymentdata);
     const invoiceAmount = getInvoiceAmount(invoiceSnapshot);
-    if (!id && paymentEntries.length === 0) {
-        const orderPayment = await getOrderPaymentForInvoice(invoiceSnapshot.orderid, invoiceAmount);
-        if (orderPayment) {
-            paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+    const rentalInvoice = isRentalInvoice(invoiceSnapshot);
+    // A historical migration copied originating order transactions into some
+    // rental invoices. Rental receivables are settled only through Cash & Bank,
+    // so remove those legacy entries while preserving genuine receipt entries.
+    if (rentalInvoice) {
+        paymentEntries = paymentEntries.filter((payment) => normalizeText(payment?.source) !== "order_payment");
+    }
+    if (!id) {
+        const orderContext = await getInvoiceOrderContext(invoiceSnapshot.orderid);
+        // In-store product and rental billing invoices are settled through the
+        // Cash & Bank customer-receipt flow. The originating order transaction
+        // remains operational history and must not pre-settle a new receivable.
+        if (isRetailStoreProductOrder(orderContext) ||
+            rentalInvoice) {
+            paymentEntries = [];
+        }
+        else if (paymentEntries.length === 0) {
+            const orderPayment = await getOrderPaymentForInvoice(orderContext, invoiceAmount);
+            if (orderPayment) {
+                paymentEntries = appendPaymentIfMissing(paymentEntries, orderPayment);
+            }
         }
     }
     const { paidAmount, balanceAmount, paymentStatus, lastPaymentDate } = summarizeInvoicePayments(invoiceAmount, paymentEntries);
@@ -364,6 +412,61 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
 };
 export var revoinvoiceservice;
 (function (revoinvoiceservice) {
+    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds) => {
+        const normalizedCustomerIds = Array.from(new Set(customerIds
+            .map((customerId) => Number(customerId))
+            .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
+            .map((customerId) => Math.trunc(customerId))));
+        if (normalizedCustomerIds.length === 0) {
+            return {};
+        }
+        const invoiceResult = await query(`
+            SELECT *
+            FROM revoinvoice
+            WHERE customerid = ANY($1::int[])
+            ORDER BY customerid, id
+            `, [normalizedCustomerIds]);
+        const summaryByCustomer = new Map();
+        invoiceResult.rows.forEach((invoice) => {
+            const customerId = Number(invoice?.customerid);
+            if (!Number.isFinite(customerId))
+                return;
+            const paymentState = getRetailInvoicePaymentState(invoice);
+            const summary = summaryByCustomer.get(customerId) || {
+                invoicecount: 0,
+                invoiceamount: 0,
+                paidamount: 0,
+                balanceamount: 0,
+            };
+            summary.invoicecount += 1;
+            summary.invoiceamount = Number((summary.invoiceamount + paymentState.invoiceAmount).toFixed(2));
+            summary.paidamount = Number((summary.paidamount + paymentState.paidAmount).toFixed(2));
+            summary.balanceamount = Number((summary.balanceamount + paymentState.outstandingAmount).toFixed(2));
+            summaryByCustomer.set(customerId, summary);
+        });
+        return Object.fromEntries(normalizedCustomerIds.map((customerId) => {
+            const summary = summaryByCustomer.get(customerId) || {
+                invoicecount: 0,
+                invoiceamount: 0,
+                paidamount: 0,
+                balanceamount: 0,
+            };
+            const paymentstatus = summary.invoicecount === 0
+                ? "no_invoices"
+                : summary.invoiceamount > 0 && summary.balanceamount === 0
+                    ? "paid"
+                    : summary.paidamount > 0
+                        ? "partially_paid"
+                        : "pending";
+            return [
+                customerId,
+                {
+                    ...summary,
+                    paymentstatus,
+                },
+            ];
+        }));
+    };
     revoinvoiceservice.getRentalAssetCountsByCustomerIds = async (customerIds, options = {}) => {
         const normalizedCustomerIds = Array.from(new Set(customerIds
             .map((customerId) => Number(customerId))
@@ -474,6 +577,21 @@ export var revoinvoiceservice;
             }
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
+            datatypeCheckResult = datatypeCheckResult.map((invoice) => {
+                if (!isRentalInvoice(invoice))
+                    return invoice;
+                const paymentState = getRetailInvoicePaymentState(invoice);
+                return {
+                    ...invoice,
+                    paidamount: paymentState.paidAmount,
+                    balanceamount: paymentState.outstandingAmount,
+                    paymentstatus: paymentState.invoiceAmount > 0 && paymentState.outstandingAmount === 0
+                        ? "paid"
+                        : paymentState.paidAmount > 0
+                            ? "partially_paid"
+                            : "pending",
+                };
+            });
             if (shouldEnrichRentalAssets(request.query.invoicefor)) {
                 datatypeCheckResult = await enrichRentalInvoiceAssets(datatypeCheckResult);
             }
@@ -526,6 +644,14 @@ export var revoinvoiceservice;
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
+            // Rental billing rows are internal source records. They must never
+            // consume an official Sales Invoice number or expose a customer PDF.
+            if (!id && String(upsertFields.invoicefor || "").toLowerCase() === "rental") {
+                upsertFields.invoicenumber = buildRentalReferenceNumber(upsertFields);
+                upsertFields.invoicedocumenttype = "rental_intermediate_record";
+                upsertFields.invoiceurl = null;
+                upsertFields.supportingdocumenturl = null;
+            }
             if (product) {
                 upsertFields.product = JSON.stringify(product);
             }
@@ -554,6 +680,7 @@ export var revoinvoiceservice;
             console.log(result, "result in upsertRevoInvoice");
             if (result && result.rows.length > 0) {
                 const row = result.rows[0];
+                await ecommercePaymentFinanceService.safelyLinkInvoice(Number(row.id));
                 if (row.invoicefor === 'service' && row.ticketnumber && row.invoiceurl) {
                     await fireInvoiceReadyEmail(row.ticketnumber, row.invoiceurl);
                 }

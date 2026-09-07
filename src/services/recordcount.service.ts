@@ -250,12 +250,25 @@ export module recordCountService {
       }
 
       if (targetObj === "users") {
-        const { search, searchTerm, isbusinessuser, includeRentalTotal } = request.query;
+        const {
+          search,
+          searchTerm,
+          isbusinessuser,
+          includeRentalTotal,
+          paymentstatusfilter,
+        } = request.query;
         const finalSearch = String(search || searchTerm || "").trim();
         const clauses: string[] = [];
         const params: any[] = [];
         let paramIndex = 1;
         const shouldIncludeRentalTotal = String(includeRentalTotal ?? "").toLowerCase() === "true";
+        const paymentStatusFilter = String(paymentstatusfilter || "all").toLowerCase();
+        const shouldFilterPaymentStatus = [
+          "paid",
+          "partially_paid",
+          "pending",
+          "no_invoices",
+        ].includes(paymentStatusFilter);
 
         if (finalSearch) {
           clauses.push(
@@ -292,15 +305,7 @@ export module recordCountService {
 
         const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
 
-        if (shouldIncludeRentalTotal) {
-          const result: QueryResult = await query(
-            `
-            SELECT COUNT(*)::int AS count
-            FROM users u
-            ${whereSql}
-            `,
-            params
-          );
+        if (shouldIncludeRentalTotal || shouldFilterPaymentStatus) {
           const userIdsResult: QueryResult = await query(
             `
             SELECT u.id
@@ -309,8 +314,25 @@ export module recordCountService {
             `,
             params
           );
+          let filteredUserIds = userIdsResult.rows.map((row: any) => row.id);
+          if (shouldFilterPaymentStatus) {
+            const paymentSummaries =
+              await revoinvoiceservice.getPaymentSummariesByCustomerIds(
+                filteredUserIds
+              );
+            filteredUserIds = filteredUserIds.filter(
+              (userId: any) =>
+                (paymentSummaries[userId]?.paymentstatus || "no_invoices") ===
+                paymentStatusFilter
+            );
+          }
+
+          if (!shouldIncludeRentalTotal) {
+            return filteredUserIds.length;
+          }
+
           const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(
-            userIdsResult.rows.map((row: any) => row.id),
+            filteredUserIds,
             { activeOnly: true }
           );
           const rentalProductTotal = Object.values(rentalCounts).reduce(
@@ -319,7 +341,7 @@ export module recordCountService {
           );
 
           return {
-            count: Number(result.rows[0]?.count || 0),
+            count: filteredUserIds.length,
             rentalproducttotal: rentalProductTotal,
           };
         }

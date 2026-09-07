@@ -9,7 +9,7 @@ const __dirname  = dirname(__filename);
 /**
  * Runs every .sql file under src/database/migrations/ in sequence.
  * Each file must be written idempotently (IF NOT EXISTS / IF EXISTS).
- * Called once from index.ts onReady hook.
+ * Invoked by the migrate/migrate:dev scripts before application deployment.
  */
 export async function runMigrations(): Promise<void> {
   const candidateDirectories = [
@@ -37,14 +37,17 @@ export async function runMigrations(): Promise<void> {
 
   const client = await pool.connect();
   try {
+    await client.query(
+      `SELECT pg_advisory_lock(hashtext('revo365_schema_migrations'))`
+    );
     for (const fileName of migrationFiles) {
       const migrationPath = join(migrationDir, fileName);
       let sql = '';
       try {
         sql = readFileSync(migrationPath, 'utf-8');
       } catch (readErr) {
-        console.warn('[Migrations] Could not read migration file:', migrationPath, readErr);
-        continue;
+        console.error('[Migrations] Could not read migration file:', migrationPath, readErr);
+        throw readErr;
       }
 
       try {
@@ -55,9 +58,17 @@ export async function runMigrations(): Promise<void> {
       } catch (migrationErr: any) {
         await client.query('ROLLBACK');
         console.error(`[Migrations] ${fileName} failed:`, migrationErr?.message || migrationErr);
+        throw migrationErr;
       }
     }
   } finally {
+    try {
+      await client.query(
+        `SELECT pg_advisory_unlock(hashtext('revo365_schema_migrations'))`
+      );
+    } catch (unlockError) {
+      console.error('[Migrations] Could not release migration lock:', unlockError);
+    }
     client.release();
   }
 }

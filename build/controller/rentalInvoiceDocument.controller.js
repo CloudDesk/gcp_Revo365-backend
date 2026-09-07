@@ -18,7 +18,7 @@ export var rentalInvoiceDocumentController;
     rentalInvoiceDocumentController.generateRentalInvoiceDocuments = async (request, reply) => {
         try {
             const invoiceId = Number(request.params?.id);
-            const invoiceResult = await query(`SELECT id, customerid FROM revoinvoice WHERE id = $1 LIMIT 1`, [invoiceId]);
+            const invoiceResult = await query(`SELECT id, customerid, invoicefor FROM revoinvoice WHERE id = $1 LIMIT 1`, [invoiceId]);
             const invoice = invoiceResult.rows[0];
             if (!invoice) {
                 throw new Error("Rental invoice not found.");
@@ -26,6 +26,11 @@ export var rentalInvoiceDocumentController;
             if (!(await accessScopeService.canVendorAccessCustomer(request, invoice.customerid))) {
                 const error = new Error("Vendor users can generate documents only for assigned business customer invoices.");
                 error.statusCode = 403;
+                throw error;
+            }
+            if (String(invoice.invoicefor || "").toLowerCase() === "rental") {
+                const error = new Error("Intermediate rental billing records do not generate customer-facing invoice or supporting documents. Generate the final consolidated invoice instead.");
+                error.statusCode = 409;
                 throw error;
             }
             const result = await rentalInvoiceDocumentService.generateRentalInvoiceDocuments(invoiceId, request.body || {});

@@ -78,75 +78,23 @@ const renderDocumentReference = (url, label) => {
     return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
 };
 const renderLineItems = (data) => {
-    const rows = data.rows.length > 0
-        ? data.rows
-        : [{
-                sourceInvoiceId: 0,
-                invoiceNumber: "",
-                invoiceDate: "",
-                invoiceTypeLabel: "Rental",
-                description: data.summaryDescription || `Laptop Rental for ${data.periodLabel}`,
-                quantityLabel: "",
-                sacCode: data.sacCode || "997315",
-                taxableAmount: data.subtotalAmount,
-                taxAmount: data.taxAmount,
-                totalAmount: data.totalAmount,
-            }];
-    const itemHeight = rows.length > 5 ? 10 : 13;
-    const fillerHeight = Math.max(14, 72 - rows.length * itemHeight);
-    const renderedRows = rows
-        .map((row) => {
-        const sourceDocuments = row.sourceDocuments?.length
-            ? row.sourceDocuments
-            : [{
-                    sourceInvoiceId: row.sourceInvoiceId,
-                    invoiceNumber: row.invoiceNumber,
-                    invoiceDate: row.invoiceDate,
-                    invoiceUrl: row.invoiceUrl,
-                    supportingDocumentUrl: row.supportingDocumentUrl,
-                }];
-        const sourceReferenceHtml = sourceDocuments
-            .map((sourceDocument) => {
-            const invoiceLink = renderDocumentReference(sourceDocument.invoiceUrl, "Invoice");
-            const supportingLink = renderDocumentReference(sourceDocument.supportingDocumentUrl, "Supporting");
-            const linkSeparator = invoiceLink && supportingLink ? " | " : "";
-            const referenceText = [
-                sourceDocument.invoiceNumber ? `Ref: ${escapeHtml(sourceDocument.invoiceNumber)}` : "",
-                sourceDocument.invoiceDate ? escapeHtml(sourceDocument.invoiceDate) : "",
-            ].filter(Boolean).join(" ");
-            const links = invoiceLink || supportingLink
-                ? `<span class="line-item-links">${invoiceLink}${linkSeparator}${supportingLink}</span>`
-                : "";
-            return `${referenceText}${links}`;
-        })
-            .filter(Boolean)
-            .join("<br />");
-        const billingMeta = [
-            row.billingRangeLabel ? `Billing: ${row.billingRangeLabel}` : "",
-            row.billingDaysLabel ? `Days: ${row.billingDaysLabel}` : "",
-            row.monthlyTaxableAmount ? `Monthly taxable: Rs. ${row.monthlyTaxableAmount}` : "",
-            row.dailyTaxableAmount ? `Daily taxable: Rs. ${row.dailyTaxableAmount}` : "",
-        ]
-            .filter(Boolean)
-            .join(" | ");
-        return `<tr class="line-item-row" style="height: ${itemHeight}mm;">
+    // Source invoice references remain stored for audit/versioning, but a
+    // consolidated invoice exposes one customer-facing billing summary only.
+    const itemHeight = 13;
+    const fillerHeight = Math.max(14, 72 - itemHeight);
+    return `<tr class="line-item-row" style="height: ${itemHeight}mm;">
         <td class="line-item-description">
-          <div class="line-item-title">${escapeHtml(row.description)}</div>
-          ${billingMeta ? `<div class="line-item-meta">${escapeHtml(billingMeta)}</div>` : ""}
-          ${sourceReferenceHtml ? `<div class="line-item-meta">${sourceReferenceHtml}</div>` : ""}
+          <div class="line-item-title">${escapeHtml(data.summaryDescription || `Laptop Rental for ${data.periodLabel}`)}</div>
         </td>
-        <td class="line-item-sac">${escapeHtml(row.sacCode || data.sacCode || "997315")}</td>
+        <td class="line-item-sac">${escapeHtml(data.sacCode || "997315")}</td>
         <td class="line-item-amount" colspan="2">
           <div class="money-row">
             <span class="currency">&#8377;</span>
-            <span class="money">${escapeHtml(row.taxableAmount)}</span>
+            <span class="money">${escapeHtml(data.subtotalAmount)}</span>
           </div>
         </td>
-      </tr>`;
-    })
-        .join("");
-    return `${renderedRows}
-          <tr class="description-filler-row" style="height: ${fillerHeight}mm;">
+      </tr>
+      <tr class="description-filler-row" style="height: ${fillerHeight}mm;">
             <td></td>
             <td></td>
             <td colspan="2"></td>
@@ -155,6 +103,8 @@ const renderLineItems = (data) => {
 export const getConsolidatedInvoiceHtml = (data) => {
     const companyAddress = splitCompanyAddress(data);
     const bankName = data.companyBankName || data.companyName;
+    const documentTitle = data.documentTitle || "TAX INVOICE";
+    const documentReferenceLabel = data.documentReferenceLabel || "INVOICE NO";
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -199,6 +149,12 @@ export const getConsolidatedInvoiceHtml = (data) => {
         line-height: 5.5mm;
         font-weight: 700;
         text-decoration: underline;
+      }
+      .title.supporting-document-title {
+        height: auto;
+        min-height: 7mm;
+        line-height: 1.15;
+        padding: 1mm 2mm;
       }
       .company {
         position: relative;
@@ -293,6 +249,8 @@ export const getConsolidatedInvoiceHtml = (data) => {
       .line-item-row td {
         font-size: 13px;
         line-height: 1.15;
+        /* Keep the description area height, without a divider before filler space. */
+        border-bottom: 0;
       }
       .line-item-description {
         padding: 2mm 1.4mm;
@@ -410,7 +368,7 @@ export const getConsolidatedInvoiceHtml = (data) => {
             <col style="width: 18%" />
           </colgroup>
           <tr>
-            <td class="title" colspan="4">TAX INVOICE</td>
+            <td class="title${data.documentTitle ? " supporting-document-title" : ""}" colspan="4">${escapeHtml(documentTitle)}</td>
           </tr>
           <tr>
             <td class="company" colspan="4">
@@ -424,7 +382,7 @@ export const getConsolidatedInvoiceHtml = (data) => {
           <tr>
             <td class="head-label">CUSTOMER NAME</td>
             <td class="head-label">PLACE OF<br />SUPPLY</td>
-            <td class="head-label">INVOICE NO</td>
+            <td class="head-label">${escapeHtml(documentReferenceLabel)}</td>
             <td class="head-label">DATE</td>
           </tr>
           <tr>
@@ -487,5 +445,16 @@ export const getConsolidatedInvoiceHtml = (data) => {
     </div>
   </body>
 </html>`;
+};
+// The Supporting Document is deliberately produced only for a final
+// consolidated invoice. It reuses the approved customer/company/tax layout,
+// but clearly identifies itself as a device list rather than a tax invoice.
+export const getConsolidatedSupportingDocumentHtml = (data) => {
+    const asOfDate = data.billingThroughDate || data.generatedDate;
+    return getConsolidatedInvoiceHtml({
+        ...data,
+        documentTitle: `Supporting Document (List of devices as on ${asOfDate})`,
+        documentReferenceLabel: "SUPPORTING DOCUMENT NO",
+    });
 };
 //# sourceMappingURL=consolidatedInvoiceTemplate.js.map

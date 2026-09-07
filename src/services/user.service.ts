@@ -17,6 +17,15 @@ export module userService {
     try {
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
+      const paymentStatusFilter = String(
+        request.query?.paymentstatusfilter || "all"
+      ).toLowerCase();
+      const shouldFilterPaymentStatus = [
+        "paid",
+        "partially_paid",
+        "pending",
+        "no_invoices",
+      ].includes(paymentStatusFilter);
       const keys = Object.keys(request.query);
       const values = Object.values(request.query);
 
@@ -68,7 +77,9 @@ export module userService {
           key !== "page" &&
           key !== "count" &&
           key !== "activerentalonly" &&
-          key !== "includeRentalTotal"
+          key !== "includeRentalTotal" &&
+          key !== "includePaymentSummary" &&
+          key !== "paymentstatusfilter"
         ) {
           const columnName = key === "city" ? "latest_address.city" : `u.${key}`;
           const clauses = paramValues.map(
@@ -96,6 +107,10 @@ export module userService {
       let queryText = `
         SELECT
           u.*,
+          latest_address.id AS addressid,
+          latest_address.doornumber AS address_doornumber,
+          latest_address.landmark AS address_landmark,
+          latest_address.address AS address_address,
           latest_address.city,
           latest_address.city AS address_city,
           latest_address.state,
@@ -105,7 +120,7 @@ export module userService {
           0::int AS rentaldevicecount
         FROM users u
         LEFT JOIN LATERAL (
-          SELECT city, state, pincode
+          SELECT id, doornumber, landmark, address, city, state, pincode
           FROM address a
           WHERE a.userid = u.id
           ORDER BY a.modifieddate DESC NULLS LAST, a.id DESC
@@ -115,21 +130,44 @@ export module userService {
         ${orderByClause}
       `;
 
-      if (pageNumber && recordCount) {
+      if (pageNumber && recordCount && !shouldFilterPaymentStatus) {
         queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
         queryParams.push(offset, recordCount);
       }
       const result = await query(queryText, queryParams);
       let datatypeCheckResult = await dataTypeCheck(result);
-      const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(
-        datatypeCheckResult.map((row: any) => row.id),
-        { activeOnly: true }
-      );
+      const customerIds = datatypeCheckResult.map((row: any) => row.id);
+      const includePaymentSummary =
+        String(request.query?.includePaymentSummary || "").toLowerCase() ===
+          "true" || shouldFilterPaymentStatus;
+      const rentalCountsPromise =
+        revoinvoiceservice.getRentalAssetCountsByCustomerIds(customerIds, {
+          activeOnly: true,
+        });
+      const paymentSummariesPromise = includePaymentSummary
+        ? revoinvoiceservice.getPaymentSummariesByCustomerIds(customerIds)
+        : Promise.resolve({});
+      const [rentalCounts, paymentSummaries] = await Promise.all([
+        rentalCountsPromise,
+        paymentSummariesPromise,
+      ]);
 
-      return datatypeCheckResult.map((row: any) => ({
+      const mappedCustomers = datatypeCheckResult.map((row: any) => ({
         ...row,
         rentaldevicecount: rentalCounts[row.id] || 0,
+        invoicecount: paymentSummaries[row.id]?.invoicecount || 0,
+        paymentstatus: paymentSummaries[row.id]?.paymentstatus || "no_invoices",
+        balanceamount: paymentSummaries[row.id]?.balanceamount || 0,
       }));
+      const filteredCustomers = shouldFilterPaymentStatus
+        ? mappedCustomers.filter(
+            (row: any) => row.paymentstatus === paymentStatusFilter
+          )
+        : mappedCustomers;
+
+      return shouldFilterPaymentStatus
+        ? filteredCustomers.slice(offset, offset + recordCount)
+        : filteredCustomers;
     } catch (error) {
       console.error("Query Execution Error: IN getUsersData", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error);

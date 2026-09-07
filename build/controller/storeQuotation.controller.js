@@ -73,5 +73,24 @@ export var storeQuotationController;
             return await ErrorHandler.handleQueryError(error);
         }
     };
+    storeQuotationController.updateStoreQuotationUrl = async (request, reply) => {
+        try {
+            const result = await storeQuotationService.updateStoreQuotationUrl({
+                ...request.body,
+                id: request.params?.id ?? request.body?.id,
+            });
+            if (result.command === "UPDATE") {
+                return reply.status(200).send({
+                    message: "Quotation URL updated successfully",
+                    data: result.rows[0],
+                });
+            }
+            return reply.status(result.statusCode || 500).send(result);
+        }
+        catch (error) {
+            console.error("Query Execution Error: IN updateStoreQuotationUrl controller", error);
+            return await ErrorHandler.handleQueryError(error);
+        }
+    };
 })(storeQuotationController || (storeQuotationController = {}));
 //# sourceMappingURL=storeQuotation.controller.js.map

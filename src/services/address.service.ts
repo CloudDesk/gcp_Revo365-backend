@@ -7,6 +7,7 @@ import { accessScopeService } from "./accessScope.service.js";
 export module addressService {
 
     export const getAddressData = async (request: any) => {
+
         try {
             const whereClauses: string[] = [];
             const queryParams: any[] = [];

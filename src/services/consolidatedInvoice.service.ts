@@ -6,6 +6,7 @@ import { admin } from "../firebase/firebaseAdmin.js";
 import { renderHtmlToPdf } from "../utils/pdf/renderHtmlToPdf.js";
 import {
   getConsolidatedInvoiceHtml,
+  getConsolidatedSupportingDocumentHtml,
   ConsolidatedInvoiceTemplateData,
 } from "../utils/invoice/consolidatedInvoiceTemplate.js";
 
@@ -671,7 +672,18 @@ const fetchCandidateInvoices = async (
     FROM revoinvoice
     WHERE customerid = $1
       AND LOWER(COALESCE(invoicefor, '')) = ANY($2::text[])
-      AND COALESCE(NULLIF(TRIM(invoiceurl), ''), '') <> ''
+      AND (
+        -- Rental rows are internal month-end source records. They intentionally
+        -- have no customer PDF URL and must be explicitly marked as such.
+        (
+          LOWER(COALESCE(invoicefor, '')) = 'rental'
+          AND LOWER(COALESCE(invoicedocumenttype, '')) = 'rental_intermediate_record'
+        )
+        OR (
+          LOWER(COALESCE(invoicefor, '')) <> 'rental'
+          AND COALESCE(NULLIF(TRIM(invoiceurl), ''), '') <> ''
+        )
+      )
     ORDER BY
       billingperiodstart ASC NULLS LAST,
       createddate ASC NULLS LAST,
@@ -1013,13 +1025,6 @@ const buildPreviewRows = (
     .map((invoice: any) => {
       const invoiceFor = normalizeComparable(invoice?.invoicefor);
       const documentType = normalizeComparable(invoice?.invoicedocumenttype);
-      if (invoiceFor === "rental" && documentType === "rental_supporting_document_pending") {
-        warnings.push(
-          `${invoice?.invoicenumber || `Invoice #${invoice?.id}`} is pending rental summary generation.`
-        );
-        return null;
-      }
-
       if (sourceIdSet && !sourceIdSet.has(Number(invoice?.id))) {
         return null;
       }
@@ -1133,7 +1138,7 @@ const getConsolidatedSummaryDescription = (rows: any[], periodLabel: string) => 
   );
   const deviceLabel = deviceCount === 1 ? "Device" : "Devices";
 
-  return `${itemLabel}(${deviceCount} ${deviceLabel} for ${getRowsBillingRangeLabel(rows, periodLabel)})`;
+  return `${itemLabel} – ${deviceCount} ${deviceLabel} – ${periodLabel}`;
 };
 
 const getFirstSacCode = (rows: any[]) =>
@@ -1526,6 +1531,8 @@ export module consolidatedInvoiceService {
         ci.sourceinvoicekey,
         ci.documentnumber,
         ci.documenturl,
+        ci.supportingdocumentnumber,
+        ci.supportingdocumenturl,
         ci.status,
         ci.subtotal,
         ci.taxamount,
@@ -1717,6 +1724,18 @@ export module consolidatedInvoiceService {
       `${CONSOLIDATED_INVOICE_FOLDER}/${fileName}`,
       fileName
     );
+    const supportingDocumentNumber = `${documentNumber}-SD`;
+    const supportingDocumentHtml = getConsolidatedSupportingDocumentHtml({
+      ...templateData,
+      documentNumber: supportingDocumentNumber,
+    });
+    const supportingDocumentBuffer = await renderHtmlToPdf(supportingDocumentHtml);
+    const supportingDocumentFileName = `${sanitizeFileName(supportingDocumentNumber)}.pdf`;
+    const supportingDocumentUrl = await uploadPdf(
+      supportingDocumentBuffer,
+      `${CONSOLIDATED_INVOICE_FOLDER}/supporting-documents/${supportingDocumentFileName}`,
+      supportingDocumentFileName
+    );
 
     const client = await pool.connect();
     let generatedRecord: any = null;
@@ -1744,16 +1763,20 @@ export module consolidatedInvoiceService {
         SET
           documentnumber = $1,
           documenturl = $2,
+          supportingdocumentnumber = $3,
+          supportingdocumenturl = $4,
           status = 'generated',
           iscurrent = TRUE,
-          metadatajson = $3::jsonb,
+          metadatajson = $5::jsonb,
           modifieddate = EXTRACT(EPOCH FROM NOW())::BIGINT
-        WHERE id = $4
+        WHERE id = $6
         RETURNING *
         `,
         [
           documentNumber,
           documentUrl,
+          supportingDocumentNumber,
+          supportingDocumentUrl,
           JSON.stringify({
             calculationVersion: CONSOLIDATED_INVOICE_CALCULATION_VERSION,
             preview,
@@ -1837,6 +1860,7 @@ export module consolidatedInvoiceService {
       consolidatedInvoice: generatedRecord,
       previousConsolidatedInvoice: currentConsolidatedInvoice,
       documenturl: documentUrl,
+      supportingdocumenturl: supportingDocumentUrl,
       preview: {
         ...preview,
         existingConsolidatedInvoices: updatedExistingConsolidatedInvoices,

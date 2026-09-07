@@ -221,12 +221,19 @@ export var recordCountService;
                 return await getCountQuery(`select count(*) from service_enquiries${clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""}`, params);
             }
             if (targetObj === "users") {
-                const { search, searchTerm, isbusinessuser, includeRentalTotal } = request.query;
+                const { search, searchTerm, isbusinessuser, includeRentalTotal, paymentstatusfilter, } = request.query;
                 const finalSearch = String(search || searchTerm || "").trim();
                 const clauses = [];
                 const params = [];
                 let paramIndex = 1;
                 const shouldIncludeRentalTotal = String(includeRentalTotal ?? "").toLowerCase() === "true";
+                const paymentStatusFilter = String(paymentstatusfilter || "all").toLowerCase();
+                const shouldFilterPaymentStatus = [
+                    "paid",
+                    "partially_paid",
+                    "pending",
+                    "no_invoices",
+                ].includes(paymentStatusFilter);
                 if (finalSearch) {
                     clauses.push(`(u.firstname ILIKE $${paramIndex}
               OR u.lastname ILIKE $${paramIndex}
@@ -250,21 +257,25 @@ export var recordCountService;
                 }
                 paramIndex = await accessScopeService.appendVendorBusinessCustomerScope(request, clauses, params, paramIndex, { customerAlias: "u", customerIdColumn: "id" });
                 const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
-                if (shouldIncludeRentalTotal) {
-                    const result = await query(`
-            SELECT COUNT(*)::int AS count
-            FROM users u
-            ${whereSql}
-            `, params);
+                if (shouldIncludeRentalTotal || shouldFilterPaymentStatus) {
                     const userIdsResult = await query(`
             SELECT u.id
             FROM users u
             ${whereSql}
             `, params);
-                    const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(userIdsResult.rows.map((row) => row.id), { activeOnly: true });
+                    let filteredUserIds = userIdsResult.rows.map((row) => row.id);
+                    if (shouldFilterPaymentStatus) {
+                        const paymentSummaries = await revoinvoiceservice.getPaymentSummariesByCustomerIds(filteredUserIds);
+                        filteredUserIds = filteredUserIds.filter((userId) => (paymentSummaries[userId]?.paymentstatus || "no_invoices") ===
+                            paymentStatusFilter);
+                    }
+                    if (!shouldIncludeRentalTotal) {
+                        return filteredUserIds.length;
+                    }
+                    const rentalCounts = await revoinvoiceservice.getRentalAssetCountsByCustomerIds(filteredUserIds, { activeOnly: true });
                     const rentalProductTotal = Object.values(rentalCounts).reduce((total, count) => total + Number(count || 0), 0);
                     return {
-                        count: Number(result.rows[0]?.count || 0),
+                        count: filteredUserIds.length,
                         rentalproducttotal: rentalProductTotal,
                     };
                 }

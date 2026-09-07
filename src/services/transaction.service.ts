@@ -30,6 +30,7 @@ import {
   listShiprocketPickupLocations,
   upsertShiprocketSettings,
 } from "./shiprocket.service.js";
+import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
 //phonepe pay
 const MERCHANT_ID = "PGTESTPAYUAT86";
 const SALT_KEY = "96434309-7796-489d-8924-ab56988a6076";
@@ -1834,6 +1835,14 @@ const finalizeCapturedRazorpayPayment = async ({
       [razorpayPaymentId, razorpayOrderId, merchantTransactionId]
     );
     if (existingTransaction.rows.length > 0) {
+      const existingTransactionRecord = await getLatestTransactionByMerchantTransactionId(
+        merchantTransactionId
+      );
+      if (existingTransactionRecord) {
+        await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(
+          existingTransactionRecord
+        );
+      }
       const existingContext = await getOrderContextByMerchantTransactionId(
         merchantTransactionId
       );
@@ -1866,6 +1875,9 @@ const finalizeCapturedRazorpayPayment = async ({
       merchantTransactionId
     );
     if (existingTransactionRecord) {
+      await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(
+        existingTransactionRecord
+      );
       const existingContext = await getOrderContextByMerchantTransactionId(
         merchantTransactionId
       );
@@ -2108,6 +2120,9 @@ const finalizeCapturedRazorpayPayment = async ({
     }
 
     if (!hasHeldReservations && context.combinedOrderRows.every((row) => isTruthyFlag(row?.ispaymentsucceed))) {
+      await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(
+        existingTransactionRecord
+      );
       const alreadyProcessedSnapshot = await getMerchantTransactionStateSnapshot(
         merchantTransactionId
       );
@@ -2167,6 +2182,15 @@ const finalizeCapturedRazorpayPayment = async ({
       );
     } catch (error) {
       if (error?.code === "23505") {
+        const existingTransactionRecord =
+          await getLatestTransactionByMerchantTransactionId(
+            merchantTransactionId
+          );
+        if (existingTransactionRecord) {
+          await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(
+            existingTransactionRecord
+          );
+        }
         const duplicateSnapshot = await getMerchantTransactionStateSnapshot(
           merchantTransactionId
         );
@@ -2741,6 +2765,9 @@ export module transactionService {
         );
         console.log("end");
         if (isOrderUpdateSuccess && isThirdPartyUpdateSuccess) {
+          await ecommercePaymentFinanceService.safelyRecordSuccessfulPayment(
+            insertedTransaction
+          );
           return {
             orderdata: orderupdated.data || thirdpartyorderupdate.data || null,
             transactionData: [finalResult.transactiondata],
