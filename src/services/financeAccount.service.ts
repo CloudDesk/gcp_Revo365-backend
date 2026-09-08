@@ -532,7 +532,18 @@ export module financeAccountService {
         b.*,
         f.accountcode,
         f.accounttype AS ledgeraccounttype,
-        f.accountsubtype
+        f.accountsubtype,
+        (
+          SELECT bt.transactiondate
+          FROM bank_transactions bt
+          WHERE bt.bankcashaccountid = b.id
+            AND bt.postingstatus = 'posted'
+          ORDER BY
+            bt.transactiondate DESC,
+            bt.posteddate DESC NULLS LAST,
+            bt.id DESC
+          LIMIT 1
+        ) AS closingdate
       FROM bank_cash_accounts b
       JOIN finance_accounts f ON f.id = b.financeaccountid
       WHERE b.id = $1 AND b.organizationid = $2

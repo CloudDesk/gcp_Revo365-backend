@@ -47,6 +47,8 @@ const ESTIMATION_FIELDS = new Set([
     "servicetotal",
     "totalpayableamount",
     "roundoffamount",
+    "productroundoffamount",
+    "serviceroundoffamount",
     "customerstate",
     "taxtype",
     "billingaddresssnapshot",
@@ -675,15 +677,24 @@ const prepareCostEstimation = async (rawInput: any) => {
             merged.servicetotal,
             roundMoney(serviceSubtotal + serviceTaxAmount)
         );
-    const preRoundTotal = roundMoney(productTotal + serviceTotal);
-    const roundoffAmount = isNew
-        ? roundMoney(Math.round(preRoundTotal) - preRoundTotal)
-        : asStoredNumber(merged.roundoffamount, 0);
+    const productRoundoffAmount = isNew
+        ? roundMoney(Math.round(productTotal) - productTotal)
+        : asStoredNumber(
+            merged.productroundoffamount,
+            roundMoney(Math.round(productTotal) - productTotal)
+        );
+    const serviceRoundoffAmount = isNew
+        ? roundMoney(Math.round(serviceTotal) - serviceTotal)
+        : asStoredNumber(
+            merged.serviceroundoffamount,
+            roundMoney(Math.round(serviceTotal) - serviceTotal)
+        );
+    const roundoffAmount = roundMoney(productRoundoffAmount + serviceRoundoffAmount);
     const totalPayableAmount = isNew
-        ? Math.round(preRoundTotal)
+        ? Math.round(productTotal) + Math.round(serviceTotal)
         : asStoredNumber(
             merged.totalpayableamount,
-            roundMoney(preRoundTotal + roundoffAmount)
+            roundMoney(productTotal + serviceTotal + roundoffAmount)
         );
     const storedHasIgst = productIgst > 0 || serviceIgst > 0;
     const storedHasSplitGst =
@@ -736,6 +747,8 @@ const prepareCostEstimation = async (rawInput: any) => {
         servicetotal: serviceTotal,
         totalpayableamount: totalPayableAmount,
         roundoffamount: roundoffAmount,
+        productroundoffamount: productRoundoffAmount,
+        serviceroundoffamount: serviceRoundoffAmount,
         customerstate: taxContext.customerstate,
         taxtype: resolvedTaxType,
         estimationstatus: estimationStatus,
