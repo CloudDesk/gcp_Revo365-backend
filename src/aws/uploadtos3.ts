@@ -11,7 +11,6 @@ const uploadtos3 = async (filestoupload: any, productId: any) => {
                 const fileList = filestoupload[key];
                 for (const file of fileList) {
                     let resultofupdateds3 = await uploads3File(file, productId, folderName);
-                    console.log(resultofupdateds3, 'called data');
                     if (resultofupdateds3 !== null) {
                         successCount++;
                     } else {
@@ -20,7 +19,6 @@ const uploadtos3 = async (filestoupload: any, productId: any) => {
                 }
             }
         }
-        console.log("Upload complete. Success count:", successCount, "Failure count:", failureCount);
         return `Upload complete. Success count:, ${successCount}, Failure count: ${failureCount}`
     } catch (error) {
         return `Error in getting s3 URL : ${error.message}`
@@ -34,8 +32,6 @@ async function uploads3File(filedata: any, productId: any, folderName: any) {
         const { Path, file } = filedata;
         let key = `product/${productId}/${folderName}/` + file;
 
-        console.log(Path);
-        console.log(file);
         const fileStream = fs.createReadStream(Path);
         const params: any = {
             Bucket: bucketName,

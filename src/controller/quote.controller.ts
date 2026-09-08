@@ -24,10 +24,10 @@ export module quoteController {
                 reply.status(200).send(message)
             }
             else {
-                console.log(upsertQuoteData)
                 reply.status(404).send({ error: [upsertQuoteData] })
             }
         } catch (error) {
+            console.error("Error in 'upsertQuotes':", error);
             reply.status(404).send(error.message)
         }
     }
@@ -45,10 +45,10 @@ export module quoteController {
                 reply.status(200).send(message)
             }
             else {
-                console.log("else upsertQuoteData Error")
                 reply.status(404).send({ error: [upsertQuoteData] })
             }
         } catch (error) {
+            console.error("Error in 'attachQuotefiles':", error);
             reply.status(404).send(error.message)
         }
     }
@@ -67,10 +67,10 @@ export module quoteController {
                 reply.status(200).send(message)
             }
             else {
-                console.log("else upsertQuoteData Error")
                 reply.status(404).send({ error: [upsertQuoteData] })
             }
         } catch (error) {
+            console.error("Error in 'attachGcpQuotefiles':", error);
             reply.status(404).send(error.message)
         }
     }

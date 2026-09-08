@@ -9,10 +9,8 @@ const gets3Dataurl = async (req, reply) => {
             Prefix: `product/${Pid}/${size}/`,
             Delimiter: '/',
         };
-        console.log(params);
         const listCommand = new ListObjectsV2Command(params);
         const data = await s3Client.send(listCommand);
-        console.log(data);
         if (!data.Contents) {
             return reply.send({ message: 'No files found for the specified folder' });
         }
@@ -40,7 +38,6 @@ const gets3DataStream = async (req, reply) => {
         Delimiter: '/',
     };
     const getObjectCommand = new GetObjectCommand(params);
-    console.log(reply);
     try {
         //starts streaming image directly 
         const response = await s3Client.send(getObjectCommand);

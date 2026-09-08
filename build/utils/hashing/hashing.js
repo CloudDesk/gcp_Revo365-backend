@@ -6,7 +6,7 @@ const saltRounds = 10;
 const hashGenerate = async (plainPassword) => {
     try {
         const salt = await bcrypt.genSalt(saltRounds);
-        const hash = await bcrypt.hash(plainPassword, salt);
+        const hash = await bcrypt.hash(String(plainPassword), salt);
         return hash;
     }
     catch (error) {
@@ -16,10 +16,7 @@ const hashGenerate = async (plainPassword) => {
 };
 const hashValidator = async (plainPassword, hashedPassword) => {
     try {
-        console.log(plainPassword, 'Plain Password');
-        console.log(hashedPassword, 'hashed password');
-        const result = await bcrypt.compare(plainPassword, hashedPassword);
-        console.log(result, 'REsult for Bycrypt is ');
+        const result = await bcrypt.compare(String(plainPassword), hashedPassword);
         return result;
     }
     catch (error) {

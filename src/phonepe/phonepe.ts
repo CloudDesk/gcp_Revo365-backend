@@ -44,7 +44,6 @@ export module phonePay  {
         } catch (error) {
             console.error("Query Execution Error: IN paymentInitialization", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     }
@@ -68,12 +67,10 @@ export module phonePay  {
                 },
             };
             const response = await axios(options);
-            console.log(JSON.stringify(response.data), 'status');
     
             const queryParams = new URLSearchParams(response.data).toString();
             let url = 'http://localhost:5173/success?' + queryParams;
             
-            // Check if the response indicates failure and change the URL accordingly
             if (!response.data.success) {
                 url = 'http://localhost:5173/fail?' + queryParams;
             }
@@ -82,7 +79,6 @@ export module phonePay  {
         } catch (error) {
             console.error("Query Execution Error: IN paymentConfirmation", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

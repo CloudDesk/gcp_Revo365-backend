@@ -1,0 +1,4 @@
+ALTER TABLE product_revo
+    ADD COLUMN IF NOT EXISTS hsncode VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS saccode VARCHAR(50);
+

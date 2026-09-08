@@ -6,10 +6,9 @@ export module sessionController {
         try {
             // let getSessionDataResult = await sessionService.getSessionData(req);
             let getSessionDataResult = await getSessionData(req)
-            console.log(getSessionDataResult, "getSessionDataResultgetSessionDataResult");
             rep.send(getSessionDataResult);
         } catch (error) {
-            console.log('ERROR IN Controller getSessionData');
+            console.error('ERROR IN getSessionController', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             rep.status(404).send(errordata);
         }

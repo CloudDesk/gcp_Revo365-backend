@@ -48,9 +48,8 @@ export module notesService {
             return datatypeCheckResult;
 
         } catch (error) {
-            console.error("Query Execution Error: IN get notes data", error);
+            console.error("Query Execution Error: IN getnotesdata", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -79,9 +78,8 @@ export module notesService {
             const result = await query(querydata, params);
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsert Service notes data", error);
+            console.error("Query Execution Error: IN upsertnotes", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     }

@@ -8,7 +8,7 @@ export var addressController;
             reply.send(getAddressDataResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getAddressData');
+            console.log('ERROR IN  Controller getAddressData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -19,7 +19,7 @@ export var addressController;
             reply.send(getAddressDataResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getUserAddressData');
+            console.log('ERROR IN  Controller getUserAddressData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -31,7 +31,7 @@ export var addressController;
             reply.send(deleteAddressResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller deleteAddress');
+            console.log('ERROR IN  Controller deleteAddress', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -39,7 +39,9 @@ export var addressController;
     addressController.upsertAddress = async (request, reply) => {
         try {
             const addressData = request.body;
+            console.log("[DEBUG][POST /address] request payload:", addressData);
             let upsertAddressResult = await addressService.upsertAddress(addressData);
+            console.log("[DEBUG][POST /address] service response command:", upsertAddressResult?.command);
             if (upsertAddressResult.command === "UPDATE" || upsertAddressResult.command === "INSERT") {
                 let message = {};
                 message = {
@@ -54,7 +56,7 @@ export var addressController;
             }
         }
         catch (error) {
-            console.log('ERROR IN  Controller upsertAddress');
+            console.log('ERROR IN  Controller upsertAddress', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }

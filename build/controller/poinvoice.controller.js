@@ -7,6 +7,7 @@ export var poinvoicecontroller;
             reply.send(PoinvoiceResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller getPOInvoice', error);
             reply.status(404).send(error.message);
         }
     };
@@ -18,8 +19,8 @@ export var poinvoicecontroller;
                 let message = {};
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message);
             }
@@ -28,6 +29,7 @@ export var poinvoicecontroller;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertPoInvoice', error);
             reply.status(404).send(error.message);
         }
     };
@@ -38,6 +40,7 @@ export var poinvoicecontroller;
             reply.send(deleteStockResult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller deletePoInvoice', error);
             reply.send(error.message);
         }
     };
@@ -49,8 +52,8 @@ export var poinvoicecontroller;
                 let message = {};
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message);
             }
@@ -59,6 +62,7 @@ export var poinvoicecontroller;
             }
         }
         catch (error) {
+            console.error('ERROR IN  Controller upsertGcpPoInvoice', error);
             reply.status(404).send(error.message);
         }
     };

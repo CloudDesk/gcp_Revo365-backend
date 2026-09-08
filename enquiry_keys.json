@@ -1,0 +1,98 @@
+[
+    {
+        "endpoint": "/enquiry-individual",
+        "method": "POST",
+        "fields": [
+            {
+                "key": "firstName",
+                "label": "First Name",
+                "required": true,
+                "validation": "Must not be empty"
+            },
+            {
+                "key": "lastName",
+                "label": "Last Name",
+                "required": false,
+                "validation": null
+            },
+            {
+                "key": "email",
+                "label": "Email Address",
+                "required": true,
+                "validation": "Must be a valid email format"
+            },
+            {
+                "key": "phone",
+                "label": "Phone Number",
+                "required": true,
+                "validation": "Must contain exactly 10 digits"
+            },
+            {
+                "key": "topic",
+                "label": "Topic",
+                "required": true,
+                "validation": "Allowed values: Product Information, Technical Support, Pricing & Plans, Partnership Opportunity, Other"
+            },
+            {
+                "key": "message",
+                "label": "Your Message",
+                "required": true,
+                "validation": "Must not be empty"
+            }
+        ]
+    },
+    {
+        "endpoint": "/enquiry-corporate",
+        "method": "POST",
+        "fields": [
+            {
+                "key": "firstName",
+                "label": "First Name",
+                "required": true,
+                "validation": "Must not be empty"
+            },
+            {
+                "key": "lastName",
+                "label": "Last Name",
+                "required": false,
+                "validation": null
+            },
+            {
+                "key": "email",
+                "label": "Work Email",
+                "required": true,
+                "validation": "Must be a valid email format"
+            },
+            {
+                "key": "phone",
+                "label": "Phone Number",
+                "required": true,
+                "validation": "Must contain exactly 10 digits"
+            },
+            {
+                "key": "company",
+                "label": "Company Name",
+                "required": true,
+                "validation": "Must not be empty"
+            },
+            {
+                "key": "fleet",
+                "label": "Employee Count",
+                "required": true,
+                "validation": "Allowed values: 1–10 employees, 11–50 employees, 51–200 employees, 200+ employees"
+            },
+            {
+                "key": "date",
+                "label": "Preferred Date",
+                "required": true,
+                "validation": "Format YYYY-MM-DD and must be today or a future date"
+            },
+            {
+                "key": "notes",
+                "label": "Anything else you'd like us to know?",
+                "required": false,
+                "validation": null
+            }
+        ]
+    }
+]

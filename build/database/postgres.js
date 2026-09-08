@@ -19,7 +19,6 @@ export const checkDatabaseConnection = () => {
                 reject(err);
             }
             else {
-                console.log("Database connected");
                 release();
                 resolve("Database Connected");
             }
@@ -27,7 +26,6 @@ export const checkDatabaseConnection = () => {
     });
 };
 pool.on("error", (err) => {
-    console.log("error is ");
     console.error("Error connecting to the database:", err.message);
 });
 //App Engine
@@ -67,13 +65,12 @@ pool.on("error", (err) => {
 //     }
 //   }
 // };
-export const query = async (stmt, options) => {
-    if (Object.keys(options).length > 0 || options.length > 0) {
+export const query = async (stmt, options = []) => {
+    if (options && (Object.keys(options).length > 0 || options.length > 0)) {
         let res = await pool.query(stmt, options);
         return res;
     }
     else {
-        console.log("else latest");
         return await pool.query(stmt);
     }
 };

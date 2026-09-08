@@ -6,6 +6,7 @@ export module poinvoicecontroller {
             let PoinvoiceResult = await poinvoiceservice.getPoInvoiceData(request);
             reply.send(PoinvoiceResult)
         } catch (error) {
+            console.error('ERROR IN  Controller getPOInvoice', error);
             reply.status(404).send(error.message)
         }
     }
@@ -19,8 +20,8 @@ export module poinvoicecontroller {
                 let message: any = {}
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message)
             }
@@ -29,6 +30,7 @@ export module poinvoicecontroller {
             }
 
         } catch (error) {
+            console.error('ERROR IN  Controller upsertPoInvoice', error);
             reply.status(404).send(error.message)
 
         }
@@ -40,6 +42,7 @@ export module poinvoicecontroller {
             let deleteStockResult = await poinvoiceservice.deletePoInvoice(id);
             reply.send(deleteStockResult);
         } catch (error) {
+            console.error('ERROR IN  Controller deletePoInvoice', error);
             reply.send(error.message);
         }
     };
@@ -53,8 +56,8 @@ export module poinvoicecontroller {
                 let message: any = {}
                 message = {
                     message: upsertPoInviceResult.command === "UPDATE"
-                        ? `Invoice For PO Updated  successfully`
-                        : `Invoice For Po Created  successfully`
+                        ? `Bill for PO updated successfully`
+                        : `Bill for PO created successfully`
                 };
                 reply.status(200).send(message)
             }
@@ -63,6 +66,7 @@ export module poinvoicecontroller {
             }
 
         } catch (error) {
+            console.error('ERROR IN  Controller upsertGcpPoInvoice', error);
             reply.status(404).send(error.message)
 
         }

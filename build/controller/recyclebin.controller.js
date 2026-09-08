@@ -8,6 +8,7 @@ export var recycleBinController;
             reply.send(getRecycleBinData);
         }
         catch (error) {
+            console.error("Error in 'getRecycleBindata':", error);
             reply.send(error);
         }
     };
@@ -18,6 +19,7 @@ export var recycleBinController;
             reply.send(getRecycleBinData);
         }
         catch (error) {
+            console.error("Error in 'getRecycleBindataRevo':", error);
             reply.send(error);
         }
     };

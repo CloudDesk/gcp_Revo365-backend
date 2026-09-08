@@ -8,9 +8,8 @@ export var globalSearchController;
             reply.send(result);
         }
         catch (error) {
-            console.error("Error: IN globalSearchController getALlData", error);
+            console.error("Error: IN getALlData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -20,9 +19,8 @@ export var globalSearchController;
             reply.send(result);
         }
         catch (error) {
-            console.error("Error: IN globalSearchController getAllProductData", error);
+            console.error("Error: IN getAllProductData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -32,9 +30,8 @@ export var globalSearchController;
             reply.send(result);
         }
         catch (error) {
-            console.error("Error: IN globalSearchController getGlobalStockOrderTicketData", error);
+            console.error("Error: IN getGlobalStockOrderTicketData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

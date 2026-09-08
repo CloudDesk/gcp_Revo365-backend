@@ -30,6 +30,7 @@ export module productController {
             }
 
         } catch (error) {
+            console.error('ERROR IN  Controller rearrangeImage', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -42,6 +43,7 @@ export module productController {
             reply.send(getProductsResult)
 
         } catch (error) {
+            console.error('ERROR IN  Controller getProducts', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -53,6 +55,7 @@ export module productController {
             reply.send(getProductsResult)
 
         } catch (error) {
+            console.error('ERROR IN  Controller getEcomProducts', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -65,6 +68,7 @@ export module productController {
             reply.send(getProductsResult)
 
         } catch (error) {
+            console.error('ERROR IN  Controller getSimilarProducts', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -77,6 +81,7 @@ export module productController {
             reply.send(getProductsResult)
 
         } catch (error) {
+            console.error('ERROR IN  Controller getArcheivedProducts', error);
             reply.send(`${error.message} error in get Products`)
         }
     }
@@ -89,6 +94,7 @@ export module productController {
             reply.send(getProductsResult)
 
         } catch (error) {
+            console.error('ERROR IN  Controller getEachProducts', error);
             reply.send(`${error.message} error in get Each Products`)
         }
     }
@@ -109,6 +115,7 @@ export module productController {
                 reply.status(404).send({ error: [productUpsertResult] })
             }
         } catch (error) {
+            console.error('ERROR IN  Controller upsertProduct', error);
             reply.status(404).send(` Error in upsert Product : ${error.message}`)
         }
     }
@@ -127,7 +134,7 @@ export module productController {
                 reply.status(200).send(message)
             }
         } catch (error) {
-            console.log(error.message, 'Error in Upsert Prodouct data set');
+            console.log('Error in upsertProductwithfile', error);
             reply.send(` Error in upsert Product : ${error.message}`)
         }
     }
@@ -137,6 +144,7 @@ export module productController {
             let resultremoverecyclebin = await productService.updateRemoveFromRecyclebin()
             reply.send(resultremoverecyclebin)
         } catch (error) {
+            console.error('ERROR IN  Controller updateRemovedFromRecyclebin', error);
             reply.send(`Error in updating recyclebin : ${error.message}`)
         }
     }
@@ -147,6 +155,7 @@ export module productController {
             let getProductsResult = await productService.deleteProduct(Number(id))
             reply.send(getProductsResult)
         } catch (error) {
+            console.error('ERROR IN  Controller deleteProduct', error);
             reply.send(` Error in deleting Product : ${error.message}`)
 
         }

@@ -12,13 +12,22 @@ export module userController {
             let getUsersDataResult = await userService.getUsersData(request);
             reply.send(getUsersDataResult);
         } catch (error) {
+            console.error("Error in getUsersData", error);
             reply.send(error.message);
+        }
+    }
+    export const getCustomersData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            let getCustomerDataResult = await userService.getCustomersData(request.body);
+            console.log(getCustomerDataResult)
+            reply.send(getCustomerDataResult);
+        } catch (error) {
+
         }
     }
     export const forgotuser = async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             let forgotuserData: any = await userService.forgotuser(request);
-            console.log(forgotuserData, 'forgotuserData');
             if (forgotuserData.status === 'success') {
                 reply.send(forgotuserData);
 
@@ -27,15 +36,14 @@ export module userController {
                 reply.status(404).send(forgotuserData.Message)
             }
         } catch (error) {
+            console.error("Error in forgotuser", error);
             reply.send(error.message);
         }
     }
     export const getLoggedInUsersData = async (request: FastifyRequest, reply: FastifyReply) => {
 
         try {
-            let getUsersDataResult:any = await userService.getLoggedInUsersData(request, reply);
-            console.log(getUsersDataResult, 'getUsersDataResult');
-            console.log(Array.isArray(getUsersDataResult.userdata));
+            let getUsersDataResult: any = await userService.getLoggedInUsersData(request, reply);
             if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
                 reply.status(401).send({ error: getUsersDataResult })
             }
@@ -43,6 +51,25 @@ export module userController {
                 reply.send(getUsersDataResult);
             }
         } catch (error) {
+            console.error("Error in getLoggedInUsersData", error);
+            reply.send(error.message);
+        }
+    }
+
+    export const getGoogleLoggedInUserData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            let getUsersDataResult: any = await userService.getGoogleLoggedInUserData(request);
+            if (getUsersDataResult && getUsersDataResult.userdata && !Array.isArray(getUsersDataResult.userdata)) {
+                reply.status(401).send({ error: getUsersDataResult })
+            }
+            else if (getUsersDataResult?.sessionId && Array.isArray(getUsersDataResult?.userdata)) {
+                reply.send(getUsersDataResult);
+            }
+            else {
+                reply.status(401).send(getUsersDataResult);
+            }
+        } catch (error) {
+            console.error("Error in getGoogleLoggedInUserData", error);
             reply.send(error.message);
         }
     }
@@ -53,63 +80,48 @@ export module userController {
             let deleteUserResult = await userService.deleteUser(Number(id));
             reply.send(deleteUserResult);
         } catch (error) {
+            console.error("Error in deleteUserData", error);
             reply.send(error.message);
         }
     }
-
-    // export const upsertUser = async (request: any, reply: any) => {
-    //     try {
-    //         const userData = request.body;
-    //         let upsertUserResult = await userService.upsertUser(userData);
-    //         console.log(upsertUserResult);
-    //         if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
-    //             let message: any = {};
-    //             message = {
-    //                 user: upsertUserResult?.command === "UPDATE"
-    //                     ? ` User Updated successfully`
-    //                     : ` User signup done successfully`
-    //             };
-    //             reply.status(200).send(message);
-    //         }
-    //         else {
-    //             reply.status(500).send(upsertUserResult)
-    //         }
-    //     } catch (error) {
-    //         reply.send(error.message);
-    //     }
-    // }
 
     export const upsertUser = async (request: any, reply: any) => {
         try {
+            // console.log("Request Body in upsertUser:", request.body);
             const userData = request.body;
-            let upsertUserResult : any = await userService.upsertUser(userData);
-            console.log('>>>>>',upsertUserResult,'>>>>>');
+            const debugUserData = { ...userData };
+            if (debugUserData.userpassword) {
+                debugUserData.userpassword = "***";
+            }
+            console.log("[DEBUG][POST /users] request payload:", debugUserData);
+            let upsertUserResult: any = await userService.upsertUser(userData);
+            console.log("[DEBUG][POST /users] service response command:", upsertUserResult?.command);
             if (upsertUserResult.command == 'UPDATE') {
                 reply.status(200).send('User Updated successfully');
-            } else if(upsertUserResult.command == 'INSERT'){
-                console.log('Inside Insert')
-                reply.status(200).send('User signup done successfully');
+            } else if (upsertUserResult.command == 'INSERT') {
+                reply.status(200).send({ message: 'User signup done successfully', data: upsertUserResult.rows });
+            } else if (upsertUserResult.errorMessage === 'Duplicate Key Exist') {
+                reply.status(404).send(upsertUserResult.errorDetails[0].message)
             }
             else {
-    
+
                 reply.status(401).send(upsertUserResult.message)
             }
         } catch (error) {
-            console.log('Error:',error.message)
+            console.error("Error in upsertUser", error);
             reply.send(error.message);
         }
     }
-    
+
     export const userlogout = async (request: any, reply: any) => {
         try {
             const userData = request.body;
             console.log(request.cookies.sessionId
             );
-            let upsertUserResult = await userService.userlogout(request,reply);
-            console.log(upsertUserResult);
-           
-                reply.status(200).send('Logged Out Successfully')
+            let upsertUserResult = await userService.userlogout(request, reply);
+            reply.status(200).send('Logged Out Successfully')
         } catch (error) {
+            console.error("Error in userlogout", error);
             reply.send(error.message);
         }
     }
@@ -119,7 +131,6 @@ export module userController {
         try {
             const userData = request.body;
             let upsertUserResult = await userService.upsertFcmidUser(userData);
-            console.log(upsertUserResult);
             if (upsertUserResult?.command === "UPDATE" || upsertUserResult?.command === "INSERT") {
                 let message: any = {};
                 message = {
@@ -133,6 +144,7 @@ export module userController {
                 reply.status(500).send(upsertUserResult)
             }
         } catch (error) {
+            console.error("Error in upsertFcmidUser", error);
             reply.send(error.message);
         }
     }

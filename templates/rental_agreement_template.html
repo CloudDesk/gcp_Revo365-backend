@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TEQIT Laptop Rental Agreement</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #000;
+      font-family: Calibri, Arial, Helvetica, sans-serif;
+      font-size: 11pt;
+      line-height: 1.18;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    :root {
+      --page-w: 210mm;
+      --page-h: 297mm;
+      --outer: #1d3651;
+      --rule: #b9c8e9;
+      --grid: #b8bcc2;
+      --grid-dark: #4f4f4f;
+      --shade: #e8edf5;
+      --text: #000;
+      --muted: #4a4a4a;
+    }
+
+    body {
+      background: #fff;
+    }
+
+    .document {
+      width: var(--page-w);
+      margin: 0 auto;
+    }
+
+    .page {
+      position: relative;
+      width: var(--page-w);
+      height: var(--page-h);
+      padding: 14mm 18mm 18mm 18mm;
+      page-break-after: always;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .page:last-child {
+      page-break-after: auto;
+    }
+
+    .frame {
+      position: absolute;
+      top: 3.6mm;
+      left: 3.6mm;
+      right: 3.6mm;
+      bottom: 3.6mm;
+      border: 0.9mm solid var(--outer);
+      pointer-events: none;
+    }
+
+    .content {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6mm;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: flex-start;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .logo-box {
+      display: inline-block;
+      background: #ffd200;
+      color: #08305d;
+      font-weight: 800;
+      font-size: 18pt;
+      line-height: 1;
+      letter-spacing: -0.5px;
+      padding: 1.2pt 4.5pt 1.2pt 4pt;
+      margin-right: 7pt;
+    }
+
+    .title-wrap {
+      flex: 1;
+      min-width: 0;
+      padding-top: 1pt;
+    }
+
+    .mini-title {
+      font-size: 9pt;
+      color: var(--muted);
+      font-weight: 600;
+      line-height: 1.15;
+    }
+
+    .top-rule {
+      height: 0.35mm;
+      background: var(--rule);
+      margin-top: 2pt;
+      width: 100%;
+    }
+
+    .confidential {
+      font-size: 9pt;
+      font-weight: 700;
+      line-height: 1.15;
+      padding-top: 1pt;
+      white-space: nowrap;
+      margin-left: 8pt;
+    }
+
+    .footer {
+      position: absolute;
+      left: 18mm;
+      right: 18mm;
+      bottom: 8.5mm;
+      font-size: 8.5pt;
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    .footer::before {
+      content: "";
+      display: block;
+      height: 0.2mm;
+      background: var(--grid);
+      margin-bottom: 2.5mm;
+    }
+
+    .cover-spacer {
+      height: 22mm;
+    }
+
+    .cover-title {
+      text-align: center;
+      font-size: 27pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin: 0 0 8mm 0;
+      letter-spacing: 0.3px;
+    }
+
+    .cover-subtitle {
+      text-align: center;
+      font-size: 11pt;
+      margin: 0 0 10mm 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .meta-table td {
+      border: 0.22mm solid var(--grid);
+      padding: 6pt 8pt;
+      vertical-align: top;
+      font-size: 10.5pt;
+      line-height: 1.18;
+    }
+
+    .meta-table .label {
+      width: 26%;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .body {
+      font-size: 10.5pt;
+      line-height: 1.18;
+    }
+
+    .section-title {
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin: 0 0 4pt 0;
+    }
+
+    .body p {
+      margin: 0 0 5pt 0;
+    }
+
+    .body ul {
+      margin: 0 0 6pt 0;
+      padding-left: 14pt;
+    }
+
+    .body li {
+      margin: 0 0 4pt 0;
+    }
+
+    .body ul.sub {
+      padding-left: 16pt;
+      list-style-type: circle;
+    }
+
+    .sign-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 22pt;
+      margin-top: 8pt;
+    }
+
+    .sign-block {
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+
+    .sign-head {
+      font-weight: 700;
+      margin-bottom: 8pt;
+    }
+
+    .line-item {
+      display: flex;
+      align-items: flex-end;
+      gap: 6pt;
+      flex-wrap: nowrap;
+      margin-bottom: 5pt;
+    }
+
+    .line-item .lbl {
+      display: block;
+      flex: 0 0 78pt;
+      min-width: 78pt;
+    }
+
+    .line-item .fill {
+      display: block;
+      flex: 1 1 auto;
+      min-width: 0;
+      border-bottom: 0.22mm solid #666;
+      height: 10pt;
+      vertical-align: bottom;
+    }
+
+    .line-item .fill.wide {
+      flex-basis: auto;
+    }
+
+    .line-item .value-line {
+      display: block;
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 12pt;
+      border-bottom: 0.22mm solid #666;
+      padding: 0 2pt 1pt 2pt;
+      vertical-align: bottom;
+    }
+
+    .line-item .value-line.wide {
+      flex-basis: auto;
+    }
+
+    .annex-title {
+      font-size: 11.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin: 0 0 4pt 0;
+    }
+
+    .annex-subtitle {
+      font-size: 10.5pt;
+      font-weight: 700;
+      margin: 0 0 10pt 0;
+    }
+
+    .annex p {
+      margin: 0 0 8pt 0;
+      font-size: 10.5pt;
+      line-height: 1.16;
+    }
+
+    .grid th,
+    .grid td {
+      border: 0.22mm solid var(--grid-dark);
+      padding: 4pt 5pt;
+      vertical-align: top;
+      font-size: 10pt;
+      line-height: 1.08;
+      text-align: left;
+    }
+
+    .grid th {
+      font-weight: 700;
+    }
+
+    .grid.small th,
+    .grid.small td {
+      font-size: 9.6pt;
+      padding: 3.5pt 4.5pt;
+    }
+
+    .info td {
+      border: 0.22mm solid var(--grid);
+      padding: 6pt 7pt;
+      vertical-align: top;
+      font-size: 10.5pt;
+      line-height: 1.12;
+    }
+
+    .info .label {
+      width: 34%;
+      background: var(--shade);
+      font-weight: 700;
+    }
+
+    .underline {
+      display: inline-block;
+      min-width: 110pt;
+      border-bottom: 0.22mm solid #777;
+      height: 10pt;
+      vertical-align: bottom;
+    }
+
+    .underline.short {
+      min-width: 60pt;
+    }
+
+    .underline.medium {
+      min-width: 90pt;
+    }
+
+    .underline.long {
+      min-width: 145pt;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24pt;
+    }
+
+    .bold {
+      font-weight: 700;
+    }
+
+    .italic {
+      font-style: italic;
+    }
+
+    .mt-6 {
+      margin-top: 6pt;
+    }
+
+    .mt-10 {
+      margin-top: 10pt;
+    }
+
+    .mt-14 {
+      margin-top: 14pt;
+    }
+
+    .mt-18 {
+      margin-top: 18pt;
+    }
+
+    .mt-24 {
+      margin-top: 24pt;
+    }
+
+    .nowrap {
+      white-space: nowrap;
+    }
+
+    .tail-sign {
+      margin-top: 58mm;
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="document">
+
+    <section class="page">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="cover-spacer"></div>
+        <h1 class="cover-title">LAPTOP RENTAL AGREEMENT</h1>
+        <p class="cover-subtitle">This Agreement is legally binding. Please read carefully before signing.</p>
+
+        <table class="meta-table">
+          <tr>
+            <td class="label">Agreement Date</td>
+            <td>{{formatDate agreementDate}}</td>
+          </tr>
+          <tr>
+            <td class="label">Agreement No.</td>
+            <td>{{agreementNumber}}</td>
+          </tr>
+          <tr>
+            <td class="label">LESSOR<br>(TEQIT)</td>
+            <td>
+              <span class="bold">{{lessor.companyName}}</span><br>
+              {{lessor.address}}<br>
+              GSTIN: {{lessor.gstin}}
+            </td>
+          </tr>
+          <tr>
+            <td class="label">LESSEE<br>(Customer)</td>
+            <td>
+              {{lessee.customerCompanyName}}<br>
+              {{lessee.registeredAddress}}<br>
+              GSTIN: {{lessee.gstin}}
+            </td>
+          </tr>
+        </table>
+      </div>
+      <div class="footer">Page 1</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <p>TEQIT (hereinafter referred to as "LESSOR") and {{lessee.customerCompanyName}} (hereinafter referred to as
+          "LESSEE") are hereinafter individually referred to as a "Party" and collectively as the "Parties."</p>
+        <p>NOW, THEREFORE, in consideration of the mutual covenants, representations, and agreements set forth herein,
+          and for other good and valuable consideration, the receipt and sufficiency of which are hereby acknowledged,
+          the Parties agree as follows:</p>
+
+        <div class="section-title">1. DEFINITIONS</div>
+        <p>For the purposes of this Agreement, the following terms shall have the meanings ascribed to them below:</p>
+        <ul>
+          <li>"Equipment" or "Device" means the laptops and any associated accessories (bags, chargers, peripherals)
+            listed in Annexure I to this Agreement.</li>
+          <li>"Rental Period" means the duration commencing from the date of delivery of the Equipment to the Lessee and
+            ending as specified in Clause 3 or upon earlier termination in accordance with this Agreement.</li>
+          <li>"Rental Charges" means the monthly rental fee payable by the Lessee to the Lessor as specified in Annexure
+            I, exclusive of applicable taxes.</li>
+          <li>"Security Deposit" means the refundable deposit paid by the Lessee as security against damage, theft,
+            loss, or breach of this Agreement.</li>
+          <li>"Damage" means any physical harm to the Equipment including but not limited to breakage, burns, scratches,
+            cuts, water damage, liquid spills, screen damage, keyboard damage, or any other harm not constituting normal
+            wear and tear.</li>
+          <li>"Theft / Loss" means the disappearance of, or inability to return, the Equipment due to theft, robbery,
+            burglary, negligence, misplacement, or any other cause.</li>
+          <li>"Market Replacement Value" means the current retail price of an equivalent or identical device at the time
+            of loss, theft, or damage as determined by the Lessor.</li>
+        </ul>
+
+        <div class="section-title">2. GRANT OF LEASE</div>
+        <p>The Lessor hereby leases to the Lessee, and the Lessee hereby takes on lease from the Lessor, the Equipment
+          described in Annexure I to this Agreement, on the terms and conditions set forth herein. The Lessee
+          acknowledges that the Equipment is the exclusive property of the Lessor and that this Agreement confers no
+          right of ownership whatsoever upon the Lessee.</p>
+
+        <div class="section-title">3. RENTAL PERIOD AND MINIMUM LOCK-IN</div>
+        <ul>
+          <li>This Agreement shall be effective from the date of signing and shall remain in force for a minimum lock-in
+            period of {{commercial.minimumLockInMonths}} months ("Minimum Term"), commencing from the date of delivery
+            of the Equipment.</li>
+          <li>After the expiry of the Minimum Term, this Agreement shall automatically renew on a month-to-month basis
+            unless either Party provides written notice of termination at least 30 (thirty) days in advance.</li>
+          <li>Early termination by the Lessee before completion of the Minimum Term shall result in forfeiture of the
+            Security Deposit and the Lessee shall be liable to pay the balance rental amount for the remaining Minimum
+            Term as liquidated damages.</li>
+          <li>Early termination by the Lessor for reasons other than breach by the Lessee shall result in the Lessor
+            refunding the Security Deposit within 15 business days of Equipment return, with no further liability.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 2</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="section-title">4. RENTAL CHARGES AND PAYMENT TERMS</div>
+        <ul>
+          <li>The monthly Rental Charges shall be as specified in Annexure I. All charges are exclusive of GST and other
+            applicable taxes, which shall be payable by the Lessee in addition.</li>
+          <li>Rental for the first month shall be calculated on a pro-rata basis from the date of delivery.</li>
+          <li>From the second month onwards, rental shall be paid in advance on or before the 5th (fifth) day of each
+            calendar month.</li>
+          <li>All payments shall be made by NEFT / RTGS / UPI / account payee cheque in favour of TEQIT. Cash payments
+            shall not be accepted.</li>
+          <li>In the event of delayed payment beyond the 5th of any month, a late payment penalty of 2% (two percent)
+            per month on the outstanding amount shall be levied and shall be payable in addition to the due rental.</li>
+          <li>If payment remains outstanding for more than 15 (fifteen) days beyond the due date, the Lessor reserves
+            the right to repossess the Equipment without further notice and without liability.</li>
+          <li>The Lessor reserves the right to revise the Rental Charges with 30 (thirty) days' prior written notice to
+            the Lessee. Any revision shall apply from the next billing cycle after the notice period.</li>
+        </ul>
+
+        <div class="section-title">5. SECURITY DEPOSIT / Advance rental</div>
+        <ul>
+          <li>The Lessee shall, prior to or at the time of delivery of the Equipment, pay a Security Deposit equivalent
+            to {{defaultText commercial.securityDepositMonths "___"}} months' rental to the Lessor by account payee cheque or bank
+            transfer.</li>
+          <li>The Security Deposit shall be held by the Lessor as security against damage, theft, loss, unpaid rentals,
+            or any other breach by the Lessee under this Agreement.</li>
+          <li>The Security Deposit shall NOT be adjusted against any monthly rental.</li>
+          <li>Upon the satisfactory return of Equipment in good working condition, settlement of all outstanding dues,
+            and completion of the Rental Period, the Security Deposit shall be refunded within 15 (fifteen) business
+            days after the Lessor's inspection confirms no damage or loss.</li>
+          <li>If damage or loss is identified upon return, the cost of repair or replacement shall be deducted from the
+            Security Deposit, and any shortfall shall be payable immediately by the Lessee.</li>
+        </ul>
+
+        <div class="section-title">6. LOGISTICS AND DELIVERY</div>
+        <ul>
+          <li>Delivery of Equipment shall be made to the address specified by the Lessee. The Lessee shall ensure a
+            responsible person is available to receive and sign the Delivery Acknowledgement (Annexure II) at the time
+            of delivery.</li>
+          <li>All logistics costs, including transportation, packaging, and insurance in transit, for delivery and
+            return of Equipment shall be borne by the Lessee at actuals, unless otherwise agreed in writing.</li>
+          <li>Risk of loss or damage to the Equipment passes to the Lessee upon delivery and remains with the Lessee
+            until the Equipment is physically received back by and signed for by an authorised representative of the
+            Lessor.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 3</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <ul>
+          <li>The Lessee shall not relocate the Equipment to any address other than the one stated in this Agreement
+            without prior written consent from the Lessor. Any unauthorised relocation shall be treated as a breach of
+            this Agreement.</li>
+        </ul>
+
+        <div class="section-title">7. CONDITION OF EQUIPMENT AT DELIVERY</div>
+        <ul>
+          <li>The Lessor warrants that the Equipment shall be delivered in good working order and functional condition.
+          </li>
+          <li>The Lessee shall inspect all Equipment at the time of delivery and document any pre-existing damage or
+            defects in the Delivery Acknowledgement (Annexure II). Photographs of pre-existing conditions are
+            encouraged.</li>
+          <li>If the Lessee does not report any defects or issues to the Lessor in writing within 48 (forty-eight) hours
+            of delivery, the Equipment shall be deemed to have been received in perfect working condition, and the
+            Lessee shall be responsible for all subsequent damage.</li>
+          <li>Any issues not reported within the above period will be treated as damage caused by the Lessee.</li>
+        </ul>
+
+        <div class="section-title">8. LESSEE’S OBLIGATIONS – CARE AND USE OF EQUIPMENT</div>
+        <p>The Lessee hereby agrees to the following obligations regarding the use and care of the Equipment:</p>
+        <ul>
+          <li>Use the Equipment only for lawful business purposes and in a careful and proper manner, consistent with
+            how a prudent owner would use their own property.</li>
+          <li>Not use the Equipment for any illegal activities, including but not limited to piracy, hacking, data
+            theft, or any activity in violation of applicable law.</li>
+          <li>Keep the Equipment in a secure location and take all reasonable precautions to prevent theft, damage, or
+            loss.</li>
+          <li>Not allow any third party to use the Equipment without written permission from the Lessor. The Lessee
+            shall be liable for any damage caused by third-party use, whether authorised or not.</li>
+          <li>Not open, dismantle, modify, attempt to repair, or tamper with the Equipment in any manner without prior
+            written consent from the Lessor. Any such unauthorised interference shall void all maintenance obligations
+            of the Lessor, and the Lessee shall be liable for all resulting damage.</li>
+          <li>Not remove, deface, or alter any identification marks, asset tags, serial number stickers, or other
+            identification markings placed on the Equipment by the Lessor.</li>
+          <li>Not install unauthorised or pirated software on the Equipment. Lessee assumes full legal and financial
+            responsibility for any software installed by them.</li>
+          <li>Not pledge, mortgage, sub-lease, assign, or otherwise encumber the Equipment or any interest therein.</li>
+          <li>Immediately notify the Lessor in writing in the event of any damage, malfunction, theft, or loss of
+            Equipment.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 4</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="section-title">9. LIABILITY FOR DAMAGE</div>
+        <p>The Lessee shall be fully liable for any physical damage to the Equipment occurring during the Rental Period,
+          including but not limited to:</p>
+        <ul>
+          <li>Accidental damage: drops, screen cracks, Screen Line, keyboard damage, broken hinges, damaged ports.</li>
+          <li>Liquid damage: water, beverages, or any liquid ingress into the Equipment.</li>
+          <li>Burn damage: heat-related damage from exposure to fire, sunlight, or other heat sources.</li>
+          <li>Vandalism or deliberate damage.</li>
+          <li>Damage caused by use of the Equipment with unauthorised or incompatible accessories or power adaptors.
+          </li>
+        </ul>
+
+        <p>Upon occurrence of damage:</p>
+        <ul class="sub">
+          <li>The Lessee shall immediately notify the Lessor in writing with a detailed description and photographs of
+            the damage.</li>
+          <li>The Lessor shall assess the damage and raise an invoice for repair or replacement at the Market
+            Replacement Value.</li>
+          <li>The Lessee shall settle the invoice within 7 (seven) business days of its receipt.</li>
+          <li>Monthly Rental Charges shall continue to accrue until full payment of the damage invoice is received, even
+            if the Equipment is non-functional.</li>
+          <li>The Lessor shall not be responsible for any loss of data, software, or applications on the Equipment.
+            Reinstallation of OS or applications shall not waive the Lessee’s liability for damage.</li>
+        </ul>
+
+        <div class="section-title">10. LIABILITY FOR THEFT, LOSS, OR MYSTERIOUS DISAPPEARANCE</div>
+        <p>This clause is of paramount importance, and the Lessee acknowledges having read and understood it fully:</p>
+        <ul>
+          <li>In the event of theft, robbery, burglary, or loss of any Equipment, the Lessee shall bear full financial
+            responsibility and shall compensate the Lessor at the Market Replacement Value of the stolen or lost
+            Equipment.</li>
+          <li>The Lessee shall report the theft or loss to the concerned police authorities and lodge a First
+            Information Report (FIR) or Non-Cognizable Complaint (NC) immediately upon discovering the theft or loss and
+            shall furnish a certified copy of the FIR / NC to the Lessor within 24 (twenty-four) hours of filing the
+            same.</li>
+          <li>The filing of an FIR / NC does NOT absolve the Lessee of financial liability to the Lessor. The Lessee
+            shall remain liable to pay the Market Replacement Value regardless of whether the culprit is found or the
+            device is recovered.</li>
+          <li>In the event of a mysterious disappearance (i.e., the Equipment cannot be found and there is no evidence
+            of theft), the same shall be treated as theft for the purposes of this Agreement, and the Lessee shall be
+            fully liable.</li>
+          <li>The Lessee must provide a letter on company letterhead describing the circumstances of the theft or loss,
+            duly signed by an authorised signatory of the Lessee company, within 3 (three) business days of the
+            incident.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 5</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <ul>
+          <li>If the Equipment is recovered after compensation has been paid, title to the recovered Equipment shall
+            vest in the Lessor and there shall be no obligation to refund the compensation paid.</li>
+          <li>Monthly Rental Charges shall continue to accrue until the Lessor receives full replacement compensation,
+            unless the Lessor expressly waives this in writing.</li>
+          <li>The Lessor reserves the right to initiate civil and/or criminal legal proceedings in addition to
+            recovering the Market Replacement Value.</li>
+        </ul>
+
+        <div class="section-title">11. MAINTENANCE, SUPPORT, AND REPAIRS</div>
+        <ul>
+          <li>The Lessor shall maintain the Equipment in good working condition during the Rental Period at its own
+            cost, provided the Equipment has not been damaged by the Lessee.</li>
+          <li>In the event of a hardware malfunction or failure due to normal wear and tear, the Lessor shall attend to
+            the issue within 3 (three) working days of receipt of written notification from the Lessee.</li>
+          <li>A replacement device may be provided at the Lessor’s discretion while the original device is under repair.
+            Rental shall continue for the period of repair.</li>
+          <li>Repair or replacement of Equipment damaged by the Lessee shall be carried out only after the Lessee has
+            paid the applicable damage invoice as specified in Clause 9.</li>
+          <li>The Lessor and its employees or authorised agents shall not be responsible for any loss of data,
+            application licensing, or any other software-related loss arising out of maintenance activities, OS
+            reinstallation, driver updates, or troubleshooting operations.</li>
+          <li>The Lessee shall provide reasonable access and cooperation to the Lessor’s representatives for the purpose
+            of inspection, maintenance, repair, or recovery of Equipment.</li>
+        </ul>
+
+        <div class="section-title">12. OWNERSHIP AND INTELLECTUAL PROPERTY</div>
+        <ul>
+          <li>The Lessor shall at all times retain full ownership, title, and interest in and to the Equipment. No right
+            or interest of ownership, whether express or implied, shall be transferred to the Lessee by virtue of this
+            Agreement or the payment of rentals.</li>
+          <li>The Lessee shall have no right to sell, transfer, assign, pledge, mortgage, hypothecate, sub-let, or
+            otherwise deal with the Equipment as if they were the owner.</li>
+          <li>Any attempt by the Lessee to assign or transfer the Equipment or any right there in without the Lessor’s
+            written consent shall be void and shall constitute a material breach of this Agreement.</li>
+          <li>The Lessor’s name, logo, brand, and any proprietary software installed on the Equipment remain the sole
+            intellectual property of the Lessor.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 6</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="section-title">13. RETURN OF EQUIPMENT</div>
+        <ul>
+          <li>Upon expiry or termination of this Agreement, the Lessee shall return all Equipment to the Lessor within 3
+            (three) business days, in the same condition as received (fair wear and tear excepted), along with all
+            accessories (chargers, bags, peripherals) listed in Annexure I.</li>
+          <li>The Lessee shall ensure all personal and/or company data is backed up and removed from the Equipment prior
+            to return. The Lessor shall bear no responsibility for data remaining on the Equipment at the time of
+            return.</li>
+          <li>Upon receipt, the Lessor shall inspect the Equipment within 3 (three) business days. Any damage or missing
+            accessories identified shall be documented and invoiced to the Lessee.</li>
+          <li>If the Lessee fails to return the Equipment within the prescribed period, the Lessor reserves the right
+            to:</li>
+        </ul>
+        <ul class="sub">
+          <li>Continue to charge rental at the prevailing monthly rate on a per-day pro-rata basis until the Equipment
+            is returned.</li>
+          <li>Treat the non-return as theft and initiate legal proceedings as appropriate.</li>
+          <li>Deduct the Market Replacement Value from the Security Deposit and claim the balance from the Lessee.</li>
+        </ul>
+        <ul>
+          <li>Failure to return Equipment shall NOT be treated as a purchase. No payment, however large, shall create a
+            right of ownership in the Lessee.</li>
+        </ul>
+
+        <div class="section-title">14. BREACH, REPOSSESSION, AND TERMINATION</div>
+        <p>Any of the following events shall constitute a material breach of this Agreement:</p>
+        <ul>
+          <li>Non-payment of Rental Charges for more than 15 (fifteen) days beyond the due date.</li>
+          <li>Theft, loss, or deliberate damage to the Equipment.</li>
+          <li>Unauthorised sub-letting, transferring, or pledging of the Equipment.</li>
+          <li>Relocation of Equipment without prior written consent.</li>
+          <li>Tampering or unauthorised modifications to the Equipment.</li>
+          <li>Insolvency, winding up, or bankruptcy of the Lessee.</li>
+          <li>Any other material breach of the terms of this Agreement.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 7</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <p>Upon occurrence of a material breach, the Lessor shall have the right to:</p>
+        <ul class="sub">
+          <li>Terminate this Agreement with immediate effect by written notice.</li>
+          <li>Repossess the Equipment without prior notice and without liability.</li>
+          <li>Forfeit the Security Deposit in its entirety.</li>
+          <li>Invoice the Lessee for all unpaid rentals, damage costs, and replacement costs.</li>
+          <li>Initiate civil and/or criminal legal proceedings to recover Equipment or dues.</li>
+        </ul>
+
+        <div class="section-title">15. INSURANCE</div>
+        <ul>
+          <li>The Lessee is strongly advised to take out appropriate insurance coverage for the Equipment against theft,
+            accidental damage, and natural disasters for the duration of the Rental Period.</li>
+          <li>The Lessee’s failure to obtain insurance shall not diminish the Lessee’s liability to the Lessor under
+            this Agreement.</li>
+          <li>Any insurance payout received by the Lessee in respect of the Equipment shall be remitted directly to the
+            Lessor in satisfaction of the Lessee’s liability hereunder.</li>
+        </ul>
+
+        <div class="section-title">16. INDEMNIFICATION</div>
+        <p>The Lessee shall indemnify, defend, and hold harmless the Lessor, its directors, employees, agents, and
+          affiliates from and against any and all claims, losses, damages, liabilities, penalties, costs, and expenses
+          (including reasonable legal fees) arising out of or relating to:</p>
+        <ul>
+          <li>Any use or misuse of the Equipment by the Lessee or any third party.</li>
+          <li>Any breach of the terms of this Agreement by the Lessee.</li>
+          <li>Any damage to person or property caused by the Equipment while in the possession of the Lessee.</li>
+          <li>Any violation of applicable law by the Lessee in connection with the use of the Equipment.</li>
+        </ul>
+
+        <div class="section-title">17. LIMITATION OF LESSOR’S LIABILITY</div>
+        <p>To the maximum extent permitted by applicable law, the Lessor shall not be liable for:</p>
+        <ul>
+          <li>Any indirect, incidental, special, consequential, or punitive damages arising from this Agreement.</li>
+          <li>Any loss of data, business, revenue, or profits arising from malfunction of the Equipment or interruption
+            of service.</li>
+          <li>Any losses arising from the Lessee’s inability to use the Equipment during a repair period.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 8</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="section-title">18. CONFIDENTIALITY</div>
+        <p>Both Parties agree to maintain the confidentiality of the terms of this Agreement and any proprietary
+          information exchanged between them and shall not disclose such information to any third party without prior
+          written consent, except as required by applicable law.</p>
+
+        <div class="section-title">19. DISPUTE RESOLUTION</div>
+        <ul>
+          <li>The Parties shall first attempt to resolve any dispute, controversy, or claim arising out of or in
+            connection with this Agreement through mutual negotiation in good faith within 30 (thirty) days of one Party
+            notifying the other of the dispute.</li>
+          <li>If the dispute is not resolved through negotiation, the Parties agree to submit the dispute to arbitration
+            in accordance with the Arbitration and Conciliation Act, 1996, as amended. The arbitration shall be
+            conducted by a sole arbitrator mutually agreed upon by the Parties. The seat and venue of arbitration shall
+            be {{commercial.city}}.</li>
+          <li>The language of arbitration shall be English. The arbitrator’s decision shall be final and binding.</li>
+        </ul>
+
+        <div class="section-title">20. GOVERNING LAW AND JURISDICTION</div>
+        <p>This Agreement shall be governed by and construed in accordance with the laws of India. Subject to Clause 19,
+          the courts at {{commercial.city}}, India, shall have exclusive jurisdiction over any disputes arising from
+          this Agreement.</p>
+
+        <div class="section-title">21. FORCE MAJEURE</div>
+        <p>Neither Party shall be held liable for any failure or delay in performance of its obligations under this
+          Agreement to the extent such failure or delay is caused by circumstances beyond its reasonable control,
+          including but not limited to acts of God, natural disasters, epidemics, pandemics, war, civil unrest,
+          government action, or power outages. The Party claiming force majeure shall give prompt written notice to the
+          other Party. If a force majeure event continues for more than 60 (sixty) days, either Party may terminate this
+          Agreement by written notice.</p>
+
+        <div class="section-title">22. NOTICES</div>
+        <p>All notices, requests, demands, or communications under this Agreement shall be made in writing and delivered
+          by: (a) email with read receipt; (b) courier with proof of delivery; or (c) registered post. Notices to the
+          Lessor shall be addressed to {{lessor.noticeEmailOrAddress}}. Notices to the Lessee shall be addressed to the
+          email and address provided in this Agreement.</p>
+
+        <div class="section-title">23. ENTIRE AGREEMENT AND AMENDMENTS</div>
+        <ul>
+          <li>This Agreement (including all Annexures) constitutes the entire agreement between the Parties with respect
+            to the subject matter hereof and supersedes all prior negotiations, understandings, representations, and
+            agreements between the Parties.</li>
+          <li>No amendment, modification, or waiver of any provision of this Agreement shall be effective unless made in
+            writing and duly signed by authorised representatives of both Parties.</li>
+          <li>A waiver by either Party of any breach of any provision shall not be construed as a continuing waiver of
+            that or any other provision.</li>
+        </ul>
+      </div>
+      <div class="footer">Page 9</div>
+    </section>
+
+    <section class="page body">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="section-title">24. SEVERABILITY</div>
+        <p>If any provision of this Agreement is held to be invalid, illegal, or unenforceable under applicable law,
+          such provision shall be modified to the minimum extent necessary to make it enforceable, and the remaining
+          provisions of this Agreement shall continue in full force and effect.</p>
+
+        <div class="section-title">25. COUNTERPARTS</div>
+        <p>This Agreement may be executed in two or more counterparts, each of which shall be deemed an original, and
+          all of which together shall constitute one and the same instrument. Electronic signatures and copies shall be
+          as effective as originals.</p>
+
+        <div class="section-title">SIGNATURES</div>
+        <p>IN WITNESS WHEREOF, the Parties have executed this Laptop Rental Agreement as of the date first written
+          above.</p>
+
+        <div class="sign-grid">
+          <div class="sign-block">
+            <div class="sign-head">For and on behalf of LESSOR<br>TEQIT</div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{lessor.companyName}}</span></div>
+            <div class="line-item"><span class="lbl">Designation:</span><span class="value-line"></span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate agreementDate}}</span></div>
+            <div class="line-item"><span class="lbl">Company Seal:</span></div>
+          </div>
+          <div class="sign-block">
+            <div class="sign-head">For and on behalf of LESSEE<br>{{lessee.customerCompanyName}}</div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.lesseeSignatoryName ""}}</span></div>
+            <div class="line-item"><span class="lbl">Designation:</span><span class="value-line">{{defaultText signatures.lesseeSignatoryDesignation ""}}</span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate agreementDate}}</span></div>
+            <div class="line-item"><span class="lbl">Company Seal:</span></div>
+          </div>
+        </div>
+
+        <div class="mt-18"></div>
+
+        <div class="sign-grid">
+          <div class="sign-block">
+            <div class="sign-head">Witness 1</div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.witness1Name ""}}</span></div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide"></span></div>
+          </div>
+          <div class="sign-block">
+            <div class="sign-head">Witness 2</div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.witness2Name ""}}</span></div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer">Page 10</div>
+    </section>
+
+    <section class="page annex">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="annex-title">ANNEXURE I – EQUIPMENT SCHEDULE</div>
+        <div class="annex-subtitle">Details of Equipment Rented Out</div>
+
+        <p><span class="nowrap">Agreement No.: {{agreementNumber}}</span>&nbsp;&nbsp;&nbsp; <span
+            class="nowrap">Customer: {{lessee.customerCompanyName}}</span><br>Date: {{formatDate annexure1.date}}</p>
+
+        <table class="grid small">
+          <thead>
+            <tr>
+              <th style="width:8%;">S.No.</th>
+              <th style="width:10%;">Asset No.</th>
+              <th style="width:12%;">Date of Delivery</th>
+              <th style="width:12%;">Make &amp; Model</th>
+              <th style="width:11%;">Serial No.</th>
+              <th style="width:16%;">Accessories</th>
+              <th style="width:13%;">Monthly Rental<br>(excl. GST)</th>
+              <th style="width:18%;">Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{#each annexure1.equipmentRows}}
+            <tr>
+              <td>{{sno}}</td>
+              <td>{{assetNo}}</td>
+              <td>{{formatDate dateOfDelivery}}</td>
+              <td>{{makeModel}}</td>
+              <td>{{serialNo}}</td>
+              <td>{{defaultText accessories ""}}</td>
+              <td>Rs. {{formatCurrency monthlyRentalExclGst}}/month</td>
+              <td>{{defaultText remarks ""}}</td>
+            </tr>
+            {{/each}}
+            <tr>
+              <td colspan="6" class="bold">TOTAL MONTHLY RENTAL (excl. GST)</td>
+              <td class="bold">Rs. {{formatCurrency annexure1.totalMonthlyRentalExclGst}}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="mt-14"></div>
+
+        <table class="info">
+          <tr>
+            <td class="label">Security Deposit Amount</td>
+            <td>Rs. {{#if annexure1.securityDepositAmount}}{{formatCurrency annexure1.securityDepositAmount}}{{/if}}</td>
+            <td>Cheque/Transfer&nbsp;&nbsp;&nbsp;&nbsp;Ref: {{defaultText annexure1.chequeTransferRef ""}}</td>
+          </tr>
+          <tr>
+            <td class="label">Minimum Lock-in Period</td>
+            <td colspan="2">{{annexure1.minimumLockInPeriodMonths}} months</td>
+          </tr>
+          <tr>
+            <td class="label">Delivery Address</td>
+            <td colspan="2" style="height:50pt;">{{annexure1.deliveryAddress}}</td>
+          </tr>
+        </table>
+
+        <div class="mt-24"></div>
+        <p class="bold">Received and acknowledged by the LESSEE:</p>
+
+        <div class="mt-18 two-col">
+          <div class="sign-block">
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.lesseeSignatoryName ""}}</span></div>
+          </div>
+          <div class="sign-block">
+            <div class="line-item"><span class="lbl">Designation:</span><span class="value-line">{{defaultText signatures.lesseeSignatoryDesignation ""}}</span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate agreementDate}}</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer">Page 11</div>
+    </section>
+
+    <section class="page annex">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="annex-title">ANNEXURE II – DELIVERY ACKNOWLEDGEMENT &amp; CONDITION REPORT</div>
+
+        <p>Agreement No.: {{agreementNumber}}<br>
+          Customer Name: {{annexure2.customerName}}<br>
+          Delivery Date: {{formatDate annexure2.deliveryDate}}<br>
+          Delivery Address: {{annexure2.deliveryAddress}}</p>
+
+        <div class="mt-14"></div>
+        <p>The Lessee hereby acknowledges receipt of the following Equipment and confirms the condition as noted below:
+        </p>
+
+        <table class="grid small">
+          <thead>
+            <tr>
+              <th style="width:9%;">S.No.</th>
+              <th style="width:12%;">Asset No.</th>
+              <th style="width:18%;">Model</th>
+              <th style="width:14%;">Serial No.</th>
+              <th style="width:19%;">Condition on Delivery<br>(Good / Damage noted)</th>
+              <th>Pre-existing Damage Notes (if any)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{#each annexure2.deliveryRows}}
+            <tr>
+              <td>{{sno}}</td>
+              <td>{{assetNo}}</td>
+              <td>{{model}}</td>
+              <td>{{serialNo}}</td>
+              <td>{{defaultText conditionOnDelivery ""}}</td>
+              <td>{{defaultText preExistingDamageNotes ""}}</td>
+            </tr>
+            {{/each}}
+          </tbody>
+        </table>
+
+        <div class="mt-14"></div>
+        <p>I/We confirm that the above Equipment has been inspected and received. Any unlisted pre-existing issues will
+          be notified to the Lessor in writing within 48 hours of this delivery. Failure to do so shall be deemed
+          acceptance of Equipment in good condition.</p>
+
+        <div class="mt-18 two-col">
+          <div class="sign-block">
+            <div class="sign-head">For TEQIT (Delivered by):</div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{lessor.companyName}}</span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate annexure2.deliveryDate}}</span></div>
+          </div>
+          <div class="sign-block">
+            <div class="sign-head">For {{lessee.customerCompanyName}} (Received by):</div>
+            <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+            <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.lesseeSignatoryName ""}}</span></div>
+            <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate annexure2.deliveryDate}}</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer">Page 12</div>
+    </section>
+
+    <section class="page annex">
+      <div class="frame"></div>
+      <div class="content">
+        <div class="header">
+          <div class="header-left">
+            <div class="logo-box">TEQIT!</div>
+            <div class="title-wrap">
+              <div class="mini-title">Laptop Rental Agreement</div>
+              <div class="top-rule"></div>
+            </div>
+          </div>
+          <div class="confidential">Confidential</div>
+        </div>
+
+        <div class="annex-title">ANNEXURE III – THEFT / LOSS INCIDENT DECLARATION</div>
+        <p class="italic">(To be submitted on Lessee’s Company Letterhead within 3 business days of incident)</p>
+
+        <p>Date: {{formatDate annexure3.declarationDate}}<br>
+          To,<br>
+          TEQIT,<br>
+          {{annexure3.letterheadAddress}}</p>
+
+        <p>Subject: Declaration of Theft / Loss of Rented Equipment</p>
+        <p>Dear Sir/Madam,</p>
+
+        <p>We, {{lessee.customerCompanyName}}, hereby formally declare that the under-mentioned Equipment rented from TEQIT
+          under Agreement No. {{agreementNumber}} has been stolen / lost under the following circumstances:</p>
+
+        <table class="grid small">
+          <tbody>
+            <tr>
+              <td style="width:32%;" class="bold">Date of Incident</td>
+              <td>{{formatDate annexure3.incidentDate}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Time of Incident</td>
+              <td>{{defaultText annexure3.incidentTime ""}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Location of Incident</td>
+              <td>{{defaultText annexure3.incidentLocation ""}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Asset No(s). Affected</td>
+              <td>{{joinArr annexure3.affectedAssetNos ", "}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Serial No(s.) Affected</td>
+              <td>{{joinArr annexure3.affectedSerialNos ", "}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Circumstances of Theft / Loss</td>
+              <td>{{defaultText annexure3.circumstances ""}}</td>
+            </tr>
+            <tr>
+              <td class="bold">FIR / NC Number</td>
+              <td>{{defaultText annexure3.firNcNumber ""}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Police Station</td>
+              <td>{{defaultText annexure3.policeStation ""}}</td>
+            </tr>
+            <tr>
+              <td class="bold">Date of FIR / NC Filing</td>
+              <td>{{formatDate annexure3.firNcFilingDate}}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="mt-14"></div>
+        <p>We understand and accept that we are fully liable to compensate TEQIT for the Market Replacement Value of the
+          stolen/lost Equipment, and that this declaration does not affect or reduce our financial liability under the
+          Rental Agreement.</p>
+        <p>We attach herewith a copy of the FIR / NC filed with the police.</p>
+
+        <div class="tail-sign">
+          <div class="bold" style="margin-bottom:8pt;">Authorised Signatory:</div>
+          <div class="line-item"><span class="lbl">Signature:</span><span class="fill"></span></div>
+          <div class="line-item"><span class="lbl">Name:</span><span class="value-line wide">{{defaultText signatures.lesseeSignatoryName ""}}</span></div>
+          <div class="line-item"><span class="lbl">Designation:</span><span class="value-line">{{defaultText signatures.lesseeSignatoryDesignation ""}}</span></div>
+          <div class="line-item"><span class="lbl">Date:</span><span class="value-line wide">{{formatDate annexure3.declarationDate}}</span></div>
+          <div class="line-item"><span class="lbl">Company Seal:</span></div>
+        </div>
+      </div>
+      <div class="footer">Page 13</div>
+    </section>
+
+  </div>
+</body>
+
+</html>
