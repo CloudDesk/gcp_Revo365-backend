@@ -1,9 +1,340 @@
 import { PROTOCOL } from "../config/config.js";
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
-import { sendMail } from "../Gmail/gmail.js";
+import { sendTransactionalMail } from "../Gmail/gmail.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
+import { accessScopeService } from "./accessScope.service.js";
+// ─── Email Helpers (Internal) ───────────────────────────────────────────────
+const replaceTemplateTokens = (input, replacements) => {
+    let output = input || "";
+    for (const [key, value] of Object.entries(replacements)) {
+        const token = new RegExp(`\\{${key}\\}`, "g");
+        output = output.replace(token, value ?? "");
+    }
+    return output;
+};
+const parseEmailList = (raw) => {
+    if (!raw || typeof raw !== "string")
+        return [];
+    return raw
+        .split(",")
+        .map((e) => e.trim())
+        .filter((e) => e.length > 0);
+};
+const getCustomerByUserId = async (userid) => {
+    if (!userid)
+        return null;
+    const result = await query(`SELECT id, firstname, useremail FROM users WHERE id = $1 LIMIT 1`, [userid]);
+    return result.rows[0] ?? null;
+};
+const getInventoryUserById = async (id) => {
+    if (!id)
+        return null;
+    const result = await query(`SELECT id, firstname, useremail FROM inventoryusers WHERE id = $1 LIMIT 1`, [id]);
+    return result.rows[0] ?? null;
+};
+const fireAssignedEmail = async (assignedid, ticketnumber, productname, issuedescription) => {
+    try {
+        const tech = await getInventoryUserById(assignedid);
+        if (tech && tech.useremail) {
+            const t = emailTemplates.tickets.assigned;
+            await sendTransactionalMail({
+                to: tech.useremail,
+                subject: t.subject.replace('{ticketNumber}', ticketnumber),
+                text: t.text
+                    .replace('{technicianName}', tech.firstname || 'Technician')
+                    .replace('{ticketNumber}', ticketnumber)
+                    .replace('{productName}', productname || 'your product')
+                    .replace('{issueDescription}', issuedescription || 'N/A')
+            });
+        }
+    }
+    catch (e) {
+        console.error('[fireAssignedEmail] Error:', e?.message || e);
+    }
+};
+const fireReassignedEmail = async (newAssignedId, ticketnumber, productname, issuedescription, previousTechnicianName) => {
+    try {
+        const tech = await getInventoryUserById(newAssignedId);
+        if (!tech?.useremail)
+            return;
+        const subject = `Service Ticket Reassigned — #${ticketnumber}`;
+        const text = `Hi ${tech.firstname || "Technician"},
+
+This service ticket has been reassigned to you.
+
+Ticket Number        : ${ticketnumber}
+Product              : ${productname || "your product"}
+Issue                : ${issuedescription || "N/A"}
+Previously Assigned  : ${previousTechnicianName || "N/A"}
+
+Please review the ticket and continue updates from the service portal.
+
+Thank You,
+Revo Service Team`;
+        await sendTransactionalMail({
+            to: tech.useremail,
+            subject,
+            text,
+        });
+    }
+    catch (e) {
+        console.error("[fireReassignedEmail] Error:", e?.message || e);
+    }
+};
+const fireCustomerCreatedEmail = async (ticketRow, customer) => {
+    try {
+        if (!customer?.useremail)
+            return;
+        const t = emailTemplates.tickets.new;
+        await sendTransactionalMail({
+            to: customer.useremail,
+            subject: replaceTemplateTokens(t.subject, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+            text: replaceTemplateTokens(t.text, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+        });
+    }
+    catch (e) {
+        console.error("[fireCustomerCreatedEmail] Error:", e?.message || e);
+    }
+};
+const fireAdminNewTicketEmail = async (ticketRow) => {
+    try {
+        const recipients = parseEmailList(ticketRow?.receiversemail);
+        if (recipients.length === 0)
+            return;
+        const t = emailTemplates.tickets.admin_new_ticket;
+        await sendTransactionalMail({
+            to: recipients.join(","),
+            subject: replaceTemplateTokens(t.subject, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+            }),
+            text: replaceTemplateTokens(t.text, {
+                ticketNumber: ticketRow.ticketnumber || "N/A",
+                productName: ticketRow.productname || "your product",
+                issueDescription: ticketRow.issuedescription || "N/A",
+                location: ticketRow.location || "N/A",
+            }),
+        });
+    }
+    catch (e) {
+        console.error("[fireAdminNewTicketEmail] Error:", e?.message || e);
+    }
+};
+const fireCustomerStatusEmail = async (ticketRow, customer) => {
+    try {
+        if (!customer?.useremail || !ticketRow?.ticketstatus)
+            return;
+        const t = emailTemplates.tickets[ticketRow.ticketstatus];
+        const replacements = {
+            ticketNumber: ticketRow.ticketnumber || "N/A",
+            productName: ticketRow.productname || "your product",
+            issueDescription: ticketRow.issuedescription || "N/A",
+            totalPayable: ticketRow.totalpayableamount != null
+                ? `\u20B9${ticketRow.totalpayableamount}`
+                : "N/A",
+            estimationUrl: ticketRow.estimationurl || "N/A",
+            amount: ticketRow.amount != null ? `\u20B9${ticketRow.amount}` : "N/A",
+            paymentMethod: ticketRow.paymentmethod || "N/A",
+            invoiceUrl: ticketRow.invoiceurl || "N/A",
+            location: ticketRow.location || "N/A",
+            technicianName: ticketRow.assignedto || "Technician",
+            status: ticketRow.ticketstatus || "N/A",
+        };
+        if (!t) {
+            // Generic fallback for statuses that do not yet have dedicated templates.
+            await sendTransactionalMail({
+                to: customer.useremail,
+                subject: `Service Request #${ticketRow.ticketnumber} Status Updated`,
+                text: `Hi,
+
+Your service request status has been updated.
+
+Ticket Number : ${ticketRow.ticketnumber || "N/A"}
+New Status    : ${ticketRow.ticketstatus || "N/A"}
+Product       : ${ticketRow.productname || "your product"}
+
+Thank You,
+Revo Service Team`,
+            });
+            return;
+        }
+        await sendTransactionalMail({
+            to: customer.useremail,
+            subject: replaceTemplateTokens(t.subject, replacements),
+            text: replaceTemplateTokens(t.text, replacements),
+        });
+    }
+    catch (e) {
+        console.error("[fireCustomerStatusEmail] Error:", e?.message || e);
+    }
+};
+const firePaymentReceivedEmail = async (ticketnumber, amount, paymentmethod) => {
+    try {
+        const result = await query(`
+            SELECT u.useremail 
+            FROM tickets t
+            JOIN users u ON t.userid = u.id
+            WHERE t.ticketnumber = $1
+            LIMIT 1
+        `, [ticketnumber]);
+        if (result.rows.length > 0 && result.rows[0].useremail) {
+            const customer = result.rows[0];
+            const t = emailTemplates.tickets.payment_received;
+            await sendTransactionalMail({
+                to: customer.useremail,
+                subject: t.subject.replace('{ticketNumber}', ticketnumber),
+                text: t.text
+                    .replace('{ticketNumber}', ticketnumber)
+                    .replace('{amount}', amount ? `\u20B9${amount}` : 'N/A')
+                    .replace('{paymentMethod}', paymentmethod || 'N/A')
+            });
+        }
+    }
+    catch (e) {
+        console.error('[firePaymentReceivedEmail] Error:', e?.message || e);
+    }
+};
+const processTicketNotifications = async (previousTicket, currentTicket, isInsert) => {
+    if (!currentTicket)
+        return;
+    const customer = await getCustomerByUserId(currentTicket.userid);
+    if (isInsert) {
+        await fireCustomerCreatedEmail(currentTicket, customer);
+        await fireAdminNewTicketEmail(currentTicket);
+    }
+    const prevAssignedId = previousTicket?.assignedid
+        ? Number(previousTicket.assignedid)
+        : null;
+    const currAssignedId = currentTicket?.assignedid
+        ? Number(currentTicket.assignedid)
+        : null;
+    const assignedChanged = prevAssignedId !== currAssignedId;
+    if (currAssignedId && (isInsert || assignedChanged)) {
+        if (!isInsert && prevAssignedId && prevAssignedId !== currAssignedId) {
+            const prevTech = await getInventoryUserById(prevAssignedId);
+            await fireReassignedEmail(currAssignedId, currentTicket.ticketnumber, currentTicket.productname, currentTicket.issuedescription, prevTech?.firstname || "Technician");
+        }
+        else {
+            await fireAssignedEmail(currAssignedId, currentTicket.ticketnumber, currentTicket.productname, currentTicket.issuedescription);
+        }
+    }
+    const prevStatus = previousTicket?.ticketstatus || null;
+    const currStatus = currentTicket?.ticketstatus || null;
+    const statusChanged = !isInsert && !!currStatus && prevStatus !== currStatus;
+    if (statusChanged) {
+        await fireCustomerStatusEmail(currentTicket, customer);
+    }
+};
+const TICKET_INTEGER_FIELDS = new Set([
+    "id",
+    "assignedto",
+    "userid",
+    "assignedid",
+    "approvedcostestimationid",
+    "addressid",
+    "queuenumber",
+    "createdbyid",
+    "productid",
+    "linkedorderlineid",
+    "activereplacementid",
+    "agreementid",
+    "penaltyinvoiceid",
+]);
+const TICKET_BIGINT_FIELDS = new Set([
+    "createddate",
+    "modifieddate",
+    "transactiondate",
+    "purchasedate",
+    "closeddate",
+    "assigneddate",
+    "productdelivereddate",
+    "requestedrenewaldate",
+    "requestedstopdate",
+    "approvedrenewaldate",
+    "receivedassetdate",
+    "resolvedassetdate",
+]);
+const TICKET_NUMERIC_FIELDS = new Set(["amount"]);
+const TICKET_BOOLEAN_FIELDS = new Set([
+    "proceedwithvalueservice",
+    "underwarranty",
+    "istransferred",
+    "isreopend",
+    "typemanual",
+    "replacementrequest",
+    "stoprental",
+    "walkintickets",
+]);
+const isNullishStringLiteral = (value) => typeof value === "string" &&
+    ["null", "undefined"].includes(value.trim().toLowerCase());
+const toNullableInteger = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "number" && Number.isInteger(value))
+        return value;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed)
+            return null;
+        if (/^-?\d+$/.test(trimmed))
+            return Number(trimmed);
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected an integer-compatible value or null.`);
+};
+const toNullableNumber = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "number" && Number.isFinite(value))
+        return value;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed)
+            return null;
+        if (/^-?\d+(\.\d+)?$/.test(trimmed))
+            return Number(trimmed);
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected a numeric value or null.`);
+};
+const toNullableBoolean = (value, fieldName) => {
+    if (value == null || isNullishStringLiteral(value))
+        return null;
+    if (typeof value === "boolean")
+        return value;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized)
+            return null;
+        if (["true", "1", "yes"].includes(normalized))
+            return true;
+        if (["false", "0", "no"].includes(normalized))
+            return false;
+    }
+    throw new Error(`Invalid value for ticket field "${fieldName}". Expected a boolean value or null.`);
+};
+const normalizeTicketFieldValue = (fieldName, value) => {
+    if (TICKET_INTEGER_FIELDS.has(fieldName) || TICKET_BIGINT_FIELDS.has(fieldName)) {
+        return toNullableInteger(value, fieldName);
+    }
+    if (TICKET_NUMERIC_FIELDS.has(fieldName)) {
+        return toNullableNumber(value, fieldName);
+    }
+    if (TICKET_BOOLEAN_FIELDS.has(fieldName)) {
+        return toNullableBoolean(value, fieldName);
+    }
+    if (isNullishStringLiteral(value)) {
+        return null;
+    }
+    return value;
+};
+const normalizeTicketPayload = (ticketData) => Object.fromEntries(Object.entries(ticketData).map(([fieldName, value]) => [
+    fieldName,
+    normalizeTicketFieldValue(fieldName, value),
+]));
 export var ticketService;
 (function (ticketService) {
     ticketService.getTicketDynamic = async (request) => {
@@ -20,30 +351,25 @@ export var ticketService;
                 if (key !== 'page' && key !== 'count') {
                     const paramValues = Array.isArray(value) ? value : [value];
                     if (key === "createddate" || key === "modifieddate") {
-                        console.log('inside created Date');
                         let rangeWhereClause = paramValues
                             .map((range) => {
-                            console.log(range);
                             const [lowerBound, upperBound] = range.split("-");
-                            console.log(lowerBound);
-                            console.log(upperBound);
                             queryParams.push(lowerBound, upperBound);
                             const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1})`;
                             parameterIndex += 2;
-                            console.log(clause, ' Clause Data is');
                             return clause;
                         })
                             .join(" OR ");
                         whereClauses.push(`(${rangeWhereClause})`);
                     }
                     else {
-                        // const formattedKey = key.toLowerCase() === 'userid' ? key : key;
                         whereClauses.push(`(${paramValues.map((_, idx) => `${key} = $${parameterIndex}`).join(" OR ")})`);
                         queryParams.push(...paramValues);
-                        parameterIndex += paramValues.length; // Increment parameter index 
+                        parameterIndex += paramValues.length;
                     }
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "tickets", customerColumn: "userid" });
             if (pageNumber && recordCount) {
                 offset = (pageNumber - 1) * recordCount;
             }
@@ -58,10 +384,8 @@ export var ticketService;
                 querydata += ` OFFSET $${queryParams.length + 1} LIMIT $${queryParams.length + 2}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log(querydata);
             let data = await query(querydata, queryParams);
             if (keys.length == 1 && keys[0] == 'userid') {
-                console.log('Inside IF>>');
                 const invoiceQuery = `
                 SELECT DISTINCT r.invoiceurl, t.ticketnumber, t.userid
                 FROM revoinvoice AS r 
@@ -69,24 +393,19 @@ export var ticketService;
                 WHERE t.userid = $1 AND r.invoicefor = 'service';
             `;
                 const invoiceurldata = await query(invoiceQuery, [userid]);
-                console.log('>>>>', invoiceurldata.rows);
-                // Create a map of ticketnumber to invoiceurl
                 const invoiceMap = new Map(invoiceurldata.rows.map(row => [row.ticketnumber, row.invoiceurl]));
-                // Merge invoice URLs into the main data
                 data.rows = data.rows.map(row => ({
                     ...row,
                     invoiceurl: invoiceMap.get(row.ticketnumber) || null
                 }));
             }
             else {
-                console.log("Inside ELSE>>");
             }
             return data.rows;
         }
         catch (error) {
             console.error("Query Execution Error: IN getTicketDynamic", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -105,7 +424,6 @@ export var ticketService;
                 const paramValues = Array.isArray(values[index])
                     ? values[index]
                     : [values[index]];
-                console.log(paramValues, "paramValues");
                 if (key === "range") {
                     const rangeClauses = paramValues.map((range) => {
                         const [lowerBound, upperBound] = range.split("-");
@@ -124,7 +442,6 @@ export var ticketService;
                 else if (paramValues[0].startsWith("NOT ")) {
                     const cleanValue = paramValues[0].slice(4);
                     whereClauses.push(`(${key} != $${parameterIndex})`);
-                    console.log(cleanValue, "cleanValue");
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
@@ -135,11 +452,13 @@ export var ticketService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "t", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `
       (isarchive = FALSE OR isarchive IS NULL) AND 
       (isdeleted = FALSE OR isdeleted IS NULL) AND  
       (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+            whereClauses.push(baseConditions);
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
@@ -158,8 +477,6 @@ export var ticketService;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
@@ -184,7 +501,6 @@ export var ticketService;
                 const paramValues = Array.isArray(values[index])
                     ? values[index]
                     : [values[index]];
-                console.log(paramValues, "paramValues");
                 if (key === "range") {
                     const rangeClauses = paramValues.map((range) => {
                         const [lowerBound, upperBound] = range.split("-");
@@ -201,10 +517,8 @@ export var ticketService;
                     orderByDirection = direction.toUpperCase() === "ASC" ? "ASC" : "DESC";
                 }
                 else if (paramValues[0].startsWith("NOT ")) {
-                    console.log(paramValues + 'PAR');
                     const cleanValue = paramValues[0].slice(4);
                     whereClauses.push(`(${key} != $${parameterIndex})`);
-                    console.log(cleanValue, "cleanValue");
                     queryParams.push(cleanValue);
                     parameterIndex++;
                 }
@@ -215,8 +529,10 @@ export var ticketService;
                     parameterIndex += paramValues.length;
                 }
             });
+            parameterIndex = await accessScopeService.appendVendorTicketScope(request, whereClauses, queryParams, parameterIndex, { ticketAlias: "t", customerColumn: "userid" });
             const offset = (pageNumber - 1) * recordCount;
             const baseConditions = `(isarchive = FALSE OR isarchive IS NULL) AND (isdeleted = FALSE OR isdeleted IS NULL) AND  (removefromrecyclebin = FALSE OR removefromrecyclebin IS NULL)`;
+            whereClauses.push(baseConditions);
             const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ``;
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
             let queryText = `
@@ -228,8 +544,6 @@ export var ticketService;
                 queryText += ` OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}`;
                 queryParams.push(offset, recordCount);
             }
-            console.log("Query Text:", queryText);
-            console.log("Query Params:", queryParams);
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result);
             return datatypeCheckResult;
@@ -239,12 +553,40 @@ export var ticketService;
             return ErrorData;
         }
     };
-    ticketService.upsertTickets = async (ticketData, files, host) => {
+    ticketService.upsertTickets = async (ticketData, files, host, request) => {
         try {
             let querydata;
             let params;
-            console.log(ticketData, "ticketData");
-            const { id, inventoryuserid, product_warranty, ...upsertFields } = ticketData;
+            // ✅ KEEP normalization
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            // ✅ KEEP notification tracking
+            const { id, inventoryuserid, product_warranty, ...upsertFields } = normalizedTicketData;
+            let previousTicket = null;
+            if (id) {
+                const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
+                previousTicket = prevResult.rows[0] ?? null;
+            }
+            if (request && await accessScopeService.isVendorRequest(request)) {
+                if (id && !(await accessScopeService.canVendorAccessTicket(request, id))) {
+                    return {
+                        errorMessage: "Vendor users can update only assigned business customer rental service requests.",
+                        statusCode: 403,
+                    };
+                }
+                const mergedTicket = { ...(previousTicket || {}), ...upsertFields };
+                if (!(await accessScopeService.canVendorAccessCustomer(request, mergedTicket.userid))) {
+                    return {
+                        errorMessage: "Vendor users can raise tickets only for assigned business customers.",
+                        statusCode: 403,
+                    };
+                }
+                if (!(await accessScopeService.isRentalTicketPayload(mergedTicket))) {
+                    return {
+                        errorMessage: "Vendor users can manage only rental service requests.",
+                        statusCode: 403,
+                    };
+                }
+            }
             if (files && files.length > 0) {
                 for (const file of files) {
                     upsertFields.recipturl =
@@ -260,114 +602,65 @@ export var ticketService;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO tickets (${fieldNames.join(", ")}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
+                querydata = `INSERT INTO tickets (${fieldNames.join(", ")})
+                   VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")})
+                   RETURNING *`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            console.log(result.rows, 'INSERTED DATA');
-            if (result && result.rows.length > 0) {
-                let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
-                    result.rows[0].userid,
-                ]);
-                if (userdata && userdata.rows.length > 0) {
-                    console.log(result.rows[0].ticketstatus, "Ticket Status Product");
-                    const ticketStatus = result.rows[0].ticketstatus;
-                    const ticketNumber = result.rows[0].ticketnumber;
-                    console.log(ticketStatus, "ticketStatus");
-                    if (emailTemplates.tickets[ticketStatus]) {
-                        console.log(emailTemplates.tickets[ticketStatus], "emailTemplates");
-                        const { subject, text } = emailTemplates.tickets[ticketStatus];
-                        let maildata = {
-                            body: {
-                                to: userdata.rows[0].useremail,
-                                subject,
-                                text: text.replace("{ticketNumber}", ticketNumber),
-                            },
-                        };
-                        try {
-                            let sendingmail = await sendMail(maildata, false);
-                            console.log(sendingmail, "sendingmail");
-                        }
-                        catch (error) {
-                            console.log(error.message || error, "error in sending mail");
-                        }
-                        console.log(maildata, "maildata");
-                    }
-                }
+            // ✅ KEEP notifications
+            if (result?.rows?.length > 0) {
+                await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
         catch (error) {
-            let ErrorData = ErrorHandler.handleQueryError(error);
-            return ErrorData;
+            console.error("Query Execution Error: IN upsertTickets", error);
+            return await ErrorHandler.handleQueryError(error);
         }
     };
     ticketService.upsertGcpTickets = async (ticketData) => {
         try {
             let querydata;
             let params;
-            console.log(ticketData, "ticketData");
-            const { id, ...upsertFields } = ticketData;
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            const { id, ...upsertFields } = normalizedTicketData;
+            let previousTicket = null;
+            if (id) {
+                const prevResult = await query(`SELECT * FROM tickets WHERE id = $1 LIMIT 1`, [id]);
+                previousTicket = prevResult.rows[0] ?? null;
+            }
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
                 querydata = `UPDATE tickets SET ${fieldNames
-                    .map((field, index) => `${field} = $${index + 1}`)
+                    .map((f, i) => `${f} = $${i + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO tickets (${fieldNames.join(", ")}) VALUES (${fieldNames
-                    .map((_, index) => `$${index + 1}`)
-                    .join(", ")}) RETURNING *`;
+                querydata = `INSERT INTO tickets (${fieldNames.join(", ")})
+                   VALUES (${fieldNames.map((_, i) => `$${i + 1}`).join(", ")})
+                   RETURNING *`;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
-            console.log(result.rows, 'INSERTED DATA');
-            if (result && result.rows.length > 0) {
-                let userdata = await query(`SELECT * FROM users WHERE id = $1`, [
-                    result.rows[0].userid,
-                ]);
-                if (userdata && userdata.rows.length > 0) {
-                    console.log(result.rows[0].ticketstatus, "Ticket Status Product");
-                    const ticketStatus = result.rows[0].ticketstatus;
-                    const ticketNumber = result.rows[0].ticketnumber;
-                    console.log(ticketStatus, "ticketStatus");
-                    if (emailTemplates.tickets[ticketStatus]) {
-                        console.log(emailTemplates.tickets[ticketStatus], "emailTemplates");
-                        const { subject, text } = emailTemplates.tickets[ticketStatus];
-                        let maildata = {
-                            body: {
-                                to: userdata.rows[0].useremail,
-                                subject,
-                                text: text.replace("{ticketNumber}", ticketNumber),
-                            },
-                        };
-                        try {
-                            let sendingmail = await sendMail(maildata, false);
-                            console.log(sendingmail, "sendingmail");
-                        }
-                        catch (error) {
-                            console.log(error.message || error, "error in sending mail");
-                        }
-                        console.log(maildata, "maildata");
-                    }
-                }
+            if (result?.rows?.length > 0) {
+                await processTicketNotifications(previousTicket, result.rows[0], !id);
             }
             return result;
         }
         catch (error) {
-            let ErrorData = ErrorHandler.handleQueryError(error);
-            return ErrorData;
+            console.error("Query Execution Error: IN upsertGcpTickets", error);
+            return await ErrorHandler.handleQueryError(error);
         }
     };
     ticketService.upsertTicketspayment = async (ticketData, files, host) => {
         try {
             let querydata;
             let params;
-            const { id, ...upsertFields } = ticketData;
+            const normalizedTicketData = normalizeTicketPayload(ticketData);
+            const { id, ...upsertFields } = normalizedTicketData;
             if (files && files.length > 0) {
                 for (const file of files) {
                     upsertFields.recipturl =
@@ -389,9 +682,13 @@ export var ticketService;
                 params = fieldValues;
             }
             const result = await query(querydata, params);
+            if (result && result.rows.length > 0) {
+                await firePaymentReceivedEmail(result.rows[0].ticketnumber, result.rows[0].amount, result.rows[0].paymentmethod);
+            }
             return result;
         }
         catch (error) {
+            console.error("Query Execution Error: IN upsertTicketspayment", error);
             let ErrorData = ErrorHandler.handleQueryError(error);
             return ErrorData;
         }
@@ -413,6 +710,7 @@ export var ticketService;
             return result;
         }
         catch (error) {
+            console.error("Query Execution Error: IN upsertTicketstatus", error);
             let ErrorData = ErrorHandler.handleQueryError(error);
             return ErrorData;
         }

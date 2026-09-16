@@ -31,8 +31,11 @@ export const stockText = [
     "processor",
     "serialnumber",
     "stockstatus",
+    "stocktype",
     "productname",
-    "rfid"
+    "rfid",
+    "hsncode",
+    "saccode"
 ]
 
 
@@ -43,7 +46,6 @@ export const stockArray = [
 export const stocklocationArray = [
     "location"
 ]
-
 
 
 

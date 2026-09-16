@@ -109,6 +109,28 @@ export const stockrevoSchema = {
                 type: 'Stock status should be String'
             }
         },
+        stocktype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Stock type should be String'
+            }
+        },
+        hsncode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: 'HSN Code should be String',
+                maxLength: 'HSN Code must not exceed 50 characters'
+            }
+        },
+        saccode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: 'SAC Code should be String',
+                maxLength: 'SAC Code must not exceed 50 characters'
+            }
+        },
         manufacturedyear: {
             type: ["string", "null"],
             pattern: "^(0[1-9]|[12][0-9]|3[01])[-/](0[1-9]|1[0-2])[-/](\\d{4})$",
@@ -157,8 +179,10 @@ export const stockrevoSchema = {
         },
         rfid:{
             type: ['string', 'null'],
+            pattern: "^(?:|.{10}|\\d{12})$",
             errorMessage: {
-                type: 'RFID should be String'
+                type: 'Barcode Number should be String',
+                pattern: 'Barcode Number should be exactly 12 digits. Existing 10-character values are supported for legacy stock.'
             }
         },
         location:{

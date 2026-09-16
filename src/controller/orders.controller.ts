@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { ordersService } from "../services/orders.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
+import { request } from "http";
 
 interface idparams {
     id: number
@@ -14,6 +15,7 @@ export module ordersController {
             let getstock = await ordersService.getOrderlineDynamic(request)
             reply.send(getstock)
         } catch (error) {
+            console.error("Query Execution Error: IN getOrderlineDynamicData Controller", error);
             reply.send(error.message)
         }
     }
@@ -43,9 +45,57 @@ export module ordersController {
                 reply.status(400).send(upsertOrderlineResult)
             }
         } catch (error) {
-            console.error("Query Execution Error: IN getOrderData Controller", error);
+            console.error("Query Execution Error: IN updateorderlineitem Controller", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
+        }
+    }
+    export const getInvoiceGeneratedData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const result = await ordersService.getInvoiceGeneratedData(request);
+    if ("error" in result) {
+        return reply.code(404).send({ success: false, message: result.error });
+    }
+    if ("errorMessage" in result) {
+        return reply.code(result.statusCode ?? 400).send({ success: false, message: result.errorMessage, details: result.errorDetails });
+    }
+
+    return reply.send({ success: true, data: result });
+        } catch (error) {
+            console.error("Query Execution Error: IN getInvoiceGeneratedData Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+            
+        }
+    }
+
+    export const updateInvoiceGeneratedData = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const result = await ordersService.updateInvoiceGeneratedData(request);
+            console.log("Result in updateInvoiceGeneratedData Controller:", result);
+            if ("errorMessage" in result) {
+      return reply.code(result.statusCode ?? 400).send({
+        success: false,
+        message: result.errorMessage,
+        details: result.errorDetails
+      });
+    }
+
+    if (result?.success === false) {
+      return reply.code(400).send(result);
+    }
+
+    // ✅ Send success response
+    return reply.send({
+      success: true,
+      message: "Rental invoice status updated successfully",
+      data: result
+    });
+        } catch (error) {
+            console.error("Query Execution Error: IN updateInvoiceGeneratedData Controller", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+            
         }
     }
     export const getUserOrderData = async (request: any, reply: any) => {
@@ -90,6 +140,23 @@ export module ordersController {
             console.error("Error IN Controller getUserOrderData1", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
+        }
+    }
+
+    export const getInvoiceDataForOrderid = async (request: any, reply: any) => {
+        try {
+            let getInvoiceDataResult = await ordersService.getInvoiceDataForOrderid(request)
+            if (getInvoiceDataResult?.errorMessage) {
+                return reply.status(getInvoiceDataResult.statusCode || 400).send({
+                    message: getInvoiceDataResult.errorMessage,
+                });
+            }
+            reply.send(getInvoiceDataResult)
+        } catch (error) {
+            console.error("Error IN Controller getInvoiceDataForOrderid", error);
+            let ErrorMessage = await ErrorHandler.handleQueryError(error)
+            return ErrorMessage
+            
         }
     }
 
@@ -144,7 +211,7 @@ export module ordersController {
             //     reply.status(400).send(upsertOrderResult)
             // }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderv2", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -169,7 +236,7 @@ export module ordersController {
                 reply.status(400).send(upsertOrderResult)
             }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderrfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -192,7 +259,7 @@ export module ordersController {
                 reply.status(400).send(upsertOrderResult)
             }
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller upsertOrderlinerfid", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -202,9 +269,20 @@ export module ordersController {
             let getOrderDataResult = await ordersService.getOrderDataForMerchantid(request.body)
             reply.send(getOrderDataResult)
         } catch (error) {
-            console.error("Error IN Controller upsertOrder", error);
+            console.error("Error IN Controller deleteBasedOnMerchantId", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
     }
+    export const deleteFailedOrder = async (request, reply) => {
+  try {
+    const getOrderDataResult = await ordersService.deleteFailedOrder(request.body.merchantid);
+    reply.send(getOrderDataResult);
+  } catch (error) {
+    console.error("Error IN Controller deleteBasedOnMerchantId", error);
+    const ErrorMessage = await ErrorHandler.handleQueryError(error);
+    reply.code(500).send(ErrorMessage);
+  }
+};
+
 }

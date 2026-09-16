@@ -12,7 +12,7 @@ export const sendMail = async (request, reply) => {
     console.log(subject);
     console.log(text);
     mailOptions = {
-        from: '"Revo" <pravinsf24@gmail.com>',
+        from: '"TEQIT" teqitcontact@gmail.com',
         to: to,
         cc: cc,
         subject: subject,
@@ -25,7 +25,7 @@ export const sendMail = async (request, reply) => {
             return { filename: file.filename, path: filepath };
         });
     }
-    console.log(mailOptions);
+    console.log(mailOptions ,"mailOptions");
     const transporter = nodemailer.createTransport({
         service: GMAIL_SERVICE,
         host: GMAIL_HOST,
@@ -37,6 +37,7 @@ export const sendMail = async (request, reply) => {
         },
     });
     transporter.sendMail(mailOptions, (error, info) => {
+        console.log(mailOptions, "mailOptions in transporter");
         if (error) {
             console.error("Error sending email: ", error);
             if (reply) {

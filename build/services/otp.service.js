@@ -17,19 +17,13 @@ export const saveOtp = async (useremail, generatedotp) => {
 export const getOtp = async (useremail, userenteredotp) => {
     const otpData = await redisClient.get(useremail);
     if (!otpData) {
-        console.log('No OTP found for the given email.');
         return false;
     }
-    //  console.log(otpData ,'otp data')
     const parsedData = JSON.parse(otpData);
-    //  console.log(typeof(parsedData.otp) ,'Parsed Data Otp')
-    //  console.log(typeof(userenteredotp) ,'user entered otp')
     if (Number(parsedData.otp) === Number(userenteredotp)) {
-        console.log('OTP matches');
         return true;
     }
     else {
-        console.log('OTP does not match');
         return false;
     }
 };

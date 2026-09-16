@@ -50,7 +50,6 @@ export var InventoryuserController;
                 reply.status(401).send({ error: getUsersDataResult });
             }
             else {
-                console.log("INISIDE ELSE OF USERS ");
                 reply.send(getUsersDataResult);
             }
         }
@@ -71,7 +70,6 @@ export var InventoryuserController;
     InventoryuserController.upsertInventoryUser = async (request, reply) => {
         try {
             const userData = request.body;
-            console.log(userData);
             let upsertUserResult = await userInventoryService.upsertInventoryUser(userData);
             if (upsertUserResult.command === "UPDATE" || upsertUserResult.command === "INSERT") {
                 let message = {};

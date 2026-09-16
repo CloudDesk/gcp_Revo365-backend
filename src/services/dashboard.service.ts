@@ -93,19 +93,10 @@ export module dashboardservice {
             return response;
 
             // API - /dashboard/totalsales?month=july&year=2024&orderstatus=ordered&category=new&subcategory=laptop
-            // Result Format -{
-            //     "total_quantity": 1,
-            //     "total_orderamount": 22980,
-            //     "year": "2024",
-            //     "month": "july",
-            //     "orderstatus": "ordered",
-            //     "category": "new",
-            //     "subcategory": "laptop"
-            //   }
 
         } catch (error) {
             const ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.error("Error in getOverallData:", ErrorMessage);
+            console.error("Error in getSalesPerMonthData:", ErrorMessage);
             return { error: ErrorMessage };
         }
     }
@@ -154,8 +145,8 @@ export module dashboardservice {
             const startDate = new Date(`${startYear}-${startMonthNumber.toString().padStart(2, '0')}-01T00:00:00Z`);
             const endDate = new Date(`${endYear}-${endMonthNumber.toString().padStart(2, '0')}-01T00:00:00Z`);
             endDate.setMonth(endDate.getMonth() + 1);
-            endDate.setDate(0); // Set to the last day of the month
-            endDate.setHours(23, 59, 59, 999); // Set time to end of the day
+            endDate.setDate(0); 
+            endDate.setHours(23, 59, 59, 999); 
 
             const startTimestamp = Math.floor(startDate.getTime() / 1000);
             const endTimestamp = Math.floor(endDate.getTime() / 1000);
@@ -197,21 +188,6 @@ ORDER BY
             return newArray
 
             // API - /dashboard/monthwise?data=2024-january,2024-july
-            // Response data -
-            // [
-            //     {
-            //       "month": "Jan",
-            //       "year": "2024",
-            //       "total_sales": 67000,
-            //       "total_quantity": 1
-            //     },
-            //     {
-            //       "month": "Feb",
-            //       "year": "2024",
-            //       "total_sales": 75000,
-            //       "total_quantity": 1
-            //     }]
-
 
         } catch (error) {
             const ErrorMessage = await ErrorHandler.handleQueryError(error);
@@ -405,22 +381,6 @@ ORDER BY
                 return result.rows;
 
                 // API - /dashboard/group-by?data=2023-january,2024-july&orderstatus
-                // [
-                //     {
-                //       "quantity": "3",
-                //       "total_amount": "83988",
-                //       "orderstatus": "delivered",
-                //       "month": "Jul",
-                //       "year": "2024"
-                //     },
-                //     {
-                //       "quantity": "1",
-                //       "total_amount": "22980",
-                //       "orderstatus": "ordered",
-                //       "month": "Dec",
-                //       "year": "2023"
-                //     }
-                // ]
             }
         } catch (error) {
             console.log("Error in getGroupedData", error.message);
@@ -697,7 +657,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getGroupbyValueData", error.message);
+            console.error("Error in getDynamicGroupbyValueData", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -784,7 +744,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getDynamicGroupbyValueData", error.message);
+            console.error("Error in getDynamicGroupbyValueData2", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -884,7 +844,7 @@ ORDER BY
             })
             return formattedResult1;
         } catch (error) {
-            console.error("Error in getDashboardFinalData", error.message);
+            console.error("Error in getOrderStsDashboardAmountQuantity", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -962,19 +922,16 @@ ORDER BY
 
             const result = await query(queryText, queryParams);
 
-            // Prepare header row
             const headerRow = ['Month', ...statusesToInclude.map(status => `${formatColumnName(status)} Quantity`)];
             if (statusesToInclude.length === allStatuses.length) {
                 headerRow.push('Total Quantity');
             }
 
-            // Prepare the data rows
-            console.log('Result - ', result.rows);
             const dataRows = result.rows.map(row => {
                 const rowData = [row.Month];
                 statusesToInclude.forEach(status => {
                     const columnName = `${formatColumnName(status)} Quantity`;
-                    rowData.push(Number(row[columnName]) || 0);  // Ensure numeric values
+                    rowData.push(Number(row[columnName]) || 0); 
                 });
                 if (statusesToInclude.length === allStatuses.length) {
                     rowData.push(Number(row['Total Quantity']) || 0);
@@ -983,9 +940,6 @@ ORDER BY
             });
 
             const finalResult = [headerRow, ...dataRows];
-            console.log('1Final Result:',finalResult);
-            console.log('1header Row:',headerRow);
-            console.log('1data row:',dataRows);
             return finalResult;
 
         } catch (error) {
@@ -1189,19 +1143,6 @@ ORDER BY
             return formattedResult;
 
             // API - /dashboard/ticket-count?data=2024-july,2024-july&ticketstatus=all
-            // Result -
-            // [
-            //     ["Ticket Status","Month","Count"],
-            //     ["Waiting For Cost Estimation Approval","Jul",2],
-            //     ["Out For Delivery","Jul",0],
-            //     ["New","Jul",2],
-            //     ["Testing In Progress","Jul",0],
-            //     ["Service In Progress","Jul",1],
-            //     ["Waiting For Spare","Jul",0],
-            //     ["Open","Jul",0],
-            //     ["Closed","Jul",1]
-            // ]
-
         } catch (error) {
             console.error("Error in getTicketCountDashboardData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
@@ -1310,8 +1251,6 @@ ORDER BY
     export const getEpochTicketCountLocationBasedData = async (querydata) => {
         try {
             const { date, ticketstatus, location,role } = querydata;
-
-            console.log('Location', location);
 
             if (!date) {
                 throw new Error('Date parameter is required.');
@@ -1545,7 +1484,7 @@ ORDER BY
             // API - /dashboard/today-ticket?priority=all
 
         } catch (error) {
-            console.error("Error in getTodayTicketCountData:", error.message);
+            console.error("Error in getTodayTicketPriorityCountData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
     };
@@ -1657,12 +1596,11 @@ ORDER BY
                 // Format the result, defaulting to 0 if no match is found
                 return [
                     category,
-                    Number(row?.total_count || 0), // Quantity
-                    Number(row?.total || 0)        // Total Amount
+                    Number(row?.total_count || 0),
+                    Number(row?.total || 0)        
                 ];
             });
 
-            // Add header row
             formattedResult.unshift(['Category', 'Quantity', 'Total Amount']);
 
             return formattedResult;
@@ -1734,11 +1672,10 @@ ORDER BY
 
                 return [
                     formattedCategory,
-                    Number(row?.total || 0) // Return only the total value (SUM of price)
+                    Number(row?.total || 0) 
                 ];
             });
 
-            // Add header row
             formattedResult.unshift(['Category', 'Total Value']);
 
             return formattedResult;
@@ -1909,8 +1846,6 @@ ORDER BY
         try {
             const { data, location } = querydata;
 
-            console.log('Query Data: ', querydata);
-
             const queryText = `
                 SELECT
                     CASE
@@ -1930,7 +1865,6 @@ ORDER BY
                 ORDER BY
                     quarter;
             `;
-            console.log(queryText, 'Query Text');
             const result = await query(queryText, [data]);
 
             const quarters = ['Jan - Mar', 'Apr - Jun', 'Jul - Sep', 'Oct - Dec'];
@@ -2006,7 +1940,6 @@ ORDER BY
             const endRange = parseDate(endMonth);
 
             let endDate = endRange.endDate;
-            console.log('Start:', startRange, 'End:', endRange);
 
             const queryText = `
                 SELECT 
@@ -2034,7 +1967,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getInvoiceData:", error.message);
+            console.error("Error in getInvoiceDataDateBased:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
 

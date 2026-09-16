@@ -41,31 +41,31 @@ export const purchaseorderInsertSchema = {
         io_companyname: {
             type: ['string', 'null'],
             errorMessage: {
-                type: 'Invoice To Companyname should be string'
+                type: 'Bill To Companyname should be string'
             }
         },
         io_companyaddress: {
             type: ['string', 'null'],
             errorMessage: {
-                type: 'Invoice To Companyaddress should be string'
+                type: 'Bill To Companyaddress should be string'
             }
         },
         io_contactname: {
             type: ['string', 'null'],
             errorMessage: {
-                type: 'Invoice To contactname should be string'
+                type: 'Bill To contactname should be string'
             }
         },
         io_phonenumber: {
             type: ['number', 'null'],
             errorMessage: {
-                type: 'Invoice To phonenumber should be Number'
+                type: 'Bill To phonenumber should be Number'
             }
         },
         io_gstnumber: {
             type: ['string', 'null'],
             errorMessage: {
-                type: 'Invoice To Gstnumber should be string'
+                type: 'Bill To Gstnumber should be string'
             }
         },
         dt_companyname: {
@@ -126,6 +126,18 @@ export const purchaseorderInsertSchema = {
             type: ['number', 'null'],
             errorMessage: {
                 type: 'cgst should be number'
+            }
+        },
+        igst: {
+            type: ['number', 'null'],
+            errorMessage: {
+                type: 'igst should be number'
+            }
+        },
+        taxmode: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'taxmode should be string'
             }
         },
         payabletaxamount: {
@@ -194,7 +206,7 @@ export const purchaseorderInsertSchema = {
         invoiceurl: {
             type: ['string', 'null'],
             errorMessage: {
-                type: 'invoiceurl should be string'
+                type: 'Bill URL should be string'
             }
         }
 
