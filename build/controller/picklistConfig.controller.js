@@ -1,9 +1,11 @@
 import { picklistConfigService } from "../services/picklistConfig.service.js";
 const sendServiceResult = (reply, result) => {
-    if (result?.status) {
+    if (Number.isInteger(result?.status) && result.status >= 100 && result.status <= 599) {
         return reply.status(result.status).send(result);
     }
-    if (result?.error?.statusCode) {
+    if (Number.isInteger(result?.error?.statusCode) &&
+        result.error.statusCode >= 100 &&
+        result.error.statusCode <= 599) {
         return reply.status(result.error.statusCode).send(result);
     }
     return reply.status(200).send(result);
