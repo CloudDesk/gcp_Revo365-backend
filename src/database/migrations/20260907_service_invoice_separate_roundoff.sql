@@ -7,6 +7,7 @@ ALTER TABLE revoinvoice
     ADD COLUMN IF NOT EXISTS productroundoffamount NUMERIC(14, 2) NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS serviceroundoffamount NUMERIC(14, 2) NOT NULL DEFAULT 0;
 
+
 -- Existing estimates already retain each section's pre-round total, so both
 -- adjustments can be reconstructed without changing product/service amounts.
 UPDATE servicecostestimation
