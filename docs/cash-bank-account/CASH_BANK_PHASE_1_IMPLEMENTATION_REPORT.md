@@ -996,12 +996,39 @@ The form must conditionally show bank-specific fields.
 
 ## 8.3 Transactions screen
 
+The Cash and Bank Account module provides two transaction scopes:
+
+- The existing account-detail **Transactions** tab lists entries belonging to
+  one selected Bank/Cash account.
+- The module-level **Transactions** tab lists entries across every Bank/Cash
+  account in the current organization.
+
+The module-level list must include separate **Bank/Cash Account** and
+**Bank Name** columns. Cash-account rows show no Bank Name. It must support
+filtering by Bank/Cash account, transaction type, Debit/Credit, date, and
+search text. All totals shown above this list are filtered activity totals;
+`balanceafter` remains the running balance of the individual account shown on
+that transaction row and must not be treated as a global running balance.
+
 ### Header actions
 
 - Add Transaction
 - Filter
 - Search
 - Export (deferred unless already available)
+
+When **Record Transaction** is opened from the module-level Transactions tab,
+the user must:
+
+1. Select Customer Receipt, Supplier Payment, or Direct Ledger Entry.
+2. Select one active Bank/Cash account using the account lookup.
+3. Complete the existing transaction form.
+
+The selected Bank/Cash account is mandatory. Customer Receipts post into that
+account, Supplier Payments post out of that account, and Direct Ledger Entries
+post their selected Debit/Credit against that account. The backend must verify
+that the account is active and belongs to the current organization. A first or
+default account must not be silently assigned to a manual transaction.
 
 ### Filters
 
