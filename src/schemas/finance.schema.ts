@@ -1,5 +1,17 @@
 const nullableString = { type: ["string", "null"] };
 
+export const createChartAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    accounttype: { type: "string", minLength: 1, maxLength: 50 },
+    accountname: { type: "string", minLength: 1, maxLength: 255 },
+    accountcode: { type: "string", minLength: 1, maxLength: 40 },
+    description: { type: ["string", "null"], maxLength: 2000 },
+  },
+  required: ["accounttype", "accountname", "accountcode"],
+};
+
 export const createBankCashAccountSchema = {
   type: "object",
   additionalProperties: false,
@@ -57,6 +69,7 @@ export const createDirectBankTransactionSchema = {
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
     },
     counterpartyaccountid: { type: "integer", minimum: 1 },
+    entryname: { type: "string", minLength: 1, maxLength: 255 },
     entryside: { type: "string", enum: ["debit", "credit"] },
     amount: { type: "number", exclusiveMinimum: 0 },
     remarks: nullableString,
@@ -64,6 +77,7 @@ export const createDirectBankTransactionSchema = {
   required: [
     "transactiondate",
     "counterpartyaccountid",
+    "entryname",
     "entryside",
     "amount",
   ],

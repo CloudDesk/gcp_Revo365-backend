@@ -1434,6 +1434,20 @@ ${whereClause} ${orderByClause}`;
             }
             const result = await query(querydata, params);
             const lineRow = result.rows[0];
+            // Billing and shipping addresses belong to the whole order. Keep the
+            // header and sibling lines in sync when either snapshot is edited so
+            // invoice/report consumers cannot read a stale copy from another row.
+            const addressSnapshotFields = ["billingaddresssnapshot", "shippingaddresssnapshot"]
+                .filter((field) => Object.prototype.hasOwnProperty.call(upsertFields, field));
+            if (lineRow?.uniqueorderid && addressSnapshotFields.length > 0) {
+                const assignments = addressSnapshotFields
+                    .map((field, index) => `${field} = $${index + 1}`)
+                    .join(", ");
+                const addressValues = addressSnapshotFields.map((field) => upsertFields[field]);
+                const orderIdParameter = addressValues.length + 1;
+                await query(`UPDATE orders SET ${assignments} WHERE orderid = $${orderIdParameter}`, [...addressValues, lineRow.uniqueorderid]);
+                await query(`UPDATE orderline SET ${assignments} WHERE uniqueorderid = $${orderIdParameter}`, [...addressValues, lineRow.uniqueorderid]);
+            }
             const lineStatus = normalizeOrderStatus(lineRow?.orderstatus);
             const previousStatus = normalizeOrderStatus(previousLineRow?.orderstatus);
             const orderType = normalizeComparableText(lineRow?.ordername);

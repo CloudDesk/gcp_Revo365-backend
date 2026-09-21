@@ -356,7 +356,10 @@ export var poinvoiceservice;
                 normalizeBillTaxFields(upsertFields);
                 await validateBillAmountWithinPurchaseOrder(upsertFields, id);
             }
+<<<<<<< HEAD
             // upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+=======
+>>>>>>> feature/finance/chart_of_accounts
             await applyCashAccountSettlementState(upsertFields, id);
             serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);
@@ -395,7 +398,10 @@ export var poinvoiceservice;
                 normalizeBillTaxFields(upsertFields);
                 await validateBillAmountWithinPurchaseOrder(upsertFields, id);
             }
+<<<<<<< HEAD
             // upsertFields.balanceamount = toNumber(upsertFields.invoiceamount) - amount
+=======
+>>>>>>> feature/finance/chart_of_accounts
             await applyCashAccountSettlementState(upsertFields, id);
             serializeJsonArrayFields(upsertFields);
             const fieldNames = Object.keys(upsertFields);

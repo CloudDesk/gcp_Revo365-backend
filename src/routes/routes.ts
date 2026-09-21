@@ -79,6 +79,7 @@ import { financeAccountController } from "../controller/financeAccount.controlle
 import { tdsSectionController } from "../controller/tdsSection.controller.js";
 import {
     createBankCashAccountSchema,
+    createChartAccountSchema,
     createDirectBankTransactionSchema,
     createRetailReceiptSchema,
     createSupplierPaymentSchema,
@@ -427,8 +428,22 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.post('/store-quotation/:id/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
 
     // Cash and Bank Account foundation
+    fastify.get('/finance/chart-of-accounts/types', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountTypes);
+    fastify.get('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccounts);
+    fastify.get('/finance/chart-of-accounts/:accountId/entries', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountEntries);
+    fastify.get('/finance/chart-of-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getChartAccount);
+    fastify.post(
+        '/finance/chart-of-accounts',
+        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createChartAccountSchema)] },
+        financeAccountController.createChartAccount
+    );
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
+    fastify.get(
+        '/finance/transactions',
+        { preHandler: [getSession, requireFinancePermission('read')] },
+        financeAccountController.listAllTransactions
+    );
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
     fastify.post(
         '/finance/bank-accounts',

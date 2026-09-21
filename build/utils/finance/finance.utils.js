@@ -70,6 +70,17 @@ export const calculateAvailableBalance = (previousBalance, entrySide, amount) =>
         ? previous + transactionAmount
         : previous - transactionAmount, "balanceafter");
 };
+export const calculateLedgerBalance = (accountCategory, totalDebit, totalCredit) => {
+    const category = String(accountCategory || "").trim().toLowerCase();
+    if (!["asset", "liability", "equity", "income", "expense"].includes(category)) {
+        throw new FinanceValidationError("A valid ledger account category is required.");
+    }
+    const debit = toMoney(totalDebit, "totaldebit");
+    const credit = toMoney(totalCredit, "totalcredit");
+    return toMoney(category === "asset" || category === "expense"
+        ? debit - credit
+        : credit - debit, "currentledgerbalance");
+};
 const requireEncryptionKey = (secret) => {
     if (!secret || secret.trim().length < 16) {
         throw new FinanceValidationError("Finance encryption key is not configured.", 500, "FINANCE_ENCRYPTION_KEY_MISSING");

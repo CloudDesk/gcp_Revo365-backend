@@ -141,6 +141,15 @@ export const getRetailInvoicePaymentState = (invoice: any) => {
   return { invoiceAmount, paidAmount, outstandingAmount };
 };
 
+export const getRetailInvoicesOutstandingTotal = (invoices: any[]): number =>
+  toMoney(
+    (Array.isArray(invoices) ? invoices : []).reduce(
+      (total: number, invoice: any) =>
+        total + getRetailInvoicePaymentState(invoice).outstandingAmount,
+      0
+    )
+  );
+
 export const applyRetailInvoiceAllocation = (
   invoice: any,
   allocationAmount: unknown,
