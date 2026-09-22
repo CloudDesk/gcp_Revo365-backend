@@ -143,6 +143,16 @@ export const dashboardController = {
         }
     },
 
+    getTechnicianTicketCountData: async (request: FastifyRequest<{ Querystring: CountDashboardQuery }>, reply: FastifyReply) => {
+        try {
+            const data = await dashboardservice.getTechnicianTicketCountDashboardData(request.query);
+            reply.send(data);
+        } catch (error) {
+            console.error("Error in getTechnicianTicketCountData", error);
+            reply.status(500).send({ error: 'Internal Server Error' });
+        }
+    },
+
     getProductCountData: async (request: FastifyRequest<{ Querystring: CountDashboardQuery }>, reply: FastifyReply) => {
         try {
             const data = await dashboardservice.getProductStatusCountDashboardData(request.query);
@@ -175,7 +185,7 @@ export const dashboardController = {
 
     getAvailableTotalAmountCountData: async (request: FastifyRequest<{ Querystring: CountDashboardQuery }>, reply: FastifyReply) => {
         try {
-            const data = await dashboardservice.getAvailableCountTotalData();
+            const data = await dashboardservice.getAvailableCountTotalData(request.query);
             reply.send(data);
         } catch (error) {
             console.error("Error in getTodayTicketTypeCountData", error);

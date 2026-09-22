@@ -45,6 +45,46 @@ export module stockRevoService {
         return productTaxCodeValues;
     };
 
+    const validateStockPurchaseDetails = async (stockData: any, required: boolean) => {
+        const hasSupplier = Object.prototype.hasOwnProperty.call(stockData, "supplierid");
+        const hasPurchasePrice = Object.prototype.hasOwnProperty.call(stockData, "purchaseprice");
+        const hasSupplierValue = hasSupplier && stockData.supplierid !== null && stockData.supplierid !== "";
+        const hasPurchasePriceValue = hasPurchasePrice && stockData.purchaseprice !== null && stockData.purchaseprice !== "";
+
+        if (!required && !hasSupplierValue && !hasPurchasePriceValue) {
+            return null;
+        }
+
+        const supplierId = Number(stockData.supplierid);
+        const purchasePrice = Number(stockData.purchaseprice);
+
+        if (!Number.isInteger(supplierId) || supplierId < 1) {
+            return { message: "Please select a valid Supplier.", status: 400 };
+        }
+
+        if (!Number.isFinite(purchasePrice) || purchasePrice <= 0) {
+            return { message: "Purchase Price must be greater than 0.", status: 400 };
+        }
+
+        const scaledPurchasePrice = purchasePrice * 100;
+        if (Math.abs(scaledPurchasePrice - Math.round(scaledPurchasePrice)) > 1e-8) {
+            return { message: "Purchase Price can have a maximum of 2 decimal places.", status: 400 };
+        }
+
+        const supplierResult = await query(
+            `SELECT id FROM supplier WHERE id = $1 LIMIT 1`,
+            [supplierId]
+        );
+
+        if (supplierResult.rows.length === 0) {
+            return { message: "The selected Supplier does not exist.", status: 400 };
+        }
+
+        stockData.supplierid = supplierId;
+        stockData.purchaseprice = purchasePrice;
+        return null;
+    };
+
     const getRequiredProductTaxCodeField = (stocktype: any) =>
         normalizeComparableText(stocktype) === RENTAL_STOCK_TYPE ? "saccode" : "hsncode";
 
@@ -332,9 +372,11 @@ export module stockRevoService {
             const orderByClause = `ORDER BY ${orderByField} ${orderByDirection}`;
 
             let queryText = `
-                SELECT s.*, p.id AS productid, p.hsncode, p.saccode
+                SELECT s.*, p.id AS productid, p.hsncode, p.saccode,
+                       supplier.suppliername
                 FROM stock_revo s
                 INNER JOIN product_revo p ON s.puc = p.puc
+                LEFT JOIN supplier ON supplier.id = s.supplierid
                 ${whereClause} 
                 ${orderByClause}`;
 
@@ -411,9 +453,11 @@ export module stockRevoService {
             const offsetParameter = `$${queryParams.length - 1}`;
             const limitParameter = `$${queryParams.length}`;
             const queryText = `
-                SELECT s.*, p.id AS productid, p.hsncode, p.saccode
+                SELECT s.*, p.id AS productid, p.hsncode, p.saccode,
+                       supplier.suppliername
                 FROM stock_revo s
                 INNER JOIN product_revo p ON s.puc = p.puc
+                LEFT JOIN supplier ON supplier.id = s.supplierid
                 WHERE ${whereClauses.join(" AND ")}
                 ORDER BY s.modifieddate DESC
                 OFFSET ${offsetParameter}
@@ -431,9 +475,11 @@ export module stockRevoService {
         try {
             const { id } = request.params
             const result: any = await query(
-                `SELECT s.*, p.id AS productid, p.hsncode, p.saccode
+                `SELECT s.*, p.id AS productid, p.hsncode, p.saccode,
+                        supplier.suppliername
                  FROM stock_revo s
                  LEFT JOIN product_revo p ON s.puc = p.puc
+                 LEFT JOIN supplier ON supplier.id = s.supplierid
                  WHERE s.id = $1`,
                 [id]
             );
@@ -451,6 +497,13 @@ export module stockRevoService {
         try {
             let querydata: string;
             let params: any[];
+            const purchaseDetailsValidationError = await validateStockPurchaseDetails(
+                stockRevoData,
+                !stockRevoData.id
+            );
+            if (purchaseDetailsValidationError) {
+                return purchaseDetailsValidationError;
+            }
             if (stockRevoData.manufacturedyear) {
                 let converttoutc = await DateCustomize.ConvertDDMMYYYtoutc(stockRevoData.manufacturedyear)
                 stockRevoData.manufacturedyear = converttoutc
@@ -494,7 +547,7 @@ export module stockRevoService {
                     // If existing stock is third_party_product, restrict updates
                     if (currentRow.stocktype === 'third_party_product') {
                         // Allow updates only for E-commerce toggle (ecompublish) and Asset number (serialnumber)
-                        const allowedFields = ['ecompublish', 'serialnumber'];
+                        const allowedFields = ['ecompublish', 'serialnumber', 'supplierid', 'purchaseprice'];
                         Object.keys(upsertFields).forEach(key => {
                             if (!allowedFields.includes(key)) {
                                 delete upsertFields[key];
@@ -1083,6 +1136,17 @@ export module stockRevoService {
             }
 
             for (let i = 0; i < jsonresult.length; i++) {
+                const purchaseDetailsValidationError = await validateStockPurchaseDetails(
+                    jsonresult[i],
+                    true
+                );
+                if (purchaseDetailsValidationError) {
+                    return {
+                        ...purchaseDetailsValidationError,
+                        message: `Row ${i + 2}: ${purchaseDetailsValidationError.message}`,
+                    };
+                }
+
                 // User-supplied barcode columns are ignored for imports.
                 // The persisted DB field is still rfid, but values are generated server-side.
                 removeUploadedBarcodeFields(jsonresult[i]);

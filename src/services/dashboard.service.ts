@@ -1354,6 +1354,73 @@ ORDER BY
         // API - /dashboard/epoch-ticket-count/location?date=1704067200-1726230525&ticketstatus=all&location=head_office
     };
 
+    export const getTechnicianTicketCountDashboardData = async (querydata) => {
+        try {
+            const { date, location } = querydata;
+            if (!date) {
+                throw new Error('Date parameter is required.');
+            }
+
+            const epochdate = String(date).split('-');
+            if (epochdate.length !== 2) {
+                throw new Error('Invalid date format. Expected format: smallepoch-greatepoch');
+            }
+
+            const fromEpoch = Number.parseInt(epochdate[0], 10);
+            const toEpoch = Number.parseInt(epochdate[1], 10);
+            if (!Number.isFinite(fromEpoch) || !Number.isFinite(toEpoch)) {
+                throw new Error('Invalid epoch values.');
+            }
+            if (fromEpoch > toEpoch) {
+                throw new Error('From epoch cannot be greater than to epoch.');
+            }
+
+            const normalizedLocation = typeof location === 'string' && location.trim()
+                ? location.trim()
+                : null;
+            const result = await query(
+                `
+                SELECT
+                    i.id,
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT_WS(' ', i.firstname, i.lastname)), ''),
+                        i.useremail,
+                        'Technician #' || i.id::text
+                    ) AS technician,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'new') AS new_count,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'open') AS open_count,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'resolved_closed') AS resolved_closed_count
+                FROM inventoryusers i
+                LEFT JOIN tickets t
+                  ON t.assignedid = i.id
+                 AND to_timestamp(t.createddate) BETWEEN to_timestamp($1) AND to_timestamp($2)
+                 AND t.ticketstatus IN ('new', 'open', 'resolved_closed')
+                 AND (t.isarchive = FALSE OR t.isarchive IS NULL)
+                 AND (t.isdeleted = FALSE OR t.isdeleted IS NULL)
+                 AND (t.removefromrecyclebin = FALSE OR t.removefromrecyclebin IS NULL)
+                WHERE LOWER(COALESCE(i.role, '')) = 'technician'
+                  AND ($3::text IS NULL OR i.location = $3)
+                GROUP BY i.id, i.firstname, i.lastname, i.useremail
+                ORDER BY technician ASC
+                `,
+                [fromEpoch, toEpoch, normalizedLocation]
+            );
+
+            return [
+                ['Technician', 'New', 'Open', 'Resolved/Closed'],
+                ...result.rows.map((row: any) => [
+                    row.technician,
+                    Number(row.new_count || 0),
+                    Number(row.open_count || 0),
+                    Number(row.resolved_closed_count || 0),
+                ]),
+            ];
+        } catch (error) {
+            console.error('Error in getTechnicianTicketCountDashboardData:', error.message);
+            return { error: { errorMessage: error.message, statusCode: 404 } };
+        }
+    };
+
     export const getProductStatusCountDashboardData = async (querydata) => {
         try {
             const { productstatus } = querydata;
@@ -1556,23 +1623,47 @@ ORDER BY
         }
     };
 
-    export const getAvailableCountTotalData = async () => {
+    const stockValueTypeFilters: Record<string, string> = {
+        on_catalogue_product: 'on_catalogue_product',
+        off_catalogue_product: 'off_catalogue_product',
+        rental_product: 'rental_product'
+    };
+
+    const getStockValueTypeFilter = (querydata: any): string | null => {
+        const requestedType = typeof querydata?.stocktype === 'string'
+            ? querydata.stocktype.trim().toLowerCase()
+            : '';
+
+        if (!requestedType || requestedType === 'all') {
+            return null;
+        }
+
+        const stockType = stockValueTypeFilters[requestedType];
+        if (!stockType) {
+            throw new Error('Invalid stocktype filter.');
+        }
+
+        return stockType;
+    };
+
+    export const getAvailableCountTotalData = async (querydata: any = {}) => {
         try {
+            const stockType = getStockValueTypeFilter(querydata);
             const queryText = `
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(p.price) AS total
+                       SUM(COALESCE(s.purchaseprice, 0)) AS total
                 FROM stock_revo AS s
-                JOIN product_revo AS p ON s.puc = p.puc
                 WHERE s.isarchive = FALSE
                   AND s.isdeleted = FALSE
                   AND s.removefromrecyclebin = FALSE
                   AND s.stockstatus = 'Available'
+                  AND ($1::text IS NULL OR s.stocktype = $1)
                 GROUP BY s.category, s.subcategory;
             `;
 
-            const result = await query(queryText, []);
+            const result = await query(queryText, [stockType]);
             // Predefined categories
             const categories = [
                 'New Laptop',
@@ -1619,29 +1710,24 @@ ORDER BY
                 throw new Error('Location parameter is required.');
             }
 
+            const stockType = getStockValueTypeFilter(querydata);
+
             const queryText = `
                 SELECT s.category,
                        s.subcategory,
-                       SUM(s.total_count * p.price) AS total
-                FROM (
-                    SELECT s.category,
-                           s.subcategory,
-                           s.puc,
-                           COUNT(s.id) AS total_count
-                    FROM stock_revo AS s
-                    WHERE s.isarchive = FALSE
-                      AND s.location = $1
-                      AND s.isdeleted = FALSE
-                      AND s.removefromrecyclebin = FALSE
-                      AND s.stockstatus = 'Available'
-                    GROUP BY s.category, s.subcategory, s.puc
-                ) AS s
-                JOIN product_revo AS p
-                ON p.puc = s.puc
+                       COUNT(s.id) AS total_count,
+                       SUM(COALESCE(s.purchaseprice, 0)) AS total
+                FROM stock_revo AS s
+                WHERE s.isarchive = FALSE
+                  AND s.location = $1
+                  AND s.isdeleted = FALSE
+                  AND s.removefromrecyclebin = FALSE
+                  AND s.stockstatus = 'Available'
+                  AND ($2::text IS NULL OR s.stocktype = $2)
                 GROUP BY s.category, s.subcategory;
             `;
 
-            const result = await query(queryText, [location]);
+            const result = await query(queryText, [location, stockType]);
 
             const categories = [
                 'new laptop',
@@ -1672,11 +1758,12 @@ ORDER BY
 
                 return [
                     formattedCategory,
+                    Number(row?.total_count || 0),
                     Number(row?.total || 0) 
                 ];
             });
 
-            formattedResult.unshift(['Category', 'Total Value']);
+            formattedResult.unshift(['Category', 'Quantity', 'Total Amount']);
 
             return formattedResult;
 
