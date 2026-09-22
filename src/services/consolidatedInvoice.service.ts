@@ -1,12 +1,12 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import ExcelJS from "exceljs";
 import pool, { query } from "../database/postgres.js";
 import { admin } from "../firebase/firebaseAdmin.js";
 import { renderHtmlToPdf } from "../utils/pdf/renderHtmlToPdf.js";
 import {
   getConsolidatedInvoiceHtml,
-  getConsolidatedSupportingDocumentHtml,
   ConsolidatedInvoiceTemplateData,
 } from "../utils/invoice/consolidatedInvoiceTemplate.js";
 
@@ -1276,27 +1276,208 @@ const getDefaultLogoDataUrl = async () => {
   return cachedDefaultLogoDataUrl;
 };
 
-const uploadPdf = async (pdfBuffer: Buffer, destination: string, fileName: string) => {
+const uploadFile = async (
+  fileBuffer: Buffer,
+  destination: string,
+  fileName: string,
+  contentType: string,
+  disposition: "inline" | "attachment" = "inline"
+) => {
   const bucket = admin.storage().bucket(CONSOLIDATED_INVOICE_BUCKET);
   const uploadedFile = bucket.file(destination);
 
-  await uploadedFile.save(pdfBuffer, {
-    contentType: "application/pdf",
+  await uploadedFile.save(fileBuffer, {
+    contentType,
     resumable: false,
     metadata: {
       cacheControl: "no-store, max-age=0",
-      contentDisposition: `inline; filename="${fileName}"`,
+      contentDisposition: `${disposition}; filename="${fileName}"`,
     },
   });
 
   return `https://storage.googleapis.com/${CONSOLIDATED_INVOICE_BUCKET}/${destination}?v=${Date.now()}`;
 };
 
+const uploadPdf = (pdfBuffer: Buffer, destination: string, fileName: string) =>
+  uploadFile(pdfBuffer, destination, fileName, "application/pdf");
+
 const sanitizeFileName = (value: unknown) =>
   normalizeText(value)
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "consolidated-invoice";
+
+const getObjectValue = (value: any, ...keys: string[]) => {
+  if (!value || typeof value !== "object") return "";
+  for (const key of keys) {
+    if (value[key] != null && value[key] !== "") return value[key];
+  }
+  return "";
+};
+
+const formatSupportingExcelText = (value: unknown) =>
+  normalizeText(value)
+    .replace(/_+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+
+const styleSupportingExcelHeader = (row: ExcelJS.Row, columnCount: number) => {
+  for (let column = 1; column <= columnCount; column += 1) {
+    const cell = row.getCell(column);
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF5B5B5B" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = {
+      top: { style: "thin" }, left: { style: "thin" },
+      bottom: { style: "thin" }, right: { style: "thin" },
+    };
+  }
+};
+
+const styleSupportingExcelDataRow = (row: ExcelJS.Row) => {
+  row.eachCell({ includeEmpty: true }, (cell) => {
+    cell.border = {
+      top: { style: "thin", color: { argb: "FFD9D9D9" } },
+      left: { style: "thin", color: { argb: "FFD9D9D9" } },
+      bottom: { style: "thin", color: { argb: "FFD9D9D9" } },
+      right: { style: "thin", color: { argb: "FFD9D9D9" } },
+    };
+    cell.alignment = { vertical: "middle" };
+  });
+};
+
+const buildSupportingExcel = async (preview: any): Promise<Buffer> => {
+  const sourceRows = getSourceInvoiceRows(preview.rows || []);
+  const sourceRowsById = new Map(
+    sourceRows.map((row: any) => [Number(row.sourceinvoiceid), row])
+  );
+  const sourceInvoiceIds = Array.from(sourceRowsById.keys()).filter(
+    (id) => Number.isFinite(id) && id > 0
+  );
+
+  const assetsResult = sourceInvoiceIds.length
+    ? await query(
+      `
+      SELECT
+        ri.id AS sourceinvoiceid,
+        ri.createddate AS invoicecreateddate,
+        raa.assetnumber,
+        raa.orderlineid,
+        to_jsonb(sr) AS stockdata,
+        to_jsonb(ol) AS orderlinedata,
+        to_jsonb(p) AS productdata,
+        to_jsonb(a) AS shippingaddressdata
+      FROM revoinvoice ri
+      INNER JOIN rental_agreement ra ON ra.uniqueorderid = ri.orderid
+      INNER JOIN rental_agreement_asset raa
+        ON raa.agreementid = ra.id
+        AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
+      LEFT JOIN stock_revo sr
+        ON sr.id = raa.stockid
+        OR CAST(sr.assetnumber AS TEXT) = CAST(raa.assetnumber AS TEXT)
+        OR CAST(sr.rfid AS TEXT) = CAST(raa.assetnumber AS TEXT)
+      LEFT JOIN orderline ol ON ol.id = raa.orderlineid
+      LEFT JOIN product_revo p ON p.id = ol.productid
+      LEFT JOIN address a ON a.id = ol.addressid
+      WHERE ri.id = ANY($1::int[])
+      ORDER BY ri.id, raa.id
+      `,
+      [sourceInvoiceIds]
+    )
+    : { rows: [] };
+
+  const assetCountBySource = new Map<number, number>();
+  assetsResult.rows.forEach((asset: any) => {
+    const sourceInvoiceId = Number(asset.sourceinvoiceid);
+    assetCountBySource.set(sourceInvoiceId, (assetCountBySource.get(sourceInvoiceId) || 0) + 1);
+  });
+
+  const sourceInvoicesWithoutAssets = sourceInvoiceIds.filter(
+    (sourceInvoiceId) => !assetCountBySource.has(sourceInvoiceId)
+  );
+  if (sourceInvoicesWithoutAssets.length > 0) {
+    throw new Error("A selected rental invoice has no current rental assets available for the supporting Excel.");
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "TEQIT";
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet("Device List", { views: [{ state: "frozen", ySplit: 3 }] });
+  const headers = [
+    "S. No.", "Serial No.", "Barcode", "Location", "Product Name", "Rental Start Date",
+    "Specification", "Pricing", "day", "Service days in month", "Actual cost", "Actual GST",
+    "Total", "Comments",
+  ];
+  const asOfDate = preview?.period?.billingthroughdisplay || preview?.period?.billingthroughdate || "";
+  sheet.mergeCells(1, 1, 1, headers.length);
+  sheet.getCell("A1").value = `Supporting Document - List of Devices as on ${asOfDate}`;
+  sheet.getCell("A1").font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+  sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF5B5B5B" } };
+  sheet.getCell("A1").alignment = { horizontal: "left", vertical: "middle" };
+  sheet.getRow(1).height = 24;
+  sheet.mergeCells(2, 1, 2, headers.length);
+  sheet.getCell("A2").value = preview?.customer?.name || "";
+  sheet.getCell("A2").font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+  sheet.getCell("A2").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF5B5B5B" } };
+  sheet.getCell("A2").alignment = { horizontal: "left", vertical: "middle" };
+  sheet.getRow(2).height = 22;
+  const headerRow = sheet.addRow(headers);
+  styleSupportingExcelHeader(headerRow, headers.length);
+  headerRow.height = 28;
+  sheet.columns = [8, 18, 16, 16, 28, 19, 28, 13, 14, 21, 14, 14, 14, 22]
+    .map((width) => ({ width }));
+
+  assetsResult.rows.forEach((asset: any, index: number) => {
+    const sourceRow = sourceRowsById.get(Number(asset.sourceinvoiceid)) || {};
+    const stock = asset.stockdata || {};
+    const orderLine = asset.orderlinedata || {};
+    const product = asset.productdata || {};
+    const shippingAddress = asset.shippingaddressdata || {};
+    const productName = formatSupportingExcelText(
+      getObjectValue(orderLine, "productname") || getObjectValue(product, "productname", "name")
+    );
+    const productModel = formatSupportingExcelText(getObjectValue(product, "model"));
+    const displayProductName = productModel && normalizeComparable(productModel) !== normalizeComparable(productName)
+      ? [productName, productModel].filter(Boolean).join(" - ")
+      : productName || productModel;
+    const assetCount = Math.max(assetCountBySource.get(Number(asset.sourceinvoiceid)) || 1, 1);
+    const lineQuantity = Math.max(toNumber(orderLine.quantity), 1);
+    const pricing = toNumber(orderLine.productamount) > 0
+      ? fromPaise(Math.round(toPaise(orderLine.productamount) / lineQuantity))
+      : fromPaise(Math.round(toPaise(sourceRow.monthlytaxableamount) / assetCount));
+    const cycleDays = Math.max(toNumber(sourceRow.cycledays), 1);
+    const serviceDays = Math.max(toNumber(sourceRow.billabledays), 0);
+    const pricePerDay = pricing / cycleDays;
+    const actualCost = fromPaise(Math.round((toPaise(pricing) * serviceDays) / cycleDays));
+    const actualGst = fromPaise(Math.round(toPaise(actualCost) * 0.18));
+    const total = fromPaise(toPaise(actualCost) + toPaise(actualGst));
+    const invoiceCreatedDate = parseDateValue(asset.invoicecreateddate);
+    const row = sheet.addRow([
+      index + 1,
+      getObjectValue(stock, "serialnumber", "serialno"),
+      getObjectValue(stock, "rfid", "barcode", "barcodenumber"),
+      getObjectValue(shippingAddress, "city", "address", "name") || getObjectValue(orderLine, "location") || getObjectValue(stock, "location"),
+      displayProductName,
+      invoiceCreatedDate || "",
+      formatSupportingExcelText(
+        getObjectValue(product, "specification", "model") || getObjectValue(orderLine, "productname")
+      ),
+      pricing, pricePerDay, serviceDays, actualCost, actualGst, total, "",
+    ]);
+    const excelRowNumber = row.number;
+    row.getCell(9).value = { formula: `H${excelRowNumber}/${cycleDays}`, result: pricePerDay };
+    row.getCell(11).value = { formula: `I${excelRowNumber}*J${excelRowNumber}`, result: actualCost };
+    row.getCell(12).value = { formula: `K${excelRowNumber}*18%`, result: actualGst };
+    row.getCell(13).value = { formula: `K${excelRowNumber}+L${excelRowNumber}`, result: total };
+    row.getCell(6).numFmt = "dd mmm yyyy";
+    [8, 9, 11, 12, 13].forEach((column) => { row.getCell(column).numFmt = "#,##0.00"; });
+    styleSupportingExcelDataRow(row);
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+};
 
 const buildTemplateData = async (
   documentNumber: string,
@@ -1531,8 +1712,8 @@ export module consolidatedInvoiceService {
         ci.sourceinvoicekey,
         ci.documentnumber,
         ci.documenturl,
-        ci.supportingdocumentnumber,
-        ci.supportingdocumenturl,
+        ci.supportingexcelnumber,
+        ci.supportingexcelurl,
         ci.status,
         ci.subtotal,
         ci.taxamount,
@@ -1716,6 +1897,11 @@ export module consolidatedInvoiceService {
       preview.rows,
       preview.totals
     );
+    const supportingExcelNumber = `${documentNumber}-XL`;
+    const supportingExcelFileName = `TEQIT-${sanitizeFileName(
+      preview.customer?.name || "Customer"
+    )}-Supporting-Document.xlsx`;
+    const supportingExcelBuffer = await buildSupportingExcel(preview);
     const html = getConsolidatedInvoiceHtml(templateData);
     const pdfBuffer = await renderHtmlToPdf(html);
     const fileName = `${sanitizeFileName(documentNumber)}.pdf`;
@@ -1724,17 +1910,12 @@ export module consolidatedInvoiceService {
       `${CONSOLIDATED_INVOICE_FOLDER}/${fileName}`,
       fileName
     );
-    const supportingDocumentNumber = `${documentNumber}-SD`;
-    const supportingDocumentHtml = getConsolidatedSupportingDocumentHtml({
-      ...templateData,
-      documentNumber: supportingDocumentNumber,
-    });
-    const supportingDocumentBuffer = await renderHtmlToPdf(supportingDocumentHtml);
-    const supportingDocumentFileName = `${sanitizeFileName(supportingDocumentNumber)}.pdf`;
-    const supportingDocumentUrl = await uploadPdf(
-      supportingDocumentBuffer,
-      `${CONSOLIDATED_INVOICE_FOLDER}/supporting-documents/${supportingDocumentFileName}`,
-      supportingDocumentFileName
+    const supportingExcelUrl = await uploadFile(
+      supportingExcelBuffer,
+      `${CONSOLIDATED_INVOICE_FOLDER}/supporting-excel/${sanitizeFileName(documentNumber)}/${supportingExcelFileName}`,
+      supportingExcelFileName,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "attachment"
     );
 
     const client = await pool.connect();
@@ -1763,8 +1944,8 @@ export module consolidatedInvoiceService {
         SET
           documentnumber = $1,
           documenturl = $2,
-          supportingdocumentnumber = $3,
-          supportingdocumenturl = $4,
+          supportingexcelnumber = $3,
+          supportingexcelurl = $4,
           status = 'generated',
           iscurrent = TRUE,
           metadatajson = $5::jsonb,
@@ -1775,8 +1956,8 @@ export module consolidatedInvoiceService {
         [
           documentNumber,
           documentUrl,
-          supportingDocumentNumber,
-          supportingDocumentUrl,
+          supportingExcelNumber,
+          supportingExcelUrl,
           JSON.stringify({
             calculationVersion: CONSOLIDATED_INVOICE_CALCULATION_VERSION,
             preview,
@@ -1860,7 +2041,7 @@ export module consolidatedInvoiceService {
       consolidatedInvoice: generatedRecord,
       previousConsolidatedInvoice: currentConsolidatedInvoice,
       documenturl: documentUrl,
-      supportingdocumenturl: supportingDocumentUrl,
+      supportingexcelurl: supportingExcelUrl,
       preview: {
         ...preview,
         existingConsolidatedInvoices: updatedExistingConsolidatedInvoices,
