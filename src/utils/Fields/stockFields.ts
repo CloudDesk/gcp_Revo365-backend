@@ -12,7 +12,12 @@ export const stockInteger = [
     "createdby",
     "modifiedby",
     "manufacturedyear",
-    "releaseyear"
+    "releaseyear",
+    "supplierid"
+]
+
+export const stockDecimal = [
+    "purchaseprice"
 ]
 
 export const stockText = [

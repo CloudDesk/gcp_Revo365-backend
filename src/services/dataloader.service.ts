@@ -13,6 +13,7 @@ import { stockRevoService } from "./stockRevo.service.js";
 import {
   stockArray,
   stockBoolean,
+  stockDecimal,
   stockInteger,
   stocklocationArray,
   stockText,
@@ -154,7 +155,7 @@ export module dataLoaderService {
                   } else {
                     e[key] = value;
                   }
-                } else if (stockInteger.includes(key)) {
+                } else if (stockInteger.includes(key) || stockDecimal.includes(key)) {
                   let valueconvert: any = Number(value);
                   if (isNaN(valueconvert)) {
                     e[key] = value;
@@ -204,7 +205,28 @@ export module dataLoaderService {
             if (e.stocktype === "rental_product") {
               e.ecompublish = false;
             }
-            let validationresult = await validateDataLoader(stockrevoSchema, e);
+            let validationresult = await validateDataLoader(
+              {
+                ...stockrevoSchema,
+                properties: {
+                  ...stockrevoSchema.properties,
+                  supplierid: {
+                    ...stockrevoSchema.properties.supplierid,
+                    type: "integer",
+                  },
+                  purchaseprice: {
+                    ...stockrevoSchema.properties.purchaseprice,
+                    type: "number",
+                  },
+                },
+                required: [
+                  ...(stockrevoSchema.required || []),
+                  "supplierid",
+                  "purchaseprice",
+                ],
+              },
+              e
+            );
             if (validationresult === true) {
             } else {
               const errorObject: any = {};

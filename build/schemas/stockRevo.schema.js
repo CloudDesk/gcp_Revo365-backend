@@ -101,6 +101,24 @@ export const stockrevoSchema = {
                 // pattern: "Serial number should not consist only of digits",
             },
         },
+        supplierid: {
+            type: ['integer', 'null'],
+            minimum: 1,
+            errorMessage: {
+                type: 'Supplier should be a valid number',
+                minimum: 'Please select a valid Supplier'
+            }
+        },
+        purchaseprice: {
+            type: ['number', 'null'],
+            exclusiveMinimum: 0,
+            multipleOf: 0.01,
+            errorMessage: {
+                type: 'Purchase Price should be a valid number',
+                exclusiveMinimum: 'Purchase Price must be greater than 0',
+                multipleOf: 'Purchase Price can have a maximum of 2 decimal places'
+            }
+        },
         stockstatus: {
             type: ['string', 'null'],
             errorMessage: {
