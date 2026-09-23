@@ -1628,6 +1628,14 @@ ORDER BY
         off_catalogue_product: 'off_catalogue_product',
         rental_product: 'rental_product'
     };
+    const stockValueCategories = [
+        { label: 'New Laptop', category: 'new', subcategory: 'laptop' },
+        { label: 'Refurbished Laptop', category: 'refurbished', subcategory: 'laptop' },
+        { label: 'New Mobile Phone', category: 'new', subcategory: 'mobile_phone' },
+        { label: 'Refurbished Mobile Phone', category: 'refurbished', subcategory: 'mobile_phone' },
+        { label: 'New Accessories', category: 'new', subcategory: 'accessories' },
+        { label: 'Refurbished Accessories', category: 'refurbished', subcategory: 'accessories' }
+    ];
 
     const getStockValueTypeFilter = (querydata: any): string | null => {
         const requestedType = typeof querydata?.stocktype === 'string'
@@ -1653,40 +1661,51 @@ ORDER BY
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(COALESCE(s.purchaseprice, 0)) AS total
+                       SUM(
+                         CASE
+                           WHEN $1::text = 'rental_product'
+                             THEN COALESCE(rental_line.productamount, 0)
+                           ELSE COALESCE(s.purchaseprice, 0)
+                         END
+                       ) AS total
                 FROM stock_revo AS s
+                LEFT JOIN LATERAL (
+                  SELECT ol.productamount
+                  FROM rental_agreement_asset raa
+                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
+                  WHERE $1::text = 'rental_product'
+                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                    AND (
+                      raa.stockid = s.id
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
+                    )
+                  ORDER BY raa.id DESC
+                  LIMIT 1
+                ) AS rental_line ON TRUE
                 WHERE s.isarchive = FALSE
                   AND s.isdeleted = FALSE
                   AND s.removefromrecyclebin = FALSE
-                  AND s.stockstatus = 'Available'
+                  AND (
+                    s.stockstatus = 'Available'
+                    OR (
+                      $1::text = 'rental_product'
+                      AND s.stockstatus IN ('Rental Sold', 'Reserved for Rental')
+                    )
+                  )
                   AND ($1::text IS NULL OR s.stocktype = $1)
                 GROUP BY s.category, s.subcategory;
             `;
 
             const result = await query(queryText, [stockType]);
-            // Predefined categories
-            const categories = [
-                'New Laptop',
-                'Refurbished Laptop',
-                'New Mobile Phone',
-                'Refurbished Mobile Phone',
-                'New Accessories',
-                'Refurbished Accessories'
-            ];
-
-            // Function to format result based on category and subcategory
-            const formattedResult = categories.map(category => {
-                const [cat, subcat] = category.split(' ');
-
-                // Find the matching row from result.rows
+            const formattedResult = stockValueCategories.map(({ label, category, subcategory }) => {
                 const row = result.rows.find(r =>
-                    r.category.toLowerCase() === cat.toLowerCase() &&
-                    r.subcategory.toLowerCase() === subcat.toLowerCase()
+                    r.category.toLowerCase() === category &&
+                    r.subcategory.toLowerCase() === subcategory
                 );
 
-                // Format the result, defaulting to 0 if no match is found
                 return [
-                    category,
+                    label,
                     Number(row?.total_count || 0),
                     Number(row?.total || 0)        
                 ];
@@ -1716,48 +1735,53 @@ ORDER BY
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(COALESCE(s.purchaseprice, 0)) AS total
+                       SUM(
+                         CASE
+                           WHEN $2::text = 'rental_product'
+                             THEN COALESCE(rental_line.productamount, 0)
+                           ELSE COALESCE(s.purchaseprice, 0)
+                         END
+                       ) AS total
                 FROM stock_revo AS s
+                LEFT JOIN LATERAL (
+                  SELECT ol.productamount
+                  FROM rental_agreement_asset raa
+                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
+                  WHERE $2::text = 'rental_product'
+                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                    AND (
+                      raa.stockid = s.id
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
+                    )
+                  ORDER BY raa.id DESC
+                  LIMIT 1
+                ) AS rental_line ON TRUE
                 WHERE s.isarchive = FALSE
                   AND s.location = $1
                   AND s.isdeleted = FALSE
                   AND s.removefromrecyclebin = FALSE
-                  AND s.stockstatus = 'Available'
+                  AND (
+                    s.stockstatus = 'Available'
+                    OR (
+                      $2::text = 'rental_product'
+                      AND s.stockstatus IN ('Rental Sold', 'Reserved for Rental')
+                    )
+                  )
                   AND ($2::text IS NULL OR s.stocktype = $2)
                 GROUP BY s.category, s.subcategory;
             `;
 
             const result = await query(queryText, [location, stockType]);
 
-            const categories = [
-                'new laptop',
-                'refurbished laptop',
-                'new mobile_phone',
-                'refurbished mobile_phone',
-                'new accessories',
-                'refurbished accessories'
-            ];
-
-            const formatCategoryName = (category) => {
-                return category
-                    .replace('_', ' ')
-                    .split(' ')
-                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                    .join(' ');
-            };
-
-            // Format the final result
-            const formattedResult = categories.map(category => {
-                const [cat, subcat] = category.split(' ');
+            const formattedResult = stockValueCategories.map(({ label, category, subcategory }) => {
                 const row = result.rows.find(r =>
-                    r.category.toLowerCase() === cat.toLowerCase() &&
-                    r.subcategory.toLowerCase() === subcat.toLowerCase()
+                    r.category.toLowerCase() === category &&
+                    r.subcategory.toLowerCase() === subcategory
                 );
 
-                const formattedCategory = formatCategoryName(category);
-
                 return [
-                    formattedCategory,
+                    label,
                     Number(row?.total_count || 0),
                     Number(row?.total || 0) 
                 ];
@@ -1769,6 +1793,64 @@ ORDER BY
 
         } catch (error) {
             console.error("Error in getAvailableCountTotalLocationBasedData:", error.message);
+            return { error: { errorMessage: error.message, statusCode: 404 } };
+        }
+    };
+
+    export const getBusinessCustomerRentalStockData = async () => {
+        try {
+            const result = await query(`
+                WITH allocated_rental_stock AS (
+                    SELECT DISTINCT
+                        ra.customerid,
+                        s.id AS stockid,
+                        s.purchaseprice
+                    FROM rental_agreement_asset raa
+                    INNER JOIN rental_agreement ra
+                        ON ra.id = raa.agreementid
+                    INNER JOIN stock_revo s
+                        ON (
+                            s.id = raa.stockid
+                            OR CAST(s.assetnumber AS TEXT) = CAST(raa.assetnumber AS TEXT)
+                            OR CAST(s.rfid AS TEXT) = CAST(raa.assetnumber AS TEXT)
+                        )
+                    WHERE COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                      AND s.stockstatus = 'Rental Sold'
+                      AND s.isarchive = FALSE
+                      AND s.isdeleted = FALSE
+                      AND s.removefromrecyclebin = FALSE
+                )
+                SELECT
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT_WS(' ', u.firstname, u.lastname)), ''),
+                        NULLIF(TRIM(u.useremail), ''),
+                        CONCAT('Customer ', u.id)
+                    ) AS client,
+                    COUNT(DISTINCT allocated_rental_stock.stockid) AS rental_sold_stock_quantity,
+                    COALESCE(SUM(COALESCE(allocated_rental_stock.purchaseprice, 0)), 0) AS rental_stock_value
+                FROM users u
+                LEFT JOIN allocated_rental_stock
+                    ON allocated_rental_stock.customerid = u.id
+                WHERE u.isbusinessuser = TRUE
+                GROUP BY u.id, u.firstname, u.lastname, u.useremail
+                ORDER BY client ASC;
+            `);
+
+            const formattedResult = result.rows.map((row) => [
+                row.client,
+                Number(row.rental_sold_stock_quantity || 0),
+                Number(row.rental_stock_value || 0)
+            ]);
+
+            formattedResult.unshift([
+                'Client',
+                'Rental Stock Quantity',
+                'Rental Stock Value (Purchase Price)'
+            ]);
+
+            return formattedResult;
+        } catch (error) {
+            console.error("Error in getBusinessCustomerRentalStockData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
     };

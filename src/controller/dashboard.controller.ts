@@ -203,6 +203,16 @@ export const dashboardController = {
         }
     },
 
+    getBusinessCustomerRentalStockData: async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const data = await dashboardservice.getBusinessCustomerRentalStockData();
+            reply.send(data);
+        } catch (error) {
+            console.error("Error in getBusinessCustomerRentalStockData", error);
+            reply.status(500).send({ error: 'Internal Server Error' });
+        }
+    },
+
     getAvailableCountData: async (request: FastifyRequest<{ Querystring: CountDashboardQuery }>, reply: FastifyReply) => {
         try {
             const data = await dashboardservice.getAvailableCountData();

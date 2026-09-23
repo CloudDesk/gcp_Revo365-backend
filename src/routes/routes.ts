@@ -594,6 +594,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     fastify.get('/dashboard/available/count-quantity', { preHandler: [getSession] }, dashboardController.getAvailableTotalAmountCountData)
     // fastify.get('/dashboard/available/count-quantity/location', dashboardController.getAvalibleTotalAmountCountLocationBasedData)
     fastify.get('/dashboard/available/count-quantity/location', { preHandler: [getSession] }, dashboardController.getAvailableTotalAmountCountLocationBasedData)
+    fastify.get('/dashboard/rental-stock/business-customers', { preHandler: [getSession] }, dashboardController.getBusinessCustomerRentalStockData)
     // fastify.get('/dashboard/available/quantity', dashboardController.getAvalibleCountData)
     fastify.get('/dashboard/available/quantity', { preHandler: [getSession] }, dashboardController.getAvailableCountData)
     // fastify.get('/dashboard/available/quantity/location', dashboardController.getAvalibleCountDataLocation)

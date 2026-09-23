@@ -3,7 +3,7 @@ import { ProductNumberFields, productArrayFields, productBooleanFields, productS
 import { validateDataLoader } from "../schemas/ajv.schema.js";
 import { productInsertSchema } from "../schemas/v1/product.schema.js";
 import { stockRevoService } from "./stockRevo.service.js";
-import { stockArray, stockBoolean, stockInteger, stocklocationArray, stockText, } from "../utils/Fields/stockFields.js";
+import { stockArray, stockBoolean, stockDecimal, stockInteger, stocklocationArray, stockText, } from "../utils/Fields/stockFields.js";
 import { stockrevoSchema } from "../schemas/stockRevo.schema.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { getStockLocationData } from "../utils/StockLocationPicklist/locationpicklist.js";
@@ -135,7 +135,7 @@ export var dataLoaderService;
                                     e[key] = value;
                                 }
                             }
-                            else if (stockInteger.includes(key)) {
+                            else if (stockInteger.includes(key) || stockDecimal.includes(key)) {
                                 let valueconvert = Number(value);
                                 if (isNaN(valueconvert)) {
                                     e[key] = value;
@@ -191,7 +191,25 @@ export var dataLoaderService;
                     if (e.stocktype === "rental_product") {
                         e.ecompublish = false;
                     }
-                    let validationresult = await validateDataLoader(stockrevoSchema, e);
+                    let validationresult = await validateDataLoader({
+                        ...stockrevoSchema,
+                        properties: {
+                            ...stockrevoSchema.properties,
+                            supplierid: {
+                                ...stockrevoSchema.properties.supplierid,
+                                type: "integer",
+                            },
+                            purchaseprice: {
+                                ...stockrevoSchema.properties.purchaseprice,
+                                type: "number",
+                            },
+                        },
+                        required: [
+                            ...(stockrevoSchema.required || []),
+                            "supplierid",
+                            "purchaseprice",
+                        ],
+                    }, e);
                     if (validationresult === true) {
                     }
                     else {
