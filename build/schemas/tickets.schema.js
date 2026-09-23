@@ -179,6 +179,12 @@ export const ticketsSchema = {
                 type: "Proceed with Value Service should be a boolean"
             }
         },
+        walkintickets: {
+            type: ['boolean', 'null'],
+            errorMessage: {
+                type: "Walk-in Tickets should be a boolean"
+            }
+        },
         productcategory: {
             type: ['string', 'null'],
             minLength: 1,
@@ -241,6 +247,18 @@ export const ticketsSchema = {
             type: ['integer', 'null'],
             errorMessage: {
                 type: "Queue Number should be an integer"
+            }
+        },
+        requestedrenewaldate: {
+            type: ['integer', 'null'],
+            errorMessage: {
+                type: "Requested Renewal Date should be an integer"
+            }
+        },
+        requestedstopdate: {
+            type: ['integer', 'null'],
+            errorMessage: {
+                type: "Requested Stop Date should be an integer"
             }
         },
     },

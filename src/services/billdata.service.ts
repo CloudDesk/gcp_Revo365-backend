@@ -9,6 +9,7 @@ export module billdatacontroller {
                             orders o ON s.orderid = p.id  WHERE orderid = $1`;
             
         } catch (error) {
+            console.error("Error in getBillData:", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
             return ErrorMessage;
         }

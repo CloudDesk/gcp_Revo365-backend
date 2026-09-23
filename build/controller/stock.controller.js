@@ -7,6 +7,7 @@ export var stockController;
             reply.send(getstock);
         }
         catch (error) {
+            console.error("Error in 'getStockData':", error);
             reply.send(error.message);
         }
     };

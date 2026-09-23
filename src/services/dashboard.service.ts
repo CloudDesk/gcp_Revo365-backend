@@ -93,19 +93,10 @@ export module dashboardservice {
             return response;
 
             // API - /dashboard/totalsales?month=july&year=2024&orderstatus=ordered&category=new&subcategory=laptop
-            // Result Format -{
-            //     "total_quantity": 1,
-            //     "total_orderamount": 22980,
-            //     "year": "2024",
-            //     "month": "july",
-            //     "orderstatus": "ordered",
-            //     "category": "new",
-            //     "subcategory": "laptop"
-            //   }
 
         } catch (error) {
             const ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.error("Error in getOverallData:", ErrorMessage);
+            console.error("Error in getSalesPerMonthData:", ErrorMessage);
             return { error: ErrorMessage };
         }
     }
@@ -154,8 +145,8 @@ export module dashboardservice {
             const startDate = new Date(`${startYear}-${startMonthNumber.toString().padStart(2, '0')}-01T00:00:00Z`);
             const endDate = new Date(`${endYear}-${endMonthNumber.toString().padStart(2, '0')}-01T00:00:00Z`);
             endDate.setMonth(endDate.getMonth() + 1);
-            endDate.setDate(0); // Set to the last day of the month
-            endDate.setHours(23, 59, 59, 999); // Set time to end of the day
+            endDate.setDate(0); 
+            endDate.setHours(23, 59, 59, 999); 
 
             const startTimestamp = Math.floor(startDate.getTime() / 1000);
             const endTimestamp = Math.floor(endDate.getTime() / 1000);
@@ -197,21 +188,6 @@ ORDER BY
             return newArray
 
             // API - /dashboard/monthwise?data=2024-january,2024-july
-            // Response data -
-            // [
-            //     {
-            //       "month": "Jan",
-            //       "year": "2024",
-            //       "total_sales": 67000,
-            //       "total_quantity": 1
-            //     },
-            //     {
-            //       "month": "Feb",
-            //       "year": "2024",
-            //       "total_sales": 75000,
-            //       "total_quantity": 1
-            //     }]
-
 
         } catch (error) {
             const ErrorMessage = await ErrorHandler.handleQueryError(error);
@@ -405,22 +381,6 @@ ORDER BY
                 return result.rows;
 
                 // API - /dashboard/group-by?data=2023-january,2024-july&orderstatus
-                // [
-                //     {
-                //       "quantity": "3",
-                //       "total_amount": "83988",
-                //       "orderstatus": "delivered",
-                //       "month": "Jul",
-                //       "year": "2024"
-                //     },
-                //     {
-                //       "quantity": "1",
-                //       "total_amount": "22980",
-                //       "orderstatus": "ordered",
-                //       "month": "Dec",
-                //       "year": "2023"
-                //     }
-                // ]
             }
         } catch (error) {
             console.log("Error in getGroupedData", error.message);
@@ -697,7 +657,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getGroupbyValueData", error.message);
+            console.error("Error in getDynamicGroupbyValueData", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -784,7 +744,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getDynamicGroupbyValueData", error.message);
+            console.error("Error in getDynamicGroupbyValueData2", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -884,7 +844,7 @@ ORDER BY
             })
             return formattedResult1;
         } catch (error) {
-            console.error("Error in getDashboardFinalData", error.message);
+            console.error("Error in getOrderStsDashboardAmountQuantity", error.message);
             return { error: { errorMessage: error.message, errorDetails: [], statusCode: 404 } };
         }
     };
@@ -962,19 +922,16 @@ ORDER BY
 
             const result = await query(queryText, queryParams);
 
-            // Prepare header row
             const headerRow = ['Month', ...statusesToInclude.map(status => `${formatColumnName(status)} Quantity`)];
             if (statusesToInclude.length === allStatuses.length) {
                 headerRow.push('Total Quantity');
             }
 
-            // Prepare the data rows
-            console.log('Result - ', result.rows);
             const dataRows = result.rows.map(row => {
                 const rowData = [row.Month];
                 statusesToInclude.forEach(status => {
                     const columnName = `${formatColumnName(status)} Quantity`;
-                    rowData.push(Number(row[columnName]) || 0);  // Ensure numeric values
+                    rowData.push(Number(row[columnName]) || 0); 
                 });
                 if (statusesToInclude.length === allStatuses.length) {
                     rowData.push(Number(row['Total Quantity']) || 0);
@@ -983,9 +940,6 @@ ORDER BY
             });
 
             const finalResult = [headerRow, ...dataRows];
-            console.log('1Final Result:',finalResult);
-            console.log('1header Row:',headerRow);
-            console.log('1data row:',dataRows);
             return finalResult;
 
         } catch (error) {
@@ -1189,19 +1143,6 @@ ORDER BY
             return formattedResult;
 
             // API - /dashboard/ticket-count?data=2024-july,2024-july&ticketstatus=all
-            // Result -
-            // [
-            //     ["Ticket Status","Month","Count"],
-            //     ["Waiting For Cost Estimation Approval","Jul",2],
-            //     ["Out For Delivery","Jul",0],
-            //     ["New","Jul",2],
-            //     ["Testing In Progress","Jul",0],
-            //     ["Service In Progress","Jul",1],
-            //     ["Waiting For Spare","Jul",0],
-            //     ["Open","Jul",0],
-            //     ["Closed","Jul",1]
-            // ]
-
         } catch (error) {
             console.error("Error in getTicketCountDashboardData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
@@ -1311,8 +1252,6 @@ ORDER BY
         try {
             const { date, ticketstatus, location,role } = querydata;
 
-            console.log('Location', location);
-
             if (!date) {
                 throw new Error('Date parameter is required.');
             }
@@ -1413,6 +1352,73 @@ ORDER BY
         }
 
         // API - /dashboard/epoch-ticket-count/location?date=1704067200-1726230525&ticketstatus=all&location=head_office
+    };
+
+    export const getTechnicianTicketCountDashboardData = async (querydata) => {
+        try {
+            const { date, location } = querydata;
+            if (!date) {
+                throw new Error('Date parameter is required.');
+            }
+
+            const epochdate = String(date).split('-');
+            if (epochdate.length !== 2) {
+                throw new Error('Invalid date format. Expected format: smallepoch-greatepoch');
+            }
+
+            const fromEpoch = Number.parseInt(epochdate[0], 10);
+            const toEpoch = Number.parseInt(epochdate[1], 10);
+            if (!Number.isFinite(fromEpoch) || !Number.isFinite(toEpoch)) {
+                throw new Error('Invalid epoch values.');
+            }
+            if (fromEpoch > toEpoch) {
+                throw new Error('From epoch cannot be greater than to epoch.');
+            }
+
+            const normalizedLocation = typeof location === 'string' && location.trim()
+                ? location.trim()
+                : null;
+            const result = await query(
+                `
+                SELECT
+                    i.id,
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT_WS(' ', i.firstname, i.lastname)), ''),
+                        i.useremail,
+                        'Technician #' || i.id::text
+                    ) AS technician,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'new') AS new_count,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'open') AS open_count,
+                    COUNT(t.id) FILTER (WHERE t.ticketstatus = 'resolved_closed') AS resolved_closed_count
+                FROM inventoryusers i
+                LEFT JOIN tickets t
+                  ON t.assignedid = i.id
+                 AND to_timestamp(t.createddate) BETWEEN to_timestamp($1) AND to_timestamp($2)
+                 AND t.ticketstatus IN ('new', 'open', 'resolved_closed')
+                 AND (t.isarchive = FALSE OR t.isarchive IS NULL)
+                 AND (t.isdeleted = FALSE OR t.isdeleted IS NULL)
+                 AND (t.removefromrecyclebin = FALSE OR t.removefromrecyclebin IS NULL)
+                WHERE LOWER(COALESCE(i.role, '')) = 'technician'
+                  AND ($3::text IS NULL OR i.location = $3)
+                GROUP BY i.id, i.firstname, i.lastname, i.useremail
+                ORDER BY technician ASC
+                `,
+                [fromEpoch, toEpoch, normalizedLocation]
+            );
+
+            return [
+                ['Technician', 'New', 'Open', 'Resolved/Closed'],
+                ...result.rows.map((row: any) => [
+                    row.technician,
+                    Number(row.new_count || 0),
+                    Number(row.open_count || 0),
+                    Number(row.resolved_closed_count || 0),
+                ]),
+            ];
+        } catch (error) {
+            console.error('Error in getTechnicianTicketCountDashboardData:', error.message);
+            return { error: { errorMessage: error.message, statusCode: 404 } };
+        }
     };
 
     export const getProductStatusCountDashboardData = async (querydata) => {
@@ -1545,7 +1551,7 @@ ORDER BY
             // API - /dashboard/today-ticket?priority=all
 
         } catch (error) {
-            console.error("Error in getTodayTicketCountData:", error.message);
+            console.error("Error in getTodayTicketPriorityCountData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
     };
@@ -1617,52 +1623,94 @@ ORDER BY
         }
     };
 
-    export const getAvailableCountTotalData = async () => {
+    const stockValueTypeFilters: Record<string, string> = {
+        on_catalogue_product: 'on_catalogue_product',
+        off_catalogue_product: 'off_catalogue_product',
+        rental_product: 'rental_product'
+    };
+    const stockValueCategories = [
+        { label: 'New Laptop', category: 'new', subcategory: 'laptop' },
+        { label: 'Refurbished Laptop', category: 'refurbished', subcategory: 'laptop' },
+        { label: 'New Mobile Phone', category: 'new', subcategory: 'mobile_phone' },
+        { label: 'Refurbished Mobile Phone', category: 'refurbished', subcategory: 'mobile_phone' },
+        { label: 'New Accessories', category: 'new', subcategory: 'accessories' },
+        { label: 'Refurbished Accessories', category: 'refurbished', subcategory: 'accessories' }
+    ];
+
+    const getStockValueTypeFilter = (querydata: any): string | null => {
+        const requestedType = typeof querydata?.stocktype === 'string'
+            ? querydata.stocktype.trim().toLowerCase()
+            : '';
+
+        if (!requestedType || requestedType === 'all') {
+            return null;
+        }
+
+        const stockType = stockValueTypeFilters[requestedType];
+        if (!stockType) {
+            throw new Error('Invalid stocktype filter.');
+        }
+
+        return stockType;
+    };
+
+    export const getAvailableCountTotalData = async (querydata: any = {}) => {
         try {
+            const stockType = getStockValueTypeFilter(querydata);
             const queryText = `
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(p.price) AS total
+                       SUM(
+                         CASE
+                           WHEN $1::text = 'rental_product'
+                             THEN COALESCE(rental_line.productamount, 0)
+                           ELSE COALESCE(s.purchaseprice, 0)
+                         END
+                       ) AS total
                 FROM stock_revo AS s
-                JOIN product_revo AS p ON s.puc = p.puc
+                LEFT JOIN LATERAL (
+                  SELECT ol.productamount
+                  FROM rental_agreement_asset raa
+                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
+                  WHERE $1::text = 'rental_product'
+                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                    AND (
+                      raa.stockid = s.id
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
+                    )
+                  ORDER BY raa.id DESC
+                  LIMIT 1
+                ) AS rental_line ON TRUE
                 WHERE s.isarchive = FALSE
                   AND s.isdeleted = FALSE
                   AND s.removefromrecyclebin = FALSE
-                  AND s.stockstatus = 'Available'
+                  AND (
+                    s.stockstatus = 'Available'
+                    OR (
+                      $1::text = 'rental_product'
+                      AND s.stockstatus IN ('Rental Sold', 'Reserved for Rental')
+                    )
+                  )
+                  AND ($1::text IS NULL OR s.stocktype = $1)
                 GROUP BY s.category, s.subcategory;
             `;
 
-            const result = await query(queryText, []);
-            // Predefined categories
-            const categories = [
-                'New Laptop',
-                'Refurbished Laptop',
-                'New Mobile Phone',
-                'Refurbished Mobile Phone',
-                'New Accessories',
-                'Refurbished Accessories'
-            ];
-
-            // Function to format result based on category and subcategory
-            const formattedResult = categories.map(category => {
-                const [cat, subcat] = category.split(' ');
-
-                // Find the matching row from result.rows
+            const result = await query(queryText, [stockType]);
+            const formattedResult = stockValueCategories.map(({ label, category, subcategory }) => {
                 const row = result.rows.find(r =>
-                    r.category.toLowerCase() === cat.toLowerCase() &&
-                    r.subcategory.toLowerCase() === subcat.toLowerCase()
+                    r.category.toLowerCase() === category &&
+                    r.subcategory.toLowerCase() === subcategory
                 );
 
-                // Format the result, defaulting to 0 if no match is found
                 return [
-                    category,
-                    Number(row?.total_count || 0), // Quantity
-                    Number(row?.total || 0)        // Total Amount
+                    label,
+                    Number(row?.total_count || 0),
+                    Number(row?.total || 0)        
                 ];
             });
 
-            // Add header row
             formattedResult.unshift(['Category', 'Quantity', 'Total Amount']);
 
             return formattedResult;
@@ -1681,70 +1729,128 @@ ORDER BY
                 throw new Error('Location parameter is required.');
             }
 
+            const stockType = getStockValueTypeFilter(querydata);
+
             const queryText = `
                 SELECT s.category,
                        s.subcategory,
-                       SUM(s.total_count * p.price) AS total
-                FROM (
-                    SELECT s.category,
-                           s.subcategory,
-                           s.puc,
-                           COUNT(s.id) AS total_count
-                    FROM stock_revo AS s
-                    WHERE s.isarchive = FALSE
-                      AND s.location = $1
-                      AND s.isdeleted = FALSE
-                      AND s.removefromrecyclebin = FALSE
-                      AND s.stockstatus = 'Available'
-                    GROUP BY s.category, s.subcategory, s.puc
-                ) AS s
-                JOIN product_revo AS p
-                ON p.puc = s.puc
+                       COUNT(s.id) AS total_count,
+                       SUM(
+                         CASE
+                           WHEN $2::text = 'rental_product'
+                             THEN COALESCE(rental_line.productamount, 0)
+                           ELSE COALESCE(s.purchaseprice, 0)
+                         END
+                       ) AS total
+                FROM stock_revo AS s
+                LEFT JOIN LATERAL (
+                  SELECT ol.productamount
+                  FROM rental_agreement_asset raa
+                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
+                  WHERE $2::text = 'rental_product'
+                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                    AND (
+                      raa.stockid = s.id
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
+                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
+                    )
+                  ORDER BY raa.id DESC
+                  LIMIT 1
+                ) AS rental_line ON TRUE
+                WHERE s.isarchive = FALSE
+                  AND s.location = $1
+                  AND s.isdeleted = FALSE
+                  AND s.removefromrecyclebin = FALSE
+                  AND (
+                    s.stockstatus = 'Available'
+                    OR (
+                      $2::text = 'rental_product'
+                      AND s.stockstatus IN ('Rental Sold', 'Reserved for Rental')
+                    )
+                  )
+                  AND ($2::text IS NULL OR s.stocktype = $2)
                 GROUP BY s.category, s.subcategory;
             `;
 
-            const result = await query(queryText, [location]);
+            const result = await query(queryText, [location, stockType]);
 
-            const categories = [
-                'new laptop',
-                'refurbished laptop',
-                'new mobile_phone',
-                'refurbished mobile_phone',
-                'new accessories',
-                'refurbished accessories'
-            ];
-
-            const formatCategoryName = (category) => {
-                return category
-                    .replace('_', ' ')
-                    .split(' ')
-                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                    .join(' ');
-            };
-
-            // Format the final result
-            const formattedResult = categories.map(category => {
-                const [cat, subcat] = category.split(' ');
+            const formattedResult = stockValueCategories.map(({ label, category, subcategory }) => {
                 const row = result.rows.find(r =>
-                    r.category.toLowerCase() === cat.toLowerCase() &&
-                    r.subcategory.toLowerCase() === subcat.toLowerCase()
+                    r.category.toLowerCase() === category &&
+                    r.subcategory.toLowerCase() === subcategory
                 );
 
-                const formattedCategory = formatCategoryName(category);
-
                 return [
-                    formattedCategory,
-                    Number(row?.total || 0) // Return only the total value (SUM of price)
+                    label,
+                    Number(row?.total_count || 0),
+                    Number(row?.total || 0) 
                 ];
             });
 
-            // Add header row
-            formattedResult.unshift(['Category', 'Total Value']);
+            formattedResult.unshift(['Category', 'Quantity', 'Total Amount']);
 
             return formattedResult;
 
         } catch (error) {
             console.error("Error in getAvailableCountTotalLocationBasedData:", error.message);
+            return { error: { errorMessage: error.message, statusCode: 404 } };
+        }
+    };
+
+    export const getBusinessCustomerRentalStockData = async () => {
+        try {
+            const result = await query(`
+                WITH allocated_rental_stock AS (
+                    SELECT DISTINCT
+                        ra.customerid,
+                        s.id AS stockid,
+                        s.purchaseprice
+                    FROM rental_agreement_asset raa
+                    INNER JOIN rental_agreement ra
+                        ON ra.id = raa.agreementid
+                    INNER JOIN stock_revo s
+                        ON (
+                            s.id = raa.stockid
+                            OR CAST(s.assetnumber AS TEXT) = CAST(raa.assetnumber AS TEXT)
+                            OR CAST(s.rfid AS TEXT) = CAST(raa.assetnumber AS TEXT)
+                        )
+                    WHERE COALESCE(raa.iscurrentasset, TRUE) = TRUE
+                      AND s.stockstatus = 'Rental Sold'
+                      AND s.isarchive = FALSE
+                      AND s.isdeleted = FALSE
+                      AND s.removefromrecyclebin = FALSE
+                )
+                SELECT
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT_WS(' ', u.firstname, u.lastname)), ''),
+                        NULLIF(TRIM(u.useremail), ''),
+                        CONCAT('Customer ', u.id)
+                    ) AS client,
+                    COUNT(DISTINCT allocated_rental_stock.stockid) AS rental_sold_stock_quantity,
+                    COALESCE(SUM(COALESCE(allocated_rental_stock.purchaseprice, 0)), 0) AS rental_stock_value
+                FROM users u
+                LEFT JOIN allocated_rental_stock
+                    ON allocated_rental_stock.customerid = u.id
+                WHERE u.isbusinessuser = TRUE
+                GROUP BY u.id, u.firstname, u.lastname, u.useremail
+                ORDER BY client ASC;
+            `);
+
+            const formattedResult = result.rows.map((row) => [
+                row.client,
+                Number(row.rental_sold_stock_quantity || 0),
+                Number(row.rental_stock_value || 0)
+            ]);
+
+            formattedResult.unshift([
+                'Client',
+                'Rental Stock Quantity',
+                'Rental Stock Value (Purchase Price)'
+            ]);
+
+            return formattedResult;
+        } catch (error) {
+            console.error("Error in getBusinessCustomerRentalStockData:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
     };
@@ -1909,8 +2015,6 @@ ORDER BY
         try {
             const { data, location } = querydata;
 
-            console.log('Query Data: ', querydata);
-
             const queryText = `
                 SELECT
                     CASE
@@ -1930,7 +2034,6 @@ ORDER BY
                 ORDER BY
                     quarter;
             `;
-            console.log(queryText, 'Query Text');
             const result = await query(queryText, [data]);
 
             const quarters = ['Jan - Mar', 'Apr - Jun', 'Jul - Sep', 'Oct - Dec'];
@@ -2006,7 +2109,6 @@ ORDER BY
             const endRange = parseDate(endMonth);
 
             let endDate = endRange.endDate;
-            console.log('Start:', startRange, 'End:', endRange);
 
             const queryText = `
                 SELECT 
@@ -2034,7 +2136,7 @@ ORDER BY
             return result.rows;
 
         } catch (error) {
-            console.error("Error in getInvoiceData:", error.message);
+            console.error("Error in getInvoiceDataDateBased:", error.message);
             return { error: { errorMessage: error.message, statusCode: 404 } };
         }
 

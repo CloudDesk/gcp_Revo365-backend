@@ -1,0 +1,3 @@
+puc,category,subcategory,colour,processor,serialnumber,manufacturedyear,releaseyear,ecompublish,productname,rfid,location,solddate,stocktype,thirdpartyquantity
+la-nw-0000000068,new,laptop,,,acer-100,,,TRUE,Acer-11,98623456000,head_office,,on_catalogue_product,
+la-nw-0000000068,new,laptop,,,acer-101,,,TRUE,Acer-11,98623456001,head_office,,on_catalogue_product,

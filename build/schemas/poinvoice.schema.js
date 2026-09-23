@@ -4,7 +4,7 @@ export const poInvoiceSchema = {
         invoiceamount: {
             type: "number",
             errorMessage: {
-                type: "Invoice Amount Should Be Number"
+                type: "Bill Amount Should Be Number"
             }
         },
         ponumber: {
@@ -16,7 +16,85 @@ export const poInvoiceSchema = {
         invoicedate: {
             type: "number",
             errorMessage: {
-                type: "Invoice Date should Be Number"
+                type: "Bill Date should Be Number"
+            }
+        },
+        subtotal: {
+            type: "number",
+            errorMessage: {
+                type: "Bill Sub Total Should Be Number"
+            }
+        },
+        discount: {
+            type: "number",
+            errorMessage: {
+                type: "Bill Discount Should Be Number"
+            }
+        },
+        sgst: {
+            type: "number",
+            errorMessage: {
+                type: "Bill SGST Should Be Number"
+            }
+        },
+        cgst: {
+            type: "number",
+            errorMessage: {
+                type: "Bill CGST Should Be Number"
+            }
+        },
+        payabletaxamount: {
+            type: "number",
+            errorMessage: {
+                type: "Bill Tax Amount Should Be Number"
+            }
+        },
+        productdata: {
+            type: "array",
+            items: {
+                type: "object",
+                properties: {
+                    id: {
+                        type: ["number", "string", "null"],
+                    },
+                    lineid: {
+                        type: ["number", "string", "null"],
+                    },
+                    name: {
+                        type: "string",
+                        errorMessage: {
+                            type: "Product Name Should Be String"
+                        }
+                    },
+                    unitPrice: {
+                        type: "number",
+                        errorMessage: {
+                            type: "Unit Price Should Be Number"
+                        }
+                    },
+                    poquantity: {
+                        type: "number",
+                        errorMessage: {
+                            type: "PO Quantity Should Be Number"
+                        }
+                    },
+                    quantity: {
+                        type: "number",
+                        errorMessage: {
+                            type: "Bill Quantity Should Be Number"
+                        }
+                    },
+                    total: {
+                        type: "number",
+                        errorMessage: {
+                            type: "Line Total Should Be Number"
+                        }
+                    },
+                },
+                required: ["name", "quantity"]
+            },
+            errorMessage: {
+                type: "Bill Products should be an array of objects"
             }
         },
         // paymentdata: {
