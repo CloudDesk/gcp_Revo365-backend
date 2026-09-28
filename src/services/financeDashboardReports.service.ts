@@ -8,10 +8,15 @@ import { invoiceIncludesCogs, parseGstMoney, resolveBillGst, resolveInvoiceDocum
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
 import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
 import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
-import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
+import { buildInventoryStockValuation, resolveInventoryStockUnitCost } from "../utils/finance/inventoryStockValuation.utils.js";
 import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
+import {
+  emptyProductCostIndex,
+  resolveInvoiceCogs,
+  type InvoiceStockCost,
+} from "../utils/finance/profitLossCogs.utils.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -509,15 +514,118 @@ export module financeDashboardReportsService {
         query(`SELECT r.*, CONCAT_WS(' ', u.firstname, u.lastname) AS partyname
           FROM revoinvoice r LEFT JOIN users u ON u.id = r.customerid
           WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
-          AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')`, [fromEpoch, toEpoch]),
-        query(`SELECT id,puc,productname,COALESCE(purchaseprice,0) AS purchaseprice FROM product_revo`, []),
+          AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')
+          ORDER BY ${REVO_INVOICE_DATE_SECONDS}, r.id`, [fromEpoch, toEpoch]),
+        query(`SELECT id,puc,productname,COALESCE(purchaseprice,0) AS purchaseprice
+               FROM product_revo`, []),
       ]);
-      const byId = new Map(productResult.rows.map((product: any) => [String(product.id), Number(product.purchaseprice || 0)]));
-      const byPuc = new Map(productResult.rows.map((product: any) => [String(product.puc || "").trim(), Number(product.purchaseprice || 0)]));
-      const byName = new Map(productResult.rows.map((product: any) => [String(product.productname || "").trim().toLowerCase(), Number(product.purchaseprice || 0)]));
+      const productCosts = emptyProductCostIndex();
+      productResult.rows.forEach((product: any) => {
+        const purchasePrice = Number(product.purchaseprice || 0);
+        productCosts.byId.set(String(product.id), purchasePrice);
+        productCosts.byPuc.set(String(product.puc || "").trim(), purchasePrice);
+        productCosts.byName.set(String(product.productname || "").trim().toLowerCase(), purchasePrice);
+      });
+      const invoiceIds = invoiceResult.rows
+        .map((invoice: any) => Number(invoice.id))
+        .filter((id: number) => Number.isInteger(id) && id > 0);
+      const stockCostResult = invoiceIds.length > 0
+        ? await query(
+            `SELECT DISTINCT ON (linked.invoiceid, linked.stockid)
+                    linked.invoiceid, linked.stockid, linked.orderlinenumber, linked.productid, linked.puc,
+                    linked.productname, linked.purchaseprice, linked.source
+             FROM (
+               SELECT r.id AS invoiceid, s.id AS stockid, ol.orderlinenumber,
+                      COALESCE(ol.productid, p.id) AS productid,
+                      s.puc, COALESCE(p.productname, ol.productname) AS productname,
+                      s.purchaseprice, 'order'::text AS source
+               FROM revoinvoice r
+               JOIN orderline ol ON ol.uniqueorderid = r.orderid
+               JOIN stock_revo s ON s.orderlinenumber = ol.orderlinenumber
+               LEFT JOIN product_revo p ON p.puc = s.puc
+               WHERE r.id = ANY($1::int[])
+                 AND LOWER(BTRIM(COALESCE(s.stockstatus, ''))) = 'sold'
+
+               UNION ALL
+
+               SELECT r.id AS invoiceid, s.id AS stockid, NULL::text AS orderlinenumber,
+                      allocation.productid, s.puc, p.productname,
+                      s.purchaseprice, 'service'::text AS source
+               FROM revoinvoice r
+               JOIN service_estimation_stock_allocations allocation
+                 ON allocation.ticketnumber = r.ticketnumber
+                AND allocation.allocationstatus = 'sold'
+               JOIN stock_revo s ON s.id = allocation.stockid
+               LEFT JOIN product_revo p ON p.id = allocation.productid
+               WHERE r.id = ANY($1::int[])
+             ) linked
+             ORDER BY linked.invoiceid, linked.stockid,
+                      CASE WHEN linked.source = 'service' THEN 0 ELSE 1 END`,
+            [invoiceIds]
+          )
+        : { rows: [] };
+      const invoiceOrderLineResult = invoiceIds.length > 0
+        ? await query(
+            `SELECT r.id AS invoiceid, ol.orderlinenumber, ol.productid,
+                    ol.productname, p.puc
+             FROM revoinvoice r
+             JOIN orderline ol ON ol.uniqueorderid = r.orderid
+             LEFT JOIN product_revo p ON p.id = ol.productid
+             WHERE r.id = ANY($1::int[])
+             ORDER BY r.id, ol.id`,
+            [invoiceIds]
+          )
+        : { rows: [] };
+      const orderLinesByInvoice = new Map<number, any[]>();
+      invoiceOrderLineResult.rows.forEach((line: any) => {
+        const invoiceId = Number(line.invoiceid);
+        const invoiceLines = orderLinesByInvoice.get(invoiceId) || [];
+        invoiceLines.push(line);
+        orderLinesByInvoice.set(invoiceId, invoiceLines);
+      });
+      const stockCostsByInvoice = new Map<number, InvoiceStockCost[]>();
+      stockCostResult.rows.forEach((stock: any) => {
+        const invoiceId = Number(stock.invoiceid);
+        const rowsForInvoice = stockCostsByInvoice.get(invoiceId) || [];
+        rowsForInvoice.push({
+          stockId: Number(stock.stockid),
+          orderLineNumber: stock.orderlinenumber,
+          productId: stock.productid == null ? null : Number(stock.productid),
+          puc: stock.puc,
+          productName: stock.productname,
+          purchasePrice: stock.purchaseprice == null ? null : Number(stock.purchaseprice),
+          source: stock.source === "service" ? "service" : "order",
+        });
+        stockCostsByInvoice.set(invoiceId, rowsForInvoice);
+      });
       profitLossDetails = [];
+      const claimedCogsStockIds = new Set<number>();
+      const claimedCogsOrderLineQuantities = new Map<string, number>();
       operationalProfitLoss = invoiceResult.rows.reduce((sum: any, invoice: any) => {
-        const productSection = jsonObject(invoice.invoicedata);
+        const rawProductSection = jsonObject(invoice.invoicedata);
+        const invoiceOrderLines = orderLinesByInvoice.get(Number(invoice.id)) || [];
+        const productSection = {
+          ...rawProductSection,
+          items: Array.isArray(rawProductSection.items)
+            ? rawProductSection.items.map((item: any) => {
+                const itemOrderLine = String(item?.orderlinenumber ?? item?.orderLineNumber ?? "").trim();
+                const itemName = String(item?.productname ?? item?.name ?? "").trim().toLowerCase();
+                const line = invoiceOrderLines.find((candidate: any) =>
+                  itemOrderLine && String(candidate.orderlinenumber || "").trim() === itemOrderLine
+                ) || invoiceOrderLines.find((candidate: any) =>
+                  itemName && String(candidate.productname || "").trim().toLowerCase() === itemName
+                ) || (invoiceOrderLines.length === 1 ? invoiceOrderLines[0] : undefined);
+                return line
+                  ? {
+                      ...item,
+                      productid: item.productid ?? item.productId ?? line.productid,
+                      orderlinenumber: itemOrderLine || line.orderlinenumber,
+                      puc: item.puc ?? item.productcode ?? line.puc,
+                    }
+                  : item;
+              })
+            : rawProductSection.items,
+        };
         const serviceSection = jsonObject(invoice.servicedata);
         const documentType = resolveInvoiceDocumentType(invoice);
         const hasProductSale = invoiceIncludesCogs(invoice);
@@ -532,14 +640,28 @@ export module financeDashboardReportsService {
         }
         if (hasProductSale) sum.salesIncome += productTaxable;
         if (hasServiceSale) sum.serviceIncome += serviceTaxable;
-        let invoiceCogs = 0;
-        if (hasProductSale) {
-          for (const item of Array.isArray(productSection.items) ? productSection.items : []) {
-            const quantity = Math.max(Number(item.quantity ?? item.qty ?? 1) || 0, 0);
-            const purchasePrice = Number(item.purchaseprice ?? item.purchasePrice ?? byId.get(String(item.productid ?? item.productId ?? item.id ?? "")) ?? byPuc.get(String(item.puc ?? item.productcode ?? "").trim()) ?? byName.get(String(item.productname ?? item.name ?? "").trim().toLowerCase()) ?? 0);
-            invoiceCogs += purchasePrice * quantity;
-          }
-        }
+        const cogsResolution = hasProductSale
+          ? resolveInvoiceCogs(
+              productSection,
+              stockCostsByInvoice.get(Number(invoice.id)) || [],
+              productCosts,
+              {
+                claimedStockIds: claimedCogsStockIds,
+                claimedOrderLineQuantities: claimedCogsOrderLineQuantities,
+              }
+            )
+          : {
+              amount: 0,
+              source: "not_applicable",
+              expectedQuantity: 0,
+              matchedStockQuantity: 0,
+              fallbackQuantity: 0,
+              unresolvedQuantity: 0,
+              duplicateReferenceQuantity: 0,
+              unmatchedStockQuantity: 0,
+              stockIds: [],
+            };
+        const invoiceCogs = cogsResolution.amount;
         sum.cogs += invoiceCogs;
         profitLossDetails!.push({
           id: Number(invoice.id),
@@ -550,6 +672,14 @@ export module financeDashboardReportsService {
           salesIncome: money(hasProductSale ? productTaxable : 0),
           serviceIncome: money(hasServiceSale ? serviceTaxable : 0),
           cogs: money(invoiceCogs),
+          cogsSource: cogsResolution.source,
+          cogsExpectedQuantity: cogsResolution.expectedQuantity,
+          cogsMatchedStockQuantity: cogsResolution.matchedStockQuantity,
+          cogsFallbackQuantity: cogsResolution.fallbackQuantity,
+          cogsUnresolvedQuantity: cogsResolution.unresolvedQuantity,
+          cogsDuplicateReferenceQuantity: cogsResolution.duplicateReferenceQuantity,
+          cogsUnmatchedStockQuantity: cogsResolution.unmatchedStockQuantity,
+          cogsStockIds: cogsResolution.stockIds,
         });
         return sum;
       }, { salesIncome: 0, serviceIncome: 0, cogs: 0 });
@@ -564,19 +694,21 @@ export module financeDashboardReportsService {
       rows = allRows.filter((row: any) => ["asset", "liability", "equity"].includes(row.accountType));
       const { fromEpoch, toEpoch } = epochRange(from, to);
       const [stockResult, gstInvoiceResult, gstBillResult] = await Promise.all([query(
-        `SELECT s.stocktype, s.stockstatus, p.puc, p.productname,
+        `SELECT s.id AS stockid, s.stocktype, s.stockstatus, s.puc,
+                COALESCE(s.productname, p.productname) AS productname,
                 COALESCE(s.createddate, s.modifieddate) AS stockdate,
-                COALESCE(p.purchaseprice, 0) AS purchaseprice, COUNT(s.id) AS quantity,
-                COALESCE(SUM(COALESCE(p.purchaseprice, 0)), 0) AS amount
-         FROM stock_revo s JOIN product_revo p ON p.puc = s.puc
+                s.purchaseprice AS stockpurchaseprice,
+                p.purchaseprice AS productpurchaseprice
+         FROM stock_revo s LEFT JOIN product_revo p ON p.puc = s.puc
          WHERE COALESCE(s.isdeleted, FALSE) = FALSE
            AND COALESCE(s.isarchive, FALSE) = FALSE
            AND COALESCE(s.removefromrecyclebin, FALSE) = FALSE
            AND COALESCE(s.ewaste, FALSE) = FALSE
-           AND ((s.stocktype IN ('on_catalogue_product', 'off_catalogue_product') AND s.stockstatus = 'Available')
-             OR (s.stocktype = 'rental_product' AND s.stockstatus IN ('Available', 'Rental Sold')))
-         GROUP BY s.stocktype, s.stockstatus, p.puc, p.productname, p.purchaseprice,
-                  COALESCE(s.createddate, s.modifieddate)`, []
+           AND ((LOWER(BTRIM(s.stocktype)) IN ('on_catalogue_product', 'off_catalogue_product')
+                 AND LOWER(BTRIM(s.stockstatus)) = 'available')
+             OR (LOWER(BTRIM(s.stocktype)) = 'rental_product'
+                 AND LOWER(BTRIM(s.stockstatus)) IN ('available', 'rental sold')))
+         ORDER BY s.id`, []
       ), query(
         `SELECT r.* FROM revoinvoice r WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
            AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
@@ -588,7 +720,20 @@ export module financeDashboardReportsService {
          WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
            AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled', 'void')`, [fromEpoch, toEpoch]
       )]);
-      const stock = buildInventoryStockValuation(stockResult.rows);
+      const stockValuationRows = stockResult.rows.map((detail: any) => {
+        const unitCost = resolveInventoryStockUnitCost({
+          stockPurchasePrice: detail.stockpurchaseprice,
+          productPurchasePrice: detail.productpurchaseprice,
+        });
+        return {
+          ...detail,
+          purchaseprice: unitCost.amount,
+          purchasepricesource: unitCost.source,
+          quantity: 1,
+          amount: unitCost.amount,
+        };
+      });
+      const stock = buildInventoryStockValuation(stockValuationRows);
       const journalDetailResult = await query(
         `SELECT jl.financeaccountid AS accountid, je.entrydate, je.journalnumber,
                 je.sourcetype, je.description AS entrydescription,
@@ -605,11 +750,13 @@ export module financeDashboardReportsService {
           description: detail.linedescription || detail.entrydescription || "Posted journal entry",
           debit: money(Number(detail.debitamount || 0)), credit: money(Number(detail.creditamount || 0)),
         })),
-        stock: stockResult.rows.map((detail: any) => ({
+        stock: stockValuationRows.map((detail: any) => ({
+          stockId: Number(detail.stockid),
           puc: detail.puc, productName: detail.productname || detail.puc,
           date: normalizeFinanceEpochSeconds(detail.stockdate),
           stockType: detail.stocktype, stockStatus: detail.stockstatus,
           purchasePrice: money(Number(detail.purchaseprice || 0)), quantity: Number(detail.quantity || 0),
+          purchasePriceSource: detail.purchasepricesource,
           amount: money(Number(detail.amount || 0)),
         })),
         gst: [
@@ -628,6 +775,11 @@ export module financeDashboardReportsService {
       const outputGst = money(gstInvoiceResult.rows.reduce((sum: number, invoice: any) => sum + resolveInvoiceGst(invoice).total, 0));
       const inputGst = money(gstBillResult.rows.reduce((sum: number, bill: any) => sum + resolveBillGst(bill).total, 0));
       const netGst = money(outputGst - inputGst);
+      const stockValuationSources = stockValuationRows.reduce((summary: Record<string, number>, detail: any) => {
+        const source = String(detail.purchasepricesource || "unresolved");
+        summary[source] = (summary[source] || 0) + 1;
+        return summary;
+      }, {});
       // Stock and GST source records are operational subledger information. They
       // remain available under details for reconciliation, but must not be added
       // to the statement because the Balance Sheet is driven exclusively by
@@ -637,7 +789,8 @@ export module financeDashboardReportsService {
         stockValue: stock.amount,
         stockQuantity: stock.quantity,
         stockBreakdown: stock.breakdown,
-        valuationMethod: "Purchase price × included stock quantity",
+        valuationMethod: "Per-stock purchase price; explicit stored product purchase price fallback",
+        valuationSources: stockValuationSources,
         outputGst,
         inputGst,
         netGst,

@@ -139,6 +139,26 @@ export module financeDashboardReportsController {
         combined.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } }; combined.fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; combined.getCell(11).numFmt = moneyFormat; combined.getCell(11).alignment = { horizontal: "right" };
         [8, 44, 24, 24, 17, 17, 17, 17, 17, 17, 20].forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
         sheet.views = [{ state: "frozen", ySplit: 2 }]; sheet.pageSetup = { orientation: "landscape", paperSize: 8 as ExcelJS.PaperSize, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.2, right: 0.2, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 } }; sheet.headerFooter.oddFooter = "TEQIT Finance - Balance Sheet - Page &P of &N";
+        const stockRows: any[] = report.details?.stock || [];
+        const stockReconciliation: any = report.details?.reconciliation?.[0] || {};
+        const stockSheet = workbook.addWorksheet("Stock Valuation");
+        stockSheet.mergeCells("A1:I1"); stockSheet.getCell("A1").value = "TEQIT - Stock Valuation Reconciliation";
+        stockSheet.getCell("A1").font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } }; stockSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; stockSheet.getRow(1).height = 32;
+        stockSheet.mergeCells("A2:I2"); stockSheet.getCell("A2").value = "Operational stock subledger shown separately from posted Balance Sheet ledger totals."; stockSheet.getCell("A2").font = { color: { argb: slate } }; stockSheet.getCell("A2").fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } };
+        stockSheet.addRow(["Stock value", Number(stockReconciliation.stockValue || 0), "Stock quantity", Number(stockReconciliation.stockQuantity || 0), "Valuation method", stockReconciliation.valuationMethod || "Stored purchase price"]);
+        stockSheet.getRow(3).font = { bold: true }; stockSheet.getCell("B3").numFmt = moneyFormat;
+        stockSheet.addRow([]);
+        const stockHeader = stockSheet.addRow(["S.No", "Stock ID", "PUC", "Product", "Date", "Type", "Status", "Purchase-price source", "Purchase price"]);
+        stockHeader.font = { bold: true, color: { argb: "FFFFFFFF" } }; stockHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; stockHeader.height = 24;
+        stockRows.forEach((stock, index) => {
+          const row = stockSheet.addRow([index + 1, Number(stock.stockId), stock.puc || "-", stock.productName || "-", formatExportDate(stock.date), friendlyLabel(String(stock.stockType || "-")), friendlyLabel(String(stock.stockStatus || "-")), friendlyLabel(String(stock.purchasePriceSource || "unresolved")), Number(stock.purchasePrice || 0)]);
+          row.eachCell((cell, column) => { cell.border = { bottom: { style: "thin", color: { argb: border } } }; cell.alignment = { horizontal: column === 1 || column === 2 || column === 9 ? "right" : "left", vertical: "middle", wrapText: true }; });
+          row.getCell(9).numFmt = moneyFormat;
+        });
+        const stockTotal = stockSheet.addRow(["", "", "", "TOTAL STOCK VALUATION", "", "", "", Number(stockReconciliation.stockQuantity || 0), Number(stockReconciliation.stockValue || 0)]);
+        stockTotal.font = { bold: true }; stockTotal.fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } }; stockTotal.getCell(9).numFmt = moneyFormat;
+        [8, 12, 24, 38, 15, 24, 18, 30, 20].forEach((width, index) => { stockSheet.getColumn(index + 1).width = width; });
+        stockSheet.views = [{ state: "frozen", ySplit: 5 }]; stockSheet.pageSetup = { orientation: "landscape", paperSize: 8 as ExcelJS.PaperSize, fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
         const buffer = await workbook.xlsx.writeBuffer();
         const name = `TEQIT_balance_sheet_${report.meta?.from || ""}_to_${report.meta?.to || ""}.xlsx`;
         return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${name}"`).send(Buffer.from(buffer));

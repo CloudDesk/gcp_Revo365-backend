@@ -5,9 +5,36 @@ type StockAggregate = {
   amount?: unknown;
 };
 
+export type InventoryStockUnitCostInput = {
+  stockPurchasePrice?: unknown;
+  productPurchasePrice?: unknown;
+};
+
+export type InventoryStockUnitCost = {
+  amount: number;
+  source: "stock_purchase_price" | "product_purchase_price_fallback" | "unresolved";
+};
+
 const numberValue = (value: unknown) => Number(value) || 0;
 const key = (value: unknown) => String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+const positiveMoney = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? money(parsed) : 0;
+};
+
+export const resolveInventoryStockUnitCost = (input: InventoryStockUnitCostInput): InventoryStockUnitCost => {
+  const stockPurchasePrice = positiveMoney(input.stockPurchasePrice);
+  if (stockPurchasePrice > 0) return { amount: stockPurchasePrice, source: "stock_purchase_price" };
+
+  const productPurchasePrice = positiveMoney(input.productPurchasePrice);
+  if (productPurchasePrice > 0) {
+    return { amount: productPurchasePrice, source: "product_purchase_price_fallback" };
+  }
+
+  return { amount: 0, source: "unresolved" };
+};
 
 export const buildInventoryStockValuation = (aggregates: StockAggregate[]) => {
   const breakdown = {
