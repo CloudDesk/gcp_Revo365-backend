@@ -126,16 +126,19 @@ export var userService;
             const rentalCountsPromise = revoinvoiceservice.getRentalAssetCountsByCustomerIds(customerIds, {
                 activeOnly: true,
             });
+            const rentalDeliveryLocationsPromise = revoinvoiceservice.getRentalDeliveryLocationsByCustomerIds(customerIds);
             const paymentSummariesPromise = includePaymentSummary
                 ? revoinvoiceservice.getPaymentSummariesByCustomerIds(customerIds)
                 : Promise.resolve({});
-            const [rentalCounts, paymentSummaries] = await Promise.all([
+            const [rentalCounts, rentalDeliveryLocations, paymentSummaries] = await Promise.all([
                 rentalCountsPromise,
+                rentalDeliveryLocationsPromise,
                 paymentSummariesPromise,
             ]);
             const mappedCustomers = datatypeCheckResult.map((row) => ({
                 ...row,
                 rentaldevicecount: rentalCounts[row.id] || 0,
+                deliverylocations: rentalDeliveryLocations[row.id] || [],
                 invoicecount: paymentSummaries[row.id]?.invoicecount || 0,
                 paymentstatus: paymentSummaries[row.id]?.paymentstatus || "no_invoices",
                 balanceamount: paymentSummaries[row.id]?.balanceamount || 0,

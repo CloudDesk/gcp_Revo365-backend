@@ -33,6 +33,8 @@ const ESTIMATION_FIELDS = new Set([
     "servicetotal",
     "totalpayableamount",
     "roundoffamount",
+    "productroundoffamount",
+    "serviceroundoffamount",
     "customerstate",
     "taxtype",
     "billingaddresssnapshot",
@@ -505,13 +507,16 @@ const prepareCostEstimation = async (rawInput) => {
     const serviceTotal = isNew
         ? asNonNegativeAmount(merged.servicetotal, roundMoney(serviceSubtotal + serviceTaxAmount), "Service total")
         : asStoredNumber(merged.servicetotal, roundMoney(serviceSubtotal + serviceTaxAmount));
-    const preRoundTotal = roundMoney(productTotal + serviceTotal);
-    const roundoffAmount = isNew
-        ? roundMoney(Math.round(preRoundTotal) - preRoundTotal)
-        : asStoredNumber(merged.roundoffamount, 0);
+    const productRoundoffAmount = isNew
+        ? roundMoney(Math.round(productTotal) - productTotal)
+        : asStoredNumber(merged.productroundoffamount, roundMoney(Math.round(productTotal) - productTotal));
+    const serviceRoundoffAmount = isNew
+        ? roundMoney(Math.round(serviceTotal) - serviceTotal)
+        : asStoredNumber(merged.serviceroundoffamount, roundMoney(Math.round(serviceTotal) - serviceTotal));
+    const roundoffAmount = roundMoney(productRoundoffAmount + serviceRoundoffAmount);
     const totalPayableAmount = isNew
-        ? Math.round(preRoundTotal)
-        : asStoredNumber(merged.totalpayableamount, roundMoney(preRoundTotal + roundoffAmount));
+        ? Math.round(productTotal) + Math.round(serviceTotal)
+        : asStoredNumber(merged.totalpayableamount, roundMoney(productTotal + serviceTotal + roundoffAmount));
     const storedHasIgst = productIgst > 0 || serviceIgst > 0;
     const storedHasSplitGst = productCgst > 0 ||
         productSgst > 0 ||
@@ -552,6 +557,8 @@ const prepareCostEstimation = async (rawInput) => {
         servicetotal: serviceTotal,
         totalpayableamount: totalPayableAmount,
         roundoffamount: roundoffAmount,
+        productroundoffamount: productRoundoffAmount,
+        serviceroundoffamount: serviceRoundoffAmount,
         customerstate: taxContext.customerstate,
         taxtype: resolvedTaxType,
         estimationstatus: estimationStatus,
