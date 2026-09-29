@@ -7,6 +7,7 @@ export var fileController;
             return insertFileResult;
         }
         catch (error) {
+            console.error('ERROR IN  Controller insertFile', error);
             reply.send(error.message);
         }
     };

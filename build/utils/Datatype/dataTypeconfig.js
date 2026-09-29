@@ -1,9 +1,12 @@
 export const BIG_INT = 20;
 export const BOOLEAN = 16;
+export const DATE = 1082;
 export const NUMERIC = 1700;
 export const TEXT = 25;
 export const TEXTA = 2249;
 export const TEXTB = 1007;
+export const TIMESTAMP = 1114;
+export const TIMESTAMPTZ = 1184;
 export const VARCHAR = 1043;
 export const INTEGER = 23;
 export const ARRAY = 1009; //_TEXT

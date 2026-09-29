@@ -8,6 +8,8 @@ export var generatePRController;
             reply.send(prresult);
         }
         catch (error) {
+            console.error('ERROR IN  Controller generatepr', error);
+            reply.status(404).send(error.message);
         }
     };
 })(generatePRController || (generatePRController = {}));

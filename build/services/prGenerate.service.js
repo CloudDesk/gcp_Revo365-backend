@@ -4,10 +4,8 @@ import { purchaseRequestService } from "./purchaseRequest.Service.js";
 export var generatePrdataservice;
 (function (generatePrdataservice) {
     generatePrdataservice.generatePrdata = async (request, prdata, reply) => {
-        console.log(JSON.stringify(prdata), 'prdata');
         try {
             let template = 'pr/Revo-PR.docx';
-            console.log(JSON.stringify(prdata), 'prdata2');
             let result = await GenerateDocx(request, prdata, template);
             let prurl = result.fileurl;
             delete result.fileurl;
@@ -21,9 +19,8 @@ export var generatePrdataservice;
             }
         }
         catch (error) {
-            console.error("Query Execution Error: IN generatepurchaseOrderData", error);
+            console.error("Query Execution Error: IN generatePrdata", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

@@ -7,8 +7,6 @@ export var globalserachService;
         try {
             const { globalSearch, subcategory, sortby, page, recordcount } = request.query;
             const searchTerms = globalSearch.split(' ');
-            console.log(searchTerms, 'Search Terms ');
-            // Construct the SQL query dynamically based on the global search term
             let searchQuery;
             let results;
             const result = await query(`
@@ -75,7 +73,6 @@ export var globalserachService;
     globalserachService.getGlobalProductData = async (request, reply) => {
         try {
             const { globalsearch, subcategory, sortby, page, recordcount } = request.query;
-            console.log(globalsearch, 'globalsearch');
             const searchTerms = globalsearch.split(' ').join(' & ');
             let newSearch = globalsearch.split(' ');
             if (newSearch.length === 1) {
@@ -120,7 +117,6 @@ export var globalserachService;
                 queryText += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
                 params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
             }
-            // Execute the query
             const resultData = await query(queryText, params);
             return resultData.rows;
         }
@@ -140,46 +136,57 @@ export var globalserachService;
             else {
                 let a = [];
                 newSearch.forEach((e) => {
-                    if (e) {
+                    if (e)
                         a.push(e);
-                    }
                 });
                 newSearch = a.length === 1 ? a[0] + ':*' : a.join(':* & ') + ':*';
             }
             const queries = {
                 stock: {
                     text: `
-                        SELECT * 
-                        FROM stock_revo 
-                        WHERE searchtext @@ to_tsquery('english', $1)
-                    `,
-                    params: [newSearch]
+          SELECT * 
+          FROM stock_revo 
+          WHERE searchtext @@ to_tsquery('english', $1)
+        `,
+                    params: [newSearch],
                 },
                 product: {
                     text: `
-                        SELECT * 
-                        FROM product_revo 
-                        WHERE searchtext @@ to_tsquery('english', $1)
-                    `,
-                    params: [newSearch]
+          SELECT * 
+          FROM product_revo 
+          WHERE searchtext @@ to_tsquery('english', $1)
+        `,
+                    params: [newSearch],
                 },
                 tickets: {
                     text: `
-                        SELECT * 
-                        FROM tickets 
-                        WHERE searchtext @@ to_tsquery('english', $1)
-                    `,
-                    params: [newSearch]
-                }
+          SELECT * 
+          FROM tickets 
+          WHERE searchtext @@ to_tsquery('english', $1)
+        `,
+                    params: [newSearch],
+                },
+                users: {
+                    text: `
+          SELECT * 
+          FROM users 
+          WHERE searchtext @@ to_tsquery('english', $1)
+        `,
+                    params: [newSearch],
+                },
             };
+            // If numeric part exists → also check qrcode/barcode/ticketnumber/user_number
             if (/\d/.test(globalsearch)) {
                 const numericPart = globalsearch.match(/\d+/)[0];
-                queries.product.text += ` OR qrcode ILIKE $${queries.product.params.length + 1}`; // Use qrcode for product_revo
+                queries.product.text += ` OR qrcode ILIKE $${queries.product.params.length + 1}`;
                 queries.product.params.push(`%${numericPart}%`);
-                queries.product.text += ` OR barcode ILIKE $${queries.product.params.length + 1}`; // Use barcode for product_revo
+                queries.product.text += ` OR barcode ILIKE $${queries.product.params.length + 1}`;
                 queries.product.params.push(`%${numericPart}%`);
                 queries.tickets.text += ` OR ticketnumber ILIKE $${queries.tickets.params.length + 1}`;
                 queries.tickets.params.push(`%${numericPart}%`);
+                // New addition: user search by number (or mobile)
+                queries.users.text += ` OR CAST(usermobilenumber AS TEXT) ILIKE $${queries.users.params.length + 1}`;
+                queries.users.params.push(`%${numericPart}%`);
             }
             if (subcategory && subcategory !== "All") {
                 queries.stock.text += ` AND subcategory = $${queries.stock.params.length + 1}`;
@@ -188,40 +195,36 @@ export var globalserachService;
             let orderBy = 'modifieddate';
             let orderBydirection = 'DESC';
             if (sortby) {
-                const [fieldName, fieldValue] = sortby.split("-");
+                const [fieldName, fieldValue] = sortby.split('-');
                 orderBy = fieldName;
                 orderBydirection = fieldValue;
             }
-            Object.values(queries).forEach(query => {
+            Object.values(queries).forEach((query) => {
                 query.text += ` ORDER BY ${orderBy} ${orderBydirection}`;
             });
             if (page && recordcount) {
-                Object.values(queries).forEach(query => {
+                Object.values(queries).forEach((query) => {
                     query.text += ` LIMIT $${query.params.length + 1} OFFSET $${query.params.length + 2}`;
                     query.params.push(parseInt(recordcount), (parseInt(page) - 1) * parseInt(recordcount));
                 });
             }
-            const [stockResult, productRevoResult, ticketsResult] = await Promise.all([
+            const [stockResult, productResult, ticketsResult, usersResult] = await Promise.all([
                 query(queries.stock.text, queries.stock.params),
                 query(queries.product.text, queries.product.params),
-                query(queries.tickets.text, queries.tickets.params)
+                query(queries.tickets.text, queries.tickets.params),
+                query(queries.users.text, queries.users.params),
             ]);
             const formattedResults = {
                 stock: stockResult.rows || [],
-                product: productRevoResult.rows || [],
-                tickets: ticketsResult.rows || []
+                product: productResult.rows || [],
+                tickets: ticketsResult.rows || [],
+                users: usersResult.rows || [],
             };
-            console.log('Results count:', {
-                tickets: formattedResults.tickets.length,
-                product: formattedResults.product.length,
-                stock: formattedResults.stock.length
-            });
             return formattedResults;
         }
         catch (error) {
-            console.error("Query Execution Error: IN getGlobalStockOrderTicketData", error);
+            console.error('Query Execution Error: IN getGlobalStockOrderTicketData', error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

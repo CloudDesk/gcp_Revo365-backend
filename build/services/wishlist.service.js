@@ -16,7 +16,6 @@ export var wishListService;
             keys.forEach((key, index) => {
                 if (key !== 'page' && key !== 'count') {
                     const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
-                    console.log(paramValues, " Param values are ");
                     if (index !== 0) {
                         whereClause += " AND ";
                     }
@@ -25,7 +24,6 @@ export var wishListService;
                     queryParams.push(...paramValues);
                 }
             });
-            console.log(whereClause, " Where clause is ");
             if (pageNumber && recordcount) {
                 offset = (pageNumber - 1) * recordcount;
             }
@@ -66,25 +64,13 @@ export var wishListService;
             if (offset && recordcount) {
                 queryParams.push(offset, recordcount);
             }
-            console.log(queryText, "Query Text is ");
-            console.log(queryParams, " query Params data ");
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
-            // console.log(datatypecheckResult, 'Data Type Check Result');
             return datatypecheckResult;
-            // const queryString = `
-            //     SELECT w.id as wishlist_id, w.productid as wl_productid, w.userid, w.createddate as wl_createddate, p.*
-            //     FROM wishlist w
-            //     INNER JOIN products p ON p.productid = ANY(w.productid::VARCHAR[]);
-            // `;
-            // console.log(queryString);
-            // const result = await query(queryString, []);
-            // return result.rows;
         }
         catch (error) {
             console.error("Query Execution Error: IN getWishlistData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -102,7 +88,6 @@ export var wishListService;
             keys.forEach((key, index) => {
                 if (key !== 'page' && key !== 'count') {
                     const paramValues = Array.isArray(values[index]) ? values[index] : [values[index]];
-                    console.log(paramValues, " Param values are ");
                     if (index !== 0) {
                         whereClause += " AND ";
                     }
@@ -111,7 +96,6 @@ export var wishListService;
                     queryParams.push(...paramValues);
                 }
             });
-            console.log(whereClause, " Where clause is ");
             if (pageNumber && recordcount) {
                 offset = (pageNumber - 1) * recordcount;
             }
@@ -127,25 +111,13 @@ export var wishListService;
             if (offset && recordcount) {
                 queryParams.push(offset, recordcount);
             }
-            console.log(queryText, "Query Text is ");
-            console.log(queryParams, " query Params data ");
             const result = await query(queryText, queryParams);
             let datatypecheckResult = await dataTypeCheck(result);
-            // console.log(datatypecheckResult, 'Data Type Check Result');
             return datatypecheckResult;
-            // const queryString = `
-            //     SELECT w.id as wishlist_id, w.productid as wl_productid, w.userid, w.createddate as wl_createddate, p.*
-            //     FROM wishlist w
-            //     INNER JOIN products p ON p.productid = ANY(w.productid::VARCHAR[]);
-            // `;
-            // console.log(queryString);
-            // const result = await query(queryString, []);
-            // return result.rows;
         }
         catch (error) {
             console.error("Query Execution Error IN getUserWishlistData:", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -162,7 +134,6 @@ export var wishListService;
         catch (error) {
             console.error("Query Execution Error: IN deleteFromWishlist", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };
@@ -170,17 +141,40 @@ export var wishListService;
         try {
             let querydata;
             let params;
-            const { id, ...upsertFields } = wishlistData;
+            const { id, ...payloadFields } = wishlistData;
+            // Wishlist is stored in cart table using flags.
+            const upsertFields = {
+                ...payloadFields,
+                iswishlist: true,
+                iscart: false,
+            };
+            if (!id && upsertFields.userid && upsertFields.productid) {
+                const existingResult = await query(`SELECT id FROM cart WHERE userid = $1 AND productid = $2 LIMIT 1`, [upsertFields.userid, upsertFields.productid]);
+                if (existingResult.rows.length > 0) {
+                    const existingId = existingResult.rows[0].id;
+                    const fieldNames = Object.keys(upsertFields);
+                    const fieldValues = Object.values(upsertFields);
+                    querydata = `UPDATE cart SET ${fieldNames
+                        .map((field, index) => `${field} = $${index + 1}`)
+                        .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
+                    params = [...fieldValues, existingId];
+                    const updated = await query(querydata, params);
+                    return updated;
+                }
+            }
+            if (!id && upsertFields.quantity === undefined) {
+                upsertFields.quantity = 1;
+            }
             const fieldNames = Object.keys(upsertFields);
             const fieldValues = Object.values(upsertFields);
             if (id) {
-                querydata = `UPDATE wishlist SET ${fieldNames
+                querydata = `UPDATE cart SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
                 params = [...fieldValues, id];
             }
             else {
-                querydata = `INSERT INTO wishlist (${fieldNames.join(", ")}) VALUES (${fieldNames
+                querydata = `INSERT INTO cart (${fieldNames.join(", ")}) VALUES (${fieldNames
                     .map((_, index) => `$${index + 1}`)
                     .join(", ")}) RETURNING *`;
                 params = fieldValues;
@@ -191,7 +185,6 @@ export var wishListService;
         catch (error) {
             console.error("Query Execution Error: IN upsertToWishlist", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     };

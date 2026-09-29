@@ -20,7 +20,6 @@ export const connectGetSessionredis = async () => {
         await redisClient.connect();
     }
     catch (error) {
-        console.log("Inside redis error");
         console.error("Error connecting to Redis:", error);
         throw error;
     }

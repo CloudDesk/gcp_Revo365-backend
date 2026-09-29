@@ -7,6 +7,7 @@ export var wishListController;
             reply.send(getWishlistDataResult);
         }
         catch (error) {
+            console.error("Error in getWishlistData", error);
             reply.send(error.message);
         }
     };
@@ -16,6 +17,7 @@ export var wishListController;
             reply.send(getWishlistDataResult);
         }
         catch (error) {
+            console.error("Error in getUserWishlistData", error);
             reply.send(error.message);
         }
     };
@@ -26,6 +28,7 @@ export var wishListController;
             reply.send(deleteFromWishlistResult);
         }
         catch (error) {
+            console.error("Error in deleteFromWishlist", error);
             reply.send(error.message);
         }
     };
@@ -44,6 +47,7 @@ export var wishListController;
             }
         }
         catch (error) {
+            console.error("Error in upsertToWishlist", error);
             reply.send(error.message);
         }
     };

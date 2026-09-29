@@ -103,10 +103,50 @@ export const stockrevoSchema = {
                 // pattern: "Serial number should not consist only of digits",
             },
         },
+        supplierid: {
+            type: ['integer', 'null'],
+            minimum: 1,
+            errorMessage: {
+                type: 'Supplier should be a valid number',
+                minimum: 'Please select a valid Supplier'
+            }
+        },
+        purchaseprice: {
+            type: ['number', 'null'],
+            exclusiveMinimum: 0,
+            multipleOf: 0.01,
+            errorMessage: {
+                type: 'Purchase Price should be a valid number',
+                exclusiveMinimum: 'Purchase Price must be greater than 0',
+                multipleOf: 'Purchase Price can have a maximum of 2 decimal places'
+            }
+        },
         stockstatus: {
             type: ['string', 'null'],
             errorMessage: {
                 type: 'Stock status should be String'
+            }
+        },
+        stocktype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: 'Stock type should be String'
+            }
+        },
+        hsncode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: 'HSN Code should be String',
+                maxLength: 'HSN Code must not exceed 50 characters'
+            }
+        },
+        saccode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: 'SAC Code should be String',
+                maxLength: 'SAC Code must not exceed 50 characters'
             }
         },
         manufacturedyear: {
@@ -157,8 +197,10 @@ export const stockrevoSchema = {
         },
         rfid:{
             type: ['string', 'null'],
+            pattern: "^(?:|.{10}|\\d{12})$",
             errorMessage: {
-                type: 'RFID should be String'
+                type: 'Barcode Number should be String',
+                pattern: 'Barcode Number should be exactly 12 digits. Existing 10-character values are supported for legacy stock.'
             }
         },
         location:{

@@ -9,7 +9,6 @@ const storage = Multer.diskStorage({
     destination: (req, file, cb) => {
         const ROOT_PATH = parentDir;
         cb(null, ROOT_PATH);
-        // cb(null, '/src/uploads');
     },
     filename: (req, file, cb) => {
         cb(null, new Date().toISOString().replace(/:/g, '-') + '-' + file.originalname);

@@ -4,6 +4,7 @@ import { dataLoaderService } from "../services/dataloader.service.js";
 import { productService } from "../services/product.service.js";
 import _ from 'lodash';
 import { stockRevoService } from "../services/stockRevo.service.js";
+import { productrevoService } from "../services/productrevo.service.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 export var dataLoaderController;
 (function (dataLoaderController) {
@@ -28,7 +29,6 @@ export var dataLoaderController;
                     }
                     else {
                         failureCount++;
-                        console.log(validationresult.error);
                         const errorObject = {};
                         validationresult.error.forEach(error => {
                             const key = error.instancePath.slice(1);
@@ -47,7 +47,7 @@ export var dataLoaderController;
             return { totalRecords, failureCount, successCount, failuredata };
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertDataLoaderData');
+            console.log('ERROR IN  Controller insertDataLoaderData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -82,7 +82,7 @@ export var dataLoaderController;
             reply.send(result);
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertDataLoaderDatalatest');
+            console.log('ERROR IN  Controller insertDataLoaderDatalatest', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -93,7 +93,7 @@ export var dataLoaderController;
             reply.send(jsonResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getDataLoaderData');
+            console.log('ERROR IN  Controller getDataLoaderData', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -104,7 +104,7 @@ export var dataLoaderController;
             reply.send(jsonResult);
         }
         catch (error) {
-            console.log('ERROR IN  Controller getDataLoaderDataStock');
+            console.log('ERROR IN  Controller getDataLoaderDataStock', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
@@ -113,29 +113,38 @@ export var dataLoaderController;
         try {
             let upsertStockResult = await dataLoaderService.upsertBulkDataStock(request, reply);
             if (upsertStockResult?.result?.command === "UPDATE" || upsertStockResult?.result?.command === "INSERT") {
-                const puc = upsertStockResult.result.rows[0].puc;
-                const pucArray = Array.from(new Set(upsertStockResult.result.rows.map(row => row.puc)));
-                let updateQuantity = await stockRevoService.updateQuantity(pucArray);
-                // let updateQuantity = await stockRevoService.testinupdateQuantity(pucArray);
+                // Collect all unique PUCs from inserted rows (may span multiple products)
+                const pucArray = Array.from(new Set(upsertStockResult.result.rows.map((row) => row.puc)));
+                console.log("PUC Array for quantity update:", pucArray);
+                // Step 1: updateQuantity — recalculates stock counts + calls testinupdateQuantity for JSONB
+                await stockRevoService.updateQuantity(pucArray);
+                // Step 2: updateCatalogueQuantities — ensures product_revo aggregate fields
+                // (overallavailableqty, ecompublishedquantity, oncatalogueqty, offcatalogueqty, etc.)
+                // are fully synced. This matches the single-stock creation path.
+                for (const puc of pucArray) {
+                    await productrevoService.updateCatalogueQuantities(puc);
+                }
                 let message = {
                     Stock: upsertStockResult?.result?.command === "UPDATE"
                         ? `Stock Updated successfully`
-                        : `Stock Inserted successfully `,
+                        : `Stock Inserted successfully`,
                     "Total Records": upsertStockResult.totalRecords,
                     "Success Count": upsertStockResult.successCount
-                    // totalCount: upsertStockResult.totalCount, // Include the total count in the response
-                    // updateQuantity
                 };
                 reply.status(200).send(message);
             }
+            else if (upsertStockResult?.status) {
+                reply.status(upsertStockResult.status).send({
+                    message: upsertStockResult.message,
+                    errorDetails: upsertStockResult.errorDetails,
+                });
+            }
             else {
-                console.log('ELSE');
                 reply.status(404).send({ error: [upsertStockResult] });
             }
-            // return result
         }
         catch (error) {
-            console.log('ERROR IN  Controller insertBulkDataStock');
+            console.log('ERROR IN Controller insertBulkDataStock', error);
             let errordata = await ErrorHandler.handleQueryError(error);
             reply.status(404).send(errordata);
         }
