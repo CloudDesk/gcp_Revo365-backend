@@ -10,6 +10,7 @@ import {
 
 export module poinvoiceservice {
   const poInvoiceFieldNames = new Set([
+    "organizationid",
     "invoiceamount",
     "ponumber",
     "invoicedate",
@@ -25,6 +26,14 @@ export module poinvoiceservice {
     "sgst",
     "cgst",
     "payabletaxamount",
+    "billtype",
+    "expensecategory",
+    "expenseaccountid",
+    "supplierid",
+    "suppliergstin",
+    "placeofsupply",
+    "taxableamount",
+    "igst",
   ]);
 
   const parseJsonArray = (value: any): any[] => {
@@ -177,6 +186,30 @@ export module poinvoiceservice {
     upsertFields: any,
     id?: any
   ) => {
+    let billType = String(upsertFields.billtype || "").trim().toLowerCase();
+    if (!billType && id) {
+      const existingResult: any = await query(
+        "SELECT COALESCE(billtype, 'inventory') AS billtype FROM poinvoice WHERE id = $1",
+        [id]
+      );
+      billType = String(existingResult.rows[0]?.billtype || "inventory").toLowerCase();
+    }
+    billType = billType || "inventory";
+    if (!["inventory", "expense"].includes(billType)) {
+      throw new Error("Bill type must be inventory or expense");
+    }
+    upsertFields.billtype = billType;
+    if (billType === "expense") {
+      if (!upsertFields.expenseaccountid && !id) {
+        throw new Error("Expense account is required for an expense bill");
+      }
+      if (!upsertFields.supplierid && !id) {
+        throw new Error("Supplier is required for an expense bill");
+      }
+      upsertFields.productdata = parseJsonArray(upsertFields.productdata);
+      return;
+    }
+
     const hasProductData = Object.prototype.hasOwnProperty.call(
       upsertFields,
       "productdata"
@@ -345,6 +378,20 @@ export module poinvoiceservice {
     upsertFields.invoiceamount = Math.round(taxableAmount + payabletaxamount);
   };
 
+  const normalizeExpenseBillFields = (upsertFields: any) => {
+    const invoiceAmount = toNumber(upsertFields.invoiceamount);
+    const taxAmount = toNumber(upsertFields.payabletaxamount);
+    if (invoiceAmount <= 0) throw new Error("Expense Bill Amount must be greater than 0");
+    if (taxAmount < 0 || taxAmount > invoiceAmount) throw new Error("Expense Bill GST must be between 0 and Bill Amount");
+    if (!["laptop", "mobile"].includes(String(upsertFields.expensecategory || "").toLowerCase())) {
+      throw new Error("Expense Category must be Laptop or Mobile");
+    }
+    upsertFields.productdata = [];
+    upsertFields.discount = 0;
+    upsertFields.taxableamount = Number((invoiceAmount - taxAmount).toFixed(2));
+    upsertFields.subtotal = upsertFields.taxableamount;
+  };
+
   const validateBillAmountWithinPurchaseOrder = async (
     upsertFields: any,
     id?: any
@@ -466,7 +513,9 @@ export module poinvoiceservice {
         upsertFields.invoiceurl = PROTOCOL + "://" + host + "/" + file.filename;
       }
       await validateAndNormalizeProductData(upsertFields, id);
-      if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
+      if (upsertFields.billtype === "expense") {
+        normalizeExpenseBillFields(upsertFields);
+      } else if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
         normalizeBillTaxFields(upsertFields);
         await validateBillAmountWithinPurchaseOrder(upsertFields, id);
       }
@@ -480,8 +529,8 @@ export module poinvoiceservice {
         fieldValues[findindex] = null
       }
       if (id) {
-        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-        params = [...fieldValues, id];
+        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
+        params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
       } else {
         querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
         params = fieldValues;
@@ -504,7 +553,9 @@ export module poinvoiceservice {
       const upsertFields = pickPoInvoiceFields(rawUpsertFields);
       if (id) await assertBillHasNoTransactions(id);
       await validateAndNormalizeProductData(upsertFields, id);
-      if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
+      if (upsertFields.billtype === "expense") {
+        normalizeExpenseBillFields(upsertFields);
+      } else if (Object.prototype.hasOwnProperty.call(upsertFields, "productdata")) {
         normalizeBillTaxFields(upsertFields);
         await validateBillAmountWithinPurchaseOrder(upsertFields, id);
       }
@@ -518,8 +569,8 @@ export module poinvoiceservice {
         fieldValues[findindex] = null
       }
       if (id) {
-        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
-        params = [...fieldValues, id];
+        querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
+        params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
       } else {
         querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
         params = fieldValues;

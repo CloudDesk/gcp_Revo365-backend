@@ -11,42 +11,34 @@ import {
 } from "../utils/finance/finance.utils.js";
 import {
   applyRetailInvoiceAllocation,
+  CustomerReceiptMode,
+  resolveCustomerReceiptAllocationMethod,
+  getCustomerReceiptInvoiceSourceMetadata,
   getRetailInvoicePaymentState,
-  isRentalInvoice,
-  isRetailStoreInvoice,
-  isServiceRequestInvoice,
+  isEligibleCustomerReceiptInvoice,
   resolveCustomerReceiptSourceType,
 } from "../utils/finance/retailReceipt.utils.js";
+import { allocateOnAccountReferenceNumber } from "./onAccountFoundation.service.js";
 import {
-  FINANCE_SOURCE_TYPES,
-  getRetailReceiptSourceTypes,
+  getCustomerReceiptSourceTypes,
   resolveAgainstDocumentSourceId,
 } from "../utils/finance/financeSource.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
 
-const RECEIPT_SOURCE_TYPES = [
-  ...getRetailReceiptSourceTypes(),
-  FINANCE_SOURCE_TYPES.serviceRequestReceipt,
-  FINANCE_SOURCE_TYPES.rentalReceipt,
-];
-
-type CustomerReceiptMode = "retail" | "rental";
+const RECEIPT_SOURCE_TYPES = getCustomerReceiptSourceTypes();
 
 const resolveCustomerReceiptMode = (value: unknown): CustomerReceiptMode => {
   const normalized = String(value ?? "retail").trim().toLowerCase();
   if (!normalized || normalized === "retail") return "retail";
   if (normalized === "rental") return "rental";
+  if (normalized === "all") return "all";
   throw new FinanceValidationError(
-    "Receipt mode must be either retail or rental."
+    "Receipt mode must be retail, rental, or all."
   );
 };
-
-const isEligibleCustomerReceiptInvoice = (
-  invoice: any,
-  mode: CustomerReceiptMode
-) =>
-  mode === "rental"
-    ? isRentalInvoice(invoice)
-    : isRetailStoreInvoice(invoice) || isServiceRequestInvoice(invoice);
 
 const normalizeText = (
   value: unknown,
@@ -101,15 +93,15 @@ const selectReceivableInvoices = (mode: CustomerReceiptMode) => `
     LIMIT 1
   ) linked_order ON TRUE
   WHERE r.customerid = $1
-    AND ${mode === "rental" ? `(
+    ${mode === "all" ? "" : `AND ${mode === "rental" ? `(
       LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'
       OR EXISTS (
         SELECT 1
         FROM jsonb_array_elements(COALESCE(r.paymentdata, '[]'::jsonb)) payment
         WHERE LOWER(COALESCE(payment->>'source', '')) = 'order_payment'
       )
-    )` : `LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'`}
-    AND ${mode === "rental" ? `(
+    )` : `LOWER(COALESCE(r.paymentstatus, 'pending')) <> 'paid'`}`}
+    ${mode === "all" ? "" : `AND ${mode === "rental" ? `(
       LOWER(COALESCE(r.invoicefor, '')) = 'rental'
     )` : `(
       (
@@ -123,11 +115,12 @@ const selectReceivableInvoices = (mode: CustomerReceiptMode) => `
         LOWER(COALESCE(r.invoicefor, '')) = 'service'
         AND NULLIF(TRIM(COALESCE(r.ticketnumber, '')), '') IS NOT NULL
       )
-    )`}
+    )`}`}
 `;
 
 const serializeOutstandingInvoice = (row: any) => {
   const state = getRetailInvoicePaymentState(row);
+  const sourceMetadata = getCustomerReceiptInvoiceSourceMetadata(row);
   return {
     id: Number(row.id),
     invoicenumber: row.invoicenumber,
@@ -146,6 +139,8 @@ const serializeOutstandingInvoice = (row: any) => {
         : state.paidAmount > 0
           ? "partially_paid"
           : "pending",
+    invoicesource: sourceMetadata?.source ?? "unknown",
+    invoicesourcelabel: sourceMetadata?.label ?? "Other",
   };
 };
 
@@ -159,6 +154,12 @@ const getExistingReceipt = async (
     SELECT
       t.*,
       j.journalnumber,
+      oa.id AS onaccountreferenceid,
+      oa.referencenumber AS onaccountreferencenumber,
+      oa.originalamount AS onaccountoriginalamount,
+      oa.usedamount AS onaccountusedamount,
+      oa.availableamount AS onaccountavailableamount,
+      oa.status AS onaccountstatus,
       COALESCE(
         (
           SELECT jsonb_agg(
@@ -192,6 +193,9 @@ const getExistingReceipt = async (
       ) AS allocations
     FROM bank_transactions t
     LEFT JOIN journal_entries j ON j.id = t.journalentryid
+    LEFT JOIN on_account_references oa
+      ON oa.organizationid = t.organizationid
+     AND oa.sourcebanktransactionid = t.id
     WHERE t.organizationid = $1
       AND t.sourcetype = ANY($2::text[])
       AND t.sourcepaymentid = $3
@@ -206,14 +210,392 @@ const getExistingReceipt = async (
         ...row,
         transactiondate:
           toFinanceDateOnly(row.transactiondate) ?? row.transactiondate,
+        onaccount: row.onaccountreferenceid
+          ? {
+              id: Number(row.onaccountreferenceid),
+              referencenumber: row.onaccountreferencenumber,
+              originalamount: toMoney(row.onaccountoriginalamount),
+              usedamount: toMoney(row.onaccountusedamount),
+              availableamount: toMoney(row.onaccountavailableamount),
+              status: row.onaccountstatus,
+            }
+          : null,
       }
     : null;
+};
+
+const postCustomerOnAccountReceipt = async ({
+  actor,
+  organizationId,
+  accountId,
+  customerId,
+  transactionDate,
+  amount,
+  remarks,
+  requestReference,
+}: {
+  actor: string;
+  organizationId: number;
+  accountId: number;
+  customerId: number;
+  transactionDate: string;
+  amount: number;
+  remarks: string | null;
+  requestReference: string;
+}) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      [`customer-receipt:${organizationId}:${requestReference}`]
+    );
+
+    const existingReceipt = await getExistingReceipt(
+      client,
+      organizationId,
+      requestReference
+    );
+    if (existingReceipt) {
+      await client.query("COMMIT");
+      return existingReceipt;
+    }
+
+    const accountResult = await client.query(
+      `
+      SELECT *
+      FROM bank_cash_accounts
+      WHERE id = $1
+        AND organizationid = $2
+      FOR UPDATE
+      `,
+      [accountId, organizationId]
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Bank/Cash account was not found.",
+        404,
+        "BANK_CASH_ACCOUNT_NOT_FOUND"
+      );
+    }
+    if (account.status !== "active") {
+      throw new FinanceValidationError(
+        "Customer advances can only be posted to an active Bank/Cash account."
+      );
+    }
+
+    const customerResult = await client.query(
+      `
+      SELECT id, firstname, lastname, useremail, usermobilenumber
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [customerId]
+    );
+    const customer = customerResult.rows[0];
+    if (!customer) {
+      throw new FinanceValidationError("The selected customer was not found.");
+    }
+    const customerName = buildCustomerName({ ...customer, customerid: customerId });
+
+    const latestTransactionResult = await client.query(
+      `
+      SELECT transactiondate
+      FROM bank_transactions
+      WHERE bankcashaccountid = $1
+        AND postingstatus = 'posted'
+      ORDER BY transactiondate DESC, posteddate DESC, id DESC
+      LIMIT 1
+      `,
+      [accountId]
+    );
+    const latestTransactionDate = toFinanceDateOnly(
+      latestTransactionResult.rows[0]?.transactiondate
+    );
+    if (latestTransactionDate && transactionDate < latestTransactionDate) {
+      throw new FinanceValidationError(
+        "Backdated transactions are not enabled in the foundation release."
+      );
+    }
+
+    const customerAdvanceResult = await client.query(
+      `
+      SELECT id
+      FROM finance_accounts
+      WHERE organizationid = $1
+        AND accountcode = 'SYS-CUSTOMER-ADVANCE'
+        AND status = 'active'
+      LIMIT 1
+      `,
+      [organizationId]
+    );
+    const customerAdvanceAccountId = Number(customerAdvanceResult.rows[0]?.id);
+    if (!Number.isSafeInteger(customerAdvanceAccountId)) {
+      throw new FinanceValidationError(
+        "Customer Advances system ledger is unavailable.",
+        409,
+        "CUSTOMER_ADVANCE_LEDGER_MISSING"
+      );
+    }
+
+    const balanceAfter = calculateAvailableBalance(
+      account.currentbalance,
+      "debit",
+      amount
+    );
+    const epoch = nowEpoch();
+    const receiptRemarks = remarks || `Advance received On Account from ${customerName}`;
+
+    const bankTransactionResult = await client.query(
+      `
+      INSERT INTO bank_transactions (
+        organizationid, bankcashaccountid, transactiondate,
+        partytype, partyid, partyname, counterpartyaccountid,
+        entryside, amount, debitamount, creditamount, balanceafter,
+        allocationmethod, sourcetype, sourceid, sourcepaymentid,
+        remarks, postingstatus, entrymode, createdby, postedby,
+        createddate, posteddate
+      )
+      VALUES (
+        $1, $2, $3, 'customer', $4, $5, $6,
+        'debit', $7, $7, 0, $8,
+        'on_account', 'customer_on_account', $9, $9,
+        $10, 'posted', 'manual', $11, $11, $12, $12
+      )
+      RETURNING *
+      `,
+      [
+        organizationId,
+        accountId,
+        transactionDate,
+        customerId,
+        customerName,
+        customerAdvanceAccountId,
+        amount,
+        balanceAfter,
+        requestReference,
+        receiptRemarks,
+        actor,
+        epoch,
+      ]
+    );
+    const bankTransaction = bankTransactionResult.rows[0];
+    const transactionNumber = `BT-${String(bankTransaction.id).padStart(8, "0")}`;
+
+    const journalResult = await client.query(
+      `
+      INSERT INTO journal_entries (
+        organizationid, entrydate, sourcetype, sourceid, status,
+        description, createdby, postedby, createddate, posteddate
+      )
+      VALUES ($1, $2, 'bank_transaction', $3, 'posted', $4, $5, $5, $6, $6)
+      RETURNING *
+      `,
+      [organizationId, transactionDate, bankTransaction.id, receiptRemarks, actor, epoch]
+    );
+    const journalEntry = journalResult.rows[0];
+    const journalNumber = `JE-${String(journalEntry.id).padStart(8, "0")}`;
+
+    await client.query(
+      `
+      INSERT INTO journal_lines (
+        journalentryid, financeaccountid, partytype, partyid,
+        debitamount, creditamount, description
+      )
+      VALUES
+        ($1, $2, 'customer', $3, $4, 0, $5),
+        ($1, $6, 'customer', $3, 0, $4, $5)
+      `,
+      [
+        journalEntry.id,
+        account.financeaccountid,
+        customerId,
+        amount,
+        receiptRemarks,
+        customerAdvanceAccountId,
+      ]
+    );
+
+    const onAccountReferenceNumber = await allocateOnAccountReferenceNumber(
+      client,
+      organizationId,
+      "customer"
+    );
+    const onAccountReferenceResult = await client.query(
+      `
+      INSERT INTO on_account_references (
+        organizationid, referencenumber, partytype, partyid, currencycode,
+        sourcetype, sourceid, sourcebanktransactionid, sourcejournalentryid,
+        originalamount, usedamount, availableamount, status,
+        createdby, modifiedby, createddate, modifieddate
+      )
+      VALUES (
+        $1, $2, 'customer', $3, $4,
+        'cash_bank_origin', $5, $6, $7,
+        $8, 0, $8, 'open', $9, $9, $10, $10
+      )
+      RETURNING *
+      `,
+      [
+        organizationId,
+        onAccountReferenceNumber,
+        customerId,
+        String(account.currencycode || "INR").toUpperCase(),
+        requestReference,
+        bankTransaction.id,
+        journalEntry.id,
+        amount,
+        actor,
+        epoch,
+      ]
+    );
+    const onAccountReference = onAccountReferenceResult.rows[0];
+
+    await client.query(
+      `
+      INSERT INTO on_account_movements (
+        organizationid, onaccountreferenceid, movementtype, direction, amount,
+        banktransactionid, journalentryid, idempotencykey, idempotencysequence,
+        description, createdby, createddate
+      )
+      VALUES ($1, $2, 'cash_bank_origin', 'increase', $3, $4, $5, $6, 1, $7, $8, $9)
+      `,
+      [
+        organizationId,
+        onAccountReference.id,
+        amount,
+        bankTransaction.id,
+        journalEntry.id,
+        requestReference,
+        receiptRemarks,
+        actor,
+        epoch,
+      ]
+    );
+
+    await client.query(
+      `UPDATE journal_entries SET journalnumber = $1 WHERE id = $2`,
+      [journalNumber, journalEntry.id]
+    );
+    await client.query(
+      `
+      UPDATE bank_transactions
+      SET transactionnumber = $1, journalentryid = $2, sourceid = $3
+      WHERE id = $4
+      `,
+      [transactionNumber, journalEntry.id, onAccountReferenceNumber, bankTransaction.id]
+    );
+    await client.query(
+      `
+      UPDATE bank_cash_accounts
+      SET currentbalance = $1, version = version + 1,
+          modifiedby = $2, modifieddate = $3
+      WHERE id = $4
+      `,
+      [balanceAfter, actor, epoch, accountId]
+    );
+    await client.query(
+      `
+      INSERT INTO finance_audit_events (
+        organizationid, entitytype, entityid, action, actor, eventdata, createddate
+      )
+      VALUES ($1, 'bank_transaction', $2, 'customer_on_account_posted', $3, $4::jsonb, $5)
+      `,
+      [
+        organizationId,
+        bankTransaction.id,
+        actor,
+        JSON.stringify({
+          transactionnumber: transactionNumber,
+          customerid: customerId,
+          amount,
+          previousbalance: toMoney(account.currentbalance),
+          balanceafter: balanceAfter,
+          onaccountreferenceid: Number(onAccountReference.id),
+          onaccountreferencenumber: onAccountReferenceNumber,
+          journalentryid: Number(journalEntry.id),
+        }),
+        epoch,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return {
+      ...bankTransaction,
+      transactiondate: transactionDate,
+      transactionnumber: transactionNumber,
+      journalentryid: Number(journalEntry.id),
+      journalnumber: journalNumber,
+      sourceid: onAccountReferenceNumber,
+      allocations: [],
+      onaccountreferenceid: Number(onAccountReference.id),
+      onaccountreferencenumber: onAccountReferenceNumber,
+      onaccount: {
+        id: Number(onAccountReference.id),
+        referencenumber: onAccountReferenceNumber,
+        originalamount: amount,
+        usedamount: 0,
+        availableamount: amount,
+        status: "open",
+      },
+    };
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    if (error?.code === "23505") {
+      const existingReceipt = await getExistingReceipt(
+        client,
+        organizationId,
+        requestReference
+      );
+      if (existingReceipt) return existingReceipt;
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 export module retailReceiptFinanceService {
   export const listCustomers = async (request: any) => {
     const search = String(request.query?.search || "").trim().toLowerCase();
+    const allocationMethod = resolveCustomerReceiptAllocationMethod(
+      request.query?.allocationmethod
+    );
     const receiptMode = resolveCustomerReceiptMode(request.query?.mode);
+
+    if (allocationMethod === "on_account") {
+      const result = await query(
+        `
+        SELECT
+          u.id,
+          u.firstname,
+          u.lastname,
+          u.useremail,
+          u.usermobilenumber,
+          u.isbusinessuser
+        FROM users u
+        WHERE $1 = ''
+           OR LOWER(CONCAT_WS(' ', u.firstname, u.lastname)) LIKE '%' || $1 || '%'
+           OR LOWER(COALESCE(u.useremail, '')) LIKE '%' || $1 || '%'
+           OR LOWER(COALESCE(u.usermobilenumber::text, '')) LIKE '%' || $1 || '%'
+        ORDER BY LOWER(CONCAT_WS(' ', u.firstname, u.lastname)), u.id
+        LIMIT 50
+        `,
+        [search]
+      );
+      return result.rows.map((row: any) => ({
+        id: Number(row.id),
+        name: buildCustomerName(row),
+        email: row.useremail || null,
+        mobilenumber: row.usermobilenumber || null,
+        isbusinessuser: Boolean(row.isbusinessuser),
+        outstandinginvoicecount: 0,
+        totaloutstanding: 0,
+      }));
+    }
+
     let invoiceRows: any[] = [];
 
     if (receiptMode === "rental") {
@@ -358,6 +740,9 @@ export module retailReceiptFinanceService {
     const accountId = Number(request.params?.accountId);
     const customerId = Number(request.body?.customerid);
     const receiptMode = resolveCustomerReceiptMode(request.body?.receiptmode);
+    const allocationMethod = resolveCustomerReceiptAllocationMethod(
+      request.body?.allocationmethod
+    );
     if (!Number.isSafeInteger(accountId) || accountId <= 0) {
       throw new FinanceValidationError("A valid accountId is required.");
     }
@@ -382,6 +767,26 @@ export module retailReceiptFinanceService {
       true,
       100
     )!;
+    if (allocationMethod === "on_account") {
+      const requestedAllocations = Array.isArray(request.body?.allocations)
+        ? request.body.allocations
+        : [];
+      if (requestedAllocations.length > 0) {
+        throw new FinanceValidationError(
+          "Invoice allocations are not allowed for an On Account receipt."
+        );
+      }
+      return postCustomerOnAccountReceipt({
+        actor,
+        organizationId,
+        accountId,
+        customerId,
+        transactionDate,
+        amount,
+        remarks,
+        requestReference,
+      });
+    }
     const requestedAllocations = Array.isArray(request.body?.allocations)
       ? request.body.allocations
       : [];
@@ -456,6 +861,10 @@ export module retailReceiptFinanceService {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [`customer-receipt:${organizationId}:${requestReference}`]
+      );
 
       const existingReceipt = await getExistingReceipt(
         client,
@@ -561,25 +970,10 @@ export module retailReceiptFinanceService {
         };
       });
 
-      const latestTransactionResult = await client.query(
-        `
-        SELECT transactiondate
-        FROM bank_transactions
-        WHERE bankcashaccountid = $1
-          AND postingstatus = 'posted'
-        ORDER BY transactiondate DESC, posteddate DESC, id DESC
-        LIMIT 1
-        `,
-        [accountId]
+      assertTransactionDateIsWithinAccountHistory(
+        transactionDate,
+        account.openingbalancedate
       );
-      const latestTransactionDate = toFinanceDateOnly(
-        latestTransactionResult.rows[0]?.transactiondate
-      );
-      if (latestTransactionDate && transactionDate < latestTransactionDate) {
-        throw new FinanceValidationError(
-          "Backdated transactions are not enabled in the foundation release."
-        );
-      }
 
       const accountsReceivableResult = await client.query(
         `
@@ -632,31 +1026,21 @@ export module retailReceiptFinanceService {
         amount
       );
       const epoch = nowEpoch();
-      const containsServiceInvoice = preparedAllocations.some((allocation) =>
-        isServiceRequestInvoice(allocation.invoice)
+      const allocationSources = preparedAllocations.map((allocation) =>
+        getCustomerReceiptInvoiceSourceMetadata(allocation.invoice)
       );
-      const containsRetailInvoice = preparedAllocations.some((allocation) =>
-        isRetailStoreInvoice(allocation.invoice)
-      );
-      const containsRentalInvoice = preparedAllocations.some((allocation) =>
-        isRentalInvoice(allocation.invoice)
+      const uniqueSourceLabels = Array.from(
+        new Set(allocationSources.map((source) => source?.label).filter(Boolean))
       );
       const receiptSourceType = resolveCustomerReceiptSourceType(
         preparedAllocations.map((allocation) => allocation.invoice)
       );
+      const receiptDescription = uniqueSourceLabels.length === 1
+        ? uniqueSourceLabels[0]
+        : "Customer";
       const defaultRemarks = preparedAllocations.length === 1
-        ? containsRentalInvoice
-          ? `Rental receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-          : containsServiceInvoice
-          ? `Service receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-          : `Retail receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
-        : containsRentalInvoice
-          ? `Rental receipt allocated across ${preparedAllocations.length} invoices`
-          : containsServiceInvoice && containsRetailInvoice
-          ? `Customer receipt allocated across ${preparedAllocations.length} invoices`
-          : containsServiceInvoice
-            ? `Service receipt allocated across ${preparedAllocations.length} invoices`
-            : `Retail receipt allocated across ${preparedAllocations.length} invoices`;
+        ? `${receiptDescription} receipt against invoice ${preparedAllocations[0].invoice.invoicenumber}`
+        : `${receiptDescription} receipt allocated across ${preparedAllocations.length} invoices`;
       const receiptRemarks = remarks || defaultRemarks;
       const sourceId = resolveAgainstDocumentSourceId(
         preparedAllocations.map((allocation) => allocation.invoice.orderid),
@@ -857,8 +1241,9 @@ export module retailReceiptFinanceService {
         const existingPayments = Array.isArray(allocation.invoice.paymentdata)
           ? allocation.invoice.paymentdata
           : [];
-        const servicePayment = isServiceRequestInvoice(allocation.invoice);
-        const rentalPayment = isRentalInvoice(allocation.invoice);
+        const invoiceSource = getCustomerReceiptInvoiceSourceMetadata(
+          allocation.invoice
+        );
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: allocation.allocationAmount,
@@ -871,11 +1256,7 @@ export module retailReceiptFinanceService {
           providerpaymentid: null,
           providerorderid: null,
           transactionid: null,
-          source: rentalPayment
-            ? "finance_rental_receipt"
-            : servicePayment
-              ? "finance_service_receipt"
-              : "finance_retail_receipt",
+          source: invoiceSource?.paymentSource || "finance_customer_receipt",
           status: "success",
           comments: remarks,
           banktransactionid: Number(bankTransaction.id),
@@ -920,17 +1301,15 @@ export module retailReceiptFinanceService {
         `,
         [transactionNumber, journalEntry.id, bankTransaction.id]
       );
-      await client.query(
-        `
-        UPDATE bank_cash_accounts
-        SET currentbalance = $1,
-            version = version + 1,
-            modifiedby = $2,
-            modifieddate = $3
-        WHERE id = $4
-        `,
-        [balanceAfter, actor, epoch, accountId]
+      const rebuiltBalances = await rebuildBankCashAccountBalances(
+        client,
+        account,
+        actor,
+        epoch
       );
+      const transactionBalanceAfter =
+        rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+      bankTransaction.balanceafter = transactionBalanceAfter;
       await client.query(
         `
         INSERT INTO finance_audit_events (
@@ -943,7 +1322,7 @@ export module retailReceiptFinanceService {
           createddate
         )
         VALUES (
-          $1, 'bank_transaction', $2, '${receiptMode === "rental" ? "rental_receipt_posted" : "retail_receipt_posted"}',
+          $1, 'bank_transaction', $2, '${receiptMode === "rental" ? "rental_receipt_posted" : receiptMode === "all" ? "customer_receipt_posted" : "retail_receipt_posted"}',
           $3, $4::jsonb, $5
         )
         `,
@@ -958,7 +1337,7 @@ export module retailReceiptFinanceService {
             tdsamount: totalTdsAmount,
             totalsettledamount: totalSettlementAmount,
             previousbalance: toMoney(account.currentbalance),
-            balanceafter: balanceAfter,
+            balanceafter: transactionBalanceAfter,
             allocations: allocationRecords,
             journalentryid: Number(journalEntry.id),
           }),

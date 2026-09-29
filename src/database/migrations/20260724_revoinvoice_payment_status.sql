@@ -119,4 +119,9 @@ SET
   lastpaymentdate = payment_summary.lastpaymentdate
 FROM payment_summary
 WHERE ri.id = payment_summary.id
-  AND COALESCE(jsonb_array_length(ri.paymentdata), 0) = 0;
+  AND CASE
+    WHEN jsonb_typeof(ri.paymentdata) = 'array'
+      THEN jsonb_array_length(ri.paymentdata) = 0
+    -- Preserve unexpected legacy JSON shapes instead of overwriting them.
+    ELSE FALSE
+  END;

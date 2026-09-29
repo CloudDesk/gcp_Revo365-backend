@@ -1,4 +1,5 @@
 import { poinvoiceservice } from "../services/poinvoice.service.js"
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 
 export module poinvoicecontroller {
     export const getPOInvoice = async (request: any, reply: any) => {
@@ -15,7 +16,8 @@ export module poinvoicecontroller {
         try {
 
             let host = request.headers.host
-            let upsertPoInviceResult = await poinvoiceservice.upsertPoInvoice(request.body, request.files, host)
+            const { organizationId } = resolveFinanceContext(request)
+            let upsertPoInviceResult = await poinvoiceservice.upsertPoInvoice({ ...request.body, organizationid: organizationId }, request.files, host)
             if (upsertPoInviceResult.command === "UPDATE" || upsertPoInviceResult.command === "INSERT") {
                 let message: any = {}
                 message = {
@@ -51,7 +53,8 @@ export module poinvoicecontroller {
         try {
 
             let host = request.headers.host
-            let upsertPoInviceResult = await poinvoiceservice.upsertGcpPoInvoice(request.body)
+            const { organizationId } = resolveFinanceContext(request)
+            let upsertPoInviceResult = await poinvoiceservice.upsertGcpPoInvoice({ ...request.body, organizationid: organizationId })
             if (upsertPoInviceResult.command === "UPDATE" || upsertPoInviceResult.command === "INSERT") {
                 let message: any = {}
                 message = {

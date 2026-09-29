@@ -1,6 +1,17 @@
 export const poInvoiceSchema = {
     type: 'object',
     properties: {
+        billtype: {
+            type: "string",
+            enum: ["inventory", "expense"]
+        },
+        expensecategory: { type: ["string", "null"], enum: ["laptop", "mobile", null] },
+        expenseaccountid: { type: ["number", "null"] },
+        supplierid: { type: ["number", "null"] },
+        suppliergstin: { type: ["string", "null"] },
+        placeofsupply: { type: ["string", "null"] },
+        taxableamount: { type: "number" },
+        igst: { type: "number" },
         invoiceamount: {
             type: "number",
             errorMessage: {
@@ -142,6 +153,6 @@ export const poInvoiceSchema = {
         //     }
         // }
     },
-    required: ["invoiceamount", "invoicedate", "ponumber"]
+    required: ["invoiceamount", "invoicedate"]
 
 }

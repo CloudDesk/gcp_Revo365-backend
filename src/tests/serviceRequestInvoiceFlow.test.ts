@@ -132,6 +132,17 @@ describe("Service Request invoice receipt flow", () => {
       "service_request_receipt"
     );
   });
+
+  test("a mixed-source payment is classified as a customer receipt", () => {
+    const storeInvoice = {
+      invoicefor: "product",
+      invoicedata: { ordername: "StorePurchase" },
+    };
+    assert.equal(
+      resolveCustomerReceiptSourceType([generatedServiceInvoice, storeInvoice]),
+      "customer_receipt"
+    );
+  });
 });
 
 describe("Existing invoice flow regression boundaries", () => {

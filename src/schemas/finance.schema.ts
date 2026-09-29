@@ -1,5 +1,17 @@
 const nullableString = { type: ["string", "null"] };
 
+export const createChartAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    accounttype: { type: "string", minLength: 1, maxLength: 50 },
+    accountname: { type: "string", minLength: 1, maxLength: 255 },
+    accountcode: { type: "string", minLength: 1, maxLength: 40 },
+    description: { type: ["string", "null"], maxLength: 2000 },
+  },
+  required: ["accounttype", "accountname", "accountcode"],
+};
+
 export const createBankCashAccountSchema = {
   type: "object",
   additionalProperties: false,
@@ -57,6 +69,7 @@ export const createDirectBankTransactionSchema = {
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
     },
     counterpartyaccountid: { type: "integer", minimum: 1 },
+    entryname: { type: "string", minLength: 1, maxLength: 255 },
     entryside: { type: "string", enum: ["debit", "credit"] },
     amount: { type: "number", exclusiveMinimum: 0 },
     remarks: nullableString,
@@ -64,6 +77,7 @@ export const createDirectBankTransactionSchema = {
   required: [
     "transactiondate",
     "counterpartyaccountid",
+    "entryname",
     "entryside",
     "amount",
   ],
@@ -86,12 +100,15 @@ export const createRetailReceiptSchema = {
     },
     receiptmode: {
       type: "string",
-      enum: ["retail", "rental"],
+      enum: ["retail", "rental", "all"],
+    },
+    allocationmethod: {
+      type: "string",
+      enum: ["against_document", "on_account"],
     },
     remarks: nullableString,
     allocations: {
       type: "array",
-      minItems: 1,
       maxItems: 100,
       items: {
         type: "object",
@@ -111,7 +128,134 @@ export const createRetailReceiptSchema = {
     "customerid",
     "amount",
     "requestreference",
-    "allocations",
+  ],
+  allOf: [
+    {
+      if: {
+        properties: {
+          allocationmethod: { const: "on_account" },
+        },
+        required: ["allocationmethod"],
+      },
+      then: {
+        properties: {
+          allocations: { type: "array", maxItems: 0 },
+        },
+      },
+      else: {
+        properties: {
+          allocations: { type: "array", minItems: 1 },
+        },
+        required: ["allocations"],
+      },
+    },
+  ],
+};
+
+export const applyCustomerOnAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    customerid: { type: "integer", minimum: 1 },
+    applicationdate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    requestreference: {
+      type: "string",
+      minLength: 8,
+      maxLength: 100,
+    },
+    remarks: nullableString,
+    referenceallocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          referenceid: { type: "integer", minimum: 1 },
+          amount: { type: "number", exclusiveMinimum: 0 },
+        },
+        required: ["referenceid", "amount"],
+      },
+    },
+    invoiceallocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          invoiceid: { type: "integer", minimum: 1 },
+          bankportion: { type: "number", exclusiveMinimum: 0 },
+          tdsapplied: { type: "boolean" },
+          tdsamount: { type: "number", minimum: 0 },
+        },
+        required: ["invoiceid", "bankportion"],
+      },
+    },
+  },
+  required: [
+    "customerid",
+    "applicationdate",
+    "requestreference",
+    "referenceallocations",
+    "invoiceallocations",
+  ],
+};
+
+export const applySupplierOnAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    supplierid: { type: "integer", minimum: 1 },
+    applicationdate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    requestreference: { type: "string", minLength: 8, maxLength: 100 },
+    remarks: nullableString,
+    referenceallocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          referenceid: { type: "integer", minimum: 1 },
+          amount: { type: "number", exclusiveMinimum: 0 },
+        },
+        required: ["referenceid", "amount"],
+      },
+    },
+    billallocations: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          billid: { type: "integer", minimum: 1 },
+          bankportion: { type: "number", exclusiveMinimum: 0 },
+          tdsapplied: { type: "boolean" },
+          tdssectionid: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+          tdsamount: { type: "number", minimum: 0 },
+        },
+        required: ["billid", "bankportion"],
+      },
+    },
+  },
+  required: [
+    "supplierid",
+    "applicationdate",
+    "requestreference",
+    "referenceallocations",
+    "billallocations",
   ],
 };
 
@@ -130,10 +274,13 @@ export const createSupplierPaymentSchema = {
       minLength: 8,
       maxLength: 100,
     },
+    allocationmethod: {
+      type: "string",
+      enum: ["against_document", "on_account"],
+    },
     remarks: nullableString,
     allocations: {
       type: "array",
-      minItems: 1,
       maxItems: 100,
       items: {
         type: "object",
@@ -154,7 +301,27 @@ export const createSupplierPaymentSchema = {
     "supplierid",
     "amount",
     "requestreference",
-    "allocations",
+  ],
+  allOf: [
+    {
+      if: {
+        properties: {
+          allocationmethod: { const: "on_account" },
+        },
+        required: ["allocationmethod"],
+      },
+      then: {
+        properties: {
+          allocations: { type: "array", maxItems: 0 },
+        },
+      },
+      else: {
+        properties: {
+          allocations: { type: "array", minItems: 1 },
+        },
+        required: ["allocations"],
+      },
+    },
   ],
 };
 
@@ -167,4 +334,121 @@ export const createTdsSectionSchema = {
     rate: { type: "string", minLength: 1, maxLength: 50 },
   },
   required: ["newcode", "natureofpayment", "rate"],
+};
+
+const journalLineSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    financeaccountid: { type: "integer", minimum: 1 },
+    description: { type: ["string", "null"], maxLength: 2000 },
+    debitamount: { type: "number", minimum: 0 },
+    creditamount: { type: "number", minimum: 0 },
+  },
+  required: ["financeaccountid", "debitamount", "creditamount"],
+};
+
+const journalDraftProperties = {
+  entrydate: {
+    type: "string",
+    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+  },
+  reference: { type: ["string", "null"], maxLength: 255 },
+  journalpurpose: {
+    type: "string",
+    enum: ["general", "accrual", "reclassification", "correction"],
+  },
+  relatedjournalentryid: { type: ["integer", "null"], minimum: 1 },
+  description: { type: "string", minLength: 1, maxLength: 2000 },
+  lines: {
+    type: "array",
+    minItems: 2,
+    maxItems: 100,
+    items: journalLineSchema,
+  },
+};
+
+export const createJournalDraftSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: journalDraftProperties,
+  required: ["entrydate", "description", "lines"],
+};
+
+export const updateJournalDraftSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...journalDraftProperties,
+    version: { type: "integer", minimum: 1 },
+  },
+  required: ["entrydate", "description", "lines", "version"],
+};
+
+export const postJournalSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    version: { type: "integer", minimum: 1 },
+  },
+  required: ["version"],
+};
+
+export const reverseJournalSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    version: { type: "integer", minimum: 1 },
+    reversaldate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    reason: { type: "string", minLength: 1, maxLength: 2000 },
+  },
+  required: ["version", "reversaldate", "reason"],
+};
+
+export const postCustomerTransferSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    sourcecustomerid: { type: "integer", minimum: 1 },
+    sourcereferenceid: { type: "integer", minimum: 1 },
+    sourcereferenceversion: { type: "integer", minimum: 0 },
+    destinationcustomerid: { type: "integer", minimum: 1 },
+    currencycode: {
+      type: "string",
+      pattern: "^[A-Z]{3}$",
+    },
+    amount: { type: "number", exclusiveMinimum: 0, multipleOf: 0.01 },
+    entrydate: {
+      type: "string",
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    },
+    description: { type: "string", minLength: 1, maxLength: 2000 },
+    idempotencykey: { type: "string", minLength: 8, maxLength: 100 },
+  },
+  required: [
+    "sourcecustomerid",
+    "sourcereferenceid",
+    "sourcereferenceversion",
+    "destinationcustomerid",
+    "currencycode",
+    "amount",
+    "entrydate",
+    "description",
+    "idempotencykey",
+  ],
+};
+
+export const replaceCustomerTransferSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    version: { type: "integer", minimum: 1 },
+    replacementreferenceid: { type: "integer", minimum: 1 },
+    reason: { type: "string", maxLength: 2000 },
+    idempotencykey: { type: "string", minLength: 8, maxLength: 100 },
+  },
+  required: ["version", "replacementreferenceid", "idempotencykey"],
 };

@@ -96,6 +96,25 @@ export const calculateAvailableBalance = (
   );
 };
 
+export const calculateLedgerBalance = (
+  accountCategory: unknown,
+  totalDebit: unknown,
+  totalCredit: unknown
+): number => {
+  const category = String(accountCategory || "").trim().toLowerCase();
+  if (!["asset", "liability", "equity", "income", "expense"].includes(category)) {
+    throw new FinanceValidationError("A valid ledger account category is required.");
+  }
+  const debit = toMoney(totalDebit, "totaldebit");
+  const credit = toMoney(totalCredit, "totalcredit");
+  return toMoney(
+    category === "asset" || category === "expense"
+      ? debit - credit
+      : credit - debit,
+    "currentledgerbalance"
+  );
+};
+
 const requireEncryptionKey = (secret: string | undefined): Uint8Array => {
   if (!secret || secret.trim().length < 16) {
     throw new FinanceValidationError(
