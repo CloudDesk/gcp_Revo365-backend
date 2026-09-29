@@ -1,0 +1,129 @@
+# Cloud Build config for the finance / zohobooks environment.
+# Trigger: teqit-finance (asia-south1) -> branch ^zohobooks$
+# Deploys Cloud Run service revo365-finance in us-central1.
+#
+# All secret values live on the trigger's substitutions (copied from revo365-sit),
+# NOT in this file. The defaults below are intentionally empty.
+
+steps:
+  # Step 1: Pin the target project
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "set-project"
+    entrypoint: "gcloud"
+    args:
+      - "config"
+      - "set"
+      - "project"
+      - "$PROJECT_ID"
+
+  # Step 2: Build the Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build"
+    args:
+      - "build"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/revo365-finance-backend:latest"
+      - "."
+
+  # Step 3: Push the image to GCR
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push"
+    args:
+      - "push"
+      - "gcr.io/$PROJECT_ID/revo365-finance-backend:latest"
+
+  # Step 4: Run database migrations with the freshly built image
+  - name: "gcr.io/cloud-builders/docker"
+    id: "migrate"
+    args:
+      - "run"
+      - "--rm"
+      - "-e"
+      - "POSTGRES__DATABASE=${_POSTGRES__DATABASE}"
+      - "-e"
+      - "POSTGRES_HOST=${_POSTGRES_HOST}"
+      - "-e"
+      - "POSTGRES_PASSWORD=${_POSTGRES_PASSWORD}"
+      - "-e"
+      - "POSTGRES_PORT=${_POSTGRES_PORT}"
+      - "-e"
+      - "POSTGRES_USER=${_POSTGRES_USER}"
+      - "gcr.io/$PROJECT_ID/revo365-finance-backend:latest"
+      - "node"
+      - "build/scripts/runMigrations.js"
+
+  # Step 5: Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "revo365-finance"
+      - "--image"
+      - "gcr.io/$PROJECT_ID/revo365-finance-backend:latest"
+      - "--region"
+      - "us-central1"
+      - "--platform"
+      - "managed"
+      - "--allow-unauthenticated"
+      - "--execution-environment"
+      - "gen2"
+      - "--service-account"
+      - "revotestbackend@revo-dev-and-test.iam.gserviceaccount.com"
+      # ^@^ sets "@" as the list delimiter so values may safely contain commas.
+      - "--set-env-vars"
+      - >-
+        ^@^ACCESSKEYID=${_ACCESSKEYID}@ENQUIRY_CORPORATE_SHEET=${_ENQUIRY_CORPORATE_SHEET}@ENQUIRY_INDIVIDUAL_SHEET=${_ENQUIRY_INDIVIDUAL_SHEET}@ENQUIRY_SHEETS_SECRET=${_ENQUIRY_SHEETS_SECRET}@ENQUIRY_SHEETS_WEBHOOK_URL=${_ENQUIRY_SHEETS_WEBHOOK_URL}@ENV_GOOGLE_API_KEY=${_ENV_GOOGLE_API_KEY}@ENV_GOOGLE_LOCATION_ID=${_ENV_GOOGLE_LOCATION_ID}@ENV_INTERNAL_TASK_SECRET=${_ENV_INTERNAL_TASK_SECRET}@ENV_RAZORPAY_KEY_ID=${_ENV_RAZORPAY_KEY_ID}@ENV_RAZORPAY_KEY_SECRET=${_ENV_RAZORPAY_KEY_SECRET}@ENV_RAZORPAY_WEBHOOK_SECRET=${_ENV_RAZORPAY_WEBHOOK_SECRET}@ENV_SHIPROCKET_WEBHOOK_TOKEN=${_ENV_SHIPROCKET_WEBHOOK_TOKEN}@FINANCE_ENCRYPTION_KEY=${_FINANCE_ENCRYPTION_KEY}@GCP_PROJECT_ID=${_GCP_PROJECT_ID}@GCP_PROJECT_LOCATION=${_GCP_PROJECT_LOCATION}@GCP_PROJECT_QUEUE=${_GCP_PROJECT_QUEUE}@GCP_TASK_URL=${_GCP_TASK_URL}@GMAIL_AUTH_PASSWORD=${_GMAIL_AUTH_PASSWORD}@GMAIL_AUTH_USER=${_GMAIL_AUTH_USER}@GMAIL_HOST=${_GMAIL_HOST}@GMAIL_PORT=${_GMAIL_PORT}@GMAIL_SERVICE=${_GMAIL_SERVICE}@POSTGRESS_QUERY_API=${_POSTGRESS_QUERY_API}@POSTGRES_HOST=${_POSTGRES_HOST}@POSTGRES_PASSWORD=${_POSTGRES_PASSWORD}@POSTGRES_PORT=${_POSTGRES_PORT}@POSTGRES_USER=${_POSTGRES_USER}@POSTGRES__DATABASE=${_POSTGRES__DATABASE}@PROTOCOL=${_PROTOCOL}@REDIRECT_INVENTORY_URL=${_REDIRECT_INVENTORY_URL}@REDIRECT_URL_FAILURE=${_REDIRECT_URL_FAILURE}@REDIRECT_URL_PAYMENT_STATUS=${_REDIRECT_URL_PAYMENT_STATUS}@REDIRECT_URL_SUCCESS=${_REDIRECT_URL_SUCCESS}@REDIS_EMAIL_OTPEXPSEC=${_REDIS_EMAIL_OTPEXPSEC}@REDIS_HOST=${_REDIS_HOST}@REDIS_PASSWORD=${_REDIS_PASSWORD}@REDIS_PORT=${_REDIS_PORT}@REDIS_SESSIONEXSEC=${_REDIS_SESSIONEXSEC}@REGION=${_REGION}@SECRETACCESSKEY=${_SECRETACCESSKEY}@SHIPROCKET_BASE_URL=${_SHIPROCKET_BASE_URL}@SHIPROCKET_EMAIL=${_SHIPROCKET_EMAIL}@SHIPROCKET_PASSWORD=${_SHIPROCKET_PASSWORD}
+
+# Declared so the build fails fast on an undeclared reference.
+# Real values come from the teqit-finance trigger's substitutions.
+substitutions:
+  _ACCESSKEYID: ""
+  _ENQUIRY_CORPORATE_SHEET: ""
+  _ENQUIRY_INDIVIDUAL_SHEET: ""
+  _ENQUIRY_SHEETS_SECRET: ""
+  _ENQUIRY_SHEETS_WEBHOOK_URL: ""
+  _ENV_GOOGLE_API_KEY: ""
+  _ENV_GOOGLE_LOCATION_ID: ""
+  _ENV_INTERNAL_TASK_SECRET: ""
+  _ENV_RAZORPAY_KEY_ID: ""
+  _ENV_RAZORPAY_KEY_SECRET: ""
+  _ENV_RAZORPAY_WEBHOOK_SECRET: ""
+  _ENV_SHIPROCKET_WEBHOOK_TOKEN: ""
+  _FINANCE_ENCRYPTION_KEY: ""
+  _GCP_PROJECT_ID: ""
+  _GCP_PROJECT_LOCATION: ""
+  _GCP_PROJECT_QUEUE: ""
+  _GCP_TASK_URL: ""
+  _GMAIL_AUTH_PASSWORD: ""
+  _GMAIL_AUTH_USER: ""
+  _GMAIL_HOST: ""
+  _GMAIL_PORT: ""
+  _GMAIL_SERVICE: ""
+  _POSTGRESS_QUERY_API: ""
+  _POSTGRES_HOST: ""
+  _POSTGRES_PASSWORD: ""
+  _POSTGRES_PORT: ""
+  _POSTGRES_USER: ""
+  _POSTGRES__DATABASE: ""
+  _PROTOCOL: ""
+  _REDIRECT_INVENTORY_URL: ""
+  _REDIRECT_URL_FAILURE: ""
+  _REDIRECT_URL_PAYMENT_STATUS: ""
+  _REDIRECT_URL_SUCCESS: ""
+  _REDIS_EMAIL_OTPEXPSEC: ""
+  _REDIS_HOST: ""
+  _REDIS_PASSWORD: ""
+  _REDIS_PORT: ""
+  _REDIS_SESSIONEXSEC: ""
+  _REGION: ""
+  _SECRETACCESSKEY: ""
+  _SHIPROCKET_BASE_URL: ""
+  _SHIPROCKET_EMAIL: ""
+  _SHIPROCKET_PASSWORD: ""
+
+timeout: 2400s
+
+options:
+  logging: CLOUD_LOGGING_ONLY
