@@ -32,9 +32,9 @@ export const resolveSupplierBillLineDetails = (
   productData: unknown
 ): SupplierBillLineDetail[] => parseLines(productData).map((line, index) => {
   const quantity = Math.max(finiteNumber(line?.quantity ?? line?.qty), 0);
-  const unitPrice = Math.max(finiteNumber(
+  const unitPrice = money(Math.max(finiteNumber(
     line?.unitPrice ?? line?.unitprice ?? line?.unit_price ?? line?.rate
-  ), 0);
+  ), 0));
   const lineTotal = money(quantity * unitPrice);
   const storedTotalValue = line?.total ?? line?.totalamount ?? line?.lineTotal;
   const hasStoredTotal = storedTotalValue !== null
@@ -50,7 +50,7 @@ export const resolveSupplierBillLineDetails = (
       line?.name ?? line?.description ?? line?.productname ?? line?.productName ?? `Line ${index + 1}`
     ).trim() || `Line ${index + 1}`,
     quantity,
-    unitPrice: money(unitPrice),
+    unitPrice,
     lineTotal,
     storedLineTotal,
     variance: money((storedLineTotal ?? lineTotal) - lineTotal),

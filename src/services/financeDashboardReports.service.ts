@@ -13,6 +13,11 @@ import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentatio
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
 import { normalizeFinanceReportStatus } from "../utils/finance/financeReportFilters.utils.js";
 import {
+  resolveSupplierBillLineDetails,
+  summarizeSupplierBillLines,
+  type SupplierBillLineDetail,
+} from "../utils/finance/supplierBillLineDetails.utils.js";
+import {
   emptyProductCostIndex,
   resolveInvoiceCogs,
   type InvoiceStockCost,
@@ -1026,9 +1031,13 @@ export module financeDashboardReportsService {
           [fromEpoch, toEpoch, search, searchPattern, status, documentType, category]
         ),
       ]);
+      const billLines: SupplierBillLineDetail[] = [];
       const rows = recordsResult.rows.map((bill: any) => {
         const payment = getSupplierBillPaymentState(bill);
         const gst = resolveBillGst(bill);
+        const lines = resolveSupplierBillLineDetails(bill.id, bill.productdata);
+        const lineSummary = summarizeSupplierBillLines(lines);
+        billLines.push(...lines);
         return {
           id: Number(bill.id), date: Number(bill.invoicedate || bill.createddate), number: bill.invoicenumber || `BILL-${bill.id}`,
           documentUrl: Array.isArray(bill.invoiceurl)
@@ -1038,6 +1047,8 @@ export module financeDashboardReportsService {
           documentType: bill.billtype || "inventory", category: bill.expensecategory || null, reference: bill.ponumber || null,
           taxableValue: money(payment.invoiceAmount - gst.total), cgst: gst.cgst, sgst: gst.sgst, igst: gst.igst, tax: gst.total,
           grossAmount: payment.invoiceAmount, paidAmount: payment.settledAmount, balanceAmount: payment.outstandingAmount,
+          lineCount: lineSummary.lineCount, lineQuantity: lineSummary.totalQuantity,
+          lineSubtotal: lineSummary.lineSubtotal, lineVariance: lineSummary.lineVariance,
           status: bill.invoicestatus || "in_progress",
         };
       });
@@ -1064,7 +1075,15 @@ export module financeDashboardReportsService {
       const reportSummary = reportKey === "gst-inward"
         ? { taxableValue: summary.taxableValue, cgst: summary.cgst, sgst: summary.sgst, igst: summary.igst, tax: summary.tax }
         : summary;
-      return { meta: { reportKey, from, to, currency: "INR", generatedAt: new Date().toISOString(), totalsScope: "all_matching_rows" }, rows, summary: reportSummary, total: countResult.rows.length, page, count };
+      return {
+        meta: { reportKey, from, to, currency: "INR", generatedAt: new Date().toISOString(), totalsScope: "all_matching_rows" },
+        rows,
+        details: { billLines },
+        summary: reportSummary,
+        total: countResult.rows.length,
+        page,
+        count,
+      };
     }
 
     if (direction === "deposit") {

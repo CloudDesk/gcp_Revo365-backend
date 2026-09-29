@@ -336,6 +336,11 @@ export module financeDashboardReportsController {
         sgst: Number(record.sgst || 0),
         igst: Number(record.igst || 0),
         totalGst: Number(record.tax || 0),
+        ...(reportKey === "gst-inward" ? {
+          lineCount: Number(record.lineCount || 0),
+          lineQuantity: Number(record.lineQuantity || 0),
+          lineSubtotal: Number(record.lineSubtotal || 0),
+        } : {}),
       })) : ["sales-invoices", "supplier-bills"].includes(reportKey) ? allRows.map((record, index) => ({
         serialNumber: index + 1,
         date: record.date,
@@ -351,6 +356,11 @@ export module financeDashboardReportsController {
         grossAmount: Number(record.grossAmount || 0),
         paidAmount: Number(record.paidAmount || 0),
         balanceAmount: Number(record.balanceAmount || 0),
+        ...(reportKey === "supplier-bills" ? {
+          lineCount: Number(record.lineCount || 0),
+          lineQuantity: Number(record.lineQuantity || 0),
+          lineSubtotal: Number(record.lineSubtotal || 0),
+        } : {}),
       })) : allRows;
       const keys = exportRows.length ? Object.keys(exportRows[0]).filter((key) => !excludedExportKeys.has(key.toLowerCase())) : [];
       const columnCount = Math.max(keys.length, 2);
@@ -379,6 +389,28 @@ export module financeDashboardReportsController {
       details.eachRow((row, rowNumber) => row.eachCell((cell) => { if (rowNumber >= 4) cell.border = { bottom: { style: "thin", color: { argb: border } } }; }));
       details.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
       details.headerFooter.oddFooter = `TEQIT Finance · ${reportTitle} · Page &P of &N`;
+      if (["supplier-bills", "gst-inward"].includes(reportKey)) {
+        const billLines: any[] = report.details?.billLines || [];
+        const billsById = new Map(allRows.map((bill) => [Number(bill.id), bill]));
+        const lineSheet = workbook.addWorksheet("Bill Lines");
+        lineSheet.mergeCells("A1:J1"); lineSheet.getCell("A1").value = `TEQIT · ${reportTitle} · Bill Line Details`;
+        lineSheet.getCell("A1").font = { bold: true, size: 18, color: { argb: "FFFFFFFF" } }; lineSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: navy } }; lineSheet.getRow(1).height = 32;
+        lineSheet.mergeCells("A2:J2"); lineSheet.getCell("A2").value = "Unit price is the immutable value stored on the Supplier Bill line."; lineSheet.getCell("A2").font = { color: { argb: slate } }; lineSheet.getCell("A2").fill = { type: "pattern", pattern: "solid", fgColor: { argb: paleBlue } };
+        lineSheet.addRow([]);
+        const lineHeader = lineSheet.addRow(["S.No", "Bill Date", "Bill Number", "Supplier", "Line ID", "Description", "Quantity", "Unit Price", "Line Total", "Stored Variance"]);
+        lineHeader.font = { bold: true, color: { argb: "FFFFFFFF" } }; lineHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: blue } }; lineHeader.height = 28;
+        billLines.forEach((line, index) => {
+          const bill = billsById.get(Number(line.billId)) || {};
+          const row = lineSheet.addRow([index + 1, formatExportDate(bill.date), bill.number || `BILL-${line.billId}`, bill.partyName || "—", line.lineId || "—", line.description || "—", Number(line.quantity || 0), Number(line.unitPrice || 0), Number(line.lineTotal || 0), Number(line.variance || 0)]);
+          if (index % 2) row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F7FC" } };
+          row.eachCell((cell, column) => { cell.alignment = { horizontal: column >= 7 ? "right" : column === 1 ? "center" : "left", vertical: "middle", wrapText: true }; cell.border = { bottom: { style: "thin", color: { argb: border } } }; });
+          [8, 9, 10].forEach((column) => { row.getCell(column).numFmt = '₹#,##0.00;[Red]-₹#,##0.00'; });
+        });
+        [8, 15, 24, 28, 18, 42, 14, 18, 18, 18].forEach((width, index) => { lineSheet.getColumn(index + 1).width = width; });
+        lineSheet.views = [{ state: "frozen", ySplit: 4 }];
+        lineSheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: 10 } };
+        lineSheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+      }
       // Keep the downloaded file focused on the exact on-screen table. Report
       // totals are already appended below the rows, so a separate Summary tab
       // only hides the requested details when the workbook first opens.

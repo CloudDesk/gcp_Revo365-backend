@@ -39,9 +39,9 @@ describe("Supplier Bill and Inward GST unit-price details", () => {
     ]);
 
     assert.equal(line.unitPrice, 500);
-    assert.equal(line.lineTotal, 999.99);
+    assert.equal(line.lineTotal, 1000);
     assert.equal(line.storedLineTotal, 999.98);
-    assert.equal(line.variance, -0.01);
+    assert.equal(line.variance, -0.02);
   });
 
   test("does not substitute product selling price when unit price is absent", () => {
@@ -62,8 +62,8 @@ describe("Supplier Bill and Inward GST unit-price details", () => {
     assert.deepEqual(summarizeSupplierBillLines(lines), {
       lineCount: 2,
       totalQuantity: 3,
-      lineSubtotal: 25.75,
-      storedLineSubtotal: 25.75,
+      lineSubtotal: 25.76,
+      storedLineSubtotal: 25.76,
       lineVariance: 0,
     });
   });
