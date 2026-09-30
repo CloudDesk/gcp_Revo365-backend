@@ -669,6 +669,54 @@ export module revoinvoiceservice {
         );
     };
 
+    export const getRentalDeliveryLocationsByCustomerIds = async (
+        customerIds: any[]
+    ) => {
+        const normalizedCustomerIds = Array.from(
+            new Set(
+                customerIds
+                    .map((customerId) => Number(customerId))
+                    .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
+                    .map((customerId) => Math.trunc(customerId))
+            )
+        );
+
+        if (normalizedCustomerIds.length === 0) {
+            return {};
+        }
+
+        const result = await query(
+            `
+            SELECT
+                userid AS customerid,
+                ARRAY_AGG(DISTINCT TRIM(deliveryfrom) ORDER BY TRIM(deliveryfrom))
+                    FILTER (WHERE NULLIF(TRIM(deliveryfrom), '') IS NOT NULL) AS deliverylocations
+            FROM orderline
+            WHERE userid = ANY($1::int[])
+              AND LOWER(COALESCE(invoicefor, '')) IN ('rental', 'product rental')
+              AND LOWER(COALESCE(orderstatus, '')) NOT IN ('cancelled', 'returned', 'payment_failed')
+            GROUP BY userid
+            `,
+            [normalizedCustomerIds]
+        );
+
+        const locationsByCustomer = new Map<number, string[]>();
+        result.rows.forEach((row: any) => {
+            const customerId = Number(row?.customerid);
+            const locations = Array.isArray(row?.deliverylocations)
+                ? row.deliverylocations.filter(Boolean)
+                : [];
+            locationsByCustomer.set(customerId, locations);
+        });
+
+        return Object.fromEntries(
+            normalizedCustomerIds.map((customerId) => [
+                customerId,
+                locationsByCustomer.get(customerId) || [],
+            ])
+        );
+    };
+
     export const getRevoInvoiceData = async (request: any) => {
         try {
             const pageNumber = parseInt(request.query.page) || 1;
