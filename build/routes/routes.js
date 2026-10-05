@@ -364,11 +364,11 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/store-quotation/:id/convert', { preHandler: [getSession] }, storeQuotationController.markStoreQuotationConverted);
     fastify.post('/store-quotation/:id/quoteurl', { preHandler: [getSession] }, storeQuotationController.updateStoreQuotationUrl);
     // Cash and Bank Account foundation
-    fastify.get('/finance/chart-of-accounts/types', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountTypes);
-    fastify.get('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccounts);
-    fastify.get('/finance/chart-of-accounts/:accountId/entries', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listChartAccountEntries);
-    fastify.get('/finance/chart-of-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getChartAccount);
-    fastify.post('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createChartAccountSchema)] }, financeAccountController.createChartAccount);
+    fastify.get('/finance/chart-of-accounts/types', { preHandler: [getSession, requireFinancePermission('read', 'chart_of_accounts')] }, financeAccountController.listChartAccountTypes);
+    fastify.get('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('read', 'chart_of_accounts')] }, financeAccountController.listChartAccounts);
+    fastify.get('/finance/chart-of-accounts/:accountId/entries', { preHandler: [getSession, requireFinancePermission('read', 'chart_of_accounts')] }, financeAccountController.listChartAccountEntries);
+    fastify.get('/finance/chart-of-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read', 'chart_of_accounts')] }, financeAccountController.getChartAccount);
+    fastify.post('/finance/chart-of-accounts', { preHandler: [getSession, requireFinancePermission('create', 'chart_of_accounts'), validateRequestBody(createChartAccountSchema)] }, financeAccountController.createChartAccount);
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
     fastify.get('/finance/customers', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listStatementCustomers);
     fastify.get('/finance/customers/:customerId/statement', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getCustomerStatement);

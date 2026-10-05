@@ -56,7 +56,7 @@ export const requireJournalPermission = (permission) => {
         return;
     };
 };
-export const requireFinancePermission = (permission) => {
+export const requireFinancePermission = (permission, resource = "cash_bank_account") => {
     return async (request, reply) => {
         const role = String(request.session?.role || "").trim().toLowerCase();
         if (!role) {
@@ -84,9 +84,9 @@ export const requireFinancePermission = (permission) => {
         COALESCE(p.permissionset, '[]'::jsonb)
       ) permission_item
       WHERE LOWER(p.role) = $1
-        AND permission_item->>'objectAPI' = 'cash_bank_account'
+        AND permission_item->>'objectAPI' = $2
       LIMIT 1
-      `, [role]);
+      `, [role, resource]);
         const permissions = result.rows[0]?.permissions || {};
         if (permissions?.[permission] === true)
             return;
@@ -94,7 +94,7 @@ export const requireFinancePermission = (permission) => {
             success: false,
             error: {
                 code: "FINANCE_ACCESS_DENIED",
-                message: `You do not have ${permission} permission for Cash and Bank Account.`,
+                message: `You do not have ${permission} permission for ${resource === "chart_of_accounts" ? "Chart of Accounts" : "Cash and Bank Account"}.`,
             },
         });
     };
