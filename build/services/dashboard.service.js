@@ -1446,28 +1446,8 @@ ORDER BY
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(
-                         CASE
-                           WHEN $1::text = 'rental_product'
-                             THEN COALESCE(rental_line.productamount, 0)
-                           ELSE COALESCE(s.purchaseprice, 0)
-                         END
-                       ) AS total
+                       SUM(COALESCE(s.purchaseprice, 0)) AS total
                 FROM stock_revo AS s
-                LEFT JOIN LATERAL (
-                  SELECT ol.productamount
-                  FROM rental_agreement_asset raa
-                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
-                  WHERE $1::text = 'rental_product'
-                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
-                    AND (
-                      raa.stockid = s.id
-                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
-                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
-                    )
-                  ORDER BY raa.id DESC
-                  LIMIT 1
-                ) AS rental_line ON TRUE
                 WHERE s.isarchive = FALSE
                   AND s.isdeleted = FALSE
                   AND s.removefromrecyclebin = FALSE
@@ -1510,28 +1490,8 @@ ORDER BY
                 SELECT s.category,
                        s.subcategory,
                        COUNT(s.id) AS total_count,
-                       SUM(
-                         CASE
-                           WHEN $2::text = 'rental_product'
-                             THEN COALESCE(rental_line.productamount, 0)
-                           ELSE COALESCE(s.purchaseprice, 0)
-                         END
-                       ) AS total
+                       SUM(COALESCE(s.purchaseprice, 0)) AS total
                 FROM stock_revo AS s
-                LEFT JOIN LATERAL (
-                  SELECT ol.productamount
-                  FROM rental_agreement_asset raa
-                  INNER JOIN orderline ol ON ol.id = raa.orderlineid
-                  WHERE $2::text = 'rental_product'
-                    AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
-                    AND (
-                      raa.stockid = s.id
-                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.assetnumber AS TEXT)
-                      OR CAST(raa.assetnumber AS TEXT) = CAST(s.rfid AS TEXT)
-                    )
-                  ORDER BY raa.id DESC
-                  LIMIT 1
-                ) AS rental_line ON TRUE
                 WHERE s.isarchive = FALSE
                   AND s.location = $1
                   AND s.isdeleted = FALSE
@@ -1595,9 +1555,9 @@ ORDER BY
                     ) AS client,
                     COUNT(DISTINCT allocated_rental_stock.stockid) AS rental_sold_stock_quantity,
                     COALESCE(SUM(COALESCE(allocated_rental_stock.purchaseprice, 0)), 0) AS rental_stock_value
-                FROM allocated_rental_stock
-                INNER JOIN users u
-                    ON u.id = allocated_rental_stock.customerid
+                FROM users u
+                LEFT JOIN allocated_rental_stock
+                    ON allocated_rental_stock.customerid = u.id
                 WHERE u.isbusinessuser = TRUE
                 GROUP BY u.id, u.firstname, u.lastname, u.useremail
                 ORDER BY client ASC;
@@ -1609,7 +1569,7 @@ ORDER BY
             ]);
             formattedResult.unshift([
                 'Client',
-                'Rental Sold Stock Quantity',
+                'Rental Stock Quantity',
                 'Rental Stock Value (Purchase Price)'
             ]);
             return formattedResult;

@@ -2,6 +2,7 @@ import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { normalizeFinancePermissionSet } from "../utils/finance/financePermission.utils.js";
 
 export module permssionservice {
     export const getPermissions = async (request: any) => {
@@ -70,6 +71,11 @@ export module permssionservice {
             let querydata: string;
             let params: any[];
             const { id, role, ...upsertFields } = permissiondata;
+            if (Object.prototype.hasOwnProperty.call(upsertFields, "permissionset")) {
+                upsertFields.permissionset = JSON.stringify(
+                    normalizeFinancePermissionSet(role, upsertFields.permissionset)
+                );
+            }
             if (!id) {
                 const checkRoleQuery = `SELECT * FROM permissions WHERE role = $1`;
                 const checkRoleParams = [role];

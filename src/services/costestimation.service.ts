@@ -216,6 +216,7 @@ const getProductsByIds = async (productIds: number[]) => {
             product.subcategory AS productfamily,
             product.hsncode,
             product.price,
+            product.purchaseprice,
             COUNT(stock.id)::int AS availablequantity
          FROM product_revo product
          LEFT JOIN stock_revo stock
@@ -246,7 +247,8 @@ const getProductsByIds = async (productIds: number[]) => {
             product.productname,
             product.subcategory,
             product.hsncode,
-            product.price`,
+            product.price,
+            product.purchaseprice`,
         [
             productIds,
             AVAILABLE_STOCK_STATUS,
@@ -415,6 +417,7 @@ const prepareProductRows = async (rows: any[], requireSelectedProduct: boolean) 
             assetnumber: selectedAsset?.assetnumber ?? "",
             availablequantity: availableQuantity,
             quantity,
+            purchaseprice: roundMoney(asNumber(product?.purchaseprice)),
             hsncode: hsnCode,
             unitprice: roundMoney(unitPrice),
             totalamount: roundMoney(quantity * unitPrice),

@@ -8,6 +8,20 @@ steps:
       - "project"
       - "revo-dev-and-test"
 
+  # Stage the Firebase service-account JSON in the compiled output.
+  # TypeScript does not copy JSON assets, but firebaseAdmin.js loads this file
+  # from build/firebase at application startup.
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "stage-firebase-key"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        mkdir -p build/firebase
+        cp src/firebase/service.json build/firebase/service.json
+        echo "staged build/firebase/service.json"
+
   # Step 3: Build the Docker image
   - name: "gcr.io/cloud-builders/docker"
     args:

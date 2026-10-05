@@ -10,6 +10,7 @@ import {
     MAIL_SERVICE,
 } from '../config/config.js';
 
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const parentDir = resolve(__dirname, '..');

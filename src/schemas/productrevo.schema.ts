@@ -129,6 +129,14 @@ export const productrevoInsertSchema = {
                 type: "Price must be number",
             }
         },
+        purchaseprice: {
+            type: ['number', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: "Purchase Price must be number",
+                minimum: "Purchase Price cannot be negative",
+            }
+        },
         processor: {
             type: ['string', 'null'],
             errorMessage: {
