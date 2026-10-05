@@ -18,6 +18,7 @@ import {
 } from "../utils/finance/finance.utils.js";
 import {
   FINANCE_SOURCE_TYPES,
+  getCustomerReceiptSourceTypes,
   getRetailReceiptSourceTypes,
 } from "../utils/finance/financeSource.utils.js";
 import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
@@ -128,7 +129,10 @@ const ensureSystemAccounts = async (
       ($1, 'SYS-CUSTOMER-ADVANCE', 'Customer Advances', 'liability', 'customer_advance', 'INR', TRUE, 'active', $2, $2),
       ($1, 'SYS-SUPPLIER-ADVANCE', 'Supplier Advances', 'asset', 'supplier_advance', 'INR', TRUE, 'active', $2, $2),
       ($1, 'SYS-TDS-RECEIVABLE', 'TDS Receivable', 'asset', 'tds_receivable', 'INR', TRUE, 'active', $2, $2),
-      ($1, 'SYS-TDS-PAYABLE', 'TDS Payable', 'liability', 'tds_payable', 'INR', TRUE, 'active', $2, $2)
+      ($1, 'SYS-TDS-PAYABLE', 'TDS Payable', 'liability', 'tds_payable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-INTEREST-EXPENSE', 'TDS Interest Expense', 'expense', 'tds_interest', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-LATE-FEE-EXPENSE', 'TDS Late Fee Expense', 'expense', 'tds_late_fee', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-PENALTY-EXPENSE', 'TDS Penalty Expense', 'expense', 'tds_penalty', 'INR', TRUE, 'active', $2, $2)
     ON CONFLICT DO NOTHING
     `,
     [organizationId, actor]
@@ -680,7 +684,6 @@ export module financeAccountService {
       ) ledger_totals ON TRUE
       WHERE f.id = $1
         AND f.organizationid = $2
-        AND f.isusercreatedchartaccount = TRUE
       LIMIT 1
       `,
       [accountId, organizationId]
@@ -729,7 +732,6 @@ export module financeAccountService {
        FROM finance_accounts
        WHERE id = $1
          AND organizationid = $2
-         AND isusercreatedchartaccount = TRUE
        LIMIT 1`,
       [accountId, organizationId]
     );
@@ -1768,6 +1770,18 @@ export module financeAccountService {
     const params: any[] = [organizationId];
     const conditions = ["t.organizationid = $1"];
 
+    if (
+      queryData.transactionid != null &&
+      String(queryData.transactionid).trim() !== ""
+    ) {
+      const transactionId = Number(queryData.transactionid);
+      if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+        throw new FinanceValidationError("A valid transactionid is required.");
+      }
+      params.push(transactionId);
+      conditions.push(`t.id = $${params.length}`);
+    }
+
     if (accountIdParam != null) {
       const bankCashAccountId = Number(accountIdParam);
       if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
@@ -1816,9 +1830,7 @@ export module financeAccountService {
       if (transactionType === "customer_receipt") {
         params.push([
           FINANCE_SOURCE_TYPES.ecommerceOrder,
-          ...getRetailReceiptSourceTypes(),
-          FINANCE_SOURCE_TYPES.serviceRequestReceipt,
-          FINANCE_SOURCE_TYPES.rentalReceipt,
+          ...getCustomerReceiptSourceTypes(),
         ]);
         conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
       } else if (transactionType === "supplier_payment") {

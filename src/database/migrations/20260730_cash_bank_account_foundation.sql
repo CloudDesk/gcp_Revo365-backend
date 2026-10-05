@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS finance_accounts (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_accounts_code
     ON finance_accounts (organizationid, LOWER(accountcode));
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_accounts_name
+CREATE INDEX IF NOT EXISTS idx_finance_accounts_name
     ON finance_accounts (organizationid, LOWER(accountname));
 
 CREATE INDEX IF NOT EXISTS idx_finance_accounts_lookup
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS bank_cash_accounts (
         )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_cash_accounts_name
+CREATE INDEX IF NOT EXISTS idx_bank_cash_accounts_name
     ON bank_cash_accounts (organizationid, LOWER(accountname));
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_cash_accounts_number_hash
