@@ -32,11 +32,15 @@ export module getTables {
                 rental_agreement: "Rental Agreements",
                 store_quotations: "Store Quotations",
                 store_quotation_versions: "Store Quotation Versions",
-                picklist_configuration: "Picklist Configuration"
+                picklist_configuration: "Picklist Configuration",
+                chart_of_accounts: "Chart of Accounts"
             };
             result.rows.unshift({ table: 'home' })
             if (!result.rows.some((element) => element.table === 'picklist_configuration')) {
                 result.rows.push({ table: 'picklist_configuration' });
+            }
+            if (!result.rows.some((element) => element.table === 'chart_of_accounts')) {
+                result.rows.push({ table: 'chart_of_accounts' });
             }
             result = result.rows
                 .map((element) => {
