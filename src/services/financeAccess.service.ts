@@ -73,9 +73,11 @@ export const requireJournalPermission = (permission: FinancePermission) => {
   };
 };
 
+export type FinanceResource = "cash_bank_account" | "chart_of_accounts" | "finance_transactions" | "on_account" | "customer_statement";
+
 export const requireFinancePermission = (
   permission: FinancePermission,
-  resource: "cash_bank_account" | "chart_of_accounts" = "cash_bank_account"
+  resource: FinanceResource | FinanceResource[] = "cash_bank_account"
 ) => {
   return async (request: any, reply: any) => {
     const role = String(request.session?.role || "").trim().toLowerCase();
@@ -107,19 +109,17 @@ export const requireFinancePermission = (
         COALESCE(p.permissionset, '[]'::jsonb)
       ) permission_item
       WHERE LOWER(p.role) = $1
-        AND permission_item->>'objectAPI' = $2
-      LIMIT 1
+        AND permission_item->>'objectAPI' ${Array.isArray(resource) ? '= ANY($2::text[])' : '= $2'}
       `,
       [role, resource]
     );
-    const permissions = result.rows[0]?.permissions || {};
-    if (permissions?.[permission] === true) return;
+    if (result.rows.some((row: any) => row.permissions?.[permission] === true)) return;
 
     return reply.status(403).send({
       success: false,
       error: {
         code: "FINANCE_ACCESS_DENIED",
-        message: `You do not have ${permission} permission for ${resource === "chart_of_accounts" ? "Chart of Accounts" : "Cash and Bank Account"}.`,
+        message: `You do not have ${permission} permission for ${resource}.`,
       },
     });
   };

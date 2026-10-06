@@ -103,3 +103,15 @@ test("normalization preserves unrelated entries and removes finance duplicates",
     1
   );
 });
+
+ test("separate screen permissions never inherit Cash/Bank during normal saves", () => {
+   const input = [{ objectAPI: "cash_bank_account", permissions: { read: true, create: true } },
+     { objectAPI: "on_account", permissions: { read: true, create: true, edit: true } }];
+   const grants = byApi(normalizeFinancePermissionSet("admin", input));
+   assert.equal(grants.get("finance_transactions").permissions.read, false);
+   assert.equal(grants.get("customer_statement").permissions.read, false);
+   assert.equal(grants.get("on_account").permissions.create, true);
+   assert.equal(grants.get("on_account").permissions.edit, false);
+   const denied = byApi(normalizeFinancePermissionSet("vendor", input));
+   assert.equal(denied.get("on_account").permissions.read, false);
+ });
