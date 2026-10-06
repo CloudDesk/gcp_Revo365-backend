@@ -1356,36 +1356,95 @@ const buildSupportingExcel = async (preview: any): Promise<Buffer> => {
     (id) => Number.isFinite(id) && id > 0
   );
 
-  const assetsResult = sourceInvoiceIds.length
+  // Rental supporting documents follow the source invoice order lines; this flow does not require an agreement record.
+  const sourceInvoicesResult = sourceInvoiceIds.length
     ? await query(
       `
-      SELECT
-        ri.id AS sourceinvoiceid,
-        ri.createddate AS invoicecreateddate,
-        raa.assetnumber,
-        raa.orderlineid,
-        to_jsonb(sr) AS stockdata,
-        to_jsonb(ol) AS orderlinedata,
-        to_jsonb(p) AS productdata,
-        to_jsonb(a) AS shippingaddressdata
-      FROM revoinvoice ri
-      INNER JOIN rental_agreement ra ON ra.uniqueorderid = ri.orderid
-      INNER JOIN rental_agreement_asset raa
-        ON raa.agreementid = ra.id
-        AND COALESCE(raa.iscurrentasset, TRUE) = TRUE
-      LEFT JOIN stock_revo sr
-        ON sr.id = raa.stockid
-        OR CAST(sr.assetnumber AS TEXT) = CAST(raa.assetnumber AS TEXT)
-        OR CAST(sr.rfid AS TEXT) = CAST(raa.assetnumber AS TEXT)
-      LEFT JOIN orderline ol ON ol.id = raa.orderlineid
-      LEFT JOIN product_revo p ON p.id = ol.productid
-      LEFT JOIN address a ON a.id = ol.addressid
-      WHERE ri.id = ANY($1::int[])
-      ORDER BY ri.id, raa.id
+      SELECT id, orderid, createddate, invoicedata
+      FROM revoinvoice
+      WHERE id = ANY($1::int[])
       `,
       [sourceInvoiceIds]
     )
     : { rows: [] };
+  const sourceInvoices = sourceInvoicesResult.rows as any[];
+  const orderLineIds = Array.from(new Set(
+    sourceInvoices.flatMap((invoice) => getInvoiceItemOrderLineIds(invoice))
+  ));
+  const orderIdsWithoutInvoiceLines = Array.from(new Set(
+    sourceInvoices
+      .filter((invoice) => getInvoiceItemOrderLineIds(invoice).length === 0)
+      .map((invoice) => normalizeText(invoice.orderid))
+      .filter(Boolean)
+  ));
+
+  const orderLinesResult = orderLineIds.length > 0 || orderIdsWithoutInvoiceLines.length > 0
+    ? await query(
+      `
+      SELECT
+        ol.id AS orderlineid,
+        ol.uniqueorderid,
+        COALESCE(
+          NULLIF(TRIM(CAST(ol.assetnumber AS TEXT)), ''),
+          NULLIF(TRIM(CAST(sr.assetnumber AS TEXT)), ''),
+          NULLIF(TRIM(CAST(sr.rfid AS TEXT)), '')
+        ) AS assetnumber,
+        to_jsonb(sr) AS stockdata,
+        to_jsonb(ol) AS orderlinedata,
+        to_jsonb(p) AS productdata,
+        to_jsonb(a) AS shippingaddressdata
+      FROM orderline ol
+      LEFT JOIN stock_revo sr
+        ON CAST(sr.assetnumber AS TEXT) = CAST(ol.assetnumber AS TEXT)
+        OR CAST(sr.rfid AS TEXT) = CAST(ol.assetnumber AS TEXT)
+      LEFT JOIN product_revo p ON p.id = ol.productid
+      LEFT JOIN address a ON a.id = ol.addressid
+      WHERE (
+        ol.id = ANY($1::int[])
+        OR ol.uniqueorderid = ANY($2::text[])
+      )
+        AND LOWER(COALESCE(ol.ordername, '')) = 'rental'
+      ORDER BY ol.uniqueorderid, ol.id
+      `,
+      [orderLineIds, orderIdsWithoutInvoiceLines]
+    )
+    : { rows: [] };
+
+  const orderLinesById = new Map<number, any>();
+  const orderLinesByOrderId = new Map<string, any[]>();
+  orderLinesResult.rows.forEach((orderLine: any) => {
+    const orderLineId = Number(orderLine.orderlineid);
+    if (Number.isFinite(orderLineId)) orderLinesById.set(orderLineId, orderLine);
+    const orderId = normalizeText(orderLine.uniqueorderid);
+    if (!orderId) return;
+    const rows = orderLinesByOrderId.get(orderId) || [];
+    rows.push(orderLine);
+    orderLinesByOrderId.set(orderId, rows);
+  });
+
+  const assetsResult = {
+    rows: sourceInvoices.flatMap((invoice) => {
+      const invoiceSourceId = Number(invoice.id);
+      const invoiceOrderId = normalizeText(invoice.orderid);
+      const invoiceOrderLineIds = getInvoiceItemOrderLineIds(invoice);
+      const linkedOrderLines = invoiceOrderLineIds.length > 0
+        ? invoiceOrderLineIds
+            .map((orderLineId) => orderLinesById.get(orderLineId))
+            .filter(Boolean)
+        : orderLinesByOrderId.get(invoiceOrderId) || [];
+
+      return linkedOrderLines
+        .filter((orderLine: any) =>
+          normalizeText(orderLine.assetnumber) ||
+          getObjectValue(orderLine.stockdata, "serialnumber", "serialno", "rfid", "assetnumber")
+        )
+        .map((orderLine: any) => ({
+          ...orderLine,
+          sourceinvoiceid: invoiceSourceId,
+          invoicecreateddate: invoice.createddate,
+        }));
+    }),
+  };
 
   const assetCountBySource = new Map<number, number>();
   assetsResult.rows.forEach((asset: any) => {
@@ -1397,7 +1456,7 @@ const buildSupportingExcel = async (preview: any): Promise<Buffer> => {
     (sourceInvoiceId) => !assetCountBySource.has(sourceInvoiceId)
   );
   if (sourceInvoicesWithoutAssets.length > 0) {
-    throw new Error("A selected rental invoice has no current rental assets available for the supporting Excel.");
+    throw new Error("A selected rental invoice has no assigned rental order-line assets available for the supporting Excel.");
   }
 
   const workbook = new ExcelJS.Workbook();
@@ -1456,7 +1515,7 @@ const buildSupportingExcel = async (preview: any): Promise<Buffer> => {
     const row = sheet.addRow([
       index + 1,
       getObjectValue(stock, "serialnumber", "serialno"),
-      getObjectValue(stock, "rfid", "barcode", "barcodenumber"),
+      getObjectValue(stock, "rfid", "barcode", "barcodenumber") || asset.assetnumber,
       getObjectValue(shippingAddress, "city", "address", "name") || getObjectValue(orderLine, "location") || getObjectValue(stock, "location"),
       displayProductName,
       invoiceCreatedDate || "",
