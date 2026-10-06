@@ -22,7 +22,8 @@ const parsePermissionSet = (value: unknown): any[] => {
 
 /**
  * Keeps the existing permission format while enforcing the hard finance role
- * boundary. Finance resources are read-only pages in the current CRUD editor.
+ * boundary. Dashboard, Reports, and Customer Statement are read-only;
+ * Transactions and On Account additionally support Create.
  */
 export const normalizeFinancePermissionSet = (
   role: unknown,
@@ -66,5 +67,28 @@ export const normalizeFinancePermissionSet = (
     }
   );
 
-  return [...unrelatedEntries, ...normalizedFinanceEntries];
+  const independentResources = [
+    { object: "Transactions", objectAPI: "finance_transactions", create: true },
+    { object: "On Account", objectAPI: "on_account", create: true },
+    { object: "Customer Statement", objectAPI: "customer_statement", create: false },
+  ];
+  const independentEntries = independentResources.map((resource) => {
+    const existing = unrelatedEntries.find((entry) => entry?.objectAPI === resource.objectAPI);
+    return {
+      ...existing,
+      object: resource.object,
+      objectAPI: resource.objectAPI,
+      permissions: {
+        read: roleCanUseFinance && existing?.permissions?.read === true,
+        create: roleCanUseFinance && resource.create && existing?.permissions?.create === true,
+        edit: false,
+        delete: false,
+      },
+    };
+  });
+  return [
+    ...unrelatedEntries.filter((entry) => !independentResources.some((resource) => resource.objectAPI === entry?.objectAPI)),
+    ...independentEntries,
+    ...normalizedFinanceEntries,
+  ];
 };

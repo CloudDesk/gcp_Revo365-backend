@@ -451,15 +451,15 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         { preHandler: [getSession, requireFinancePermission('create', 'chart_of_accounts'), validateRequestBody(createChartAccountSchema)] },
         financeAccountController.createChartAccount
     );
-    fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.listLedgers);
+    fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] }, financeAccountController.listLedgers);
     fastify.get(
         '/finance/customers',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listStatementCustomers
     );
     fastify.get(
         '/finance/customers/:customerId/statement',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.getCustomerStatement
     );
     fastify.get(
@@ -469,22 +469,22 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.get(
         '/finance/customers/:customerId/estimates',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerEstimates
     );
     fastify.get(
         '/finance/customers/:customerId/invoices',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerInvoices
     );
     fastify.get(
         '/finance/customers/:customerId/payments',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerPayments
     );
     fastify.get(
         '/finance/customers/:customerId/delivery-challans',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('read')] },
         financeAccountController.listDeliveryChallans
     );
     fastify.post(
@@ -494,27 +494,27 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.get(
         '/finance/customers/:customerId/delivery-challan-invoices',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('read')] },
         financeAccountController.listDeliveryChallanInvoices
     );
     fastify.get(
         '/finance/customers/:customerId/invoices/:invoiceId/delivery-lines',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallanInvoiceLines
     );
     fastify.post(
         '/finance/customers/:customerId/delivery-challans',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('create')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('create')] },
         financeAccountController.createDeliveryChallan
     );
     fastify.get(
         '/finance/customers/:customerId/delivery-challans/:challanId',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallan
     );
     fastify.post(
         '/finance/customers/:customerId/delivery-challans/:challanId/document',
-        { preHandler: [getSession, requireFinancePermission('read'), requireDeliveryChallanPermission('create')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('create')] },
         financeAccountController.retryDeliveryChallanDocument
     );
     fastify.get(
@@ -537,50 +537,50 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
         financeAccountController.retryDeliveryChallanDocument
     );
-    fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.list);
+    fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read', ['cash_bank_account', 'finance_transactions'])] }, financeAccountController.list);
     fastify.get(
         '/finance/transactions',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] },
         financeAccountController.listAllTransactions
     );
     fastify.get(
         '/finance/on-account/customers',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.listCustomerOnAccountReferences
     );
     fastify.get(
         '/finance/on-account/customers/:referenceId',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.getCustomerOnAccountReference
     );
     fastify.get(
         '/finance/on-account/suppliers',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.listSupplierOnAccountReferences
     );
     fastify.get(
         '/finance/on-account/suppliers/:referenceId',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.getSupplierOnAccountReference
     );
     fastify.get(
         '/finance/on-account/customers/:referenceId/application-context',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.getCustomerOnAccountApplicationContext
     );
     fastify.post(
         '/finance/on-account/customers/applications',
-        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applyCustomerOnAccountSchema)] },
+        { preHandler: [getSession, requireFinancePermission('create', 'on_account'), validateRequestBody(applyCustomerOnAccountSchema)] },
         financeAccountController.applyCustomerOnAccountToInvoices
     );
     fastify.get(
         '/finance/on-account/suppliers/:referenceId/application-context',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'on_account')] },
         financeAccountController.getSupplierOnAccountApplicationContext
     );
     fastify.post(
         '/finance/on-account/suppliers/applications',
-        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(applySupplierOnAccountSchema)] },
+        { preHandler: [getSession, requireFinancePermission('create', 'on_account'), validateRequestBody(applySupplierOnAccountSchema)] },
         financeAccountController.applySupplierOnAccountToBills
     );
     fastify.get('/finance/bank-accounts/:accountId', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getById);
@@ -596,42 +596,42 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.get(
         '/finance/bank-accounts/:accountId/transactions',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] },
         financeAccountController.listTransactions
     );
     fastify.get(
         '/finance/retail/customers',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', ['finance_transactions', 'on_account'])] },
         financeAccountController.listRetailCustomers
     );
     fastify.get(
         '/finance/retail/customers/:customerId/outstanding-invoices',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] },
         financeAccountController.listRetailOutstandingInvoices
     );
     fastify.post(
         '/finance/bank-accounts/:accountId/transactions/retail-receipt',
-        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createRetailReceiptSchema)] },
+        { preHandler: [getSession, requireFinancePermission('create', 'finance_transactions'), validateRequestBody(createRetailReceiptSchema)] },
         financeAccountController.postRetailReceipt
     );
     fastify.get(
         '/finance/suppliers',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', ['finance_transactions', 'on_account'])] },
         financeAccountController.listSuppliers
     );
     fastify.get(
         '/finance/suppliers/:supplierId/outstanding-bills',
-        { preHandler: [getSession, requireFinancePermission('read')] },
+        { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] },
         financeAccountController.listSupplierOutstandingBills
     );
     fastify.post(
         '/finance/bank-accounts/:accountId/transactions/supplier-payment',
-        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createSupplierPaymentSchema)] },
+        { preHandler: [getSession, requireFinancePermission('create', 'finance_transactions'), validateRequestBody(createSupplierPaymentSchema)] },
         financeAccountController.postSupplierPayment
     );
     fastify.post(
         '/finance/bank-accounts/:accountId/transactions/direct-ledger',
-        { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createDirectBankTransactionSchema)] },
+        { preHandler: [getSession, requireFinancePermission('create', 'finance_transactions'), validateRequestBody(createDirectBankTransactionSchema)] },
         financeAccountController.postDirectLedgerTransaction
     );
 
@@ -741,8 +741,8 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
 
     // TDS Section Master foundation
-    fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.list);
-    fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read')] }, tdsSectionController.getById);
+    fastify.get('/finance/tds-sections', { preHandler: [getSession, requireFinancePermission('read', ['cash_bank_account', 'finance_transactions'])] }, tdsSectionController.list);
+    fastify.get('/finance/tds-sections/:sectionId', { preHandler: [getSession, requireFinancePermission('read', ['cash_bank_account', 'finance_transactions'])] }, tdsSectionController.getById);
     fastify.post(
         '/finance/tds-sections',
         { preHandler: [getSession, requireFinancePermission('create'), validateRequestBody(createTdsSectionSchema)] },

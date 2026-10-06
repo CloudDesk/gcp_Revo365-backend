@@ -33,6 +33,9 @@ export module getTables {
                 store_quotations: "Store Quotations",
                 store_quotation_versions: "Store Quotation Versions",
                 picklist_configuration: "Picklist Configuration",
+                finance_transactions: "Transactions",
+                on_account: "On Account",
+                customer_statement: "Customer Statement",
                 chart_of_accounts: "Chart of Accounts",
                 finance_dashboard: "Finance Dashboard",
                 finance_reports: "Finance Reports"
@@ -47,7 +50,7 @@ export module getTables {
             // These are permission resources rather than physical tables. Add
             // them to the same metadata response so the existing User
             // Permissions editor can render them without a second framework.
-            ['finance_dashboard', 'finance_reports'].forEach((table) => {
+            ['finance_dashboard', 'finance_reports', 'finance_transactions', 'on_account', 'customer_statement'].forEach((table) => {
                 if (!result.rows.some((element) => element.table === table)) {
                     result.rows.push({ table });
                 }
