@@ -1,26 +1,33 @@
 export const addressInsertSchema = {
     type: 'object',
+    additionalProperties: false,
     properties: {
+        id: {
+            type: 'number',
+            errorMessage: {
+                type: 'ID should be number'
+            }
+        },
         userid:{
-            type:['number','null'],
+            type:'number',
             errorMessage:{
                 type:'User ID should be number'
             }
         },
         name:{
-            type:['string','null'],
+            type:'string',
             errorMessage:{
                 type:'Name should ne string'
             }
         },
         mobilenumber:{
-            type:['number','null'],
+            type:'number',
             errorMessage:{
                 type:'Mobile Number should be number'
             }
         },
         pincode: {
-            type: ['number','null'],
+            type: 'number',
             "minimum": 100000,
             "maximum": 999999,
             "errorMessage": {
@@ -40,7 +47,7 @@ export const addressInsertSchema = {
             }
         },
         address:{
-            type:['string','null'],
+            type:'string',
             errorMessage:{
                 type:'Address should be string'
             }
@@ -52,17 +59,42 @@ export const addressInsertSchema = {
             }
         },
         city: {
-            type: ['string','null'],
+            type: 'string',
             errorMessage: {
                 type: "City should be string"
             }
         },
         state: {
-            type: ['string','null'],
+            type: 'string',
             errorMessage: {
                 type: "State should be string"
             }
         },
+        email: {
+            type: ['string', 'null'],
+            minLength: 5,
+            maxLength: 255,
+            errorMessage: {
+                type: "Email should be string",
+                minLength: "Email should be at least 5 characters",
+                maxLength: "Email should be at most 255 characters"
+            }
+        }
     },
-    required: []
+    oneOf: [
+        {
+            required: ["id"]
+        },
+        {
+            required: [
+                "userid",
+                "name",
+                "mobilenumber",
+                "pincode",
+                "address",
+                "state",
+                "city"
+            ]
+        }
+    ]
 }

@@ -1,11 +1,19 @@
 import { query } from "../database/postgres.js";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import dataTypeCheck from "../utils/Datatype/checkDatatype.js";
+import { accessScopeService } from "./accessScope.service.js";
+import { normalizeFinancePermissionSet } from "../utils/finance/financePermission.utils.js";
 
 export module permssionservice {
     export const getPermissions = async (request: any) => {
         try {
-            console.log('get Inventory User function call');
+            const sessionRole = String(request.session?.role || "").toLowerCase();
+            if (sessionRole && sessionRole !== "admin") {
+                request.query = {
+                    ...request.query,
+                    role: request.session.role,
+                };
+            }
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const keys = Object.keys(request.query);
@@ -43,12 +51,17 @@ export module permssionservice {
             }
             const result = await query(queryText, queryParams);
             let datatypeCheckResult = await dataTypeCheck(result)
-            console.log(datatypeCheckResult, "datatypeCheckResult");
+            datatypeCheckResult = datatypeCheckResult.map((row: any) => ({
+                ...row,
+                permissionset: accessScopeService.applyRoleScopes(
+                    row.role,
+                    row.permissionset
+                ),
+            }));
             return datatypeCheckResult
         } catch (error) {
-            console.error("Query Execution Error: IN Get Permissions User", error);
+            console.error("Query Execution Error: IN getPermissions", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -58,11 +71,15 @@ export module permssionservice {
             let querydata: string;
             let params: any[];
             const { id, role, ...upsertFields } = permissiondata;
+            if (Object.prototype.hasOwnProperty.call(upsertFields, "permissionset")) {
+                upsertFields.permissionset = JSON.stringify(
+                    normalizeFinancePermissionSet(role, upsertFields.permissionset)
+                );
+            }
             if (!id) {
                 const checkRoleQuery = `SELECT * FROM permissions WHERE role = $1`;
                 const checkRoleParams = [role];
                 const existingRole = await query(checkRoleQuery, checkRoleParams);
-                console.log(existingRole, 'Existing role is ');
                 if (existingRole.rows.length > 0) {
                     return { error: "Role already exists", existingRole: existingRole.rows[0] };
                 }
@@ -88,9 +105,8 @@ export module permssionservice {
             const result = await query(querydata, params);
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsert Permissiona", error);
+            console.error("Query Execution Error: IN upsertPermissiona", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

@@ -15,6 +15,22 @@ export const productrevoInsertSchema = {
                 maxLength: "Product Name Must not exceed 5000 characters"
             }
         },
+        hsncode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: "HSN Code must be string",
+                maxLength: "HSN Code must not exceed 50 characters"
+            }
+        },
+        saccode: {
+            type: ['string', 'null'],
+            maxLength: 50,
+            errorMessage: {
+                type: "SAC Code must be string",
+                maxLength: "SAC Code must not exceed 50 characters"
+            }
+        },
         storage: {
             type: ['string', 'null'],
             errorMessage: {
@@ -111,6 +127,14 @@ export const productrevoInsertSchema = {
             type: ['number', 'null'],
             errorMessage: {
                 type: "Price must be number",
+            }
+        },
+        purchaseprice: {
+            type: ['number', 'null'],
+            minimum: 0,
+            errorMessage: {
+                type: "Purchase Price must be number",
+                minimum: "Purchase Price cannot be negative",
             }
         },
         processor: {
@@ -305,6 +329,30 @@ export const productrevoInsertSchema = {
             type: ['string', 'null'],
             errorMessage: {
                 type: "Sub-category should be a string"
+            }
+        },
+        producttype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Product type should be a string"
+            }
+        },
+        buildtype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Build type should be a string"
+            }
+        },
+        fulfillmenttype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Fulfillment type should be a string"
+            }
+        },
+        sparetype: {
+            type: ['string', 'null'],
+            errorMessage: {
+                type: "Spare type should be a string"
             }
         },
         location: {

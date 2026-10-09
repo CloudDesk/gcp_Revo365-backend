@@ -14,9 +14,9 @@ export module recordCount {
         try {
             const { objectName } = request.params;
             const getRecordCount: RecordCountResponse = await recordCountService.getRecordCount(objectName,request);
-            console.log(getRecordCount, 'get Record Count');
             reply.send(getRecordCount);
         } catch (error) {
+            console.error("Error in getRecordCount", error);
             reply.send(error.message);
         }
     }
@@ -24,9 +24,9 @@ export module recordCount {
         try {
             const { objectName } = request.params;
             const getRecordCount: RecordCountResponse = await recordCountService.getRecordCountRevo(objectName,request);
-            console.log(getRecordCount, 'get Record Count');
             reply.send(getRecordCount);
         } catch (error) {
+            console.error("Error in getRecordCountRevo", error);
             reply.send(error.message);
         }
     }
@@ -34,9 +34,9 @@ export module recordCount {
         try {
             const { objectName } = request.params;
             const getRecordCount: RecordCountResponse = await recordCountService.getRecordCountWithUserId(request);
-            console.log(getRecordCount, 'get Record Count');
             reply.send(getRecordCount);
         } catch (error) {
+            console.error("Error in getRecordCountWithUserId", error);
             reply.send(error.message);
         }
     }
@@ -44,18 +44,18 @@ export module recordCount {
         try {
             const { objectName } = request.params;
             const getRecordCount: RecordCountResponse = await recordCountService.getArchivefilterRecordCount(objectName,request);
-            console.log(getRecordCount, 'get Record Count');
             reply.send(getRecordCount);
         } catch (error) {
+            console.error("Error in getArchivefilterRecordCount", error);
             reply.send(error.message);
         }
     }
     export const getGlobalProductDataCount = async (request:   any, reply: any) => {
         try {
             const getRecordCount: any = await recordCountService.getGlobalProductDataCount(request,reply);
-            console.log(getRecordCount, 'get Record Count');
             reply.send(getRecordCount);
         } catch (error) {
+            console.error("Error in getGlobalProductDataCount", error);
             reply.send(error.message);
         }
     }

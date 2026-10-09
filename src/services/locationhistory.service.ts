@@ -46,7 +46,7 @@ export module locationHistoryService {
             return datatypeCheckResult
         } 
         catch (error) {
-            console.log('ERROR IN  Controller getLocationHistoryData');
+            console.log('ERROR IN  Controller getLocationHistoryData',error);
             let errordata = await ErrorHandler.handleQueryError(error)
             
         }
@@ -76,9 +76,8 @@ export module locationHistoryService {
             const result = await query(querydata, params);
             return result;
         } catch (error) {
-            console.error("Query Execution Error: IN upsert Service locationhistory data", error);
+            console.error("Query Execution Error: IN upsertlocationhistory", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error);
-            console.log(ErrorMessage);
             return ErrorMessage;
         }
     }

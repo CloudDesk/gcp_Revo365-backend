@@ -12,7 +12,6 @@ export module recycleBinSerivce {
         } catch (error) {
             console.error("Query Execution Error: IN getRecycleBinData", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }
@@ -25,7 +24,6 @@ export module recycleBinSerivce {
         } catch (error) {
             console.error("Query Execution Error: IN getRecycleBinDataRevo", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
-            console.log(ErrorMessage);
             return ErrorMessage
         }
     }

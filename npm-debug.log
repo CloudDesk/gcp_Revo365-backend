@@ -1,56 +1,43 @@
 0 info it worked if it ends with ok
 1 verbose cli [
 1 verbose cli   'C:\\Program Files\\nodejs\\node.exe',
-1 verbose cli   'C:\\Users\\CLOUD\\OneDrive - Cloud Desk Technology\\Documents\\GitHub\\pravin-on-cloud\\Revo365_Backend\\node_modules\\npm\\bin\\npm-cli.js',
+1 verbose cli   'C:\\Users\\Admin\\Documents\\GitHub\\TEQIT\\gcp_Revo365-backend\\node_modules\\npm\\bin\\npm-cli.js',
 1 verbose cli   'run',
 1 verbose cli   'test'
 1 verbose cli ]
 2 info using npm@2.15.12
-3 info using node@v20.12.1
-4 verbose stack Error: Cannot find module 'is-property'
-4 verbose stack Require stack:
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\node_modules\is-my-json-valid\node_modules\generate-object-property\index.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\node_modules\is-my-json-valid\index.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\lib\runner.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\lib\index.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\lib\har.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\request.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\index.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\npm-registry-client\lib\fetch.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\npm-registry-client\index.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\lib\cache\caching-client.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\lib\npm.js
-4 verbose stack - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\bin\npm-cli.js
-4 verbose stack     at Module._resolveFilename (node:internal/modules/cjs/loader:1143:15)
-4 verbose stack     at Module._load (node:internal/modules/cjs/loader:984:27)
-4 verbose stack     at Module.require (node:internal/modules/cjs/loader:1231:19)
-4 verbose stack     at require (node:internal/modules/helpers:179:18)
-4 verbose stack     at Object.<anonymous> (C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\node_modules\is-my-json-valid\node_modules\generate-object-property\index.js:1:18)
-4 verbose stack     at Module._compile (node:internal/modules/cjs/loader:1369:14)
-4 verbose stack     at Module._extensions..js (node:internal/modules/cjs/loader:1427:10)
-4 verbose stack     at Module.load (node:internal/modules/cjs/loader:1206:32)
-4 verbose stack     at Module._load (node:internal/modules/cjs/loader:1022:12)
-4 verbose stack     at Module.require (node:internal/modules/cjs/loader:1231:19)
-5 verbose cwd C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend
-6 error Windows_NT 10.0.19045
-7 error argv "C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\CLOUD\\OneDrive - Cloud Desk Technology\\Documents\\GitHub\\pravin-on-cloud\\Revo365_Backend\\node_modules\\npm\\bin\\npm-cli.js" "run" "test"
-8 error node v20.12.1
-9 error npm  v2.15.12
-10 error code MODULE_NOT_FOUND
-11 error Cannot find module 'is-property'
-11 error Require stack:
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\node_modules\is-my-json-valid\node_modules\generate-object-property\index.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\node_modules\is-my-json-valid\index.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\lib\runner.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\node_modules\har-validator\lib\index.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\lib\har.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\request.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\request\index.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\npm-registry-client\lib\fetch.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\node_modules\npm-registry-client\index.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\lib\cache\caching-client.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\lib\npm.js
-11 error - C:\Users\CLOUD\OneDrive - Cloud Desk Technology\Documents\GitHub\pravin-on-cloud\Revo365_Backend\node_modules\npm\bin\npm-cli.js
-12 error If you need help, you may report this error at:
-12 error     <https://github.com/npm/npm/issues>
-13 verbose exit [ 1, true ]
+3 info using node@v22.19.0
+4 verbose run-script [ 'pretest', 'test', 'posttest' ]
+5 info pretest revo-365_backend@1.0.0
+6 info test revo-365_backend@1.0.0
+7 verbose unsafe-perm in lifecycle true
+8 info revo-365_backend@1.0.0 Failed to exec test script
+9 verbose stack Error: revo-365_backend@1.0.0 test: `npm run test`
+9 verbose stack Exit status 1
+9 verbose stack     at EventEmitter.<anonymous> (C:\Users\Admin\Documents\GitHub\TEQIT\gcp_Revo365-backend\node_modules\npm\lib\utils\lifecycle.js:217:16)
+9 verbose stack     at EventEmitter.emit (node:events:519:28)
+9 verbose stack     at ChildProcess.<anonymous> (C:\Users\Admin\Documents\GitHub\TEQIT\gcp_Revo365-backend\node_modules\npm\lib\utils\spawn.js:24:14)
+9 verbose stack     at ChildProcess.emit (node:events:519:28)
+9 verbose stack     at maybeClose (node:internal/child_process:1101:16)
+9 verbose stack     at ChildProcess._handle.onexit (node:internal/child_process:304:5)
+10 verbose pkgid revo-365_backend@1.0.0
+11 verbose cwd C:\Users\Admin\Documents\GitHub\TEQIT\gcp_Revo365-backend
+12 error Windows_NT 10.0.26100
+13 error argv "C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Admin\\Documents\\GitHub\\TEQIT\\gcp_Revo365-backend\\node_modules\\npm\\bin\\npm-cli.js" "run" "test"
+14 error node v22.19.0
+15 error npm  v2.15.12
+16 error code ELIFECYCLE
+17 error revo-365_backend@1.0.0 test: `npm run test`
+17 error Exit status 1
+18 error Failed at the revo-365_backend@1.0.0 test script 'npm run test'.
+18 error This is most likely a problem with the revo-365_backend package,
+18 error not with npm itself.
+18 error Tell the author that this fails on your system:
+18 error     npm run test
+18 error You can get information on how to open an issue for this project with:
+18 error     npm bugs revo-365_backend
+18 error Or if that isn't available, you can get their info via:
+18 error
+18 error     npm owner ls revo-365_backend
+18 error There is likely additional logging output above.
+19 verbose exit [ 1, true ]

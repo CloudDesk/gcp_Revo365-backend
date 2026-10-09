@@ -6,15 +6,16 @@ export module supplierController {
             let getSupplierResult = await supplierSerivce.getSupplierData(request);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplier Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
-    //lookup
     export const getSupplierName = async (request, reply) => {
         try {
             let getSupplierResult = await supplierSerivce.getSupplierName(request.query);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplierName Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
@@ -23,6 +24,7 @@ export module supplierController {
             let getSupplierResult = await supplierSerivce.getSupplierProductdata(request.params.id);
             reply.send(getSupplierResult)
         } catch (error) {
+            console.error('Error in getSupplierProductdata Controller', error);
             reply.send(error.message, 'Error in get Supplier Data Controller')
         }
     }
@@ -30,17 +32,22 @@ export module supplierController {
     export const upsertSupplier = async (request, reply) => {
         try {
             let upsertSupplierResult = await supplierSerivce.upsertSupplierData(request.body);
+            console.log(upsertSupplierResult, "upsertSupplierResult")
             if (upsertSupplierResult.command === "UPDATE" || upsertSupplierResult.command === "INSERT") {
                 let message: any = {};
                 message = {
                     message: upsertSupplierResult.command === "UPDATE"
-                        ? `Data Updated successfully in supplier`
-                        : `Data Inserted successfully into supplier`,
-                        data:upsertSupplierResult.rows
+                        ? `Supplier data has been successfully updated.`
+                        : `Supplier data has been successfully added.`,
+                    data: upsertSupplierResult.rows
                 };
                 reply.status(200).send(message);
             }
+            else {
+                reply.status(400).send({ error: upsertSupplierResult.errorDetails[0].message });
+            }
         } catch (error) {
+            console.error('Error in upsertSupplier Controller', error);
             reply.send(error.message, 'Error in upsert Supplier Data Controller')
         }
     }
@@ -50,6 +57,7 @@ export module supplierController {
             let deleteSupplierResult = await supplierSerivce.deleteSupplierData(request.params.id);
             reply.send(deleteSupplierResult)
         } catch (error) {
+            console.error('Error in deleteSupplier Controller', error);
             reply.send(error.message, 'Error in delete Supplier Data Controller')
         }
     }

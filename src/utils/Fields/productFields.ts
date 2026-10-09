@@ -31,11 +31,11 @@ export const productStringFields = [
       "connectortype","voltageandcurrentrating","compatiblelaptopsize","bagcapacity","accessoriesbrand","thickness",
       "packagecontents","designedfor","lightindicator","includeschargingcable","powerinput","powersupply","foldable",
       "compatibility", "productid","accessoriesmaterial","sticklength","connector1","connector2","connector3",
-      "connector4"
+      "connector4","producttype","buildtype","fulfillmenttype","sparetype"
     ]
 
     export const productArrayFields = [
         "chargerports","large","medium","small","accessoriesincluded","supports","adapterporttype"
     ]
-  
+
   
