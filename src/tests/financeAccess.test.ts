@@ -52,15 +52,16 @@ test("finance permissions stay independent and preserve Cash/Bank defaults", asy
     grants[resource] = { read: true, create: false };
     assert.equal((await check("read", resource)).statusCode, 200);
     assert.equal((await check("create", resource)).statusCode, 403);
-    assert.equal((await check("read", resource, "vendor")).statusCode, 403);
+    assert.equal((await check("read", resource, "vendor")).statusCode, 200);
     delete grants[resource];
   }
   const count = calls.length;
-  for (const role of ["", "vendor", "customer"]) {
+  assert.equal((await check("read", "chart_of_accounts", "")).statusCode, 403);
+  assert.equal(calls.length, count, "a missing role never queries permissions");
+  for (const role of ["vendor", "customer"]) {
     assert.equal((await check("read", "chart_of_accounts", role)).statusCode, 403);
     assert.equal((await check("read", undefined, role)).statusCode, 403);
   }
-  assert.equal(calls.length, count, "disallowed roles never query permissions");
 });
 
 test("shared lookups accept any explicit grant, regardless of row order", async (t) => {

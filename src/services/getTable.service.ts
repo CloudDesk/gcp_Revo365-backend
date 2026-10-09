@@ -37,6 +37,8 @@ export module getTables {
                 on_account: "On Account",
                 customer_statement: "Customer Statement",
                 chart_of_accounts: "Chart of Accounts",
+                cash_bank_account: "Cash & Bank Accounts",
+                journal: "Journals",
                 finance_dashboard: "Finance Dashboard",
                 finance_reports: "Finance Reports"
             };
@@ -50,7 +52,7 @@ export module getTables {
             // These are permission resources rather than physical tables. Add
             // them to the same metadata response so the existing User
             // Permissions editor can render them without a second framework.
-            ['finance_dashboard', 'finance_reports', 'finance_transactions', 'on_account', 'customer_statement'].forEach((table) => {
+            ['cash_bank_account', 'finance_transactions', 'on_account', 'customer_statement', 'chart_of_accounts', 'journal', 'finance_dashboard', 'finance_reports'].forEach((table) => {
                 if (!result.rows.some((element) => element.table === table)) {
                     result.rows.push({ table });
                 }

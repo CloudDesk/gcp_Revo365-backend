@@ -15,12 +15,12 @@ export const requireFinanceModulePermission = (
 ) => {
   return async (request: any, reply: any) => {
     const role = String(request.session?.role || "").trim().toLowerCase();
-    if (!["admin", "accountant"].includes(role)) {
+    if (!role) {
       return reply.status(403).send({
         success: false,
         error: {
           code: "FINANCE_MODULE_ACCESS_DENIED",
-          message: "Finance Dashboard and Reports are restricted to Admin and Accountant roles.",
+          message: "Finance access is restricted to authorized internal users.",
         },
       });
     }
@@ -56,20 +56,23 @@ export const requireJournalPermission = (permission: FinancePermission) => {
         },
       });
     }
-    if (!["accountant", "admin"].includes(role)) {
-      return reply.status(403).send({
-        success: false,
-        error: {
-          code: "JOURNAL_ACCESS_DENIED",
-          message: "Journal access is restricted to Accountant and Admin roles.",
-        },
-      });
-    }
-    // Journal capabilities are deliberately granted as one Finance policy to
-    // both approved roles. Routes still declare the exact capability
-    // (transfer/replace/etc.) so the UI and audit boundary remain explicit.
-    void permission;
-    return;
+    const result = await query(
+      `SELECT item->'permissions' AS permissions
+       FROM permissions p
+       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.permissionset, '[]'::jsonb)) item
+       WHERE LOWER(TRIM(p.role)) = $1
+         AND item->>'objectAPI' = 'journal'
+       LIMIT 1`,
+      [role]
+    );
+    if (result.rows[0]?.permissions?.[permission] === true) return;
+    return reply.status(403).send({
+      success: false,
+      error: {
+        code: "JOURNAL_ACCESS_DENIED",
+        message: `You do not have ${permission} permission for Journals.`,
+      },
+    });
   };
 };
 
@@ -87,16 +90,6 @@ export const requireFinancePermission = (
         error: {
           code: "FINANCE_ACCESS_DENIED",
           message: "Finance access is restricted to authorized internal users.",
-        },
-      });
-    }
-
-    if (!["accountant", "admin"].includes(role)) {
-      return reply.status(403).send({
-        success: false,
-        error: {
-          code: "FINANCE_ACCESS_DENIED",
-          message: "Finance access is restricted to Accountant and Admin roles.",
         },
       });
     }
