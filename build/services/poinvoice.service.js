@@ -146,6 +146,10 @@ export var poinvoiceservice;
             throw new Error("Bill type must be inventory or expense");
         }
         upsertFields.billtype = billType;
+        if (billType === "inventory") {
+            upsertFields.expenseaccountid = null;
+            upsertFields.expensecategory = null;
+        }
         if (billType === "expense") {
             if (!upsertFields.expenseaccountid && !id) {
                 throw new Error("Expense account is required for an expense bill");
