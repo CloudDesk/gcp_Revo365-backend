@@ -4,7 +4,7 @@ import {
   resolveFinanceContext,
   toMoney,
 } from "../utils/finance/finance.utils.js";
-import { invoiceIncludesCogs, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
+import { invoiceIncludesCogs, invoiceIncludesRentalIncome, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
 import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
 import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
@@ -519,8 +519,9 @@ export module financeDashboardReportsService {
         query(`SELECT r.*, CONCAT_WS(' ', u.firstname, u.lastname) AS partyname
           FROM revoinvoice r LEFT JOIN users u ON u.id = r.customerid
           WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+          AND r.organizationid = $3
           AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')
-          ORDER BY ${REVO_INVOICE_DATE_SECONDS}, r.id`, [fromEpoch, toEpoch]),
+          ORDER BY ${REVO_INVOICE_DATE_SECONDS}, r.id`, [fromEpoch, toEpoch, organizationId]),
         query(`SELECT id,puc,productname,COALESCE(purchaseprice,0) AS purchaseprice
                FROM product_revo`, []),
       ]);
@@ -635,6 +636,7 @@ export module financeDashboardReportsService {
         const documentType = resolveInvoiceDocumentType(invoice);
         const hasProductSale = invoiceIncludesCogs(invoice);
         const hasServiceSale = documentType === "service" || documentType === "product + service";
+        const hasRentalIncome = invoiceIncludesRentalIncome(invoice);
         let productTaxable = taxableSectionAmount(productSection);
         let serviceTaxable = taxableSectionAmount(serviceSection);
         if (productTaxable === 0 && serviceTaxable === 0) {
@@ -643,8 +645,18 @@ export module financeDashboardReportsService {
           if (String(invoice.invoicefor || "").toLowerCase() === "service") serviceTaxable = taxable;
           else productTaxable = taxable;
         }
+        // Rental snapshots can retain the full contract/product total in
+        // invoicedata. Use the canonical billed amount so P&L reconciles with
+        // the Sales Invoice report for the same document and period.
+        const rentalTaxable = hasRentalIncome
+          ? money(Math.max(
+              getRetailInvoicePaymentState(invoice).invoiceAmount - resolveInvoiceGst(invoice).total,
+              0
+            ))
+          : 0;
         if (hasProductSale) sum.salesIncome += productTaxable;
         if (hasServiceSale) sum.serviceIncome += serviceTaxable;
+        if (hasRentalIncome) sum.rentalIncome += rentalTaxable;
         const cogsResolution = hasProductSale
           ? resolveInvoiceCogs(
               productSection,
@@ -676,6 +688,7 @@ export module financeDashboardReportsService {
           documentType,
           salesIncome: money(hasProductSale ? productTaxable : 0),
           serviceIncome: money(hasServiceSale ? serviceTaxable : 0),
+          rentalIncome: rentalTaxable,
           cogs: money(invoiceCogs),
           cogsSource: cogsResolution.source,
           cogsExpectedQuantity: cogsResolution.expectedQuantity,
@@ -687,11 +700,12 @@ export module financeDashboardReportsService {
           cogsStockIds: cogsResolution.stockIds,
         });
         return sum;
-      }, { salesIncome: 0, serviceIncome: 0, cogs: 0 });
+      }, { salesIncome: 0, serviceIncome: 0, rentalIncome: 0, cogs: 0 });
       Object.keys(operationalProfitLoss).forEach(key => operationalProfitLoss[key] = money(operationalProfitLoss[key]));
       const calculatedRows = [
         { accountId: -101, accountCode: "CALC-SALES-INCOME", accountName: "Sales Income (excluding GST)", accountType: "income", accountSubtype: "sales_income", openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: operationalProfitLoss.salesIncome, closingDebit: 0, closingCredit: operationalProfitLoss.salesIncome, balance: -operationalProfitLoss.salesIncome },
         { accountId: -102, accountCode: "CALC-SERVICE-INCOME", accountName: "Service Income (excluding GST)", accountType: "income", accountSubtype: "service_income", openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: operationalProfitLoss.serviceIncome, closingDebit: 0, closingCredit: operationalProfitLoss.serviceIncome, balance: -operationalProfitLoss.serviceIncome },
+        { accountId: -104, accountCode: "CALC-RENTAL-INCOME", accountName: "Rental Income (excluding GST)", accountType: "income", accountSubtype: "rental_income", openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: operationalProfitLoss.rentalIncome, closingDebit: 0, closingCredit: operationalProfitLoss.rentalIncome, balance: -operationalProfitLoss.rentalIncome },
         { accountId: -103, accountCode: "CALC-COGS", accountName: "Cost of Goods Sold", accountType: "expense", accountSubtype: "cost_of_goods_sold", openingDebit: 0, openingCredit: 0, periodDebit: operationalProfitLoss.cogs, periodCredit: 0, closingDebit: operationalProfitLoss.cogs, closingCredit: 0, balance: operationalProfitLoss.cogs },
       ];
       rows = [...calculatedRows, ...rows];
@@ -860,6 +874,7 @@ export module financeDashboardReportsService {
             netExpense,
             salesIncome: operationalProfitLoss?.salesIncome || 0,
             serviceIncome: operationalProfitLoss?.serviceIncome || 0,
+            rentalIncome: operationalProfitLoss?.rentalIncome || 0,
             cogs: operationalProfitLoss?.cogs || 0,
             totalIncome: money(netIncome - (operationalProfitLoss?.cogs || 0)),
             netProfit: money(netIncome - netExpense),
@@ -916,6 +931,7 @@ export module financeDashboardReportsService {
            FROM revoinvoice r
            LEFT JOIN users u ON u.id = r.customerid
            WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+             AND r.organizationid = $9
              AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(r.invoicenumber, '') ILIKE $4
                   OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $4)
@@ -923,7 +939,7 @@ export module financeDashboardReportsService {
              AND ($6 = '' OR LOWER(COALESCE(r.invoicefor, 'invoice')) = $6)
            ORDER BY ${REVO_INVOICE_DATE_SECONDS} DESC, r.id DESC
            OFFSET $7 LIMIT $8`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType, offset, count]
+          [fromEpoch, toEpoch, search, searchPattern, status, documentType, offset, count, organizationId]
         ),
         query(
           `SELECT r.id, r.invoicefor, r.invoicedata, r.servicedata, r.summaryinvoicedata,
@@ -932,12 +948,13 @@ export module financeDashboardReportsService {
            FROM revoinvoice r
            LEFT JOIN users u ON u.id = r.customerid
            WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+             AND r.organizationid = $7
              AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(r.invoicenumber, '') ILIKE $4
                   OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $4)
              AND ($5 = '' OR LOWER(COALESCE(r.paymentstatus, 'pending')) = $5)
              AND ($6 = '' OR LOWER(COALESCE(r.invoicefor, 'invoice')) = $6)`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType]
+          [fromEpoch, toEpoch, search, searchPattern, status, documentType, organizationId]
         ),
       ]);
       const rows = recordsResult.rows.map((invoice: any) => {
