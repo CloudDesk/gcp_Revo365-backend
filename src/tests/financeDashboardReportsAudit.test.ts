@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { auditFinanceDashboard, auditFinanceReport } from "../utils/finance/financeReportAudit.utils.js";
-import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, resolveBillGst } from "../utils/finance/gstSummary.utils.js";
+import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, invoiceIncludesRentalIncome, resolveBillGst } from "../utils/finance/gstSummary.utils.js";
 import { fillMonthlyFinanceTrend, listFinanceMonths, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
 import { classifyM4Document, requiredM4Movement } from "../utils/finance/m4Reconciliation.utils.js";
@@ -103,6 +103,13 @@ test("includes only product sales in COGS", () => {
   assert.equal(invoiceIncludesCogs({ invoicefor: "service", servicedata: { items: [{ quantity: 1 }] } }), false);
   assert.equal(invoiceIncludesCogs({ invoicefor: "rental", invoicedata: { items: [{ quantity: 1 }] } }), false);
   assert.equal(invoiceIncludesCogs({ invoicefor: "service", invoicedata: { items: [{ quantity: 1 }] }, servicedata: { items: [{ quantity: 1 }] } }), true);
+});
+
+test("classifies rental invoices as rental income without COGS", () => {
+  const rentalInvoice = { invoicefor: "rental", invoicedata: { items: [{ quantity: 1 }], total: 1180, taxamount: 180 } };
+  assert.equal(invoiceIncludesRentalIncome(rentalInvoice), true);
+  assert.equal(invoiceIncludesCogs(rentalInvoice), false);
+  assert.equal(invoiceIncludesRentalIncome({ invoicefor: "product", invoicedata: { items: [{ quantity: 1 }] } }), false);
 });
 
 test("normalizes legacy seconds and current millisecond invoice dates", () => {
