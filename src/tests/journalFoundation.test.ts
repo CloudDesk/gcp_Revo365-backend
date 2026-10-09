@@ -13,6 +13,7 @@ import {
 } from "../utils/finance/journal.utils.js";
 import { FinanceValidationError } from "../utils/finance/finance.utils.js";
 import { requireJournalPermission } from "../services/financeAccess.service.js";
+import pool from "../database/postgres.js";
 
 describe("Journal Phase 4 foundation", () => {
   test("defines create and optimistic-concurrency update contracts", () => {
@@ -133,7 +134,16 @@ describe("Journal Phase 4 foundation", () => {
     );
   });
 
-  test("grants full Journal capability only to Admin and Accountant roles", async () => {
+  test("uses the explicit Journal permission for every role", async (t) => {
+    const grants: Record<string, Record<string, boolean>> = {
+      admin: { read: true, reverse: true },
+      accountant: { read: true, reverse: true },
+      viewer: { read: true, reverse: false },
+    };
+    t.mock.method(pool, "query", async (_sql: string, params: string[]) => ({
+      rows: grants[params[0]] ? [{ permissions: grants[params[0]] }] : [],
+    }));
+
     for (const role of ["admin", "accountant"]) {
       let replyUsed = false;
       await requireJournalPermission("reverse")(
@@ -150,7 +160,7 @@ describe("Journal Phase 4 foundation", () => {
 
     let deniedStatus = 0;
     let deniedPayload: any;
-    await requireJournalPermission("read")(
+    await requireJournalPermission("reverse")(
       { session: { role: "viewer" } },
       {
         status: (status: number) => {
@@ -165,6 +175,17 @@ describe("Journal Phase 4 foundation", () => {
     );
     assert.equal(deniedStatus, 403);
     assert.equal(deniedPayload.error.code, "JOURNAL_ACCESS_DENIED");
+
+    const readReply = {
+      statusCode: 200,
+      status(code: number) { this.statusCode = code; return this; },
+      send() { return this; },
+    };
+    await requireJournalPermission("read")(
+      { session: { role: "viewer" } },
+      readReply,
+    );
+    assert.equal(readReply.statusCode, 200);
   });
 
   test("allows accrual and general entries without a related entry", () => {

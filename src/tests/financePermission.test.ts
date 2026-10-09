@@ -30,8 +30,8 @@ test("Admin and Accountant receive readable finance resources by default", () =>
   }
 });
 
-test("non-finance roles cannot grant themselves finance access", () => {
-  const maliciousInput = [
+test("explicit read permission enables Finance pages for any internal role", () => {
+  const input = [
     {
       object: "Finance Dashboard",
       objectAPI: "finance_dashboard",
@@ -46,11 +46,11 @@ test("non-finance roles cannot grant themselves finance access", () => {
 
   for (const role of ["storemanager", "technician", "vendor", "unknown"]) {
     const permissions = byApi(
-      normalizeFinancePermissionSet(role, maliciousInput)
+      normalizeFinancePermissionSet(role, input)
     );
     for (const objectAPI of ["finance_dashboard", "finance_reports"]) {
       assert.deepEqual(permissions.get(objectAPI)?.permissions, {
-        read: false,
+        read: true,
         create: false,
         edit: false,
         delete: false,
@@ -112,6 +112,6 @@ test("normalization preserves unrelated entries and removes finance duplicates",
    assert.equal(grants.get("customer_statement").permissions.read, false);
    assert.equal(grants.get("on_account").permissions.create, true);
    assert.equal(grants.get("on_account").permissions.edit, false);
-   const denied = byApi(normalizeFinancePermissionSet("vendor", input));
-   assert.equal(denied.get("on_account").permissions.read, false);
+   const vendorGrants = byApi(normalizeFinancePermissionSet("vendor", input));
+   assert.equal(vendorGrants.get("on_account").permissions.read, true);
  });

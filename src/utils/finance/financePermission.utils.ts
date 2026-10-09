@@ -21,15 +21,14 @@ const parsePermissionSet = (value: unknown): any[] => {
 };
 
 /**
- * Keeps the existing permission format while enforcing the hard finance role
- * boundary. Dashboard, Reports, and Customer Statement are read-only;
+ * Keeps the existing permission format. Dashboard, Reports, and Customer Statement are read-only;
  * Transactions and On Account additionally support Create.
  */
 export const normalizeFinancePermissionSet = (
   role: unknown,
   value: unknown
 ) => {
-  const roleCanUseFinance = isFinancePermissionRole(role);
+  const financeRoleDefaultsToRead = isFinancePermissionRole(role);
   const permissionSet = parsePermissionSet(value);
   const financeEntries = new Map<string, any>();
   const unrelatedEntries: any[] = [];
@@ -56,9 +55,9 @@ export const normalizeFinancePermissionSet = (
         objectAPI: resource.objectAPI,
         permissions: {
           read:
-            roleCanUseFinance && existing
+            existing
               ? existing?.permissions?.read === true
-              : roleCanUseFinance,
+              : financeRoleDefaultsToRead,
           create: false,
           edit: false,
           delete: false,
@@ -79,8 +78,8 @@ export const normalizeFinancePermissionSet = (
       object: resource.object,
       objectAPI: resource.objectAPI,
       permissions: {
-        read: roleCanUseFinance && existing?.permissions?.read === true,
-        create: roleCanUseFinance && resource.create && existing?.permissions?.create === true,
+        read: existing?.permissions?.read === true,
+        create: resource.create && existing?.permissions?.create === true,
         edit: false,
         delete: false,
       },
