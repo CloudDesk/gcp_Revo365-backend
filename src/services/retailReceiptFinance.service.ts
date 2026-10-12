@@ -2,6 +2,7 @@ import pool, { query } from "../database/postgres.js";
 import {
   FinanceValidationError,
   calculateAvailableBalance,
+  financeDateToEpochSeconds,
   nowEpoch,
   requireIsoDate,
   requirePositiveMoney,
@@ -300,25 +301,10 @@ const postCustomerOnAccountReceipt = async ({
     }
     const customerName = buildCustomerName({ ...customer, customerid: customerId });
 
-    const latestTransactionResult = await client.query(
-      `
-      SELECT transactiondate
-      FROM bank_transactions
-      WHERE bankcashaccountid = $1
-        AND postingstatus = 'posted'
-      ORDER BY transactiondate DESC, posteddate DESC, id DESC
-      LIMIT 1
-      `,
-      [accountId]
+    assertTransactionDateIsWithinAccountHistory(
+      transactionDate,
+      account.openingbalancedate
     );
-    const latestTransactionDate = toFinanceDateOnly(
-      latestTransactionResult.rows[0]?.transactiondate
-    );
-    if (latestTransactionDate && transactionDate < latestTransactionDate) {
-      throw new FinanceValidationError(
-        "Backdated transactions are not enabled in the foundation release."
-      );
-    }
 
     const customerAdvanceResult = await client.query(
       `
@@ -487,15 +473,15 @@ const postCustomerOnAccountReceipt = async ({
       `,
       [transactionNumber, journalEntry.id, onAccountReferenceNumber, bankTransaction.id]
     );
-    await client.query(
-      `
-      UPDATE bank_cash_accounts
-      SET currentbalance = $1, version = version + 1,
-          modifiedby = $2, modifieddate = $3
-      WHERE id = $4
-      `,
-      [balanceAfter, actor, epoch, accountId]
+    const rebuiltBalances = await rebuildBankCashAccountBalances(
+      client,
+      account,
+      actor,
+      epoch
     );
+    const transactionBalanceAfter =
+      rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+    bankTransaction.balanceafter = transactionBalanceAfter;
     await client.query(
       `
       INSERT INTO finance_audit_events (
@@ -512,7 +498,7 @@ const postCustomerOnAccountReceipt = async ({
           customerid: customerId,
           amount,
           previousbalance: toMoney(account.currentbalance),
-          balanceafter: balanceAfter,
+          balanceafter: transactionBalanceAfter,
           onaccountreferenceid: Number(onAccountReference.id),
           onaccountreferencenumber: onAccountReferenceNumber,
           journalentryid: Number(journalEntry.id),
@@ -1026,6 +1012,7 @@ export module retailReceiptFinanceService {
         amount
       );
       const epoch = nowEpoch();
+      const transactionDateEpoch = financeDateToEpochSeconds(transactionDate);
       const allocationSources = preparedAllocations.map((allocation) =>
         getCustomerReceiptInvoiceSourceMetadata(allocation.invoice)
       );
@@ -1251,7 +1238,7 @@ export module retailReceiptFinanceService {
           settlementamount: allocation.totalSettledAmount,
           paymentmethod:
             account.accounttype === "cash" ? "cash" : "bank_transfer",
-          paymentdate: epoch,
+          paymentdate: transactionDateEpoch,
           transactionreference: transactionNumber,
           providerpaymentid: null,
           providerorderid: null,
@@ -1270,14 +1257,15 @@ export module retailReceiptFinanceService {
               balanceamount = $3,
               paymentstatus = $4,
               lastpaymentdate = $5,
-              modifieddate = $5
-          WHERE id = $6
+              modifieddate = $6
+          WHERE id = $7
           `,
           [
             JSON.stringify([...existingPayments, paymentEntry]),
             allocation.paidAmount,
             allocation.balanceAmount,
             allocation.paymentStatus,
+            transactionDateEpoch,
             epoch,
             allocation.invoice.id,
           ]

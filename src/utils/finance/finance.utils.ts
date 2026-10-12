@@ -48,6 +48,12 @@ export const requireIsoDate = (value: unknown, fieldName: string): string => {
   return normalized;
 };
 
+export const financeDateToEpochSeconds = (value: string): number =>
+  Math.floor(
+    new Date(`${requireIsoDate(value, "transactiondate")}T00:00:00+05:30`).getTime() /
+      1000
+  );
+
 export const toFinanceDateOnly = (value: unknown): string | null => {
   if (value == null || value === "") return null;
 
