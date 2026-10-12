@@ -26,6 +26,10 @@ import {
   getBillGstSummary,
   getInvoiceGstSummary,
 } from "../utils/finance/gstSummary.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
 
 const CHART_ACCOUNT_CATEGORIES = new Set([
   "asset",
@@ -1554,25 +1558,10 @@ export module financeAccountService {
         );
       }
 
-      const latestResult = await client.query(
-        `
-        SELECT transactiondate
-        FROM bank_transactions
-        WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
-        ORDER BY transactiondate DESC, posteddate DESC, id DESC
-        LIMIT 1
-        `,
-        [bankCashAccountId]
+      assertTransactionDateIsWithinAccountHistory(
+        transactionDate,
+        bankCashAccount.openingbalancedate
       );
-      if (
-        latestResult.rows[0]?.transactiondate &&
-        transactionDate <
-          (toFinanceDateOnly(latestResult.rows[0].transactiondate) || "")
-      ) {
-        throw new FinanceValidationError(
-          "Backdated transactions are not enabled in the foundation release."
-        );
-      }
 
       const balanceAfter = calculateAvailableBalance(
         bankCashAccount.currentbalance,
@@ -1714,17 +1703,15 @@ export module financeAccountService {
         `,
         [transactionNumber, journalEntry.id, bankTransaction.id]
       );
-      await client.query(
-        `
-        UPDATE bank_cash_accounts
-        SET currentbalance = $1,
-            version = version + 1,
-            modifiedby = $2,
-            modifieddate = $3
-        WHERE id = $4
-        `,
-        [balanceAfter, actor, epoch, bankCashAccountId]
+      const rebuiltBalances = await rebuildBankCashAccountBalances(
+        client,
+        bankCashAccount,
+        actor,
+        epoch
       );
+      const transactionBalanceAfter =
+        rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+      bankTransaction.balanceafter = transactionBalanceAfter;
 
       await insertAuditEvent(
         client,
@@ -1739,7 +1726,7 @@ export module financeAccountService {
           amount,
           entryname: entryName,
           previousbalance: toMoney(bankCashAccount.currentbalance),
-          balanceafter: balanceAfter,
+          balanceafter: transactionBalanceAfter,
           allocationmethod: "direct_ledger",
           journalentryid: journalEntry.id,
         }

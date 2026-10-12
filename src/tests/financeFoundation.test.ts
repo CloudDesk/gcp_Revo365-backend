@@ -7,6 +7,7 @@ const Ajv = require("ajv");
 import {
   FinanceValidationError,
   calculateAvailableBalance,
+  financeDateToEpochSeconds,
   calculateLedgerBalance,
   formatTdsSectionDisplayName,
   maskAccountNumber,
@@ -820,7 +821,10 @@ describe("Chart of Accounts Phase 3", () => {
     );
   });
 });
-import { assertTransactionDateIsWithinAccountHistory } from "../utils/finance/bankTransactionBalance.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -858,6 +862,65 @@ describe("Cash and Bank foundation validation", () => {
       () => assertTransactionDateIsWithinAccountHistory("2025-12-31", "2026-01-01"),
       (error: any) => error instanceof FinanceValidationError
     );
+  });
+
+  test("Stores a backdated accounting date as India-local midnight", () => {
+    const epoch = financeDateToEpochSeconds("2026-10-09");
+    assert.equal(
+      new Date((epoch + 5.5 * 60 * 60) * 1000).toISOString().slice(0, 10),
+      "2026-10-09"
+    );
+  });
+
+  test("Rebuilds all later running balances after a backdated transaction", async () => {
+    const persistedBalances = new Map<number, number>();
+    let persistedCurrentBalance: number | null = null;
+    const client = {
+      query: async (sql: string, params: any[]) => {
+        if (sql.includes("SELECT id, transactiondate, entryside, amount")) {
+          return {
+            rows: [
+              { id: 2, transactiondate: "2026-01-10", entryside: "debit", amount: 50 },
+              { id: 3, transactiondate: "2026-01-15", entryside: "credit", amount: 20 },
+              { id: 1, transactiondate: "2026-01-20", entryside: "debit", amount: 100 },
+            ],
+          };
+        }
+        if (sql.includes("UPDATE bank_transactions SET balanceafter")) {
+          persistedBalances.set(Number(params[1]), Number(params[0]));
+          return { rows: [] };
+        }
+        if (sql.includes("UPDATE bank_cash_accounts")) {
+          persistedCurrentBalance = Number(params[0]);
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query in balance rebuild test: ${sql}`);
+      },
+    };
+
+    const rebuilt = await rebuildBankCashAccountBalances(
+      client,
+      {
+        id: 4,
+        openingbalance: 1000,
+        openingbalancedate: "2026-01-01",
+      },
+      "test-user",
+      1
+    );
+
+    assert.deepEqual([...rebuilt.balances.entries()], [
+      [2, 1050],
+      [3, 1030],
+      [1, 1130],
+    ]);
+    assert.deepEqual([...persistedBalances.entries()], [
+      [2, 1050],
+      [3, 1030],
+      [1, 1130],
+    ]);
+    assert.equal(rebuilt.currentBalance, 1130);
+    assert.equal(persistedCurrentBalance, 1130);
   });
 
   test("Retail receipt schema accepts TDS allocation fields", () => {
