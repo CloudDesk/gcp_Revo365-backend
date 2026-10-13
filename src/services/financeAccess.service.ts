@@ -7,7 +7,8 @@ export type FinancePermission =
   | "post"
   | "reverse"
   | "transfer"
-  | "replace";
+  | "replace"
+  | "delete";
 
 export const requireFinanceModulePermission = (
   objectAPI: "finance_dashboard" | "finance_reports",

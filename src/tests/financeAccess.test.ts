@@ -14,7 +14,7 @@ test("finance permissions stay independent and preserve Cash/Bank defaults", asy
     return { rows: grants[params[1]] ? [{ permissions: grants[params[1]] }] : [] };
   });
   const check = async (
-    action: "read" | "create" | "edit",
+    action: "read" | "create" | "edit" | "delete",
     resource?: FinanceResource,
     role = "admin"
   ) => {
@@ -42,6 +42,9 @@ test("finance permissions stay independent and preserve Cash/Bank defaults", asy
   assert.equal((await check("read")).statusCode, 403);
   grants.chart_of_accounts.create = true;
   assert.equal((await check("create", "chart_of_accounts")).statusCode, 200);
+  assert.equal((await check("delete", "chart_of_accounts")).statusCode, 403);
+  grants.chart_of_accounts.delete = true;
+  assert.equal((await check("delete", "chart_of_accounts")).statusCode, 200);
   delete grants.chart_of_accounts;
   assert.equal((await check("read", "chart_of_accounts")).statusCode, 403);
 

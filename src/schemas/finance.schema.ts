@@ -21,6 +21,58 @@ export const updateChartAccountSchema = {
   required: ["accountname"],
 };
 
+export const chartAccountStatusSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: ["active", "inactive"] },
+    reason: { type: ["string", "null"], maxLength: 500 },
+  },
+  required: ["status"],
+};
+
+export const bulkChartAccountStatusSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    accountids: {
+      type: "array",
+      minItems: 1,
+      maxItems: 200,
+      uniqueItems: true,
+      items: { type: "integer", minimum: 1 },
+    },
+    status: { type: "string", enum: ["active", "inactive"] },
+    reason: { type: ["string", "null"], maxLength: 500 },
+  },
+  required: ["accountids", "status"],
+};
+
+export const chartAccountDeletePreviewSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    accountids: {
+      type: "array",
+      minItems: 1,
+      maxItems: 200,
+      uniqueItems: true,
+      items: { type: "integer", minimum: 1 },
+    },
+  },
+  required: ["accountids"],
+};
+
+export const chartAccountBulkDeleteSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    deletiontoken: { type: "string", minLength: 40, maxLength: 20000 },
+    reason: { type: ["string", "null"], maxLength: 500 },
+  },
+  required: ["deletiontoken"],
+};
+
 export const createBankCashAccountSchema = {
   type: "object",
   additionalProperties: false,

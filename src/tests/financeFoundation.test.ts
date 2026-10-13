@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv");
@@ -708,18 +709,18 @@ describe("Chart of Accounts list period filtering", () => {
     );
     assert.ok(countCall);
     assert.match(countCall.sql, /EXISTS \([\s\S]*period_entry\.status = 'posted'/);
-    assert.match(countCall.sql, /period_entry\.entrydate >= \$2::DATE/);
-    assert.match(countCall.sql, /period_entry\.entrydate <= \$3::DATE/);
-    assert.deepEqual(countCall.params, [7, "2026-10-23", "2026-10-23"]);
+    assert.match(countCall.sql, /period_entry\.entrydate >= \$3::DATE/);
+    assert.match(countCall.sql, /period_entry\.entrydate <= \$4::DATE/);
+    assert.deepEqual(countCall.params, [7, "active", "2026-10-23", "2026-10-23"]);
 
     const listCall = calls.find(({ sql }) =>
       /LEFT JOIN LATERAL \([\s\S]*SUM\(jl\.debitamount\)/s.test(sql)
     );
     assert.ok(listCall);
     assert.match(listCall.sql, /je\.status = 'posted'/);
-    assert.match(listCall.sql, /je\.entrydate >= \$2::DATE/);
-    assert.match(listCall.sql, /je\.entrydate <= \$3::DATE/);
-    assert.deepEqual(listCall.params, [7, "2026-10-23", "2026-10-23", 0, 10]);
+    assert.match(listCall.sql, /je\.entrydate >= \$3::DATE/);
+    assert.match(listCall.sql, /je\.entrydate <= \$4::DATE/);
+    assert.deepEqual(listCall.params, [7, "active", "2026-10-23", "2026-10-23", 0, 10]);
   });
 });
 
@@ -950,7 +951,16 @@ describe("Chart of Accounts Phase 3", () => {
     );
   });
 });
-import { assertTransactionDateIsWithinAccountHistory } from "../utils/finance/bankTransactionBalance.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
+import {
+  createBlockingReferenceFixture,
+  createMultiBankDirectLedgerFixture,
+  createSingleBankDirectLedgerFixture,
+  inspectFixtureChartAccountReferences,
+} from "./fixtures/chartAccountLifecycle.fixture.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -973,6 +983,302 @@ describe("Cash and Bank foundation calculations", () => {
         error instanceof FinanceValidationError &&
         error.message === "amount must be greater than zero."
     );
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 0 baseline", () => {
+  const rebuildFixtureAccount = async (
+    fixture: ReturnType<typeof createSingleBankDirectLedgerFixture>,
+    bankCashAccountId: number
+  ) => {
+    const account = fixture.bankCashAccounts.find(
+      (candidate) => candidate.id === bankCashAccountId
+    );
+    assert.ok(account);
+    const transactions = fixture.bankTransactions
+      .filter(
+        (transaction) =>
+          transaction.bankcashaccountid === bankCashAccountId &&
+          transaction.postingstatus === "posted"
+      )
+      .sort(
+        (left, right) =>
+          left.transactiondate.localeCompare(right.transactiondate) ||
+          left.posteddate - right.posteddate ||
+          left.id - right.id
+      );
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        if (/SELECT id, transactiondate, entryside, amount/.test(sql)) {
+          return { rows: transactions };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const rebuilt = await rebuildBankCashAccountBalances(
+      client,
+      account,
+      "phase0@example.com",
+      1_789_000_000
+    );
+    return { account, calls, rebuilt };
+  };
+
+  test("captures the current single-bank Direct Ledger balances", async () => {
+    const fixture = createSingleBankDirectLedgerFixture();
+    const { calls, rebuilt } = await rebuildFixtureAccount(fixture, 11);
+    const chartLines = fixture.journalLines.filter(
+      (line) => line.financeaccountid === fixture.chartAccount.id
+    );
+
+    assert.equal(rebuilt.currentBalance, 7_000);
+    assert.equal(rebuilt.balances.get(501), 7_000);
+    assert.equal(
+      calculateLedgerBalance(
+        fixture.chartAccount.accounttype,
+        chartLines.reduce((total, line) => total + line.debitamount, 0),
+        chartLines.reduce((total, line) => total + line.creditamount, 0)
+      ),
+      3_000
+    );
+    assert.ok(
+      calls.some(
+        ({ sql, params }) =>
+          /UPDATE bank_cash_accounts/.test(sql) && params?.[0] === 7_000
+      )
+    );
+  });
+
+  test("captures one COA used by Direct Ledger entries in multiple bank accounts", async () => {
+    const fixture = createMultiBankDirectLedgerFixture();
+    const mainBank = await rebuildFixtureAccount(fixture, 11);
+    const pettyCash = await rebuildFixtureAccount(fixture, 12);
+    const chartLines = fixture.journalLines.filter(
+      (line) => line.financeaccountid === fixture.chartAccount.id
+    );
+
+    assert.equal(mainBank.rebuilt.currentBalance, 7_000);
+    assert.equal(pettyCash.rebuilt.currentBalance, 3_500);
+    assert.equal(
+      calculateLedgerBalance(
+        fixture.chartAccount.accounttype,
+        chartLines.reduce((total, line) => total + line.debitamount, 0),
+        chartLines.reduce((total, line) => total + line.creditamount, 0)
+      ),
+      4_500
+    );
+  });
+
+  test("classifies Direct Ledger references separately from deletion blockers without mutation", () => {
+    const fixture = createBlockingReferenceFixture();
+    const before = JSON.stringify(fixture);
+    const references = inspectFixtureChartAccountReferences(
+      fixture,
+      fixture.chartAccount.id
+    );
+
+    assert.deepEqual(references.cascadeSafe, {
+      bankTransactionIds: [501],
+      journalEntryIds: [701],
+      journalLineIds: [901, 902],
+    });
+    assert.deepEqual(references.blocking, {
+      manualJournalLineIds: [905],
+      expenseBillIds: [801],
+      reconciliationSettingIds: [301],
+    });
+    assert.equal(JSON.stringify(fixture), before);
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 1 migration", () => {
+  const migrationSql = readFileSync(
+    new URL(
+      "../database/migrations/20261013_chart_account_lifecycle_foundation.sql",
+      import.meta.url
+    ),
+    "utf8"
+  );
+
+  test("adds soft-delete and lifecycle ownership fields with safe defaults", () => {
+    for (const tableName of [
+      "finance_accounts",
+      "bank_transactions",
+      "journal_entries",
+    ]) {
+      assert.match(migrationSql, new RegExp(`ALTER TABLE ${tableName}`));
+    }
+    assert.match(
+      migrationSql,
+      /isdeleted BOOLEAN NOT NULL DEFAULT FALSE/g
+    );
+    assert.match(migrationSql, /deletionbatchid UUID/);
+    assert.match(migrationSql, /deactivatedbychartaccountid BIGINT/);
+  });
+
+  test("extends bank transaction and journal status constraints with inactive", () => {
+    assert.match(
+      migrationSql,
+      /postingstatus IN \('draft', 'posted', 'inactive', 'reversed'\)/
+    );
+    assert.match(
+      migrationSql,
+      /status IN \('draft', 'posted', 'inactive', 'reversed'\)/
+    );
+  });
+
+  test("allows deleted account names and codes to be reused while indexing lifecycle lookups", () => {
+    assert.match(
+      migrationSql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_accounts_code_normalized[\s\S]*WHERE isdeleted = FALSE/
+    );
+    assert.match(
+      migrationSql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_chart_accounts_name_normalized[\s\S]*isusercreatedchartaccount = TRUE[\s\S]*isdeleted = FALSE/
+    );
+    assert.match(
+      migrationSql,
+      /idx_bank_transactions_chart_account_lifecycle/
+    );
+    assert.match(migrationSql, /idx_finance_accounts_deletion_batch/);
+  });
+
+  test("records the lifecycle foundation schema version", () => {
+    assert.match(
+      migrationSql,
+      /20261013_chart_account_lifecycle_foundation_v1/
+    );
+    assert.match(migrationSql, /ON CONFLICT \(version\) DO NOTHING/);
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 2 read behavior", () => {
+  test("defaults the COA list to active and always excludes soft-deleted accounts", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: {},
+    });
+
+    const countCall = calls.find(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.ok(countCall);
+    assert.match(countCall.sql, /f\.isdeleted = FALSE/);
+    assert.match(countCall.sql, /f\.status = \$2/);
+    assert.deepEqual(countCall.params, [7, "active", null, null]);
+  });
+
+  test("supports inactive and all non-deleted COA views", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { status: "inactive" },
+    });
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { status: "all" },
+    });
+
+    const countCalls = calls.filter(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.equal(countCalls.length, 2);
+    assert.match(countCalls[0].sql, /f\.isdeleted = FALSE/);
+    assert.match(countCalls[0].sql, /f\.status = \$2/);
+    assert.deepEqual(countCalls[0].params, [7, "inactive", null, null]);
+    assert.match(countCalls[1].sql, /f\.isdeleted = FALSE/);
+    assert.doesNotMatch(countCalls[1].sql, /f\.status =/);
+    assert.deepEqual(countCalls[1].params, [7, null, null]);
+  });
+
+  test("rebuilds Cash and Bank balances from active posted transactions only", async () => {
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+
+    await rebuildBankCashAccountBalances(
+      client,
+      { id: 11, openingbalance: 1000, openingbalancedate: "2026-04-01" },
+      "phase2@example.com",
+      1_789_000_000
+    );
+
+    const transactionRead = calls.find(({ sql }) => /FROM bank_transactions/.test(sql));
+    assert.ok(transactionRead);
+    assert.match(transactionRead.sql, /postingstatus = 'posted'/);
+    assert.match(transactionRead.sql, /isdeleted = FALSE/);
+  });
+
+  test("applies active, inactive, and all lifecycle scopes to transaction rows and totals", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      return /COUNT\(\*\)::INTEGER AS total/.test(sql)
+        ? ({ rows: [{ total: 0, debit: 0, credit: 0 }] } as any)
+        : ({ rows: [] } as any);
+    });
+
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: {},
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "inactive", transactiontype: "direct_ledger" },
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "all" },
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "inactive", sourcetype: "manual" },
+      params: {},
+    });
+
+    const summaries = calls.filter(({ sql }) => /COUNT\(\*\)::INTEGER AS total/.test(sql));
+    assert.equal(summaries.length, 4);
+    for (const { sql } of summaries) assert.match(sql, /t\.isdeleted = FALSE/);
+    assert.match(summaries[0].sql, /t\.postingstatus = 'posted'/);
+    assert.match(summaries[1].sql, /t\.postingstatus = 'inactive'/);
+    assert.match(summaries[1].sql, /t\.allocationmethod = 'direct_ledger'/);
+    assert.match(summaries[2].sql, /t\.postingstatus IN \('posted', 'inactive'\)/);
+    assert.match(summaries[3].sql, /t\.postingstatus = 'inactive'/);
+    assert.match(summaries[3].sql, /LOWER\(t\.sourcetype\)/);
+    assert.ok(summaries[3].params.includes("manual"));
   });
 });
 

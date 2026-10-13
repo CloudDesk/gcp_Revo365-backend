@@ -98,6 +98,10 @@ import {
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
     updateChartAccountSchema,
+    chartAccountStatusSchema,
+    bulkChartAccountStatusSchema,
+    chartAccountDeletePreviewSchema,
+    chartAccountBulkDeleteSchema,
     postCustomerTransferSchema,
     replaceCustomerTransferSchema,
 } from "../schemas/finance.schema.js";
@@ -451,6 +455,26 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/chart-of-accounts',
         { preHandler: [getSession, requireFinancePermission('create', 'chart_of_accounts'), validateRequestBody(createChartAccountSchema)] },
         financeAccountController.createChartAccount
+    );
+    fastify.post(
+        '/finance/chart-of-accounts/delete-preview',
+        { preHandler: [getSession, requireFinancePermission('delete', 'chart_of_accounts'), validateRequestBody(chartAccountDeletePreviewSchema)] },
+        financeAccountController.previewChartAccountDeletion
+    );
+    fastify.post(
+        '/finance/chart-of-accounts/bulk-delete',
+        { preHandler: [getSession, requireFinancePermission('delete', 'chart_of_accounts'), validateRequestBody(chartAccountBulkDeleteSchema)] },
+        financeAccountController.deleteChartAccounts
+    );
+    fastify.post(
+        '/finance/chart-of-accounts/bulk-status',
+        { preHandler: [getSession, requireFinancePermission('edit', 'chart_of_accounts'), validateRequestBody(bulkChartAccountStatusSchema)] },
+        financeAccountController.changeChartAccountStatus
+    );
+    fastify.patch(
+        '/finance/chart-of-accounts/:accountId/status',
+        { preHandler: [getSession, requireFinancePermission('edit', 'chart_of_accounts'), validateRequestBody(chartAccountStatusSchema)] },
+        financeAccountController.changeChartAccountStatus
     );
     fastify.patch(
         '/finance/chart-of-accounts/:accountId',

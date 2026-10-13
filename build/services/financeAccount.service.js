@@ -5,6 +5,7 @@ import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalan
 import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, getRetailReceiptSourceTypes, } from "../utils/finance/financeSource.utils.js";
 import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
 import { getBillGstSummary, getInvoiceGstSummary, } from "../utils/finance/gstSummary.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
 const CHART_ACCOUNT_CATEGORIES = new Set([
     "asset",
     "liability",
@@ -28,6 +29,13 @@ const normalizeCurrency = (value) => {
         throw new FinanceValidationError("currencycode must contain three letters.");
     }
     return currency;
+};
+const requireChartAccountId = (value) => {
+    const accountId = Number(value);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+        throw new FinanceValidationError("A valid accountId is required.");
+    }
+    return accountId;
 };
 const sanitizeAccount = (row) => {
     if (!row)
@@ -89,6 +97,7 @@ const getSystemAccount = async (client, organizationId, accountCode) => {
     WHERE organizationid = $1
       AND LOWER(accountcode) = LOWER($2)
       AND status = 'active'
+      AND isdeleted = FALSE
     LIMIT 1
     `, [organizationId, accountCode]);
     if (!result.rows[0]) {
@@ -185,10 +194,10 @@ export var financeAccountService;
         const data = request.body || {};
         const accountTypeCode = String(data.accounttype || "").trim().toLowerCase();
         const accountName = normalizeText(data.accountname, "Account Name", true, 255);
-        const accountCode = normalizeText(data.accountcode, "Account Code", true, 40);
+        const accountCode = normalizeText(data.accountcode, "Account Code", false, 40);
         const description = normalizeText(data.description, "Description", false, 2000);
         const normalizedName = accountName.toLocaleLowerCase("en-US");
-        const normalizedCode = accountCode.toLocaleLowerCase("en-US");
+        const normalizedCode = accountCode?.toLocaleLowerCase("en-US") ?? null;
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
@@ -210,20 +219,26 @@ export var financeAccountService;
             }
             // Serialize matching names/codes so service validation remains reliable
             // even when two create requests arrive concurrently.
-            await client.query(`SELECT pg_advisory_xact_lock(hashtext($1)),
-                pg_advisory_xact_lock(hashtext($2))`, [
-                `chart-account-name:${organizationId}:${normalizedName}`,
-                `chart-account-code:${organizationId}:${normalizedCode}`,
-            ]);
+            await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`chart-account-name:${organizationId}:${normalizedName}`]);
+            if (normalizedCode) {
+                await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`chart-account-code:${organizationId}:${normalizedCode}`]);
+            }
             const duplicateResult = await client.query(`
         SELECT
           BOOL_OR(LOWER(TRIM(accountname)) = $2) AS duplicatename,
-          BOOL_OR(LOWER(TRIM(accountcode)) = $3) AS duplicatecode
+          BOOL_OR(
+            $3::TEXT IS NOT NULL
+            AND LOWER(TRIM(accountcode)) = $3
+          ) AS duplicatecode
         FROM finance_accounts
         WHERE organizationid = $1
+          AND isdeleted = FALSE
           AND (
             LOWER(TRIM(accountname)) = $2
-            OR LOWER(TRIM(accountcode)) = $3
+            OR (
+              $3::TEXT IS NOT NULL
+              AND LOWER(TRIM(accountcode)) = $3
+            )
           )
         `, [organizationId, normalizedName, normalizedCode]);
             if (duplicateResult.rows[0]?.duplicatename === true) {
@@ -299,6 +314,7 @@ export var financeAccountService;
         const conditions = [
             "f.organizationid = $1",
             "f.isusercreatedchartaccount = TRUE",
+            "f.isdeleted = FALSE",
         ];
         if (queryData.search) {
             params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
@@ -327,17 +343,36 @@ export var financeAccountService;
             params.push(accountTypeCode);
             conditions.push(`f.accountsubtype = $${params.length}`);
         }
-        if (queryData.status) {
-            const status = String(queryData.status).trim().toLowerCase();
-            if (!['active', 'inactive'].includes(status)) {
-                throw new FinanceValidationError("status must be active or inactive.");
-            }
+        const status = String(queryData.status || "active").trim().toLowerCase();
+        if (!['active', 'inactive', 'all'].includes(status)) {
+            throw new FinanceValidationError("status must be active, inactive, or all.");
+        }
+        if (status !== "all") {
             params.push(status);
             conditions.push(`f.status = $${params.length}`);
         }
         const page = Math.max(Number(queryData.page) || 1, 1);
         const count = Math.min(Math.max(Number(queryData.count) || 10, 1), 200);
         const offset = (page - 1) * count;
+        const { fromDate, toDate } = resolveChartAccountDateRange(queryData);
+        const fromDateParam = params.length + 1;
+        const toDateParam = params.length + 2;
+        params.push(fromDate, toDate);
+        conditions.push(`(
+      $${fromDateParam}::DATE IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM journal_lines period_line
+        JOIN journal_entries period_entry
+          ON period_entry.id = period_line.journalentryid
+        WHERE period_line.financeaccountid = f.id
+          AND period_entry.organizationid = f.organizationid
+          AND period_entry.status = 'posted'
+          AND period_entry.isdeleted = FALSE
+          AND period_entry.entrydate >= $${fromDateParam}::DATE
+          AND period_entry.entrydate <= $${toDateParam}::DATE
+      )
+    )`);
         const whereClause = conditions.join(" AND ");
         const filterParams = [...params];
         const [countResult, summaryResult, receivableInvoiceResult, billResult] = await Promise.all([
@@ -347,11 +382,11 @@ export var financeAccountService;
             query(`
         SELECT
           COUNT(*)::INTEGER AS total,
-          COUNT(*) FILTER (WHERE accounttype = 'asset')::INTEGER AS asset,
-          COUNT(*) FILTER (WHERE accounttype = 'liability')::INTEGER AS liability,
-          COUNT(*) FILTER (WHERE accounttype = 'equity')::INTEGER AS equity,
-          COUNT(*) FILTER (WHERE accounttype = 'income')::INTEGER AS income,
-          COUNT(*) FILTER (WHERE accounttype = 'expense')::INTEGER AS expense,
+          COUNT(*) FILTER (WHERE f.accounttype = 'asset')::INTEGER AS asset,
+          COUNT(*) FILTER (WHERE f.accounttype = 'liability')::INTEGER AS liability,
+          COUNT(*) FILTER (WHERE f.accounttype = 'equity')::INTEGER AS equity,
+          COUNT(*) FILTER (WHERE f.accounttype = 'income')::INTEGER AS income,
+          COUNT(*) FILTER (WHERE f.accounttype = 'expense')::INTEGER AS expense,
           COALESCE((
             SELECT SUM(
               GREATEST(
@@ -362,10 +397,9 @@ export var financeAccountService;
             FROM poinvoice bill
             WHERE LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
           ), 0) AS accountspayable
-        FROM finance_accounts
-        WHERE organizationid = $1
-          AND isusercreatedchartaccount = TRUE
-        `, [organizationId]),
+        FROM finance_accounts f
+        WHERE ${whereClause}
+        `, filterParams),
             query(`SELECT *
          FROM revoinvoice
          WHERE LOWER(COALESCE(paymentstatus, 'pending')) <> 'cancelled'`),
@@ -373,6 +407,8 @@ export var financeAccountService;
          FROM poinvoice
          WHERE LOWER(COALESCE(invoicestatus, 'in_progress')) <> 'cancelled'`),
         ]);
+        const offsetParam = params.length + 1;
+        const countParam = params.length + 2;
         params.push(offset, count);
         const result = await query(`
       SELECT
@@ -406,10 +442,13 @@ export var financeAccountService;
         WHERE jl.financeaccountid = f.id
           AND je.organizationid = f.organizationid
           AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+          AND ($${fromDateParam}::DATE IS NULL OR je.entrydate >= $${fromDateParam}::DATE)
+          AND ($${toDateParam}::DATE IS NULL OR je.entrydate <= $${toDateParam}::DATE)
       ) ledger_totals ON TRUE
       WHERE ${whereClause}
       ORDER BY f.modifieddate DESC, f.id DESC
-      OFFSET $${params.length - 1} LIMIT $${params.length}
+      OFFSET $${offsetParam} LIMIT $${countParam}
       `, params);
         const records = result.rows.map((account) => ({
             ...account,
@@ -429,6 +468,10 @@ export var financeAccountService;
             total: Number(countResult.rows[0]?.total || 0),
             page,
             count,
+            period: {
+                fromdate: fromDate,
+                todate: toDate,
+            },
             summary: {
                 total: Number(summary.total || 0),
                 asset: Number(summary.asset || 0),
@@ -481,9 +524,11 @@ export var financeAccountService;
         WHERE jl.financeaccountid = f.id
           AND je.organizationid = f.organizationid
           AND je.status = 'posted'
+          AND je.isdeleted = FALSE
       ) ledger_totals ON TRUE
       WHERE f.id = $1
         AND f.organizationid = $2
+        AND f.isdeleted = FALSE
       LIMIT 1
       `, [accountId, organizationId]);
         const account = result.rows[0];
@@ -503,6 +548,63 @@ export var financeAccountService;
                 String(account.accounttype || "").replace(/^./, (value) => value.toUpperCase()),
         };
     };
+    financeAccountService.updateChartAccount = async (request) => {
+        const { actor, organizationId } = resolveFinanceContext(request);
+        const accountId = requireChartAccountId(request.params?.accountId);
+        const accountName = normalizeText(request.body?.accountname, "Account Name", true, 255);
+        const normalizedName = accountName.toLocaleLowerCase("en-US");
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            const currentResult = await client.query(`SELECT * FROM finance_accounts
+         WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
+         LIMIT 1
+         FOR UPDATE`, [accountId, organizationId]);
+            const current = currentResult.rows[0];
+            if (!current) {
+                throw new FinanceValidationError("Chart account was not found.", 404, "CHART_ACCOUNT_NOT_FOUND");
+            }
+            if (current.issystem === true || current.isusercreatedchartaccount !== true) {
+                throw new FinanceValidationError("System and operational accounts cannot be renamed.", 409, "CHART_ACCOUNT_EDIT_PROTECTED");
+            }
+            await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`chart-account-name:${organizationId}:${normalizedName}`]);
+            const duplicateResult = await client.query(`SELECT id FROM finance_accounts
+         WHERE organizationid = $1
+           AND id <> $2
+           AND isdeleted = FALSE
+           AND LOWER(TRIM(accountname)) = $3
+         LIMIT 1`, [organizationId, accountId, normalizedName]);
+            if (duplicateResult.rows[0]) {
+                throw new FinanceValidationError("An account with this Account Name already exists.", 409, "CHART_ACCOUNT_NAME_DUPLICATE");
+            }
+            const epoch = nowEpoch();
+            const updatedResult = await client.query(`UPDATE finance_accounts
+         SET accountname = $1, modifiedby = $2, modifieddate = $3
+         WHERE id = $4 AND organizationid = $5
+           AND isdeleted = FALSE
+         RETURNING *`, [accountName, actor, epoch, accountId, organizationId]);
+            await client.query(`UPDATE bank_transactions
+         SET partyname = $1
+         WHERE organizationid = $2
+           AND counterpartyaccountid = $3
+           AND isdeleted = FALSE
+           AND partytype = 'ledger'`, [accountName, organizationId, accountId]);
+            await insertAuditEvent(client, organizationId, "chart_account", accountId, "renamed", actor, { previousname: current.accountname, accountname: accountName });
+            await client.query("COMMIT");
+            return updatedResult.rows[0];
+        }
+        catch (error) {
+            await client.query("ROLLBACK");
+            if (error?.code === "23505") {
+                throw new FinanceValidationError("An account with this Account Name already exists.", 409, "CHART_ACCOUNT_NAME_DUPLICATE");
+            }
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    };
     financeAccountService.listChartAccountEntries = async (request) => {
         const { organizationId } = resolveFinanceContext(request);
         const accountId = Number(request.params?.accountId);
@@ -513,6 +615,7 @@ export var financeAccountService;
        FROM finance_accounts
        WHERE id = $1
          AND organizationid = $2
+         AND isdeleted = FALSE
        LIMIT 1`, [accountId, organizationId]);
         const account = accountResult.rows[0];
         if (!account) {
@@ -531,6 +634,7 @@ export var financeAccountService;
       WHERE jl.financeaccountid = $1
         AND je.organizationid = $2
         AND je.status = 'posted'
+        AND je.isdeleted = FALSE
       `, [accountId, organizationId]);
         const entriesResult = await query(`
       SELECT
@@ -634,6 +738,7 @@ export var financeAccountService;
         ON je.sourcetype = 'bank_transaction'
        AND bt.id = je.sourceid
        AND bt.organizationid = je.organizationid
+       AND bt.isdeleted = FALSE
       LEFT JOIN bank_cash_accounts bca
         ON bca.id = bt.bankcashaccountid
        AND bca.organizationid = je.organizationid
@@ -657,6 +762,7 @@ export var financeAccountService;
       WHERE jl.financeaccountid = $1
         AND je.organizationid = $2
         AND je.status = 'posted'
+        AND je.isdeleted = FALSE
       ORDER BY je.entrydate DESC, je.posteddate DESC NULLS LAST, jl.id DESC
       OFFSET $3 LIMIT $4
       `, [accountId, organizationId, offset, count]);
@@ -892,7 +998,9 @@ export var financeAccountService;
         f.accountcode,
         f.accountsubtype
       FROM bank_cash_accounts b
-      JOIN finance_accounts f ON f.id = b.financeaccountid
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
       WHERE ${conditions.join(" AND ")}
       ORDER BY b.modifieddate DESC, b.id DESC
       OFFSET $${params.length - 1} LIMIT $${params.length}
@@ -927,6 +1035,7 @@ export var financeAccountService;
           FROM bank_transactions bt
           WHERE bt.bankcashaccountid = b.id
             AND bt.postingstatus = 'posted'
+            AND bt.isdeleted = FALSE
           ORDER BY
             bt.transactiondate DESC,
             bt.posteddate DESC NULLS LAST,
@@ -934,7 +1043,9 @@ export var financeAccountService;
           LIMIT 1
         ) AS closingdate
       FROM bank_cash_accounts b
-      JOIN finance_accounts f ON f.id = b.financeaccountid
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
       WHERE b.id = $1 AND b.organizationid = $2
       LIMIT 1
       `, [accountId, organizationId]);
@@ -1102,6 +1213,7 @@ export var financeAccountService;
       FROM finance_accounts
       WHERE organizationid = $1
         AND status = 'active'
+        AND isdeleted = FALSE
         AND isusercreatedchartaccount = TRUE
         AND accountsubtype NOT IN ('bank', 'cash')
         ${searchClause}
@@ -1123,15 +1235,37 @@ export var financeAccountService;
         const transactionDate = requireIsoDate(request.body?.transactiondate, "transactiondate");
         const entrySide = normalizeEntrySide(request.body?.entryside);
         const amount = requirePositiveMoney(request.body?.amount);
-        const entryName = normalizeText(request.body?.entryname, "Entry Name", true, 255);
-        const remarks = normalizeText(request.body?.remarks, "remarks", false, 2000);
+        const narration = normalizeText(request.body?.entryname, "Narration", false, 255);
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
+            // Lifecycle operations lock Chart Accounts before Cash/Bank accounts.
+            // Direct Ledger posting uses the same order to prevent a transaction
+            // from being inserted while its counterparty account is deactivated.
+            const counterpartyResult = await client.query(`
+        SELECT *
+        FROM finance_accounts
+        WHERE id = $1
+          AND organizationid = $2
+          AND status = 'active'
+          AND isdeleted = FALSE
+          AND isusercreatedchartaccount = TRUE
+        LIMIT 1
+        FOR UPDATE
+        `, [counterpartyAccountId, organizationId]);
+            const counterparty = counterpartyResult.rows[0];
+            if (!counterparty) {
+                throw new FinanceValidationError("The selected counterparty ledger was not found.");
+            }
+            if (["bank", "cash"].includes(counterparty.accountsubtype)) {
+                throw new FinanceValidationError("Bank-to-bank and cash transfers require the transfer workflow.");
+            }
             const accountResult = await client.query(`
         SELECT b.*, f.id AS ledgerid
         FROM bank_cash_accounts b
-        JOIN finance_accounts f ON f.id = b.financeaccountid
+        JOIN finance_accounts f
+          ON f.id = b.financeaccountid
+         AND f.isdeleted = FALSE
         WHERE b.id = $1 AND b.organizationid = $2
         FOR UPDATE OF b
         `, [bankCashAccountId, organizationId]);
@@ -1142,29 +1276,15 @@ export var financeAccountService;
             if (bankCashAccount.status !== "active") {
                 throw new FinanceValidationError("The selected Bank/Cash account is inactive.");
             }
-            const counterpartyResult = await client.query(`
-        SELECT *
-        FROM finance_accounts
-        WHERE id = $1
-          AND organizationid = $2
-          AND status = 'active'
-          AND isusercreatedchartaccount = TRUE
-        LIMIT 1
-        `, [counterpartyAccountId, organizationId]);
-            const counterparty = counterpartyResult.rows[0];
-            if (!counterparty) {
-                throw new FinanceValidationError("The selected counterparty ledger was not found.");
-            }
             if (Number(counterparty.id) === Number(bankCashAccount.financeaccountid)) {
                 throw new FinanceValidationError("The counterparty ledger must differ from the selected Bank/Cash account.");
-            }
-            if (["bank", "cash"].includes(counterparty.accountsubtype)) {
-                throw new FinanceValidationError("Bank-to-bank and cash transfers require the transfer workflow.");
             }
             const latestResult = await client.query(`
         SELECT transactiondate
         FROM bank_transactions
-        WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
+        WHERE bankcashaccountid = $1
+          AND postingstatus = 'posted'
+          AND isdeleted = FALSE
         ORDER BY transactiondate DESC, posteddate DESC, id DESC
         LIMIT 1
         `, [bankCashAccountId]);
@@ -1219,8 +1339,8 @@ export var financeAccountService;
                 debitAmount,
                 creditAmount,
                 balanceAfter,
-                remarks,
-                entryName,
+                null,
+                narration,
                 actor,
                 epoch,
             ]);
@@ -1247,7 +1367,7 @@ export var financeAccountService;
                 organizationId,
                 transactionDate,
                 bankTransaction.id,
-                entryName,
+                narration,
                 actor,
                 epoch,
             ]);
@@ -1273,7 +1393,7 @@ export var financeAccountService;
                 bankCashAccount.financeaccountid,
                 bankDebit,
                 bankCredit,
-                entryName,
+                narration,
                 counterparty.id,
                 counterpartyDebit,
                 counterpartyCredit,
@@ -1301,7 +1421,7 @@ export var financeAccountService;
                 transactionnumber: transactionNumber,
                 entryside: entrySide,
                 amount,
-                entryname: entryName,
+                narration,
                 previousbalance: toMoney(bankCashAccount.currentbalance),
                 balanceafter: balanceAfter,
                 allocationmethod: "direct_ledger",
@@ -1330,7 +1450,20 @@ export var financeAccountService;
         const accountIdParam = request.params?.accountId;
         const queryData = request.query || {};
         const params = [organizationId];
-        const conditions = ["t.organizationid = $1"];
+        const conditions = ["t.organizationid = $1", "t.isdeleted = FALSE"];
+        const lifecycleStatus = String(queryData.status || "active").trim().toLowerCase();
+        if (!["active", "inactive", "all"].includes(lifecycleStatus)) {
+            throw new FinanceValidationError("status must be active, inactive, or all.");
+        }
+        if (lifecycleStatus === "active") {
+            conditions.push("t.postingstatus = 'posted'");
+        }
+        else if (lifecycleStatus === "inactive") {
+            conditions.push("t.postingstatus = 'inactive'");
+        }
+        else {
+            conditions.push("t.postingstatus IN ('posted', 'inactive')");
+        }
         if (queryData.transactionid != null &&
             String(queryData.transactionid).trim() !== "") {
             const transactionId = Number(queryData.transactionid);
@@ -1497,8 +1630,12 @@ export var financeAccountService;
       JOIN bank_cash_accounts b
         ON b.id = t.bankcashaccountid
        AND b.organizationid = t.organizationid
-      LEFT JOIN journal_entries j ON j.id = t.journalentryid
-      LEFT JOIN finance_accounts f ON f.id = t.counterpartyaccountid
+      LEFT JOIN journal_entries j
+        ON j.id = t.journalentryid
+       AND j.isdeleted = FALSE
+      LEFT JOIN finance_accounts f
+        ON f.id = t.counterpartyaccountid
+       AND f.isdeleted = FALSE
       LEFT JOIN LATERAL (
         SELECT
           iu.firstname,

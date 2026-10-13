@@ -184,12 +184,14 @@ const buildReferenceSelect = (conditions: string[]) => `
   LEFT JOIN bank_transactions bt
     ON bt.id = r.sourcebanktransactionid
    AND bt.organizationid = r.organizationid
+   AND bt.isdeleted = FALSE
   LEFT JOIN bank_cash_accounts bca
     ON bca.id = bt.bankcashaccountid
    AND bca.organizationid = r.organizationid
   LEFT JOIN journal_entries j
     ON j.id = r.sourcejournalentryid
    AND j.organizationid = r.organizationid
+   AND j.isdeleted = FALSE
   WHERE ${conditions.join(" AND ")}
 `;
 
@@ -217,11 +219,11 @@ const buildSupplierReferenceSelect = (conditions: string[]) => `
   LEFT JOIN movement_totals mt
     ON mt.organizationid = r.organizationid AND mt.onaccountreferenceid = r.id
   LEFT JOIN bank_transactions bt
-    ON bt.id = r.sourcebanktransactionid AND bt.organizationid = r.organizationid
+    ON bt.id = r.sourcebanktransactionid AND bt.organizationid = r.organizationid AND bt.isdeleted = FALSE
   LEFT JOIN bank_cash_accounts bca
     ON bca.id = bt.bankcashaccountid AND bca.organizationid = r.organizationid
   LEFT JOIN journal_entries j
-    ON j.id = r.sourcejournalentryid AND j.organizationid = r.organizationid
+    ON j.id = r.sourcejournalentryid AND j.organizationid = r.organizationid AND j.isdeleted = FALSE
   WHERE ${conditions.join(" AND ")}
 `;
 
@@ -239,8 +241,8 @@ const loadMovements = async (organizationId: number, referenceId: number) => {
       COALESCE(oa.totalsettlement, a.totalsettledamount) AS totalsettledamount,
       rm.movementtype AS relatedmovementtype
     FROM on_account_movements m
-    LEFT JOIN bank_transactions bt ON bt.id = m.banktransactionid AND bt.organizationid = m.organizationid
-    LEFT JOIN journal_entries j ON j.id = m.journalentryid AND j.organizationid = m.organizationid
+    LEFT JOIN bank_transactions bt ON bt.id = m.banktransactionid AND bt.organizationid = m.organizationid AND bt.isdeleted = FALSE
+    LEFT JOIN journal_entries j ON j.id = m.journalentryid AND j.organizationid = m.organizationid AND j.isdeleted = FALSE
     LEFT JOIN bank_transaction_allocations a ON a.id = m.banktransactionallocationid
     LEFT JOIN on_account_document_allocations oa
       ON oa.onaccountmovementid = m.id AND oa.organizationid = m.organizationid AND oa.status = 'applied'
@@ -416,9 +418,11 @@ export module onAccountReferenceService {
       LEFT JOIN bank_transactions bt
         ON bt.id = m.banktransactionid
        AND bt.organizationid = m.organizationid
+       AND bt.isdeleted = FALSE
       LEFT JOIN journal_entries j
         ON j.id = m.journalentryid
        AND j.organizationid = m.organizationid
+       AND j.isdeleted = FALSE
       LEFT JOIN bank_transaction_allocations a
         ON a.id = m.banktransactionallocationid
       LEFT JOIN on_account_document_allocations oa

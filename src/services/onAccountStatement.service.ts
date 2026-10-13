@@ -84,12 +84,14 @@ export module onAccountStatementService {
       LEFT JOIN bank_transactions bt
         ON bt.id = m.banktransactionid
        AND bt.organizationid = r.organizationid
+       AND bt.isdeleted = FALSE
       LEFT JOIN bank_cash_accounts account
         ON account.id = bt.bankcashaccountid
        AND account.organizationid = r.organizationid
       LEFT JOIN journal_entries journal
         ON journal.id = m.journalentryid
        AND journal.organizationid = r.organizationid
+       AND journal.isdeleted = FALSE
       LEFT JOIN on_account_document_allocations allocation
         ON allocation.onaccountmovementid = m.id
        AND allocation.organizationid = r.organizationid

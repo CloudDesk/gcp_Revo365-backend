@@ -5,10 +5,66 @@ export const createChartAccountSchema = {
     properties: {
         accounttype: { type: "string", minLength: 1, maxLength: 50 },
         accountname: { type: "string", minLength: 1, maxLength: 255 },
-        accountcode: { type: "string", minLength: 1, maxLength: 40 },
+        accountcode: { type: ["string", "null"], maxLength: 40 },
         description: { type: ["string", "null"], maxLength: 2000 },
     },
-    required: ["accounttype", "accountname", "accountcode"],
+    required: ["accounttype", "accountname"],
+};
+export const updateChartAccountSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        accountname: { type: "string", minLength: 1, maxLength: 255 },
+    },
+    required: ["accountname"],
+};
+export const chartAccountStatusSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: { type: "string", enum: ["active", "inactive"] },
+        reason: { type: ["string", "null"], maxLength: 500 },
+    },
+    required: ["status"],
+};
+export const bulkChartAccountStatusSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        accountids: {
+            type: "array",
+            minItems: 1,
+            maxItems: 200,
+            uniqueItems: true,
+            items: { type: "integer", minimum: 1 },
+        },
+        status: { type: "string", enum: ["active", "inactive"] },
+        reason: { type: ["string", "null"], maxLength: 500 },
+    },
+    required: ["accountids", "status"],
+};
+export const chartAccountDeletePreviewSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        accountids: {
+            type: "array",
+            minItems: 1,
+            maxItems: 200,
+            uniqueItems: true,
+            items: { type: "integer", minimum: 1 },
+        },
+    },
+    required: ["accountids"],
+};
+export const chartAccountBulkDeleteSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        deletiontoken: { type: "string", minLength: 40, maxLength: 20000 },
+        reason: { type: ["string", "null"], maxLength: 500 },
+    },
+    required: ["deletiontoken"],
 };
 export const createBankCashAccountSchema = {
     type: "object",
@@ -65,15 +121,13 @@ export const createDirectBankTransactionSchema = {
             pattern: "^\\d{4}-\\d{2}-\\d{2}$",
         },
         counterpartyaccountid: { type: "integer", minimum: 1 },
-        entryname: { type: "string", minLength: 1, maxLength: 255 },
+        entryname: { type: ["string", "null"], maxLength: 255 },
         entryside: { type: "string", enum: ["debit", "credit"] },
         amount: { type: "number", exclusiveMinimum: 0 },
-        remarks: nullableString,
     },
     required: [
         "transactiondate",
         "counterpartyaccountid",
-        "entryname",
         "entryside",
         "amount",
     ],

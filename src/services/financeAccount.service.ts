@@ -160,6 +160,7 @@ const getSystemAccount = async (
     WHERE organizationid = $1
       AND LOWER(accountcode) = LOWER($2)
       AND status = 'active'
+      AND isdeleted = FALSE
     LIMIT 1
     `,
     [organizationId, accountCode]
@@ -365,6 +366,7 @@ export module financeAccountService {
           ) AS duplicatecode
         FROM finance_accounts
         WHERE organizationid = $1
+          AND isdeleted = FALSE
           AND (
             LOWER(TRIM(accountname)) = $2
             OR (
@@ -481,6 +483,7 @@ export module financeAccountService {
     const conditions = [
       "f.organizationid = $1",
       "f.isusercreatedchartaccount = TRUE",
+      "f.isdeleted = FALSE",
     ];
 
     if (queryData.search) {
@@ -513,11 +516,11 @@ export module financeAccountService {
       params.push(accountTypeCode);
       conditions.push(`f.accountsubtype = $${params.length}`);
     }
-    if (queryData.status) {
-      const status = String(queryData.status).trim().toLowerCase();
-      if (!['active', 'inactive'].includes(status)) {
-        throw new FinanceValidationError("status must be active or inactive.");
-      }
+    const status = String(queryData.status || "active").trim().toLowerCase();
+    if (!['active', 'inactive', 'all'].includes(status)) {
+      throw new FinanceValidationError("status must be active, inactive, or all.");
+    }
+    if (status !== "all") {
       params.push(status);
       conditions.push(`f.status = $${params.length}`);
     }
@@ -539,6 +542,7 @@ export module financeAccountService {
         WHERE period_line.financeaccountid = f.id
           AND period_entry.organizationid = f.organizationid
           AND period_entry.status = 'posted'
+          AND period_entry.isdeleted = FALSE
           AND period_entry.entrydate >= $${fromDateParam}::DATE
           AND period_entry.entrydate <= $${toDateParam}::DATE
       )
@@ -557,11 +561,11 @@ export module financeAccountService {
         `
         SELECT
           COUNT(*)::INTEGER AS total,
-          COUNT(*) FILTER (WHERE accounttype = 'asset')::INTEGER AS asset,
-          COUNT(*) FILTER (WHERE accounttype = 'liability')::INTEGER AS liability,
-          COUNT(*) FILTER (WHERE accounttype = 'equity')::INTEGER AS equity,
-          COUNT(*) FILTER (WHERE accounttype = 'income')::INTEGER AS income,
-          COUNT(*) FILTER (WHERE accounttype = 'expense')::INTEGER AS expense,
+          COUNT(*) FILTER (WHERE f.accounttype = 'asset')::INTEGER AS asset,
+          COUNT(*) FILTER (WHERE f.accounttype = 'liability')::INTEGER AS liability,
+          COUNT(*) FILTER (WHERE f.accounttype = 'equity')::INTEGER AS equity,
+          COUNT(*) FILTER (WHERE f.accounttype = 'income')::INTEGER AS income,
+          COUNT(*) FILTER (WHERE f.accounttype = 'expense')::INTEGER AS expense,
           COALESCE((
             SELECT SUM(
               GREATEST(
@@ -572,11 +576,10 @@ export module financeAccountService {
             FROM poinvoice bill
             WHERE LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
           ), 0) AS accountspayable
-        FROM finance_accounts
-        WHERE organizationid = $1
-          AND isusercreatedchartaccount = TRUE
+        FROM finance_accounts f
+        WHERE ${whereClause}
         `,
-        [organizationId]
+        filterParams
       ),
       query(
         `SELECT *
@@ -626,6 +629,7 @@ export module financeAccountService {
         WHERE jl.financeaccountid = f.id
           AND je.organizationid = f.organizationid
           AND je.status = 'posted'
+          AND je.isdeleted = FALSE
           AND ($${fromDateParam}::DATE IS NULL OR je.entrydate >= $${fromDateParam}::DATE)
           AND ($${toDateParam}::DATE IS NULL OR je.entrydate <= $${toDateParam}::DATE)
       ) ledger_totals ON TRUE
@@ -724,9 +728,11 @@ export module financeAccountService {
         WHERE jl.financeaccountid = f.id
           AND je.organizationid = f.organizationid
           AND je.status = 'posted'
+          AND je.isdeleted = FALSE
       ) ledger_totals ON TRUE
       WHERE f.id = $1
         AND f.organizationid = $2
+        AND f.isdeleted = FALSE
       LIMIT 1
       `,
       [accountId, organizationId]
@@ -779,6 +785,7 @@ export module financeAccountService {
       const currentResult = await client.query(
         `SELECT * FROM finance_accounts
          WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
          LIMIT 1
          FOR UPDATE`,
         [accountId, organizationId]
@@ -806,6 +813,7 @@ export module financeAccountService {
         `SELECT id FROM finance_accounts
          WHERE organizationid = $1
            AND id <> $2
+           AND isdeleted = FALSE
            AND LOWER(TRIM(accountname)) = $3
          LIMIT 1`,
         [organizationId, accountId, normalizedName]
@@ -823,6 +831,7 @@ export module financeAccountService {
         `UPDATE finance_accounts
          SET accountname = $1, modifiedby = $2, modifieddate = $3
          WHERE id = $4 AND organizationid = $5
+           AND isdeleted = FALSE
          RETURNING *`,
         [accountName, actor, epoch, accountId, organizationId]
       );
@@ -831,6 +840,7 @@ export module financeAccountService {
          SET partyname = $1
          WHERE organizationid = $2
            AND counterpartyaccountid = $3
+           AND isdeleted = FALSE
            AND partytype = 'ledger'`,
         [accountName, organizationId, accountId]
       );
@@ -872,6 +882,7 @@ export module financeAccountService {
        FROM finance_accounts
        WHERE id = $1
          AND organizationid = $2
+         AND isdeleted = FALSE
        LIMIT 1`,
       [accountId, organizationId]
     );
@@ -899,6 +910,7 @@ export module financeAccountService {
       WHERE jl.financeaccountid = $1
         AND je.organizationid = $2
         AND je.status = 'posted'
+        AND je.isdeleted = FALSE
       `,
       [accountId, organizationId]
     );
@@ -1006,6 +1018,7 @@ export module financeAccountService {
         ON je.sourcetype = 'bank_transaction'
        AND bt.id = je.sourceid
        AND bt.organizationid = je.organizationid
+       AND bt.isdeleted = FALSE
       LEFT JOIN bank_cash_accounts bca
         ON bca.id = bt.bankcashaccountid
        AND bca.organizationid = je.organizationid
@@ -1029,6 +1042,7 @@ export module financeAccountService {
       WHERE jl.financeaccountid = $1
         AND je.organizationid = $2
         AND je.status = 'posted'
+        AND je.isdeleted = FALSE
       ORDER BY je.entrydate DESC, je.posteddate DESC NULLS LAST, jl.id DESC
       OFFSET $3 LIMIT $4
       `,
@@ -1328,7 +1342,9 @@ export module financeAccountService {
         f.accountcode,
         f.accountsubtype
       FROM bank_cash_accounts b
-      JOIN finance_accounts f ON f.id = b.financeaccountid
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
       WHERE ${conditions.join(" AND ")}
       ORDER BY b.modifieddate DESC, b.id DESC
       OFFSET $${params.length - 1} LIMIT $${params.length}
@@ -1367,6 +1383,7 @@ export module financeAccountService {
           FROM bank_transactions bt
           WHERE bt.bankcashaccountid = b.id
             AND bt.postingstatus = 'posted'
+            AND bt.isdeleted = FALSE
           ORDER BY
             bt.transactiondate DESC,
             bt.posteddate DESC NULLS LAST,
@@ -1374,7 +1391,9 @@ export module financeAccountService {
           LIMIT 1
         ) AS closingdate
       FROM bank_cash_accounts b
-      JOIN finance_accounts f ON f.id = b.financeaccountid
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
       WHERE b.id = $1 AND b.organizationid = $2
       LIMIT 1
       `,
@@ -1600,6 +1619,7 @@ export module financeAccountService {
       FROM finance_accounts
       WHERE organizationid = $1
         AND status = 'active'
+        AND isdeleted = FALSE
         AND isusercreatedchartaccount = TRUE
         AND accountsubtype NOT IN ('bank', 'cash')
         ${searchClause}
@@ -1640,11 +1660,42 @@ export module financeAccountService {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // Lifecycle operations lock Chart Accounts before Cash/Bank accounts.
+      // Direct Ledger posting uses the same order to prevent a transaction
+      // from being inserted while its counterparty account is deactivated.
+      const counterpartyResult = await client.query(
+        `
+        SELECT *
+        FROM finance_accounts
+        WHERE id = $1
+          AND organizationid = $2
+          AND status = 'active'
+          AND isdeleted = FALSE
+          AND isusercreatedchartaccount = TRUE
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [counterpartyAccountId, organizationId]
+      );
+      const counterparty = counterpartyResult.rows[0];
+      if (!counterparty) {
+        throw new FinanceValidationError(
+          "The selected counterparty ledger was not found."
+        );
+      }
+      if (["bank", "cash"].includes(counterparty.accountsubtype)) {
+        throw new FinanceValidationError(
+          "Bank-to-bank and cash transfers require the transfer workflow."
+        );
+      }
+
       const accountResult = await client.query(
         `
         SELECT b.*, f.id AS ledgerid
         FROM bank_cash_accounts b
-        JOIN finance_accounts f ON f.id = b.financeaccountid
+        JOIN finance_accounts f
+          ON f.id = b.financeaccountid
+         AND f.isdeleted = FALSE
         WHERE b.id = $1 AND b.organizationid = $2
         FOR UPDATE OF b
         `,
@@ -1663,33 +1714,9 @@ export module financeAccountService {
           "The selected Bank/Cash account is inactive."
         );
       }
-
-      const counterpartyResult = await client.query(
-        `
-        SELECT *
-        FROM finance_accounts
-        WHERE id = $1
-          AND organizationid = $2
-          AND status = 'active'
-          AND isusercreatedchartaccount = TRUE
-        LIMIT 1
-        `,
-        [counterpartyAccountId, organizationId]
-      );
-      const counterparty = counterpartyResult.rows[0];
-      if (!counterparty) {
-        throw new FinanceValidationError(
-          "The selected counterparty ledger was not found."
-        );
-      }
       if (Number(counterparty.id) === Number(bankCashAccount.financeaccountid)) {
         throw new FinanceValidationError(
           "The counterparty ledger must differ from the selected Bank/Cash account."
-        );
-      }
-      if (["bank", "cash"].includes(counterparty.accountsubtype)) {
-        throw new FinanceValidationError(
-          "Bank-to-bank and cash transfers require the transfer workflow."
         );
       }
 
@@ -1697,7 +1724,9 @@ export module financeAccountService {
         `
         SELECT transactiondate
         FROM bank_transactions
-        WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
+        WHERE bankcashaccountid = $1
+          AND postingstatus = 'posted'
+          AND isdeleted = FALSE
         ORDER BY transactiondate DESC, posteddate DESC, id DESC
         LIMIT 1
         `,
@@ -1907,7 +1936,19 @@ export module financeAccountService {
     const accountIdParam = request.params?.accountId;
     const queryData = request.query || {};
     const params: any[] = [organizationId];
-    const conditions = ["t.organizationid = $1"];
+    const conditions = ["t.organizationid = $1", "t.isdeleted = FALSE"];
+
+    const lifecycleStatus = String(queryData.status || "active").trim().toLowerCase();
+    if (!["active", "inactive", "all"].includes(lifecycleStatus)) {
+      throw new FinanceValidationError("status must be active, inactive, or all.");
+    }
+    if (lifecycleStatus === "active") {
+      conditions.push("t.postingstatus = 'posted'");
+    } else if (lifecycleStatus === "inactive") {
+      conditions.push("t.postingstatus = 'inactive'");
+    } else {
+      conditions.push("t.postingstatus IN ('posted', 'inactive')");
+    }
 
     if (
       queryData.transactionid != null &&
@@ -2085,8 +2126,12 @@ export module financeAccountService {
       JOIN bank_cash_accounts b
         ON b.id = t.bankcashaccountid
        AND b.organizationid = t.organizationid
-      LEFT JOIN journal_entries j ON j.id = t.journalentryid
-      LEFT JOIN finance_accounts f ON f.id = t.counterpartyaccountid
+      LEFT JOIN journal_entries j
+        ON j.id = t.journalentryid
+       AND j.isdeleted = FALSE
+      LEFT JOIN finance_accounts f
+        ON f.id = t.counterpartyaccountid
+       AND f.isdeleted = FALSE
       LEFT JOIN LATERAL (
         SELECT
           iu.firstname,

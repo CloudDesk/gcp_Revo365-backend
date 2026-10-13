@@ -231,6 +231,7 @@ const linkInvoiceToPostedReceipt = async (
         AND partytype = 'customer'
         AND partyid = $4
         AND postingstatus = 'posted'
+        AND isdeleted = FALSE
       ORDER BY id
       LIMIT 1
       FOR UPDATE
@@ -347,6 +348,7 @@ const linkInvoiceToPostedReceipt = async (
       WHERE organizationid = $1
         AND accountcode = 'SYS-AR'
         AND status = 'active'
+        AND isdeleted = FALSE
       LIMIT 1
       `,
       [ORGANIZATION_ID]
@@ -705,6 +707,7 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
         AND sourcetype = 'ecommerce_order'
         AND sourcepaymentid = $2
         AND postingstatus <> 'reversed'
+        AND isdeleted = FALSE
       LIMIT 1
       `,
       [event.organizationid, event.sourcepaymentid]
@@ -799,6 +802,7 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       WHERE organizationid = $1
         AND accountcode = 'SYS-CUSTOMER-ADVANCE'
         AND status = 'active'
+        AND isdeleted = FALSE
       LIMIT 1
       `,
       [event.organizationid]
@@ -820,6 +824,7 @@ const processEvent = async (eventId: number): Promise<FinanceEventResult> => {
       FROM bank_transactions
       WHERE bankcashaccountid = $1
         AND postingstatus = 'posted'
+        AND isdeleted = FALSE
       ORDER BY transactiondate DESC, posteddate DESC, id DESC
       LIMIT 1
       `,
@@ -1271,6 +1276,7 @@ export module ecommercePaymentFinanceService {
                AND unapplied.remainingamount > 0
               WHERE transaction.id = event.banktransactionid
                 AND transaction.postingstatus = 'posted'
+                AND transaction.isdeleted = FALSE
             )
             AND EXISTS (
               SELECT 1
