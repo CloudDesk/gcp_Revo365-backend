@@ -71,6 +71,9 @@ import {
   resolveInvoiceDocumentType,
   resolveInvoiceGst,
 } from "../utils/finance/gstSummary.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
+import pool from "../database/postgres.js";
+import { financeAccountService } from "../services/financeAccount.service.js";
 import {
   buildCustomerStatement,
   toCustomerStatementDate,
@@ -628,12 +631,15 @@ describe("Customer Statement Phase 3 foundation", () => {
 });
 
 describe("Chart of Accounts Phase 1", () => {
-  test("requires Account Type, Account Name, and Account Code", () => {
+  test("requires Account Type and Account Name while Account Code is optional", () => {
     assert.deepEqual(createChartAccountSchema.required, [
       "accounttype",
       "accountname",
-      "accountcode",
     ]);
+    assert.deepEqual(
+      (createChartAccountSchema.properties.accountcode as any).type,
+      ["string", "null"]
+    );
     assert.equal(
       (createChartAccountSchema.properties.description as any).maxLength,
       2000
@@ -641,15 +647,139 @@ describe("Chart of Accounts Phase 1", () => {
   });
 });
 
+describe("Chart of Accounts list period filtering", () => {
+  test("accepts all time or an inclusive date range", () => {
+    assert.deepEqual(resolveChartAccountDateRange({}), {
+      fromDate: null,
+      toDate: null,
+    });
+    assert.deepEqual(
+      resolveChartAccountDateRange({
+        fromdate: "2026-04-01",
+        todate: "2027-03-31",
+      }),
+      { fromDate: "2026-04-01", toDate: "2027-03-31" }
+    );
+  });
+
+  test("rejects incomplete, invalid, and reversed ranges", () => {
+    assert.throws(
+      () => resolveChartAccountDateRange({ fromdate: "2026-04-01" }),
+      /Select both From date and To date/
+    );
+    assert.throws(
+      () =>
+        resolveChartAccountDateRange({
+          fromdate: "2026-04-31",
+          todate: "2026-05-01",
+        }),
+      /valid date/
+    );
+    assert.throws(
+      () =>
+        resolveChartAccountDateRange({
+          fromdate: "2026-10-12",
+          todate: "2026-10-01",
+        }),
+      /From date cannot be later than To date/
+    );
+  });
+
+  test("uses posted ledger entry dates for both row inclusion and period balance", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { fromdate: "2026-10-23", todate: "2026-10-23" },
+    });
+
+    const countCall = calls.find(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.ok(countCall);
+    assert.match(countCall.sql, /EXISTS \([\s\S]*period_entry\.status = 'posted'/);
+    assert.match(countCall.sql, /period_entry\.entrydate >= \$2::DATE/);
+    assert.match(countCall.sql, /period_entry\.entrydate <= \$3::DATE/);
+    assert.deepEqual(countCall.params, [7, "2026-10-23", "2026-10-23"]);
+
+    const listCall = calls.find(({ sql }) =>
+      /LEFT JOIN LATERAL \([\s\S]*SUM\(jl\.debitamount\)/s.test(sql)
+    );
+    assert.ok(listCall);
+    assert.match(listCall.sql, /je\.status = 'posted'/);
+    assert.match(listCall.sql, /je\.entrydate >= \$2::DATE/);
+    assert.match(listCall.sql, /je\.entrydate <= \$3::DATE/);
+    assert.deepEqual(listCall.params, [7, "2026-10-23", "2026-10-23", 0, 10]);
+  });
+});
+
+describe("Chart of Accounts editing", () => {
+  const account = {
+    id: 41,
+    organizationid: 7,
+    accountcode: "OFFICE-RENT",
+    accountname: "Office rent",
+    accounttype: "expense",
+    accountsubtype: "expense",
+    description: null,
+    currencycode: "INR",
+    issystem: false,
+    isusercreatedchartaccount: true,
+    status: "active",
+    createdby: "owner@example.com",
+    modifiedby: "owner@example.com",
+    createddate: 1,
+    modifieddate: 1,
+  };
+
+  test("renames a user account and updates Direct Ledger display names", async (t) => {
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        if (/SELECT \* FROM finance_accounts[\s\S]*FOR UPDATE/s.test(sql)) return { rows: [account] };
+        if (/SELECT id FROM finance_accounts/s.test(sql)) return { rows: [] };
+        if (/UPDATE finance_accounts/s.test(sql)) return { rows: [{ ...account, accountname: "Premises rent" }] };
+        return { rows: [] };
+      },
+      release: () => undefined,
+    };
+    t.mock.method(pool, "connect", async () => client as any);
+
+    const result = await financeAccountService.updateChartAccount({
+      session: { organizationid: 7, useremail: "accountant@example.com" },
+      params: { accountId: 41 },
+      body: { accountname: "Premises rent" },
+    });
+
+    assert.equal(result.accountname, "Premises rent");
+    assert.ok(calls.some(({ sql, params }) => /UPDATE bank_transactions/s.test(sql) && params?.[0] === "Premises rent"));
+    assert.ok(calls.some(({ sql }) => /INSERT INTO finance_audit_events/s.test(sql)));
+    assert.equal(calls.at(-1)?.sql, "COMMIT");
+  });
+
+});
+
 describe("Chart of Accounts Phase 2", () => {
-  test("Direct Ledger Entry requires its account, date, narration, side, and amount", () => {
+  test("Direct Ledger Entry accepts optional narration and excludes remarks", () => {
     assert.deepEqual(createDirectBankTransactionSchema.required, [
       "transactiondate",
       "counterpartyaccountid",
-      "entryname",
       "entryside",
       "amount",
     ]);
+    assert.deepEqual((createDirectBankTransactionSchema.properties.entryname as any).type, ["string", "null"]);
+    assert.equal("remarks" in createDirectBankTransactionSchema.properties, false);
     assert.equal(
       (createDirectBankTransactionSchema.properties.amount as any)
         .exclusiveMinimum,

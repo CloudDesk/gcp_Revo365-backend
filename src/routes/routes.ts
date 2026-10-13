@@ -97,6 +97,7 @@ import {
     reverseJournalSchema,
     updateJournalDraftSchema,
     updateBankCashAccountSchema,
+    updateChartAccountSchema,
     postCustomerTransferSchema,
     replaceCustomerTransferSchema,
 } from "../schemas/finance.schema.js";
@@ -450,6 +451,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/chart-of-accounts',
         { preHandler: [getSession, requireFinancePermission('create', 'chart_of_accounts'), validateRequestBody(createChartAccountSchema)] },
         financeAccountController.createChartAccount
+    );
+    fastify.patch(
+        '/finance/chart-of-accounts/:accountId',
+        { preHandler: [getSession, requireFinancePermission('edit', 'chart_of_accounts'), validateRequestBody(updateChartAccountSchema)] },
+        financeAccountController.updateChartAccount
     );
     fastify.get('/finance/accounts', { preHandler: [getSession, requireFinancePermission('read', 'finance_transactions')] }, financeAccountController.listLedgers);
     fastify.get(

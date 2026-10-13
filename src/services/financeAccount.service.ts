@@ -26,6 +26,7 @@ import {
   getBillGstSummary,
   getInvoiceGstSummary,
 } from "../utils/finance/gstSummary.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
 
 const CHART_ACCOUNT_CATEGORIES = new Set([
   "asset",
@@ -59,6 +60,14 @@ const normalizeCurrency = (value: unknown): string => {
     throw new FinanceValidationError("currencycode must contain three letters.");
   }
   return currency;
+};
+
+const requireChartAccountId = (value: unknown): number => {
+  const accountId = Number(value);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+    throw new FinanceValidationError("A valid accountId is required.");
+  }
+  return accountId;
 };
 
 const sanitizeAccount = (row: any) => {
@@ -293,9 +302,9 @@ export module financeAccountService {
     const accountCode = normalizeText(
       data.accountcode,
       "Account Code",
-      true,
+      false,
       40
-    )!;
+    );
     const description = normalizeText(
       data.description,
       "Description",
@@ -303,7 +312,7 @@ export module financeAccountService {
       2000
     );
     const normalizedName = accountName.toLocaleLowerCase("en-US");
-    const normalizedCode = accountCode.toLocaleLowerCase("en-US");
+    const normalizedCode = accountCode?.toLocaleLowerCase("en-US") ?? null;
 
     const client = await pool.connect();
     try {
@@ -336,24 +345,32 @@ export module financeAccountService {
       // Serialize matching names/codes so service validation remains reliable
       // even when two create requests arrive concurrently.
       await client.query(
-        `SELECT pg_advisory_xact_lock(hashtext($1)),
-                pg_advisory_xact_lock(hashtext($2))`,
-        [
-          `chart-account-name:${organizationId}:${normalizedName}`,
-          `chart-account-code:${organizationId}:${normalizedCode}`,
-        ]
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        [`chart-account-name:${organizationId}:${normalizedName}`]
       );
+      if (normalizedCode) {
+        await client.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1))`,
+          [`chart-account-code:${organizationId}:${normalizedCode}`]
+        );
+      }
 
       const duplicateResult = await client.query(
         `
         SELECT
           BOOL_OR(LOWER(TRIM(accountname)) = $2) AS duplicatename,
-          BOOL_OR(LOWER(TRIM(accountcode)) = $3) AS duplicatecode
+          BOOL_OR(
+            $3::TEXT IS NOT NULL
+            AND LOWER(TRIM(accountcode)) = $3
+          ) AS duplicatecode
         FROM finance_accounts
         WHERE organizationid = $1
           AND (
             LOWER(TRIM(accountname)) = $2
-            OR LOWER(TRIM(accountcode)) = $3
+            OR (
+              $3::TEXT IS NOT NULL
+              AND LOWER(TRIM(accountcode)) = $3
+            )
           )
         `,
         [organizationId, normalizedName, normalizedCode]
@@ -508,6 +525,24 @@ export module financeAccountService {
     const page = Math.max(Number(queryData.page) || 1, 1);
     const count = Math.min(Math.max(Number(queryData.count) || 10, 1), 200);
     const offset = (page - 1) * count;
+    const { fromDate, toDate } = resolveChartAccountDateRange(queryData);
+    const fromDateParam = params.length + 1;
+    const toDateParam = params.length + 2;
+    params.push(fromDate, toDate);
+    conditions.push(`(
+      $${fromDateParam}::DATE IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM journal_lines period_line
+        JOIN journal_entries period_entry
+          ON period_entry.id = period_line.journalentryid
+        WHERE period_line.financeaccountid = f.id
+          AND period_entry.organizationid = f.organizationid
+          AND period_entry.status = 'posted'
+          AND period_entry.entrydate >= $${fromDateParam}::DATE
+          AND period_entry.entrydate <= $${toDateParam}::DATE
+      )
+    )`);
     const whereClause = conditions.join(" AND ");
     const filterParams = [...params];
 
@@ -555,6 +590,8 @@ export module financeAccountService {
       ),
     ]);
 
+    const offsetParam = params.length + 1;
+    const countParam = params.length + 2;
     params.push(offset, count);
     const result = await query(
       `
@@ -589,10 +626,12 @@ export module financeAccountService {
         WHERE jl.financeaccountid = f.id
           AND je.organizationid = f.organizationid
           AND je.status = 'posted'
+          AND ($${fromDateParam}::DATE IS NULL OR je.entrydate >= $${fromDateParam}::DATE)
+          AND ($${toDateParam}::DATE IS NULL OR je.entrydate <= $${toDateParam}::DATE)
       ) ledger_totals ON TRUE
       WHERE ${whereClause}
       ORDER BY f.modifieddate DESC, f.id DESC
-      OFFSET $${params.length - 1} LIMIT $${params.length}
+      OFFSET $${offsetParam} LIMIT $${countParam}
       `,
       params
     );
@@ -624,6 +663,10 @@ export module financeAccountService {
       total: Number(countResult.rows[0]?.total || 0),
       page,
       count,
+      period: {
+        fromdate: fromDate,
+        todate: toDate,
+      },
       summary: {
         total: Number(summary.total || 0),
         asset: Number(summary.asset || 0),
@@ -718,6 +761,103 @@ export module financeAccountService {
           value.toUpperCase()
         ),
     };
+  };
+
+  export const updateChartAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const accountId = requireChartAccountId(request.params?.accountId);
+    const accountName = normalizeText(
+      request.body?.accountname,
+      "Account Name",
+      true,
+      255
+    )!;
+    const normalizedName = accountName.toLocaleLowerCase("en-US");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const currentResult = await client.query(
+        `SELECT * FROM finance_accounts
+         WHERE id = $1 AND organizationid = $2
+         LIMIT 1
+         FOR UPDATE`,
+        [accountId, organizationId]
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        throw new FinanceValidationError(
+          "Chart account was not found.",
+          404,
+          "CHART_ACCOUNT_NOT_FOUND"
+        );
+      }
+      if (current.issystem === true || current.isusercreatedchartaccount !== true) {
+        throw new FinanceValidationError(
+          "System and operational accounts cannot be renamed.",
+          409,
+          "CHART_ACCOUNT_EDIT_PROTECTED"
+        );
+      }
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        [`chart-account-name:${organizationId}:${normalizedName}`]
+      );
+      const duplicateResult = await client.query(
+        `SELECT id FROM finance_accounts
+         WHERE organizationid = $1
+           AND id <> $2
+           AND LOWER(TRIM(accountname)) = $3
+         LIMIT 1`,
+        [organizationId, accountId, normalizedName]
+      );
+      if (duplicateResult.rows[0]) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+
+      const epoch = nowEpoch();
+      const updatedResult = await client.query(
+        `UPDATE finance_accounts
+         SET accountname = $1, modifiedby = $2, modifieddate = $3
+         WHERE id = $4 AND organizationid = $5
+         RETURNING *`,
+        [accountName, actor, epoch, accountId, organizationId]
+      );
+      await client.query(
+        `UPDATE bank_transactions
+         SET partyname = $1
+         WHERE organizationid = $2
+           AND counterpartyaccountid = $3
+           AND partytype = 'ledger'`,
+        [accountName, organizationId, accountId]
+      );
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "chart_account",
+        accountId,
+        "renamed",
+        actor,
+        { previousname: current.accountname, accountname: accountName }
+      );
+      await client.query("COMMIT");
+      return updatedResult.rows[0];
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (error?.code === "23505") {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   };
 
   export const listChartAccountEntries = async (request: any) => {
@@ -1490,13 +1630,12 @@ export module financeAccountService {
     );
     const entrySide = normalizeEntrySide(request.body?.entryside);
     const amount = requirePositiveMoney(request.body?.amount);
-    const entryName = normalizeText(
+    const narration = normalizeText(
       request.body?.entryname,
-      "Entry Name",
-      true,
+      "Narration",
+      false,
       255
-    )!;
-    const remarks = normalizeText(request.body?.remarks, "remarks", false, 2000);
+    );
 
     const client = await pool.connect();
     try {
@@ -1627,8 +1766,8 @@ export module financeAccountService {
           debitAmount,
           creditAmount,
           balanceAfter,
-          remarks,
-          entryName,
+          null,
+          narration,
           actor,
           epoch,
         ]
@@ -1659,7 +1798,7 @@ export module financeAccountService {
           organizationId,
           transactionDate,
           bankTransaction.id,
-          entryName,
+          narration,
           actor,
           epoch,
         ]
@@ -1690,7 +1829,7 @@ export module financeAccountService {
           bankCashAccount.financeaccountid,
           bankDebit,
           bankCredit,
-          entryName,
+          narration,
           counterparty.id,
           counterpartyDebit,
           counterpartyCredit,
@@ -1737,7 +1876,7 @@ export module financeAccountService {
           transactionnumber: transactionNumber,
           entryside: entrySide,
           amount,
-          entryname: entryName,
+          narration,
           previousbalance: toMoney(bankCashAccount.currentbalance),
           balanceafter: balanceAfter,
           allocationmethod: "direct_ledger",

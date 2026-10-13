@@ -277,6 +277,19 @@ export module financeAccountController {
     }
   };
 
+  export const updateChartAccount = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.updateChartAccount(request);
+      return reply.send({
+        success: true,
+        message: "Account renamed successfully.",
+        data,
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listChartAccountEntries = async (request: any, reply: any) => {
     try {
       const data = await financeAccountService.listChartAccountEntries(request);
