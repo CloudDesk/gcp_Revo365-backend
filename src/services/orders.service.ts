@@ -595,6 +595,7 @@ export module ordersService {
                 o.customertaxpincode,
                 o.billingaddresssnapshot,
                 o.shippingaddresssnapshot,
+                o.invoicedate AS orderinvoicedate,
                 invoice as invoiceurl,
                 invoicecreateddate,
                 a.name, 
@@ -2333,6 +2334,13 @@ ${whereClause} ${orderByClause}`;
             transactionData?.storeLocation ??
             null;
 
+        // In-store sales may carry a user-selected invoice date (epoch ms, as revoinvoice.invoicedate).
+        const rawInvoiceDate = Number(transactionData?.invoicedate);
+        const invoiceDate =
+            Number.isFinite(rawInvoiceDate) && rawInvoiceDate > 0
+                ? Math.trunc(String(Math.trunc(rawInvoiceDate)).length <= 10 ? rawInvoiceDate * 1000 : rawInvoiceDate)
+                : null;
+
         // ✅ Address fallback
         if (orderData[0].addressid === null) {
             const getAddress = await query(
@@ -2439,12 +2447,13 @@ ${whereClause} ${orderByClause}`;
                         assetnumber, location, vendorname, empid,
                         deliverydate, brand, invoicefor,
                         billingaddresssnapshot, shippingaddresssnapshot,
-                        quotationid, quotationversionid, quotationnumber
+                        quotationid, quotationversionid, quotationnumber,
+                        invoicedate
                     )
                     VALUES (
                         $1,$2,$3,$4,$5,$6,$7,$8,$9,
                         $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
-                        $27,$28,$29
+                        $27,$28,$29,$30
                     )
                     RETURNING *
                 `;
@@ -2478,7 +2487,8 @@ ${whereClause} ${orderByClause}`;
                     normalizeAddressSnapshot(ordersToInsert[0].shippingaddresssnapshot) ?? shippingAddressSnapshot,
                     ordersToInsert[0].quotationid ?? transactionData?.quotationid ?? null,
                     ordersToInsert[0].quotationversionid ?? transactionData?.quotationversionid ?? null,
-                    ordersToInsert[0].quotationnumber ?? transactionData?.quotationnumber ?? null
+                    ordersToInsert[0].quotationnumber ?? transactionData?.quotationnumber ?? null,
+                    invoiceDate
                 ];
 
                 const orderResult = await client.query(insertOrderQuery, insertOrderValues);
