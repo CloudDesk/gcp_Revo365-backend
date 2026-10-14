@@ -15,6 +15,10 @@ import {
   REDIRECT_URL_SUCCESS,
 } from "../config/config.js";
 import { productrevoService } from "./productrevo.service.js";
+import {
+  calculateInStoreRentalAvailability,
+  calculateInStoreSaleAvailability,
+} from "./inStoreProductAvailability.js";
 import { stockRevoService } from "./stockRevo.service.js";
 import { createHttpTask } from "../googletask/createtask.js";
 import { cartservice } from "./cart.service.js";
@@ -170,7 +174,6 @@ const allocateProductLocationsForOrder = async (orderItems: any[] = []) => {
     FROM stock_revo s
     JOIN product_revo p ON p.puc = s.puc
     WHERE p.id = ANY($1::int[])
-      AND s.ecompublish = true
       AND s.stockstatus = 'Available'
       AND s.stocktype IN ('on_catalogue_product', 'off_catalogue_product')
       AND (s.isdeleted = false OR s.isdeleted IS NULL)
@@ -374,7 +377,7 @@ const validateReservationCapacity = async (
   }
 
   const productRows = await query(
-    `SELECT id, overallavailableqty, rentalavailablequantity
+    `SELECT id, oncatalogueqty, offcatalogueqty, orderedquantity, rentalavailablequantity
      FROM product_revo
      WHERE id = ANY($1::int[])`,
     [productIds]
@@ -400,16 +403,24 @@ const validateReservationCapacity = async (
     const productRow = availabilityByProduct.get(requestSummary.productId);
     const totalHeld =
       heldByProduct.get(`${requestSummary.productId}::${requestSummary.reservationType}`) || 0;
-    const availableToPromise =
+    const availableAfterHolds =
       requestSummary.reservationType === "rental"
-        ? toSafeNumber(productRow?.rentalavailablequantity, 0)
-        : toSafeNumber(productRow?.overallavailableqty, 0);
+        ? calculateInStoreRentalAvailability({
+            rentalAvailableQuantity: productRow?.rentalavailablequantity,
+            heldQuantity: totalHeld,
+          })
+        : calculateInStoreSaleAvailability({
+            onCatalogueQuantity: productRow?.oncatalogueqty,
+            offCatalogueQuantity: productRow?.offcatalogueqty,
+            orderedQuantity: productRow?.orderedquantity,
+            heldQuantity: totalHeld,
+          });
 
-    if (availableToPromise - totalHeld - requestSummary.requestedQuantity < 0) {
+    if (availableAfterHolds - requestSummary.requestedQuantity < 0) {
       violations.push({
         productId: requestSummary.productId,
         reservationType: requestSummary.reservationType,
-        availableToPromise,
+        availableToPromise: availableAfterHolds,
         heldQuantity: totalHeld,
         requestedQuantity: requestSummary.requestedQuantity,
       });

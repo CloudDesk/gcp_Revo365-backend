@@ -44,6 +44,110 @@ export module productrevoService {
     "assemble_to_order",
     "virtual_kit",
   ]);
+
+  export const searchInStoreProducts = async (request: any) => {
+    try {
+      const search = String(request.query?.q ?? "").trim();
+      const mode = String(request.query?.mode ?? "sale").trim().toLowerCase();
+      const requestedLimit = Number.parseInt(String(request.query?.limit ?? "20"), 10);
+      const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 20, 1), 50);
+
+      if (search.length === 1) {
+        return [];
+      }
+
+      const normalizedMode = mode === "rental" ? "rental" : "sale";
+      const result = await query(
+        `
+        WITH held_reservations AS (
+          SELECT
+            productid,
+            reservation_type,
+            COALESCE(SUM(quantity), 0)::int AS held_quantity
+          FROM inventory_reservations
+          WHERE status = 'held'
+            AND expires_at > NOW()
+          GROUP BY productid, reservation_type
+        )
+        SELECT
+          p.id,
+          p.puc,
+          p.productname,
+          p.category,
+          p.category AS productcategory,
+          p.colour,
+          p.colour AS productcolour,
+          p.brand,
+          p.model,
+          p.subcategory,
+          p.price,
+          p.hsncode,
+          p.saccode,
+          COALESCE(p.oncatalogueqty, 0)::int AS oncatalogueqty,
+          COALESCE(p.offcatalogueqty, 0)::int AS offcatalogueqty,
+          GREATEST(
+            0,
+            COALESCE(p.oncatalogueqty, 0)
+              + COALESCE(p.offcatalogueqty, 0)
+              - COALESCE(p.orderedquantity, 0)
+              - COALESCE(sale_holds.held_quantity, 0)
+          )::int AS saleavailablequantity,
+          GREATEST(
+            0,
+            COALESCE(p.rentalavailablequantity, 0)
+              - COALESCE(rental_holds.held_quantity, 0)
+          )::int AS rentalavailablequantity
+        FROM product_revo p
+        LEFT JOIN held_reservations sale_holds
+          ON sale_holds.productid = p.id
+         AND sale_holds.reservation_type = 'product'
+        LEFT JOIN held_reservations rental_holds
+          ON rental_holds.productid = p.id
+         AND rental_holds.reservation_type = 'rental'
+        WHERE (p.isarchive = FALSE OR p.isarchive IS NULL)
+          AND (p.isdeleted = FALSE OR p.isdeleted IS NULL)
+          AND (p.removefromrecyclebin = FALSE OR p.removefromrecyclebin IS NULL)
+          AND (
+            $3 = ''
+            OR (
+              COALESCE(p.productname, '') || ' ' ||
+              COALESCE(p.puc, '') || ' ' ||
+              COALESCE(p.brand, '') || ' ' ||
+              COALESCE(p.model, '')
+            ) ILIKE $1
+          )
+          AND CASE
+            WHEN $2 = 'rental' THEN
+              GREATEST(
+                0,
+                COALESCE(p.rentalavailablequantity, 0)
+                  - COALESCE(rental_holds.held_quantity, 0)
+              ) > 0
+            ELSE
+              GREATEST(
+                0,
+                COALESCE(p.oncatalogueqty, 0)
+                  + COALESCE(p.offcatalogueqty, 0)
+                  - COALESCE(p.orderedquantity, 0)
+                  - COALESCE(sale_holds.held_quantity, 0)
+              ) > 0
+          END
+        ORDER BY
+          CASE WHEN $3 <> '' AND LOWER(COALESCE(p.productname, '')) = LOWER($3) THEN 0 ELSE 1 END,
+          CASE WHEN $3 <> '' AND LOWER(COALESCE(p.puc, '')) = LOWER($3) THEN 0 ELSE 1 END,
+          p.productname ASC,
+          p.id ASC
+        LIMIT $4
+        `,
+        [`%${search}%`, normalizedMode, search, limit]
+      );
+
+      return await dataTypeCheck(result);
+    } catch (error) {
+      console.error("Query Execution Error: IN searchInStoreProducts", error);
+      return await ErrorHandler.handleQueryError(error);
+    }
+  };
   const isRentalOrderItem = (item: any) => {
     const orderName = String(item?.ordername ?? "").trim().toLowerCase();
     const invoiceFor = String(item?.invoicefor ?? "").trim().toLowerCase();

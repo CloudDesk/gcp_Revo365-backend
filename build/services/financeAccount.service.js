@@ -5,6 +5,7 @@ import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalan
 import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, getRetailReceiptSourceTypes, } from "../utils/finance/financeSource.utils.js";
 import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
 import { getBillGstSummary, getInvoiceGstSummary, } from "../utils/finance/gstSummary.utils.js";
+import { assertTransactionDateIsWithinAccountHistory, rebuildBankCashAccountBalances, } from "../utils/finance/bankTransactionBalance.utils.js";
 const CHART_ACCOUNT_CATEGORIES = new Set([
     "asset",
     "liability",
@@ -1161,18 +1162,7 @@ export var financeAccountService;
             if (["bank", "cash"].includes(counterparty.accountsubtype)) {
                 throw new FinanceValidationError("Bank-to-bank and cash transfers require the transfer workflow.");
             }
-            const latestResult = await client.query(`
-        SELECT transactiondate
-        FROM bank_transactions
-        WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
-        ORDER BY transactiondate DESC, posteddate DESC, id DESC
-        LIMIT 1
-        `, [bankCashAccountId]);
-            if (latestResult.rows[0]?.transactiondate &&
-                transactionDate <
-                    (toFinanceDateOnly(latestResult.rows[0].transactiondate) || "")) {
-                throw new FinanceValidationError("Backdated transactions are not enabled in the foundation release.");
-            }
+            assertTransactionDateIsWithinAccountHistory(transactionDate, bankCashAccount.openingbalancedate);
             const balanceAfter = calculateAvailableBalance(bankCashAccount.currentbalance, entrySide, amount);
             const debitAmount = entrySide === "debit" ? amount : 0;
             const creditAmount = entrySide === "credit" ? amount : 0;
@@ -1289,21 +1279,16 @@ export var financeAccountService;
             journalentryid = $2
         WHERE id = $3
         `, [transactionNumber, journalEntry.id, bankTransaction.id]);
-            await client.query(`
-        UPDATE bank_cash_accounts
-        SET currentbalance = $1,
-            version = version + 1,
-            modifiedby = $2,
-            modifieddate = $3
-        WHERE id = $4
-        `, [balanceAfter, actor, epoch, bankCashAccountId]);
+            const rebuiltBalances = await rebuildBankCashAccountBalances(client, bankCashAccount, actor, epoch);
+            const transactionBalanceAfter = rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+            bankTransaction.balanceafter = transactionBalanceAfter;
             await insertAuditEvent(client, organizationId, "bank_transaction", bankTransaction.id, "posted", actor, {
                 transactionnumber: transactionNumber,
                 entryside: entrySide,
                 amount,
                 entryname: entryName,
                 previousbalance: toMoney(bankCashAccount.currentbalance),
-                balanceafter: balanceAfter,
+                balanceafter: transactionBalanceAfter,
                 allocationmethod: "direct_ledger",
                 journalentryid: journalEntry.id,
             });

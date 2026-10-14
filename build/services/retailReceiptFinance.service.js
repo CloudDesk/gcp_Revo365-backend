@@ -1,5 +1,5 @@
 import pool, { query } from "../database/postgres.js";
-import { FinanceValidationError, calculateAvailableBalance, nowEpoch, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
+import { FinanceValidationError, calculateAvailableBalance, financeDateToEpochSeconds, nowEpoch, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
 import { applyRetailInvoiceAllocation, resolveCustomerReceiptAllocationMethod, getCustomerReceiptInvoiceSourceMetadata, getRetailInvoicePaymentState, isEligibleCustomerReceiptInvoice, resolveCustomerReceiptSourceType, } from "../utils/finance/retailReceipt.utils.js";
 import { allocateOnAccountReferenceNumber } from "./onAccountFoundation.service.js";
 import { getCustomerReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
@@ -211,18 +211,7 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
             throw new FinanceValidationError("The selected customer was not found.");
         }
         const customerName = buildCustomerName({ ...customer, customerid: customerId });
-        const latestTransactionResult = await client.query(`
-      SELECT transactiondate
-      FROM bank_transactions
-      WHERE bankcashaccountid = $1
-        AND postingstatus = 'posted'
-      ORDER BY transactiondate DESC, posteddate DESC, id DESC
-      LIMIT 1
-      `, [accountId]);
-        const latestTransactionDate = toFinanceDateOnly(latestTransactionResult.rows[0]?.transactiondate);
-        if (latestTransactionDate && transactionDate < latestTransactionDate) {
-            throw new FinanceValidationError("Backdated transactions are not enabled in the foundation release.");
-        }
+        assertTransactionDateIsWithinAccountHistory(transactionDate, account.openingbalancedate);
         const customerAdvanceResult = await client.query(`
       SELECT id
       FROM finance_accounts
@@ -347,12 +336,9 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
       SET transactionnumber = $1, journalentryid = $2, sourceid = $3
       WHERE id = $4
       `, [transactionNumber, journalEntry.id, onAccountReferenceNumber, bankTransaction.id]);
-        await client.query(`
-      UPDATE bank_cash_accounts
-      SET currentbalance = $1, version = version + 1,
-          modifiedby = $2, modifieddate = $3
-      WHERE id = $4
-      `, [balanceAfter, actor, epoch, accountId]);
+        const rebuiltBalances = await rebuildBankCashAccountBalances(client, account, actor, epoch);
+        const transactionBalanceAfter = rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+        bankTransaction.balanceafter = transactionBalanceAfter;
         await client.query(`
       INSERT INTO finance_audit_events (
         organizationid, entitytype, entityid, action, actor, eventdata, createddate
@@ -367,7 +353,7 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
                 customerid: customerId,
                 amount,
                 previousbalance: toMoney(account.currentbalance),
-                balanceafter: balanceAfter,
+                balanceafter: transactionBalanceAfter,
                 onaccountreferenceid: Number(onAccountReference.id),
                 onaccountreferencenumber: onAccountReferenceNumber,
                 journalentryid: Number(journalEntry.id),
@@ -738,6 +724,7 @@ export var retailReceiptFinanceService;
             }
             const balanceAfter = calculateAvailableBalance(account.currentbalance, "debit", amount);
             const epoch = nowEpoch();
+            const transactionDateEpoch = financeDateToEpochSeconds(transactionDate);
             const allocationSources = preparedAllocations.map((allocation) => getCustomerReceiptInvoiceSourceMetadata(allocation.invoice));
             const uniqueSourceLabels = Array.from(new Set(allocationSources.map((source) => source?.label).filter(Boolean)));
             const receiptSourceType = resolveCustomerReceiptSourceType(preparedAllocations.map((allocation) => allocation.invoice));
@@ -931,7 +918,7 @@ export var retailReceiptFinanceService;
                     tdsamount: allocation.tdsAmount,
                     settlementamount: allocation.totalSettledAmount,
                     paymentmethod: account.accounttype === "cash" ? "cash" : "bank_transfer",
-                    paymentdate: epoch,
+                    paymentdate: transactionDateEpoch,
                     transactionreference: transactionNumber,
                     providerpaymentid: null,
                     providerorderid: null,
@@ -949,13 +936,14 @@ export var retailReceiptFinanceService;
               balanceamount = $3,
               paymentstatus = $4,
               lastpaymentdate = $5,
-              modifieddate = $5
-          WHERE id = $6
+              modifieddate = $6
+          WHERE id = $7
           `, [
                     JSON.stringify([...existingPayments, paymentEntry]),
                     allocation.paidAmount,
                     allocation.balanceAmount,
                     allocation.paymentStatus,
+                    transactionDateEpoch,
                     epoch,
                     allocation.invoice.id,
                 ]);

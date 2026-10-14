@@ -163,6 +163,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     )
     // version 2 -> product
     fastify.get('/v2/product', { preHandler: [getSession] }, productrevoController.getAdminProductsrevoData);
+    fastify.get('/v2/product/instore-search', { preHandler: [getSession] }, productrevoController.searchInStoreProducts);
     fastify.get('/v2/product-ecommerce', productrevoController.getProductsrevoData);
     fastify.get('/v2/product/Archieve', { preHandler: [getSession] }, productrevoController.getArcheivedProductsRevo);
     fastify.get('/v2/product/component-options', { preHandler: [getSession] }, productrevoController.getProductComponentOptions);
