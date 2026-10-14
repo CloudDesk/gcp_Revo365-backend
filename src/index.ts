@@ -11,11 +11,10 @@ import formbody from "@fastify/formbody";
 import fastifyRawBody from "fastify-raw-body";
 
 import fs from "fs";
-
 import { connectGetSessionredis } from "./database/redis.session.js";
 
 interface CustomRequest extends FastifyRequest {
-  startTime?: [number, number]; 
+  startTime?: [number, number];
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -108,12 +107,13 @@ fastify.addHook("onReady", async () => {
   }
 });
 
-fastify.listen({ port: PORT || 5600,host:"0.0.0.0"
+fastify.listen({
+  port: PORT || 5600, host: "0.0.0.0"
 }, (err, address) => {
   try {
     if (err) {
       console.error(err);
-            console.error(err);
+      console.error(err);
 
 
     }
