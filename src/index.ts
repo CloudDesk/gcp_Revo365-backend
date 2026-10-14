@@ -8,14 +8,15 @@ import { checkDatabaseConnection } from "./database/postgres.js";
 import cors from "@fastify/cors";
 import { PORT } from "./config/config.js";
 import formbody from "@fastify/formbody";
+import fastifyRawBody from "fastify-raw-body";
 
 import fs from "fs";
-// import { stringify } from 'csv-stringify';
+
 
 import { connectGetSessionredis } from "./database/redis.session.js";
 
 interface CustomRequest extends FastifyRequest {
-  startTime?: [number, number]; // Optional startTime property
+  startTime?: [number, number]; 
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,7 +30,8 @@ const logFilePath = "./request_logs.csv";
 const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 // Create Fastify instance
-const fastify: any = Fastify({ logger: true });
+// Keep logger enabled for errors/startup logs, but disable per-request noise.
+const fastify: any = Fastify({ logger: true, disableRequestLogging: true });
 
 // Log CSV header if file is empty
 fs.stat(logFilePath, (err, stats) => {
@@ -38,7 +40,23 @@ fs.stat(logFilePath, (err, stats) => {
   }
 });
 
-fastify.register(cors);
+fastify.register(cors, {
+  exposedHeaders: [
+    "Content-Disposition",
+    "X-Preview-Account-Count",
+    "X-Deletable-Account-Count",
+    "X-Deletion-Batch-Id",
+    "X-Deleted-Account-Count",
+    "X-Blocked-Account-Count",
+    "X-Skipped-Account-Count",
+  ],
+});
+fastify.register(fastifyRawBody, {
+  global: false,
+  field: "rawBody",
+  encoding: "utf8",
+  runFirst: true,
+});
 
 // Log each request to CSV
 fastify.addHook("onRequest", (request: CustomRequest, reply, done) => {
@@ -87,31 +105,28 @@ fastify.register(formbody);
 fastify.register(Multer.contentParser);
 fastify.register(Revo365Routes, { fastifyInstance: fastify });
 
-console.log(join(parentDir, "/uploads"), "INDEX PATH");
-console.log(parentDir, "INDEX PATH 2");
 fastify.register(fastifyStatic, {
   root: join(parentDir, "/uploads"),
 });
 
-
 fastify.addHook("onReady", async () => {
   try {
-    let data = await checkDatabaseConnection();
-    console.log(data, "inside");
+    await checkDatabaseConnection();
     await connectGetSessionredis();
-    // done()
-    // console.log(fastify.isServerReady, 'Loging value is');
   } catch (error) {
     console.error("Failed to connect to the database:", error);
     return error;
   }
 });
 
-fastify.listen({ port: PORT,host:"0.0.0.0"
+fastify.listen({ port: PORT || 5600,host:"0.0.0.0"
 }, (err, address) => {
   try {
     if (err) {
       console.error(err);
+            console.error(err);
+
+
     }
     if (address) {
       console.log("Successfully Connected", address);

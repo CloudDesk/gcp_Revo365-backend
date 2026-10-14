@@ -7,12 +7,9 @@ export module generatePurchaseOrderService {
     podata: any,
     reply: any
   ) => {
-    console.log(JSON.stringify(podata), "podata");
-    // console.log(podata[0].id,"request from invoiceService invoiceData")
     try {
       let template = "po/Revo-PO new 1.docx";
       let result = await GenerateDocx(request, podata, template);
-      console.log(result, "result from invoiceData");
       let insertFilePo: any = await purchaseOrderService.upsertPurchaseOrder(
         result
       );
@@ -30,7 +27,6 @@ export module generatePurchaseOrderService {
         error
       );
       let ErrorMessage = await ErrorHandler.handleQueryError(error);
-      console.log(ErrorMessage);
       return ErrorMessage;
     }
   };

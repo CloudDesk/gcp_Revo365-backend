@@ -55,7 +55,6 @@ export module InventoryuserController {
                 reply.status(401).send({ error: getUsersDataResult })
             }
             else {
-                console.log("INISIDE ELSE OF USERS ")
                 reply.send(getUsersDataResult);
 
             }
@@ -76,7 +75,6 @@ export module InventoryuserController {
     export const upsertInventoryUser = async (request: any, reply: any) => {
         try {
             const userData = request.body;
-            console.log(userData)
             let upsertUserResult : any = await userInventoryService.upsertInventoryUser(userData);
             if (upsertUserResult.command === "UPDATE" || upsertUserResult.command === "INSERT") {
                 let message: any = {};

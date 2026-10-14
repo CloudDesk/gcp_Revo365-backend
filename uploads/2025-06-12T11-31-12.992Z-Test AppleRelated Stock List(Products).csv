@@ -1,0 +1,4 @@
+puc,category,subcategory,serialnumber,ecompublish,productname,rfid,location,stocktype
+la-nw-0000000033,new,laptop,TESt-002,TRUE,Test Apple,1234321237,head_office,off_catalogue_product
+la-nw-0000000033,new,laptop,TESt-003,TRUE,Test Apple,1234321235,head_office,third_party_product
+la-nw-0000000033,new,laptop,TESt-004,TRUE,Test Apple,1234321236,head_office,on_catalogue_product

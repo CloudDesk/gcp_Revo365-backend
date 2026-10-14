@@ -7,6 +7,7 @@ export module tablecontoller {
             let getTableResult = await getTables.getTable(request);
             reply.send(getTableResult);
         } catch (error) {
+            console.error("Error in getTable", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }
@@ -17,6 +18,7 @@ export module tablecontoller {
             let getTableResult = await getTables.getUserTable(request);
             reply.send(getTableResult);
         } catch (error) {
+            console.error("Error in getUserTable", error);
             let ErrorMessage = await ErrorHandler.handleQueryError(error)
             return ErrorMessage
         }

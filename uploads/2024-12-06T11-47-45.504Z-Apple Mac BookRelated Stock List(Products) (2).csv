@@ -1,0 +1,11 @@
+puc,category,subcategory,colour,processor,serialnumber,manufacturedyear,ecompublish,productname,rfid,location,ewaste
+la-nw-0000001010,new,laptop,Grey,apple_m2,APPLE-0002,,TRUE,Apple Mac Book,1122334000,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m3,APPLE-0002,,TRUE,Apple Mac Book,1122334001,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m4,APPLE-0004,,TRUE,Apple Mac Book,1122334002,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m5,APPLE-0005,,TRUE,Apple Mac Book,1122334003,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m6,APPLE-0006,,TRUE,Apple Mac Book,1122334004,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m7,APPLE-0007,,TRUE,Apple Mac Book,1122334005,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m8,APPLE-0008,,TRUE,Apple Mac Book,1122334006,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m9,APPLE-0009,,TRUE,Apple Mac Book,1122334007,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m10,APPLE-0010,,TRUE,Apple Mac Book,1122334008,head_office,FALSE
+la-nw-0000001010,new,laptop,Grey,apple_m11,APPLE-0011,,TRUE,Apple Mac Book,1122334009,head_office,FALSE
