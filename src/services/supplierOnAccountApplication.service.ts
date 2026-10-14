@@ -82,6 +82,7 @@ const getExistingApplication = async (
     LEFT JOIN journal_entries j
       ON j.id = m.journalentryid
      AND j.organizationid = a.organizationid
+     AND j.isdeleted = FALSE
     WHERE a.organizationid = $1
       AND a.idempotencykey = $2
       AND a.documenttype = 'purchase_bill'
@@ -334,6 +335,7 @@ export module supplierOnAccountApplicationService {
             WHERE allocation.documenttype = 'purchase_bill'
               AND allocation.documentid = bill.id
               AND allocation.status = 'applied'
+              AND bank_tx.isdeleted = FALSE
               AND bank_tx.postingstatus = 'posted'
           ), 0) AS finance_settled_amount,
           CASE
@@ -388,7 +390,7 @@ export module supplierOnAccountApplicationService {
       const accountResult = await client.query(
         `SELECT accountcode, id FROM finance_accounts
          WHERE organizationid = $1 AND accountcode = ANY($2::text[])
-           AND status = 'active'`,
+           AND status = 'active' AND isdeleted = FALSE`,
         [organizationId, accountCodes]
       );
       const accounts = new Map(

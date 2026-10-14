@@ -78,6 +78,7 @@ const assertNoPostedTransactions = async (id: number) => {
          AND allocation.documentid = bill.id
          AND allocation.status = 'applied'
          AND transaction.postingstatus = 'posted'
+         AND transaction.isdeleted = FALSE
      ) AS hastransactions
      FROM poinvoice bill WHERE bill.id = $1`,
     [id]
@@ -98,7 +99,7 @@ const validateSupplier = async (supplierId: number | null) => {
 const validateExpenseAccount = async (expenseAccountId: number) => {
   const accountResult: any = await query(
     `SELECT id FROM finance_accounts
-     WHERE id = $1 AND status = 'active' AND accounttype = 'expense'
+     WHERE id = $1 AND status = 'active' AND isdeleted = FALSE AND accounttype = 'expense'
      LIMIT 1`,
     [expenseAccountId]
   );
@@ -118,10 +119,11 @@ export module directBillService {
            AND allocation.documentid = bill.id
            AND allocation.status = 'applied'
            AND transaction.postingstatus = 'posted'
+           AND transaction.isdeleted = FALSE
        ), 0) AS finance_settled_amount
        FROM poinvoice bill
        LEFT JOIN supplier ON supplier.id = bill.supplierid
-       LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid
+       LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid AND account.isdeleted = FALSE
        WHERE bill.billtype = 'expense'
          ${supplierlessOnly ? "AND bill.supplierid IS NULL" : ""}
        ORDER BY COALESCE(bill.invoicedate, bill.createddate) DESC, bill.id DESC`
@@ -160,10 +162,11 @@ export module directBillService {
              AND allocation.documentid = bill.id
              AND allocation.status = 'applied'
              AND transaction.postingstatus = 'posted'
+             AND transaction.isdeleted = FALSE
          ), 0) AS finance_settled_amount
          FROM poinvoice bill
          LEFT JOIN supplier ON supplier.id = bill.supplierid
-         LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid
+         LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid AND account.isdeleted = FALSE
          WHERE bill.billtype = 'expense'
          ORDER BY bill.invoicedate DESC NULLS LAST, bill.id DESC
          LIMIT $1 OFFSET $2`,
@@ -200,10 +203,11 @@ export module directBillService {
            AND allocation.documentid = bill.id
            AND allocation.status = 'applied'
            AND transaction.postingstatus = 'posted'
+           AND transaction.isdeleted = FALSE
        ), 0) AS finance_settled_amount
        FROM poinvoice bill
        LEFT JOIN supplier ON supplier.id = bill.supplierid
-       LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid
+       LEFT JOIN finance_accounts account ON account.id = bill.expenseaccountid AND account.isdeleted = FALSE
        WHERE bill.id = $1 AND bill.billtype = 'expense'
        LIMIT 1`,
       [billId]

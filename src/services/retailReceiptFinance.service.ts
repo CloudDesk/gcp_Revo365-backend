@@ -193,7 +193,7 @@ const getExistingReceipt = async (
         '[]'::jsonb
       ) AS allocations
     FROM bank_transactions t
-    LEFT JOIN journal_entries j ON j.id = t.journalentryid
+    LEFT JOIN journal_entries j ON j.id = t.journalentryid AND j.isdeleted = FALSE
     LEFT JOIN on_account_references oa
       ON oa.organizationid = t.organizationid
      AND oa.sourcebanktransactionid = t.id
@@ -201,6 +201,7 @@ const getExistingReceipt = async (
       AND t.sourcetype = ANY($2::text[])
       AND t.sourcepaymentid = $3
       AND t.postingstatus <> 'reversed'
+      AND t.isdeleted = FALSE
     LIMIT 1
     `,
     [organizationId, RECEIPT_SOURCE_TYPES, requestReference]
@@ -313,6 +314,7 @@ const postCustomerOnAccountReceipt = async ({
       WHERE organizationid = $1
         AND accountcode = 'SYS-CUSTOMER-ADVANCE'
         AND status = 'active'
+        AND isdeleted = FALSE
       LIMIT 1
       `,
       [organizationId]
@@ -968,6 +970,7 @@ export module retailReceiptFinanceService {
         WHERE organizationid = $1
           AND accountcode = 'SYS-AR'
           AND status = 'active'
+          AND isdeleted = FALSE
         LIMIT 1
         `,
         [organizationId]
@@ -992,6 +995,7 @@ export module retailReceiptFinanceService {
           WHERE organizationid = $1
             AND accountcode = 'SYS-TDS-RECEIVABLE'
             AND status = 'active'
+            AND isdeleted = FALSE
           LIMIT 1
           `,
           [organizationId]

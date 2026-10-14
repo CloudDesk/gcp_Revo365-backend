@@ -94,7 +94,9 @@ export module financeDashboardReportsService {
         JOIN journal_lines jl ON jl.journalentryid = je.id
         JOIN finance_accounts fa ON fa.id = jl.financeaccountid
         WHERE je.organizationid = $1
+          AND je.isdeleted = FALSE
           AND je.status = 'posted'
+          AND fa.isdeleted = FALSE
           AND je.entrydate <= $3
         GROUP BY fa.accounttype, fa.accountsubtype
       )
@@ -148,7 +150,7 @@ export module financeDashboardReportsService {
          COALESCE(SUM(a.tdsamount) FILTER (WHERE a.documenttype='purchase_bill'),0) AS company_deducted
        FROM bank_transaction_allocations a
        JOIN bank_transactions t ON t.id=a.banktransactionid
-       WHERE t.organizationid=$1 AND t.postingstatus='posted'
+       WHERE t.organizationid=$1 AND t.postingstatus='posted' AND t.isdeleted=FALSE
          AND a.status='applied' AND a.tdsapplied=TRUE
          AND t.transactiondate BETWEEN $2 AND $3`,
       [organizationId, from, to]
@@ -249,7 +251,8 @@ export module financeDashboardReportsService {
                 COALESCE(SUM(CASE WHEN fa.accounttype='expense' THEN jl.debitamount-jl.creditamount ELSE 0 END),0) AS expense
          FROM journal_entries je JOIN journal_lines jl ON jl.journalentryid=je.id
          JOIN finance_accounts fa ON fa.id=jl.financeaccountid
-         WHERE je.organizationid=$1 AND je.status='posted' AND je.entrydate BETWEEN $2 AND $3
+         WHERE je.organizationid=$1 AND je.status='posted' AND je.isdeleted=FALSE
+           AND fa.isdeleted=FALSE AND je.entrydate BETWEEN $2 AND $3
          GROUP BY DATE_TRUNC('month', je.entrydate) ORDER BY DATE_TRUNC('month', je.entrydate)`,
         [organizationId, from, to]
       ),
@@ -291,7 +294,7 @@ export module financeDashboardReportsService {
            COUNT(*) FILTER (WHERE status='posted' AND ABS(COALESCE(lines.debits,0)-COALESCE(lines.credits,0)) > 0.01)::int AS unbalanced
          FROM journal_entries je
          LEFT JOIN LATERAL (SELECT SUM(debitamount) debits, SUM(creditamount) credits FROM journal_lines WHERE journalentryid=je.id) lines ON TRUE
-         WHERE je.organizationid=$1`,
+         WHERE je.organizationid=$1 AND je.isdeleted=FALSE`,
         [organizationId]
       ),
       query(
@@ -300,8 +303,8 @@ export module financeDashboardReportsService {
          FROM journal_entries je
          JOIN journal_lines jl ON jl.journalentryid=je.id
          JOIN finance_accounts fa ON fa.id=jl.financeaccountid
-         WHERE je.organizationid=$1 AND je.status='posted'
-           AND je.entrydate BETWEEN $2 AND $3 AND fa.accounttype='expense'
+         WHERE je.organizationid=$1 AND je.status='posted' AND je.isdeleted=FALSE
+           AND fa.isdeleted=FALSE AND je.entrydate BETWEEN $2 AND $3 AND fa.accounttype='expense'
          GROUP BY fa.id, fa.accountname
          HAVING ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) >= 0.01
          ORDER BY ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) DESC, fa.accountname ASC`,
@@ -456,8 +459,9 @@ export module financeDashboardReportsService {
         ON je.id = jl.journalentryid
        AND je.organizationid = $1
        AND je.status = 'posted'
+       AND je.isdeleted = FALSE
        AND je.entrydate <= $3
-      WHERE fa.organizationid = $1
+      WHERE fa.organizationid = $1 AND fa.isdeleted = FALSE
       GROUP BY fa.id, fa.accountcode, fa.accountname, fa.accounttype, fa.accountsubtype
       ORDER BY
         CASE fa.accounttype
@@ -499,7 +503,7 @@ export module financeDashboardReportsService {
                 je.sourcetype, je.description AS entrydescription,
                 jl.description AS linedescription, jl.debitamount, jl.creditamount
          FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journalentryid
-         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.entrydate <= $2
+         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.isdeleted = FALSE AND je.entrydate <= $2
          ORDER BY je.entrydate DESC, je.id DESC, jl.id ASC`,
         [organizationId, to]
       );
@@ -758,7 +762,7 @@ export module financeDashboardReportsService {
                 je.sourcetype, je.description AS entrydescription,
                 jl.description AS linedescription, jl.debitamount, jl.creditamount
          FROM journal_lines jl JOIN journal_entries je ON je.id = jl.journalentryid
-         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.entrydate <= $2
+         WHERE je.organizationid = $1 AND je.status = 'posted' AND je.isdeleted = FALSE AND je.entrydate <= $2
          ORDER BY je.entrydate DESC, je.id DESC, jl.id ASC`,
         [organizationId, to]
       );
@@ -1139,7 +1143,7 @@ export module financeDashboardReportsService {
          ON a.documenttype = 'sales_invoice' AND sales_document.id = a.documentid
        LEFT JOIN poinvoice purchase_bill_document
          ON a.documenttype = 'purchase_bill' AND purchase_bill_document.id = a.documentid
-       WHERE t.organizationid = $1 AND t.postingstatus = 'posted'
+       WHERE t.organizationid = $1 AND t.postingstatus = 'posted' AND t.isdeleted = FALSE
          AND a.tdsapplied = TRUE AND a.tdsamount > 0
          AND t.transactiondate BETWEEN $2 AND $3
          AND ($4 = '' OR ($4='customer' AND a.documenttype='sales_invoice') OR ($4='company' AND a.documenttype='purchase_bill'))
@@ -1154,7 +1158,7 @@ export module financeDashboardReportsService {
               COALESCE(SUM(a.tdsamount) FILTER (WHERE a.documenttype='purchase_bill'),0) AS companydeducted
        FROM bank_transaction_allocations a JOIN bank_transactions t ON t.id = a.banktransactionid
        LEFT JOIN tds_sections s ON s.id = a.tdssectionid
-       WHERE t.organizationid=$1 AND t.postingstatus='posted' AND a.tdsapplied=TRUE AND a.tdsamount>0
+       WHERE t.organizationid=$1 AND t.postingstatus='posted' AND t.isdeleted=FALSE AND a.tdsapplied=TRUE AND a.tdsamount>0
          AND t.transactiondate BETWEEN $2 AND $3
          AND ($4 = '' OR ($4='customer' AND a.documenttype='sales_invoice') OR ($4='company' AND a.documenttype='purchase_bill'))
          AND ($5 = '' OR COALESCE(t.partyname,'') ILIKE $6 OR COALESCE(a.documentnumber,'') ILIKE $6 OR COALESCE(s.newcode,'') ILIKE $6)`,

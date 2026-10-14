@@ -8,6 +8,7 @@ import { onAccountReferenceService } from "../services/onAccountReference.servic
 import { customerOnAccountApplicationService } from "../services/customerOnAccountApplication.service.js";
 import { supplierOnAccountApplicationService } from "../services/supplierOnAccountApplication.service.js";
 import { sendFinanceError } from "./finance.controller.utils.js";
+import { chartAccountLifecycleService } from "../services/chartAccountLifecycle.service.js";
 
 export module financeAccountController {
   export const listCustomerOnAccountReferences = async (
@@ -272,6 +273,80 @@ export module financeAccountController {
     try {
       const data = await financeAccountService.getChartAccount(request);
       return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const updateChartAccount = async (request: any, reply: any) => {
+    try {
+      const data = await financeAccountService.updateChartAccount(request);
+      return reply.send({
+        success: true,
+        message: "Account renamed successfully.",
+        data,
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const changeChartAccountStatus = async (request: any, reply: any) => {
+    try {
+      const data = await chartAccountLifecycleService.changeStatus(request);
+      return reply.send({
+        success: true,
+        message: `Chart of Accounts ${data.status === "active" ? "activated" : "deactivated"} successfully.`,
+        data,
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const previewChartAccountDeletion = async (request: any, reply: any) => {
+    try {
+      const data = await chartAccountLifecycleService.previewDeletion(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const exportChartAccountDeletionPreview = async (
+    request: any,
+    reply: any
+  ) => {
+    try {
+      const result = await chartAccountLifecycleService.exportDeletionPreview(
+        request
+      );
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header(
+          "Content-Disposition",
+          `attachment; filename="${result.filename}"`
+        )
+        .header("X-Preview-Account-Count", String(result.summary.requested))
+        .header("X-Deletable-Account-Count", String(result.summary.deletable))
+        .header("X-Blocked-Account-Count", String(result.summary.blocked))
+        .send(Buffer.from(result.csv, "utf8"));
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const deleteChartAccounts = async (request: any, reply: any) => {
+    try {
+      const result = await chartAccountLifecycleService.deleteAccounts(request);
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", `attachment; filename="${result.filename}"`)
+        .header("X-Deletion-Batch-Id", result.summary.deletionbatchid)
+        .header("X-Deleted-Account-Count", String(result.summary.deleted))
+        .header("X-Blocked-Account-Count", String(result.summary.blocked))
+        .header("X-Skipped-Account-Count", String(result.summary.skipped))
+        .send(Buffer.from(result.csv, "utf8"));
     } catch (error) {
       return sendFinanceError(reply, error);
     }

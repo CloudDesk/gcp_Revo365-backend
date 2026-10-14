@@ -22,18 +22,20 @@ const analyze = async (organizationId: number, asOfDate: string, cutoverDate: st
     db(`SELECT je.id AS journalid,je.entrydate,je.journalnumber,je.sourcetype,je.sourceid,je.status,je.reversalofid,
                jl.id AS lineid,jl.financeaccountid,jl.debitamount,jl.creditamount,fa.accountsubtype,
                a.documenttype,a.documentid,a.totalsettledamount,
-               EXISTS(SELECT 1 FROM journal_entries rev WHERE rev.reversalofid=je.id) AS hasreversal
+               EXISTS(SELECT 1 FROM journal_entries rev WHERE rev.reversalofid=je.id AND rev.isdeleted=FALSE) AS hasreversal
         FROM journal_entries je JOIN journal_lines jl ON jl.journalentryid=je.id
         JOIN finance_accounts fa ON fa.id=jl.financeaccountid AND fa.organizationid=je.organizationid
-        LEFT JOIN bank_transactions bt ON je.sourcetype='bank_transaction' AND bt.id=je.sourceid AND bt.organizationid=je.organizationid
+        LEFT JOIN bank_transactions bt ON je.sourcetype='bank_transaction' AND bt.id=je.sourceid AND bt.organizationid=je.organizationid AND bt.isdeleted=FALSE
         LEFT JOIN bank_transaction_allocations a ON a.banktransactionid=bt.id AND a.status='applied'
         WHERE je.organizationid=$1 AND je.entrydate <= $2 AND je.status IN ('posted','reversed')
+          AND je.isdeleted=FALSE AND fa.isdeleted=FALSE
           AND fa.accountsubtype IN ('accounts_receivable','accounts_payable')
         ORDER BY je.entrydate,je.id,jl.id`,[organizationId,asOfDate]),
     db(`SELECT je.id AS journalid,je.sourcetype,je.sourceid,fa.accounttype,fa.accountsubtype
         FROM journal_entries je JOIN journal_lines jl ON jl.journalentryid=je.id
         JOIN finance_accounts fa ON fa.id=jl.financeaccountid AND fa.organizationid=je.organizationid
         WHERE je.organizationid=$1 AND je.entrydate <= $2 AND je.status='posted'
+          AND je.isdeleted=FALSE AND fa.isdeleted=FALSE
           AND (je.sourcetype IN ('sales_invoice','retail_invoice','purchase_bill','supplier_bill'))`,[organizationId,asOfDate]),
     db(`SELECT COUNT(*)::int AS count FROM revoinvoice WHERE organizationid IS NULL`),
     db(`SELECT COUNT(*)::int AS count FROM poinvoice WHERE organizationid IS NULL`),
@@ -95,7 +97,7 @@ export module financeM4ReconciliationService {
     requireAdmin(request); const {organizationId,actor}=resolveFinanceContext(request); const runId=Number(request.params?.runId);
     const ar=Number(request.body?.arCounterpartAccountId), ap=Number(request.body?.apCounterpartAccountId); const note=String(request.body?.approvalNote||"").trim();
     if(!Number.isSafeInteger(runId)||runId<=0||!Number.isSafeInteger(ar)||!Number.isSafeInteger(ap)||!note) throw new FinanceValidationError("Run, both counterpart accounts, and an approval note are required.");
-    const accounts=await query(`SELECT id,accountsubtype FROM finance_accounts WHERE organizationid=$1 AND status='active' AND id=ANY($2::bigint[])`,[organizationId,[ar,ap]]);
+    const accounts=await query(`SELECT id,accountsubtype FROM finance_accounts WHERE organizationid=$1 AND status='active' AND isdeleted=FALSE AND id=ANY($2::bigint[])`,[organizationId,[ar,ap]]);
     if(accounts.rows.length!==new Set([ar,ap]).size||accounts.rows.some((a:any)=>["accounts_receivable","accounts_payable"].includes(String(a.accountsubtype)))) throw new FinanceValidationError("Counterpart accounts must be active non-control accounts in this organization.");
     const result=await query(`UPDATE finance_m4_reconciliation_runs SET status='approved',arcounterpartaccountid=$1,apcounterpartaccountid=$2,approvalnote=$3,approvedby=$4,approveddate=$5 WHERE id=$6 AND organizationid=$7 AND status IN ('dry_run','approved') RETURNING *`,[ar,ap,note,actor,nowEpoch(),runId,organizationId]);
     if(!result.rows[0]) throw new FinanceValidationError("M4 dry run was not found or is no longer approvable.",409,"M4_RUN_NOT_APPROVABLE");
@@ -110,16 +112,16 @@ export module financeM4ReconciliationService {
       const runResult=await client.query(`SELECT * FROM finance_m4_reconciliation_runs WHERE id=$1 AND organizationid=$2 FOR UPDATE`,[runId,organizationId]); const run=runResult.rows[0];
       if(!run) throw new FinanceValidationError("M4 run not found.",404,"M4_RUN_NOT_FOUND"); if(run.status==="posted"){await client.query("COMMIT");return {run,idempotent:true};} if(run.status!=="approved") throw new FinanceValidationError("M4 run must be approved before posting.",409,"M4_APPROVAL_REQUIRED");
       const current=await analyze(organizationId,String(run.asofdate).slice(0,10),String(run.cutoverdate).slice(0,10),db); if(current.meta.fingerprint!==run.fingerprint) throw new FinanceValidationError("The reconciliation changed after approval. Create and approve a new dry run.",409,"M4_RUN_STALE");
-      const controls=await client.query(`SELECT id,accountcode FROM finance_accounts WHERE organizationid=$1 AND status='active' AND accountcode IN ('SYS-AR','SYS-AP')`,[organizationId]);
+      const controls=await client.query(`SELECT id,accountcode FROM finance_accounts WHERE organizationid=$1 AND status='active' AND isdeleted=FALSE AND accountcode IN ('SYS-AR','SYS-AP')`,[organizationId]);
       const byCode=new Map(controls.rows.map((a:any)=>[String(a.accountcode),Number(a.id)]));
       const counterpartIds=[Number(run.arcounterpartaccountid),Number(run.apcounterpartaccountid)];
-      const counterparts=await client.query(`SELECT id FROM finance_accounts WHERE organizationid=$1 AND status='active' AND id=ANY($2::bigint[]) AND accountsubtype NOT IN ('accounts_receivable','accounts_payable')`,[organizationId,counterpartIds]);
+      const counterparts=await client.query(`SELECT id FROM finance_accounts WHERE organizationid=$1 AND status='active' AND isdeleted=FALSE AND id=ANY($2::bigint[]) AND accountsubtype NOT IN ('accounts_receivable','accounts_payable')`,[organizationId,counterpartIds]);
       if(counterparts.rows.length!==new Set(counterpartIds).size) throw new FinanceValidationError("One or more approved counterpart accounts are no longer eligible.",409,"M4_COUNTERPART_INELIGIBLE");
       const epoch=nowEpoch();
       for(const correction of [{type:"ar",variance:current.summary.receivableVariance,controlId:byCode.get("SYS-AR"),counterpartId:Number(run.arcounterpartaccountid),source:"m4_ar_correction"},{type:"ap",variance:current.summary.payableVariance,controlId:byCode.get("SYS-AP"),counterpartId:Number(run.apcounterpartaccountid),source:"m4_ap_correction"}]){
         if(Math.abs(correction.variance)<=0.01) continue; if(!correction.controlId) throw new FinanceValidationError(`Required ${correction.type.toUpperCase()} control account is missing.`);
         const movement=requiredM4Movement(correction.type as "ar"|"ap",correction.variance); const amount=money(movement.amount); const controlDebit=movement.side==="debit"; const jr=await client.query(`INSERT INTO journal_entries (organizationid,entrydate,sourcetype,sourceid,status,reference,description,createdby,postedby,createddate,posteddate) VALUES ($1,$2,$3,$4,'posted',$5,$6,$7,$7,$8,$8) ON CONFLICT (organizationid,sourcetype,sourceid) WHERE status <> 'reversed' DO NOTHING RETURNING id`,[organizationId,run.asofdate,correction.source,runId,`M4-${correction.type.toUpperCase()}-${runId}`,`Approved M4 ${correction.type.toUpperCase()} control reconciliation: ${run.approvalnote}`,actor,epoch]);
-        let journalId=Number(jr.rows[0]?.id); if(!journalId){const existing=await client.query(`SELECT id FROM journal_entries WHERE organizationid=$1 AND sourcetype=$2 AND sourceid=$3 AND status<>'reversed'`,[organizationId,correction.source,runId]);journalId=Number(existing.rows[0]?.id);} else {
+        let journalId=Number(jr.rows[0]?.id); if(!journalId){const existing=await client.query(`SELECT id FROM journal_entries WHERE organizationid=$1 AND sourcetype=$2 AND sourceid=$3 AND status<>'reversed' AND isdeleted=FALSE`,[organizationId,correction.source,runId]);journalId=Number(existing.rows[0]?.id);} else {
           await client.query(`UPDATE journal_entries SET journalnumber=$1 WHERE id=$2`,[`JE-${String(journalId).padStart(8,"0")}`,journalId]);
           await client.query(`INSERT INTO journal_lines (journalentryid,financeaccountid,debitamount,creditamount,description,lineorder) VALUES ($1,$2,$3,$4,$5,1),($1,$6,$4,$3,$5,2)`,[journalId,correction.controlId,controlDebit?amount:0,controlDebit?0:amount,`M4 ${correction.type.toUpperCase()} reconciliation`,correction.counterpartId]);
         }

@@ -63,6 +63,7 @@ const validateEligibleAccounts = async (
      WHERE organizationid = $1
        AND id = ANY($2::bigint[])
        AND status = 'active'
+       AND isdeleted = FALSE
        AND isusercreatedchartaccount = TRUE
        AND issystem = FALSE
        AND accountsubtype <> ALL($3::text[])`,
@@ -91,6 +92,7 @@ const validateRelatedEntry = async (
      WHERE related.id = $1
        AND related.organizationid = $2
        AND related.status = 'posted'
+       AND related.isdeleted = FALSE
        AND EXISTS (
          SELECT 1
          FROM journal_lines related_line
@@ -99,12 +101,14 @@ const validateRelatedEntry = async (
           AND related_account.organizationid = related.organizationid
          WHERE related_line.journalentryid = related.id
            AND related_account.isusercreatedchartaccount = TRUE
+           AND related_account.isdeleted = FALSE
            AND related_account.issystem = FALSE
            AND related_account.accountsubtype <> ALL($3::text[])
        )
        AND NOT EXISTS (
          SELECT 1 FROM journal_entries reversal
          WHERE reversal.reversalofid = related.id
+           AND reversal.isdeleted = FALSE
        )
      LIMIT 1`,
     [relatedJournalEntryId, organizationId, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES]
@@ -187,6 +191,7 @@ export module journalService {
     const conditions = [
       "entry.organizationid = $1",
       "entry.status = 'posted'",
+      "entry.isdeleted = FALSE",
       `entry.sourcetype <> '${MANUAL_JOURNAL_REVERSAL_SOURCE}'`,
       `EXISTS (
         SELECT 1
@@ -196,10 +201,11 @@ export module journalService {
          AND eligible_account.organizationid = entry.organizationid
         WHERE eligible_line.journalentryid = entry.id
           AND eligible_account.isusercreatedchartaccount = TRUE
+          AND eligible_account.isdeleted = FALSE
           AND eligible_account.issystem = FALSE
           AND eligible_account.accountsubtype <> ALL($2::text[])
       )`,
-      "NOT EXISTS (SELECT 1 FROM journal_entries reversal WHERE reversal.reversalofid = entry.id)",
+      "NOT EXISTS (SELECT 1 FROM journal_entries reversal WHERE reversal.reversalofid = entry.id AND reversal.isdeleted = FALSE)",
     ];
     if (Number.isSafeInteger(excludeJournalId) && excludeJournalId > 0) {
       values.push(excludeJournalId);
@@ -230,13 +236,16 @@ export module journalService {
                 SUM(line.creditamount) AS totalcredit,
                 STRING_AGG(DISTINCT CONCAT(account.accountcode, ' — ', account.accountname), ', ') AS accounts
          FROM journal_lines line
-         JOIN finance_accounts account ON account.id = line.financeaccountid
+         JOIN finance_accounts account
+           ON account.id = line.financeaccountid
+          AND account.isdeleted = FALSE
          WHERE line.journalentryid = entry.id
        ) line_summary ON TRUE
        LEFT JOIN bank_transactions source_transaction
          ON entry.sourcetype = 'bank_transaction'
         AND source_transaction.id = entry.sourceid
         AND source_transaction.organizationid = entry.organizationid
+        AND source_transaction.isdeleted = FALSE
        WHERE ${conditions.join(" AND ")}
        ORDER BY entry.entrydate DESC, entry.id DESC
        LIMIT 50`,
@@ -268,7 +277,7 @@ export module journalService {
     const { organizationId, actor } = resolveFinanceContext(request);
     const { page, count, offset } = pagination(request);
     const values: any[] = [organizationId];
-    const conditions = ["je.organizationid = $1"];
+    const conditions = ["je.organizationid = $1", "je.isdeleted = FALSE"];
     const add = (condition: string, value: unknown) => {
       values.push(value);
       conditions.push(condition.replace("?", `$${values.length}`));
@@ -300,11 +309,11 @@ export module journalService {
     }
     if (status === "reversed") {
       conditions.push(
-        "EXISTS (SELECT 1 FROM journal_entries reversed WHERE reversed.reversalofid = je.id)"
+        "EXISTS (SELECT 1 FROM journal_entries reversed WHERE reversed.reversalofid = je.id AND reversed.isdeleted = FALSE)"
       );
     } else if (status === "posted") {
       conditions.push(
-        "je.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries reversed WHERE reversed.reversalofid = je.id)"
+        "je.status = 'posted' AND NOT EXISTS (SELECT 1 FROM journal_entries reversed WHERE reversed.reversalofid = je.id AND reversed.isdeleted = FALSE)"
       );
     } else if (status) {
       add("je.status = ?", status);
@@ -342,6 +351,7 @@ export module journalService {
          SELECT reversed.id, reversed.journalnumber
          FROM journal_entries reversed
          WHERE reversed.reversalofid = je.id
+           AND reversed.isdeleted = FALSE
          ORDER BY reversed.id DESC
          LIMIT 1
        ) reversal ON TRUE
@@ -349,6 +359,7 @@ export module journalService {
          ON je.sourcetype = 'bank_transaction'
         AND source_transaction.id = je.sourceid
         AND source_transaction.organizationid = je.organizationid
+        AND source_transaction.isdeleted = FALSE
        WHERE ${where}
        ORDER BY je.entrydate DESC, je.id DESC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
@@ -376,6 +387,7 @@ export module journalService {
        FROM finance_accounts
        WHERE organizationid = $1
          AND status = 'active'
+         AND isdeleted = FALSE
          AND isusercreatedchartaccount = TRUE
          AND issystem = FALSE
          AND accountsubtype <> ALL($2::text[])
@@ -423,6 +435,7 @@ export module journalService {
          SELECT reversed.id, reversed.journalnumber
          FROM journal_entries reversed
          WHERE reversed.reversalofid = je.id
+           AND reversed.isdeleted = FALSE
          ORDER BY reversed.id DESC
          LIMIT 1
        ) reversal ON TRUE
@@ -430,22 +443,29 @@ export module journalService {
          ON je.sourcetype = 'bank_transaction'
         AND source_transaction.id = je.sourceid
         AND source_transaction.organizationid = je.organizationid
+        AND source_transaction.isdeleted = FALSE
        LEFT JOIN journal_entries related
          ON related.id = je.relatedjournalentryid
         AND related.organizationid = je.organizationid
+        AND related.isdeleted = FALSE
        LEFT JOIN bank_transactions related_source
          ON related.sourcetype = 'bank_transaction'
         AND related_source.id = related.sourceid
         AND related_source.organizationid = related.organizationid
+        AND related_source.isdeleted = FALSE
        LEFT JOIN LATERAL (
          SELECT SUM(line.debitamount) AS totaldebit,
                 SUM(line.creditamount) AS totalcredit,
                 STRING_AGG(DISTINCT CONCAT(account.accountcode, ' — ', account.accountname), ', ') AS accounts
          FROM journal_lines line
-         JOIN finance_accounts account ON account.id = line.financeaccountid
+         JOIN finance_accounts account
+           ON account.id = line.financeaccountid
+          AND account.isdeleted = FALSE
          WHERE line.journalentryid = related.id
        ) related_summary ON TRUE
-       WHERE je.organizationid = $1 AND je.id = $2
+       WHERE je.organizationid = $1
+         AND je.id = $2
+         AND je.isdeleted = FALSE
        LIMIT 1`,
       [organizationId, journalId]
     );
@@ -457,7 +477,9 @@ export module journalService {
               jl.creditamount, jl.lineorder, fa.accountcode, fa.accountname,
               fa.accounttype, fa.accountsubtype
        FROM journal_lines jl
-       JOIN finance_accounts fa ON fa.id = jl.financeaccountid
+       JOIN finance_accounts fa
+         ON fa.id = jl.financeaccountid
+        AND fa.isdeleted = FALSE
        WHERE jl.journalentryid = $1
        ORDER BY jl.lineorder ASC, jl.id ASC`,
       [journalId]
@@ -614,6 +636,7 @@ export module journalService {
       const currentResult = await client.query(
         `SELECT * FROM journal_entries
          WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
          FOR UPDATE`,
         [journalId, organizationId]
       );
@@ -673,6 +696,7 @@ export module journalService {
       const currentResult = await client.query(
         `SELECT * FROM journal_entries
          WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
          FOR UPDATE`,
         [journalId, organizationId]
       );
@@ -722,13 +746,16 @@ export module journalService {
                 (COUNT(DISTINCT jl.financeaccountid) FILTER (
                   WHERE fa.id IS NOT NULL
                     AND fa.status = 'active'
+                    AND fa.isdeleted = FALSE
                     AND fa.isusercreatedchartaccount = TRUE
                     AND fa.issystem = FALSE
                     AND fa.accountsubtype <> ALL($3::text[])
                 ))::integer AS validcount
          FROM journal_lines jl
          LEFT JOIN finance_accounts fa
-           ON fa.id = jl.financeaccountid AND fa.organizationid = $2
+           ON fa.id = jl.financeaccountid
+          AND fa.organizationid = $2
+          AND fa.isdeleted = FALSE
          WHERE jl.journalentryid = $1`,
         [journalId, organizationId, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES]
       );
@@ -774,6 +801,7 @@ export module journalService {
       const currentResult = await client.query(
         `SELECT * FROM journal_entries
          WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
          FOR UPDATE`,
         [journalId, organizationId]
       );
@@ -801,7 +829,10 @@ export module journalService {
         );
       }
       const existingResult = await client.query(
-        `SELECT id FROM journal_entries WHERE reversalofid = $1 LIMIT 1`,
+        `SELECT id FROM journal_entries
+         WHERE reversalofid = $1
+           AND isdeleted = FALSE
+         LIMIT 1`,
         [journalId]
       );
       if (existingResult.rows[0]) {

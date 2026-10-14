@@ -46,6 +46,7 @@ const findExistingCustomerTransfer = async (
        ON j.id = source_movement.journalentryid
       AND j.organizationid = source_movement.organizationid
       AND j.sourcetype = 'on_account_transfer'
+      AND j.isdeleted = FALSE
      LEFT JOIN on_account_references destination_reference
        ON destination_reference.organizationid = source_movement.organizationid
       AND destination_reference.sourcejournalentryid = j.id
@@ -277,6 +278,7 @@ export const getCustomerTransferReplacementContext = async (request: any) => {
        JOIN users source_user ON source_user.id = source_ref.partyid
        JOIN users destination_user ON destination_user.id = destination_ref.partyid
        WHERE j.organizationid = $1 AND j.id = $2 AND j.sourcetype = 'on_account_transfer'
+         AND j.isdeleted = FALSE
        LIMIT 1`,
     [organizationId, journalId]
   );
@@ -294,6 +296,7 @@ export const getCustomerTransferReplacementContext = async (request: any) => {
         AND bt.partytype = 'customer'
         AND bt.partyid = r.partyid
         AND bt.postingstatus = 'posted'
+        AND bt.isdeleted = FALSE
        JOIN bank_cash_accounts bca
          ON bca.id = bt.bankcashaccountid
         AND bca.organizationid = r.organizationid
@@ -435,7 +438,8 @@ export const executeCustomerTransferOrchestration = async (request: any) => {
     // 2. Fetch the 'customer_advance' control account
     const controlAccountResult = await client.query(
       `SELECT id FROM finance_accounts 
-       WHERE organizationid = $1 AND accountsubtype = 'customer_advance' AND issystem = TRUE 
+       WHERE organizationid = $1 AND accountsubtype = 'customer_advance' AND issystem = TRUE
+         AND status = 'active' AND isdeleted = FALSE
        LIMIT 1`,
       [organizationId]
     );
@@ -563,6 +567,7 @@ export const replaceCustomerOnAccountTransfer = async (request: any) => {
        WHERE reversal.organizationid = $1
          AND reversal.sourcetype = 'on_account_transfer_reversal'
          AND reversal.requestidempotencykey = $2
+         AND reversal.isdeleted = FALSE
        LIMIT 1`,
     [organizationId, idempotencyKey]
   );
@@ -579,7 +584,7 @@ export const replaceCustomerOnAccountTransfer = async (request: any) => {
     
     // 1. Lock and Verify Journal
     const journalResult = await client.query(
-      `SELECT * FROM journal_entries WHERE id = $1 AND organizationid = $2 FOR UPDATE`,
+      `SELECT * FROM journal_entries WHERE id = $1 AND organizationid = $2 AND isdeleted = FALSE FOR UPDATE`,
       [journalId, organizationId]
     );
     const journal = journalResult.rows[0];
@@ -590,7 +595,7 @@ export const replaceCustomerOnAccountTransfer = async (request: any) => {
     if (Number(journal.version) !== version) {
       throw new FinanceValidationError("The Journal changed after you opened it. Refresh and try again.");
     }
-    const existingReversal = await client.query(`SELECT id FROM journal_entries WHERE organizationid = $1 AND reversalofid = $2 LIMIT 1`, [organizationId, journalId]);
+    const existingReversal = await client.query(`SELECT id FROM journal_entries WHERE organizationid = $1 AND reversalofid = $2 AND isdeleted = FALSE LIMIT 1`, [organizationId, journalId]);
     if (existingReversal.rows.length > 0) {
       throw new FinanceValidationError("This Journal has already been reversed.");
     }
@@ -623,6 +628,7 @@ export const replaceCustomerOnAccountTransfer = async (request: any) => {
           AND bt.partytype = 'customer'
           AND bt.partyid = r.partyid
           AND bt.postingstatus = 'posted'
+          AND bt.isdeleted = FALSE
          JOIN bank_cash_accounts bca
            ON bca.id = bt.bankcashaccountid
           AND bca.organizationid = r.organizationid
@@ -775,6 +781,7 @@ export const replaceCustomerOnAccountTransfer = async (request: any) => {
             AND reversal.sourcetype = 'on_account_transfer_reversal'
             AND reversal.requestidempotencykey = $2
             AND reversal.reversalofid = $3
+            AND reversal.isdeleted = FALSE
           LIMIT 1`,
         [organizationId, idempotencyKey, journalId]
       );

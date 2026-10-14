@@ -120,7 +120,7 @@ reject an Account Type that is missing or inactive in this catalogue.
 | --- | --- | --- |
 | Account Type | Yes | Select one value from the backend-provided account type catalogue. |
 | Account Name | Yes | Trim leading and trailing whitespace; must not be blank; must be unique within the organization without regard to letter case. |
-| Account Code | Yes | Trim leading and trailing whitespace; must not be blank; must be unique within the organization without regard to letter case. |
+| Account Code | No | If supplied, trim leading and trailing whitespace and require uniqueness within the organization without regard to letter case. Blank values are stored as `NULL`. |
 | Description | No | Free-text description of the account. |
 
 #### 3.4.2 Creation Behaviour
@@ -135,8 +135,9 @@ reject an Account Type that is missing or inactive in this catalogue.
 
 ### 3.5 Uniqueness Rules
 
-Account Name and Account Code must each be unique within the current
-organization, irrespective of uppercase or lowercase formatting.
+Account Name must be unique within the current organization. When Account Code
+is supplied, it must also be unique within the current organization. Both
+comparisons are irrespective of uppercase or lowercase formatting.
 
 Examples:
 
@@ -211,9 +212,8 @@ The backend must reject:
 
 - A missing or unsupported Account Type.
 - A missing, blank, or whitespace-only Account Name.
-- A missing, blank, or whitespace-only Account Code.
 - A duplicate Account Name after trimming and case normalization.
-- A duplicate Account Code after trimming and case normalization.
+- A duplicate non-blank Account Code after trimming and case normalization.
 - Attempts to create an account for an organization outside the authenticated
   user's scope.
 
@@ -224,8 +224,8 @@ the message below that field.
 
 1. The Account Type selector contains all and only the fixed types listed in
    this document, grouped under Assets, Liability, Equity, Income, and Expense.
-2. A user can create an account with a valid Account Type, Account Name,
-   Account Code, and optional Description.
+2. A user can create an account with a valid Account Type and Account Name,
+   plus an optional Account Code and Description.
 3. The backend correctly derives the broad category for the selected Account
    Type.
 4. A newly created account is shown on the list page for the same organization.
@@ -233,7 +233,8 @@ the message below that field.
    returned on the Chart of Accounts page.
 6. The list is flat and does not require parent or child account handling.
 7. Account Name comparison is trimmed and case-insensitive for uniqueness.
-8. Account Code comparison is trimmed and case-insensitive for uniqueness.
+8. A supplied Account Code is trimmed and case-insensitive for uniqueness;
+   multiple accounts may omit Account Code.
 9. Duplicate validation remains reliable when two matching requests are sent
    concurrently.
 10. An unsupported Account Type is rejected by the backend.
@@ -303,16 +304,15 @@ The form must contain:
 | Transaction Type | Yes | `Direct Ledger Entry`. |
 | Account | Yes | Search and select an active Chart of Accounts record. |
 | Transaction Date | Yes | Use the same date component and date rules as the existing transaction forms. |
-| Entry Name | Yes | Manual narration for the row, for example `June 26 Rent`. |
+| Narration | No | Optional narration for the row, for example `June 26 Rent`. |
 | Entry Side | Yes | Select either Debit or Credit from the Bank/Cash account perspective. |
 | Amount | Yes | Must be greater than zero and use the module's standard money precision. |
-| Remarks | No | Optional transaction-level remarks. |
 
 The manual-entry area should use the same visual container as the existing
 invoice/bill allocation area. Instead of document rows, it must display manual
 entry rows with:
 
-- Entry Name
+- Narration (optional)
 - Debit/Credit
 - Amount
 
@@ -419,7 +419,7 @@ The user opens a Bank account and records:
 Transaction Type: Direct Ledger Entry
 Account: Rental
 Transaction Date: 26 June 2026
-Entry Name: June 26 Rent
+Narration: June 26 Rent
 Entry Side: Credit
 Amount: ₹50,000
 ```
@@ -497,7 +497,7 @@ result.
    Customer or Supplier selector.
 3. The Account selector returns active Phase 1 accounts for the current
    organization.
-4. The manual-entry area accepts Entry Name, Debit/Credit, and Amount.
+4. The manual-entry area accepts optional Narration, Debit/Credit, and Amount.
 5. Transaction Date is mandatory and follows the existing module's date rules.
 6. TDS and invoice/bill allocation controls are not displayed.
 7. A zero, negative, blank, or dual-sided entry is rejected.
@@ -523,6 +523,18 @@ result.
 The Chart of Accounts home/list page must continue to show one flat row per
 account. Each row must also show that account's individual current ledger
 balance.
+
+The filter toolbar beside account search must support **All Time**, **Date**,
+**Week**, **Month**, **Quarter**, **Year**, and **Custom Date Range**. Weeks run
+from Monday through Sunday. Quarters and years follow the Indian financial
+year from April through March. Custom ranges include both boundary dates.
+
+When a period is selected, the Balance column becomes Period Balance and shows
+the account's natural net ledger movement from the inclusive From Date through
+To Date. Only accounts with at least one posted ledger entry dated inside the
+selected period are shown. Resetting to All Time restores the complete account
+list and current lifetime balances. Account counts and the document-derived
+Financial Summary are not period-filtered.
 
 The value shown for an account must be calculated only from posted journal
 lines belonging to that account and organization. It must not be calculated by
@@ -550,7 +562,7 @@ The entry list must show each individual ledger value rather than only a
 combined transaction total. Each entry should show:
 
 - Transaction Date
-- Entry Name or journal-line description
+- Narration or journal-line description
 - Transaction/Journal reference
 - Source Type
 - Related Bank/Cash Account, when applicable
@@ -582,6 +594,14 @@ The natural current balance depends on the broad account category:
 
 The response should also retain the separate Debit and Credit totals so the UI
 does not lose the underlying accounting direction.
+
+For a selected list-page period:
+
+```text
+Period Debit = Posted Debit amounts from From Date through To Date
+Period Credit = Posted Credit amounts from From Date through To Date
+Period Balance = Natural balance calculated from Period Debit and Period Credit
+```
 
 ### 5.4 Amount Receivable and Amount Payable Home Summary
 
@@ -632,6 +652,7 @@ The backend must provide operations equivalent to:
 - Get one account's details, Total Debit, Total Credit, and Current Ledger
   Balance.
 - List paginated journal entries/lines for one account.
+- Filter Chart of Accounts list balances by an inclusive From Date and To Date.
 - Get the current Amount Receivable and Amount Payable home summary.
 
 The exact routes may follow the existing finance module conventions.
@@ -656,5 +677,23 @@ The exact routes may follow the existing finance module conventions.
 9. Amount Payable equals the sum of positive outstanding supplier bill
    balances.
 10. List, detail, and summary queries are isolated by organization.
-11. Amount Receivable and Amount Payable navigate to the organization-wide
+11. Date, Week, Month, financial Quarter, financial Year, and Custom Date
+    Range filters resolve to inclusive From and To dates.
+12. The filter is displayed beside account search, filtered rows show Period
+    Balance, and changing the range resets the list to page one.
+13. Amount Receivable and Amount Payable navigate to the organization-wide
     transaction list with Customer Receipt or Supplier Payment filtering.
+14. List-page Balance and Period Balance values show their accounting side as
+    `Dr` or `Cr` and display the amount without a negative-sign convention.
+15. Account detail Current Ledger Balance shows the same `Dr` or `Cr`
+    indicator. Assets and Expenses normally resolve to Dr; Liabilities,
+    Equity, and Income normally resolve to Cr, with the side reversed when the
+    calculated balance is negative.
+
+## 6. Account Editing
+
+An authorized user can rename a user-created account. Account names remain
+case-insensitively unique within the organization. Renaming updates the ledger
+master and the denormalized Direct Ledger party display name, while historical
+journal relationships continue to point to the same account identifier. The
+change is recorded in `finance_audit_events`.

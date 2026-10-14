@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv");
@@ -72,6 +73,9 @@ import {
   resolveInvoiceDocumentType,
   resolveInvoiceGst,
 } from "../utils/finance/gstSummary.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
+import pool from "../database/postgres.js";
+import { financeAccountService } from "../services/financeAccount.service.js";
 import {
   buildCustomerStatement,
   toCustomerStatementDate,
@@ -101,7 +105,34 @@ import {
   findOnAccountMovementByIdempotency,
   lockOnAccountReferences,
 } from "../services/onAccountFoundation.service.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
+import {
+  createBlockingReferenceFixture,
+  createMultiBankDirectLedgerFixture,
+  createSingleBankDirectLedgerFixture,
+  inspectFixtureChartAccountReferences,
+} from "./fixtures/chartAccountLifecycle.fixture.js";
 
+import {
+  buildControlAccountHistory,
+  summarizeControlAccountHistory,
+} from "../utils/finance/controlAccountHistory.utils.js";
+
+const LISTED_SYSTEM_SUBTYPES = [
+  "accounts_receivable",
+  "accounts_payable",
+  "gst_output_cgst",
+  "gst_output_sgst",
+  "gst_output_igst",
+  "gst_input_cgst",
+  "gst_input_sgst",
+  "gst_input_igst",
+];
+
+describe("Finance foundation regression suite", { concurrency: false }, () => {
 describe("On Account Phase 1 foundation", () => {
   test("formats stable Customer and Supplier reference numbers", () => {
     assert.equal(formatOnAccountReferenceNumber("customer", 1), "OA-C-00000001");
@@ -629,12 +660,15 @@ describe("Customer Statement Phase 3 foundation", () => {
 });
 
 describe("Chart of Accounts Phase 1", () => {
-  test("requires Account Type, Account Name, and Account Code", () => {
+  test("requires Account Type and Account Name while Account Code is optional", () => {
     assert.deepEqual(createChartAccountSchema.required, [
       "accounttype",
       "accountname",
-      "accountcode",
     ]);
+    assert.deepEqual(
+      (createChartAccountSchema.properties.accountcode as any).type,
+      ["string", "null"]
+    );
     assert.equal(
       (createChartAccountSchema.properties.description as any).maxLength,
       2000
@@ -642,15 +676,144 @@ describe("Chart of Accounts Phase 1", () => {
   });
 });
 
+describe("Chart of Accounts list period filtering", () => {
+  test("accepts all time or an inclusive date range", () => {
+    assert.deepEqual(resolveChartAccountDateRange({}), {
+      fromDate: null,
+      toDate: null,
+    });
+    assert.deepEqual(
+      resolveChartAccountDateRange({
+        fromdate: "2026-04-01",
+        todate: "2027-03-31",
+      }),
+      { fromDate: "2026-04-01", toDate: "2027-03-31" }
+    );
+  });
+
+  test("rejects incomplete, invalid, and reversed ranges", () => {
+    assert.throws(
+      () => resolveChartAccountDateRange({ fromdate: "2026-04-01" }),
+      /Select both From date and To date/
+    );
+    assert.throws(
+      () =>
+        resolveChartAccountDateRange({
+          fromdate: "2026-04-31",
+          todate: "2026-05-01",
+        }),
+      /valid date/
+    );
+    assert.throws(
+      () =>
+        resolveChartAccountDateRange({
+          fromdate: "2026-10-12",
+          todate: "2026-10-01",
+        }),
+      /From date cannot be later than To date/
+    );
+  });
+
+  test("uses posted ledger entry dates for both row inclusion and period balance", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { fromdate: "2026-10-23", todate: "2026-10-23" },
+    });
+
+    const countCall = calls.find(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.ok(countCall);
+    assert.match(countCall.sql, /EXISTS \([\s\S]*period_entry\.status = 'posted'/);
+    assert.match(countCall.sql, /f\.issystem = TRUE AND f\.accountsubtype = ANY\(\$2::TEXT\[\]\)/);
+    assert.match(countCall.sql, /period_entry\.entrydate >= \$4::DATE/);
+    assert.match(countCall.sql, /period_entry\.entrydate <= \$5::DATE/);
+    assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23"]);
+
+    const listCall = calls.find(({ sql }) =>
+      /LEFT JOIN LATERAL \([\s\S]*SUM\(jl\.debitamount\)/s.test(sql)
+    );
+    assert.ok(listCall);
+    assert.match(listCall.sql, /je\.status = 'posted'/);
+    assert.match(
+      listCall.sql,
+      /ORDER BY\s+-- System accounts first[\s\S]*array_position\(\$2::TEXT\[\], f\.accountsubtype\)[\s\S]*NULLS LAST,\s+f\.modifieddate DESC/
+    );
+    assert.match(listCall.sql, /je\.entrydate >= \$4::DATE/);
+    assert.match(listCall.sql, /je\.entrydate <= \$5::DATE/);
+    assert.deepEqual(listCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23", 0, 10]);
+  });
+});
+
+describe("Chart of Accounts editing", () => {
+  const account = {
+    id: 41,
+    organizationid: 7,
+    accountcode: "OFFICE-RENT",
+    accountname: "Office rent",
+    accounttype: "expense",
+    accountsubtype: "expense",
+    description: null,
+    currencycode: "INR",
+    issystem: false,
+    isusercreatedchartaccount: true,
+    status: "active",
+    createdby: "owner@example.com",
+    modifiedby: "owner@example.com",
+    createddate: 1,
+    modifieddate: 1,
+  };
+
+  test("renames a user account and updates Direct Ledger display names", async (t) => {
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        if (/SELECT \* FROM finance_accounts[\s\S]*FOR UPDATE/s.test(sql)) return { rows: [account] };
+        if (/SELECT id FROM finance_accounts/s.test(sql)) return { rows: [] };
+        if (/UPDATE finance_accounts/s.test(sql)) return { rows: [{ ...account, accountname: "Premises rent" }] };
+        return { rows: [] };
+      },
+      release: () => undefined,
+    };
+    t.mock.method(pool, "connect", async () => client as any);
+
+    const result = await financeAccountService.updateChartAccount({
+      session: { organizationid: 7, useremail: "accountant@example.com" },
+      params: { accountId: 41 },
+      body: { accountname: "Premises rent" },
+    });
+
+    assert.equal(result.accountname, "Premises rent");
+    assert.ok(calls.some(({ sql, params }) => /UPDATE bank_transactions/s.test(sql) && params?.[0] === "Premises rent"));
+    assert.ok(calls.some(({ sql }) => /INSERT INTO finance_audit_events/s.test(sql)));
+    assert.equal(calls.at(-1)?.sql, "COMMIT");
+  });
+
+});
+
 describe("Chart of Accounts Phase 2", () => {
-  test("Direct Ledger Entry requires its account, date, narration, side, and amount", () => {
+  test("Direct Ledger Entry accepts optional narration and excludes remarks", () => {
     assert.deepEqual(createDirectBankTransactionSchema.required, [
       "transactiondate",
       "counterpartyaccountid",
-      "entryname",
       "entryside",
       "amount",
     ]);
+    assert.deepEqual((createDirectBankTransactionSchema.properties.entryname as any).type, ["string", "null"]);
+    assert.equal("remarks" in createDirectBankTransactionSchema.properties, false);
     assert.equal(
       (createDirectBankTransactionSchema.properties.amount as any)
         .exclusiveMinimum,
@@ -821,10 +984,6 @@ describe("Chart of Accounts Phase 3", () => {
     );
   });
 });
-import {
-  assertTransactionDateIsWithinAccountHistory,
-  rebuildBankCashAccountBalances,
-} from "../utils/finance/bankTransactionBalance.utils.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -847,6 +1006,302 @@ describe("Cash and Bank foundation calculations", () => {
         error instanceof FinanceValidationError &&
         error.message === "amount must be greater than zero."
     );
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 0 baseline", () => {
+  const rebuildFixtureAccount = async (
+    fixture: ReturnType<typeof createSingleBankDirectLedgerFixture>,
+    bankCashAccountId: number
+  ) => {
+    const account = fixture.bankCashAccounts.find(
+      (candidate) => candidate.id === bankCashAccountId
+    );
+    assert.ok(account);
+    const transactions = fixture.bankTransactions
+      .filter(
+        (transaction) =>
+          transaction.bankcashaccountid === bankCashAccountId &&
+          transaction.postingstatus === "posted"
+      )
+      .sort(
+        (left, right) =>
+          left.transactiondate.localeCompare(right.transactiondate) ||
+          left.posteddate - right.posteddate ||
+          left.id - right.id
+      );
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        if (/SELECT id, transactiondate, entryside, amount/.test(sql)) {
+          return { rows: transactions };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const rebuilt = await rebuildBankCashAccountBalances(
+      client,
+      account,
+      "phase0@example.com",
+      1_789_000_000
+    );
+    return { account, calls, rebuilt };
+  };
+
+  test("captures the current single-bank Direct Ledger balances", async () => {
+    const fixture = createSingleBankDirectLedgerFixture();
+    const { calls, rebuilt } = await rebuildFixtureAccount(fixture, 11);
+    const chartLines = fixture.journalLines.filter(
+      (line) => line.financeaccountid === fixture.chartAccount.id
+    );
+
+    assert.equal(rebuilt.currentBalance, 7_000);
+    assert.equal(rebuilt.balances.get(501), 7_000);
+    assert.equal(
+      calculateLedgerBalance(
+        fixture.chartAccount.accounttype,
+        chartLines.reduce((total, line) => total + line.debitamount, 0),
+        chartLines.reduce((total, line) => total + line.creditamount, 0)
+      ),
+      3_000
+    );
+    assert.ok(
+      calls.some(
+        ({ sql, params }) =>
+          /UPDATE bank_cash_accounts/.test(sql) && params?.[0] === 7_000
+      )
+    );
+  });
+
+  test("captures one COA used by Direct Ledger entries in multiple bank accounts", async () => {
+    const fixture = createMultiBankDirectLedgerFixture();
+    const mainBank = await rebuildFixtureAccount(fixture, 11);
+    const pettyCash = await rebuildFixtureAccount(fixture, 12);
+    const chartLines = fixture.journalLines.filter(
+      (line) => line.financeaccountid === fixture.chartAccount.id
+    );
+
+    assert.equal(mainBank.rebuilt.currentBalance, 7_000);
+    assert.equal(pettyCash.rebuilt.currentBalance, 3_500);
+    assert.equal(
+      calculateLedgerBalance(
+        fixture.chartAccount.accounttype,
+        chartLines.reduce((total, line) => total + line.debitamount, 0),
+        chartLines.reduce((total, line) => total + line.creditamount, 0)
+      ),
+      4_500
+    );
+  });
+
+  test("classifies Direct Ledger references separately from deletion blockers without mutation", () => {
+    const fixture = createBlockingReferenceFixture();
+    const before = JSON.stringify(fixture);
+    const references = inspectFixtureChartAccountReferences(
+      fixture,
+      fixture.chartAccount.id
+    );
+
+    assert.deepEqual(references.cascadeSafe, {
+      bankTransactionIds: [501],
+      journalEntryIds: [701],
+      journalLineIds: [901, 902],
+    });
+    assert.deepEqual(references.blocking, {
+      manualJournalLineIds: [905],
+      expenseBillIds: [801],
+      reconciliationSettingIds: [301],
+    });
+    assert.equal(JSON.stringify(fixture), before);
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 1 migration", () => {
+  const migrationSql = readFileSync(
+    new URL(
+      "../database/migrations/20261013_chart_account_lifecycle_foundation.sql",
+      import.meta.url
+    ),
+    "utf8"
+  );
+
+  test("adds soft-delete and lifecycle ownership fields with safe defaults", () => {
+    for (const tableName of [
+      "finance_accounts",
+      "bank_transactions",
+      "journal_entries",
+    ]) {
+      assert.match(migrationSql, new RegExp(`ALTER TABLE ${tableName}`));
+    }
+    assert.match(
+      migrationSql,
+      /isdeleted BOOLEAN NOT NULL DEFAULT FALSE/g
+    );
+    assert.match(migrationSql, /deletionbatchid UUID/);
+    assert.match(migrationSql, /deactivatedbychartaccountid BIGINT/);
+  });
+
+  test("extends bank transaction and journal status constraints with inactive", () => {
+    assert.match(
+      migrationSql,
+      /postingstatus IN \('draft', 'posted', 'inactive', 'reversed'\)/
+    );
+    assert.match(
+      migrationSql,
+      /status IN \('draft', 'posted', 'inactive', 'reversed'\)/
+    );
+  });
+
+  test("allows deleted account names and codes to be reused while indexing lifecycle lookups", () => {
+    assert.match(
+      migrationSql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_accounts_code_normalized[\s\S]*WHERE isdeleted = FALSE/
+    );
+    assert.match(
+      migrationSql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_chart_accounts_name_normalized[\s\S]*isusercreatedchartaccount = TRUE[\s\S]*isdeleted = FALSE/
+    );
+    assert.match(
+      migrationSql,
+      /idx_bank_transactions_chart_account_lifecycle/
+    );
+    assert.match(migrationSql, /idx_finance_accounts_deletion_batch/);
+  });
+
+  test("records the lifecycle foundation schema version", () => {
+    assert.match(
+      migrationSql,
+      /20261013_chart_account_lifecycle_foundation_v1/
+    );
+    assert.match(migrationSql, /ON CONFLICT \(version\) DO NOTHING/);
+  });
+});
+
+describe("Chart of Accounts lifecycle Phase 2 read behavior", () => {
+  test("defaults the COA list to active and always excludes soft-deleted accounts", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: {},
+    });
+
+    const countCall = calls.find(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.ok(countCall);
+    assert.match(countCall.sql, /f\.isdeleted = FALSE/);
+    assert.match(countCall.sql, /f\.status = \$3/);
+    assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", null, null]);
+  });
+
+  test("supports inactive and all non-deleted COA views", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+        return { rows: [{ total: 0 }] } as any;
+      }
+      if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+        return { rows: [{}] } as any;
+      }
+      return { rows: [] } as any;
+    });
+
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { status: "inactive" },
+    });
+    await financeAccountService.listChartAccounts({
+      session: { organizationid: 7 },
+      query: { status: "all" },
+    });
+
+    const countCalls = calls.filter(({ sql }) =>
+      /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)
+    );
+    assert.equal(countCalls.length, 2);
+    assert.match(countCalls[0].sql, /f\.isdeleted = FALSE/);
+    assert.match(countCalls[0].sql, /f\.status = \$3/);
+    assert.deepEqual(countCalls[0].params, [7, LISTED_SYSTEM_SUBTYPES, "inactive", null, null]);
+    assert.match(countCalls[1].sql, /f\.isdeleted = FALSE/);
+    assert.doesNotMatch(countCalls[1].sql, /f\.status =/);
+    assert.deepEqual(countCalls[1].params, [7, LISTED_SYSTEM_SUBTYPES, null, null]);
+  });
+
+  test("rebuilds Cash and Bank balances from active posted transactions only", async () => {
+    const calls: Array<{ sql: string; params?: any[] }> = [];
+    const client = {
+      query: async (sql: string, params?: any[]) => {
+        calls.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+
+    await rebuildBankCashAccountBalances(
+      client,
+      { id: 11, openingbalance: 1000, openingbalancedate: "2026-04-01" },
+      "phase2@example.com",
+      1_789_000_000
+    );
+
+    const transactionRead = calls.find(({ sql }) => /FROM bank_transactions/.test(sql));
+    assert.ok(transactionRead);
+    assert.match(transactionRead.sql, /postingstatus = 'posted'/);
+    assert.match(transactionRead.sql, /isdeleted = FALSE/);
+  });
+
+  test("applies active, inactive, and all lifecycle scopes to transaction rows and totals", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      return /COUNT\(\*\)::INTEGER AS total/.test(sql)
+        ? ({ rows: [{ total: 0, debit: 0, credit: 0 }] } as any)
+        : ({ rows: [] } as any);
+    });
+
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: {},
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "inactive", transactiontype: "direct_ledger" },
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "all" },
+      params: {},
+    });
+    await financeAccountService.listBankTransactions({
+      session: { organizationid: 7 },
+      query: { status: "inactive", sourcetype: "manual" },
+      params: {},
+    });
+
+    const summaries = calls.filter(({ sql }) => /COUNT\(\*\)::INTEGER AS total/.test(sql));
+    assert.equal(summaries.length, 4);
+    for (const { sql } of summaries) assert.match(sql, /t\.isdeleted = FALSE/);
+    assert.match(summaries[0].sql, /t\.postingstatus = 'posted'/);
+    assert.match(summaries[1].sql, /t\.postingstatus = 'inactive'/);
+    assert.match(summaries[1].sql, /t\.allocationmethod = 'direct_ledger'/);
+    assert.match(summaries[2].sql, /t\.postingstatus IN \('posted', 'inactive'\)/);
+    assert.match(summaries[3].sql, /t\.postingstatus = 'inactive'/);
+    assert.match(summaries[3].sql, /LOWER\(t\.sourcetype\)/);
+    assert.ok(summaries[3].params.includes("manual"));
   });
 });
 
@@ -1790,4 +2245,120 @@ describe("Bank account number protection", () => {
         error.code === "FINANCE_ENCRYPTION_KEY_MISSING"
     );
   });
+});
+
+describe("Accounts Receivable and Payable history", () => {
+  test("lists invoices as Debit and receipts as Credit with a running balance", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 1,
+        invoicenumber: "INV-1",
+        invoicedate: "2026-10-01",
+        totalorderamount: 10000,
+        partyname: "Customer A",
+        paymentdata: [
+          {
+            paymentamount: 5400,
+            tdsamount: 600,
+            settlementamount: 6000,
+            paymentdate: "2026-10-05",
+            transactionreference: "RCPT-1",
+            paymentmethod: "bank_transfer",
+            banktransactionid: 99,
+            status: "success",
+          },
+        ],
+      },
+      {
+        id: 2,
+        invoicenumber: "INV-2",
+        invoicedate: "2026-10-03",
+        totalorderamount: 5000,
+        paymentdata: [],
+      },
+    ], new Map([[99, "HDFC Current"]]));
+
+    assert.deepEqual(
+      history.map((entry) => [
+        entry.transactionnumber,
+        entry.debitamount,
+        entry.creditamount,
+        entry.runningbalance,
+      ]),
+      [
+        ["INV-1", 10000, 0, 10000],
+        ["INV-2", 5000, 0, 15000],
+        ["RCPT-1", 0, 6000, 9000],
+      ]
+    );
+    const receipt = history[2];
+    assert.equal(receipt.documentnumber, "INV-1");
+    assert.equal(receipt.bankcashaccountname, "HDFC Current");
+    assert.match(String(receipt.remarks), /TDS/);
+    assert.deepEqual(summarizeControlAccountHistory(history), {
+      totaldebit: 15000,
+      totalcredit: 6000,
+    });
+  });
+
+  test("adds a settlement row when an invoice is paid without payment details", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 3,
+        invoicenumber: "INV-3",
+        invoicedate: "2026-09-01",
+        totalorderamount: 2000,
+        paidamount: 2000,
+        paymentdata: [],
+      },
+    ]);
+    assert.equal(history.length, 2);
+    assert.equal(history[1].sourcetype, "settlement_adjustment");
+    assert.equal(history[1].creditamount, 2000);
+    assert.equal(history[1].runningbalance, 0);
+  });
+
+  test("orders a payment made before the invoice after that invoice", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 4,
+        invoicenumber: "INV-4",
+        invoicedate: "2026-10-10",
+        totalorderamount: 1000,
+        paymentdata: [{ paymentamount: 1000, paymentdate: "2026-10-08", status: "success" }],
+      },
+    ]);
+    assert.deepEqual(history.map((entry) => entry.runningbalance), [1000, 0]);
+    assert.equal(history[1].transactiondate, "2026-10-08");
+  });
+
+  test("lists bills as Credit and payments as Debit and skips failed payments", () => {
+    const history = buildControlAccountHistory("payable", [
+      {
+        id: 7,
+        invoicenumber: "BILL-7",
+        invoicedate: "2026-10-02",
+        invoiceamount: 8000,
+        balanceamount: 5000,
+        parentreference: "PO-12",
+        paymentdata: [
+          { paymentamount: 3000, paymentdate: "2026-10-04", status: "success", transactionreference: "PAY-1" },
+          { paymentamount: 1000, paymentdate: "2026-10-05", status: "failed" },
+        ],
+      },
+    ]);
+    assert.deepEqual(
+      history.map((entry) => [entry.debitamount, entry.creditamount, entry.runningbalance]),
+      [
+        [0, 8000, -8000],
+        [3000, 0, -5000],
+      ]
+    );
+    assert.equal(history[0].remarks, "PO: PO-12");
+    assert.deepEqual(
+      summarizeControlAccountHistory(history, "2026-10-03", "2026-10-31"),
+      { totaldebit: 3000, totalcredit: 0 }
+    );
+  });
+});
 });

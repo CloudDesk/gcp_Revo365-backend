@@ -41,7 +41,7 @@ export module tdsDepositService {
                     b.accountname AS bankaccountname
              FROM finance_tds_deposits d
              LEFT JOIN tds_sections s ON s.id=d.tdssectionid AND s.organizationid=d.organizationid
-             LEFT JOIN bank_transactions t ON t.id=d.banktransactionid
+             LEFT JOIN bank_transactions t ON t.id=d.banktransactionid AND t.isdeleted=FALSE
              LEFT JOIN bank_cash_accounts b ON b.id=t.bankcashaccountid
              WHERE d.organizationid=$1 AND d.depositdate BETWEEN $2 AND $3
                AND ($4='' OR d.status=$4)
@@ -105,7 +105,7 @@ export module tdsDepositService {
                ($1,'SYS-TDS-LATE-FEE-EXPENSE','TDS Late Fee Expense','expense','tds_late_fee','INR',TRUE,'active',$2,$2),
                ($1,'SYS-TDS-PENALTY-EXPENSE','TDS Penalty Expense','expense','tds_penalty','INR',TRUE,'active',$2,$2)
         ON CONFLICT DO NOTHING`, [organizationId, actor]);
-      const accountRows = await client.query(`SELECT id,accountcode FROM finance_accounts WHERE organizationid=$1 AND accountcode=ANY($2::text[]) AND status='active'`, [organizationId, ["SYS-TDS-PAYABLE","SYS-TDS-INTEREST-EXPENSE","SYS-TDS-LATE-FEE-EXPENSE","SYS-TDS-PENALTY-EXPENSE"]]);
+      const accountRows = await client.query(`SELECT id,accountcode FROM finance_accounts WHERE organizationid=$1 AND accountcode=ANY($2::text[]) AND status='active' AND isdeleted=FALSE`, [organizationId, ["SYS-TDS-PAYABLE","SYS-TDS-INTEREST-EXPENSE","SYS-TDS-LATE-FEE-EXPENSE","SYS-TDS-PENALTY-EXPENSE"]]);
       const accounts = new Map<string, number>(accountRows.rows.map((row:any): [string, number]=>[String(row.accountcode),Number(row.id)]));
       if (accounts.size !== 4) throw new FinanceValidationError("Required TDS Chart of Accounts could not be resolved.");
       const bankResult = await client.query(`SELECT * FROM bank_cash_accounts WHERE id=$1 AND organizationid=$2 AND status='active' FOR UPDATE`, [bankCashAccountId, organizationId]);

@@ -304,6 +304,7 @@ export module customerStatementService {
               AND t.partytype = 'customer'
               AND t.partyid = $2
               AND t.postingstatus = 'posted'
+              AND t.isdeleted = FALSE
             `,
             [organizationId, customerId]
           )
@@ -356,6 +357,7 @@ export module customerStatementService {
           AND t.partytype = 'customer'
           AND t.partyid = $2
           AND t.postingstatus = 'posted'
+          AND t.isdeleted = FALSE
         ORDER BY t.transactiondate, t.posteddate, t.id
         `,
         [organizationId, customerId]
@@ -371,11 +373,16 @@ export module customerStatementService {
             JOIN on_account_movements m
               ON m.id = a.onaccountmovementid
              AND m.organizationid = a.organizationid
+            JOIN journal_entries j
+              ON j.id = m.journalentryid
+             AND j.organizationid = a.organizationid
+             AND j.isdeleted = FALSE
             WHERE a.organizationid = $1
               AND r.partytype = 'customer'
               AND r.partyid = $2
               AND a.documenttype = 'sales_invoice'
               AND a.status = 'applied'
+              AND j.isdeleted = FALSE
             `,
             [organizationId, customerId]
           )
@@ -409,6 +416,7 @@ export module customerStatementService {
             JOIN journal_entries j
               ON j.id = m.journalentryid
              AND j.organizationid = a.organizationid
+             AND j.isdeleted = FALSE
             WHERE a.organizationid = $1
               AND r.partytype = 'customer'
               AND r.partyid = $2
@@ -426,6 +434,7 @@ export module customerStatementService {
             SELECT COUNT(DISTINCT m.id)::int AS total
             FROM on_account_movements m
             JOIN on_account_references r ON r.id = m.onaccountreferenceid
+            JOIN journal_entries j ON j.id = m.journalentryid AND j.isdeleted = FALSE
             WHERE m.organizationid = $1
               AND r.partytype = 'customer'
               AND r.partyid = $2
@@ -459,6 +468,7 @@ export module customerStatementService {
               AND r.partyid = $2
               AND m.movementtype IN ('journal_transfer_in', 'journal_transfer_out', 'journal_transfer_reversal')
               AND j.status = 'posted'
+              AND j.isdeleted = FALSE
             ORDER BY j.entrydate, j.posteddate, j.id
             `,
             [organizationId, customerId]
@@ -838,6 +848,7 @@ export module customerStatementService {
       AND t.partytype = 'customer'
       AND t.partyid = $2
       AND t.postingstatus = 'posted'
+      AND t.isdeleted = FALSE
     `;
     const [recordResult, countResult] = await Promise.all([
       query(
