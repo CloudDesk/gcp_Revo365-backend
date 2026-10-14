@@ -43,17 +43,6 @@ const CHART_ACCOUNT_CATEGORIES = new Set([
   "expense",
 ]);
 
-const LISTED_SYSTEM_ACCOUNT_SUBTYPES = [
-  "accounts_receivable",
-  "accounts_payable",
-  "gst_output_cgst",
-  "gst_output_sgst",
-  "gst_output_igst",
-  "gst_input_cgst",
-  "gst_input_sgst",
-  "gst_input_igst",
-];
-
 type GstComponent = "cgst" | "sgst" | "igst";
 
 const getGstAccountContext = (accountSubtype: unknown) => {
@@ -521,7 +510,7 @@ export module financeAccountService {
   export const listChartAccounts = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
     const queryData = request.query || {};
-    const params: any[] = [organizationId, LISTED_SYSTEM_ACCOUNT_SUBTYPES];
+    const params: any[] = [organizationId];
     const conditions = [
       "f.organizationid = $1",
       "f.isusercreatedchartaccount = TRUE",

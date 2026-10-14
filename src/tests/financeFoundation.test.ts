@@ -104,7 +104,18 @@ import {
   findOnAccountMovementByIdempotency,
   lockOnAccountReferences,
 } from "../services/onAccountFoundation.service.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
+import {
+  createBlockingReferenceFixture,
+  createMultiBankDirectLedgerFixture,
+  createSingleBankDirectLedgerFixture,
+  inspectFixtureChartAccountReferences,
+} from "./fixtures/chartAccountLifecycle.fixture.js";
 
+describe("Finance foundation regression suite", { concurrency: false }, () => {
 describe("On Account Phase 1 foundation", () => {
   test("formats stable Customer and Supplier reference numbers", () => {
     assert.equal(formatOnAccountReferenceNumber("customer", 1), "OA-C-00000001");
@@ -951,16 +962,6 @@ describe("Chart of Accounts Phase 3", () => {
     );
   });
 });
-import {
-  assertTransactionDateIsWithinAccountHistory,
-  rebuildBankCashAccountBalances,
-} from "../utils/finance/bankTransactionBalance.utils.js";
-import {
-  createBlockingReferenceFixture,
-  createMultiBankDirectLedgerFixture,
-  createSingleBankDirectLedgerFixture,
-  inspectFixtureChartAccountReferences,
-} from "./fixtures/chartAccountLifecycle.fixture.js";
 
 describe("Cash and Bank foundation calculations", () => {
   test("Debit increases available balance", () => {
@@ -2163,4 +2164,5 @@ describe("Bank account number protection", () => {
         error.code === "FINANCE_ENCRYPTION_KEY_MISSING"
     );
   });
+});
 });

@@ -891,7 +891,23 @@ export const changeChartAccountStatusWithClient = async (
   };
 };
 
-const DELETE_PREVIEW_TTL_SECONDS = 5 * 60;
+// Give administrators enough time to inspect the downloaded CSV. The final
+// delete still revalidates every reference fingerprint before changing data.
+const DELETE_PREVIEW_TTL_SECONDS = 30 * 60;
+
+const deletionCsvFilenameTimestamp = (epoch: number) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(epoch * 1000));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.day}${values.month}${values.year}${values.hour}${values.minute}`;
+};
 
 type ChartAccountDeletionTokenPayload = {
   version: 1;
@@ -1133,7 +1149,8 @@ const loadChartAccountDeletionSnapshot = async (
   const bankTransactions = transactionIds.length
     ? await client.query(
         `SELECT bt.*, bca.accountname AS bankcashaccountname,
-                bca.accounttype AS bankcashaccounttype
+                bca.accounttype AS bankcashaccounttype,
+                bca.currentbalance AS bankbalancebefore
            FROM bank_transactions bt
            JOIN bank_cash_accounts bca
              ON bca.id = bt.bankcashaccountid
@@ -1199,6 +1216,7 @@ export const buildChartAccountDeletionCsv = (input: {
   rebuiltAccounts: Array<{ bankCashAccountId: number; before: number; after: number }>;
   deletedAccountIds?: number[];
   skippedReasons?: Map<number, string>;
+  operationMode?: "delete" | "preview";
 }) => {
   const accountRows = new Map(input.snapshot.accounts.map((row) => [Number(row.id), row]));
   const journalRows = new Map(input.snapshot.journalEntries.map((row) => [Number(row.id), row]));
@@ -1265,9 +1283,12 @@ export const buildChartAccountDeletionCsv = (input: {
     const transactions = input.snapshot.bankTransactions.filter(
       (row) => Number(row.counterpartyaccountid) === impact.accountid
     );
+    const eligibleResult = input.operationMode === "preview"
+      ? "preview_deletable"
+      : "deleted";
     if (transactions.length === 0) {
       csvRows.push({
-        ...baseForAccount(impact, "deleted"),
+        ...baseForAccount(impact, eligibleResult),
         datajson: accountRows.get(impact.accountid) || {},
       });
       continue;
@@ -1278,12 +1299,13 @@ export const buildChartAccountDeletionCsv = (input: {
       const balance = balances.get(Number(transaction.bankcashaccountid));
       for (const line of lines) {
         csvRows.push({
-          ...baseForAccount(impact, "deleted"),
+          ...baseForAccount(impact, eligibleResult),
           bankcashaccountid: transaction.bankcashaccountid,
           bankcashaccountname: transaction.bankcashaccountname,
           bankcashaccounttype: transaction.bankcashaccounttype,
-          bankbalancebefore: balance?.before,
-          bankbalanceafter: balance?.after,
+          bankbalancebefore: balance?.before ?? transaction.bankbalancebefore,
+          bankbalanceafter:
+            input.operationMode === "preview" ? "" : balance?.after,
           banktransactionid: transaction.id,
           transactionnumber: transaction.transactionnumber,
           transactiondate: transaction.transactiondate,
@@ -1317,6 +1339,66 @@ export const buildChartAccountDeletionCsv = (input: {
     ...csvRows.map((row) => deletionCsvColumns.map((column) => csvValue(row[column])).join(",")),
   ].join("\r\n");
   return `\uFEFF${csv}\r\n`;
+};
+
+export const exportChartAccountDeletionPreviewWithClient = async (
+  client: LifecycleDbClient,
+  input: {
+    organizationId: number;
+    actor: string;
+    deletionToken: unknown;
+    epoch?: number;
+    tokenSecret?: string;
+  }
+) => {
+  const epoch = input.epoch ?? nowEpoch();
+  const token = verifyChartAccountDeletionToken(input.deletionToken, {
+    organizationId: input.organizationId,
+    actor: input.actor,
+    now: epoch,
+    secret: input.tokenSecret,
+  });
+  const impacts = await buildChartAccountLifecycleImpact(
+    client,
+    input.organizationId,
+    token.accountids,
+    { lockAccounts: false }
+  );
+  if (fingerprintChartAccountDeletionImpact(impacts) !== token.fingerprint) {
+    throw new FinanceValidationError(
+      "Account or reference state changed after preview. Refresh the preview before downloading.",
+      409,
+      "CHART_ACCOUNT_DELETE_PREVIEW_CHANGED"
+    );
+  }
+  const deletableImpacts = impacts.filter(
+    (impact) => impact.deletable && token.deletableids.includes(impact.accountid)
+  );
+  const snapshot = await loadChartAccountDeletionSnapshot(
+    client,
+    input.organizationId,
+    token.accountids,
+    deletableImpacts
+  );
+  const csv = buildChartAccountDeletionCsv({
+    deletionBatchId: `preview-${token.nonce}`,
+    actor: input.actor,
+    epoch,
+    impacts,
+    snapshot,
+    rebuiltAccounts: [],
+    operationMode: "preview",
+  });
+  const filenameTimestamp = deletionCsvFilenameTimestamp(epoch);
+  return {
+    csv,
+    filename: `${filenameTimestamp}-chart-of-accounts-delete-preview.csv`,
+    summary: {
+      requested: impacts.length,
+      deletable: deletableImpacts.length,
+      blocked: impacts.length - deletableImpacts.length,
+    },
+  };
 };
 
 export const deleteChartAccountsWithClient = async (
@@ -1540,10 +1622,10 @@ export const deleteChartAccountsWithClient = async (
     deletedAccountIds: deletableIds,
     skippedReasons,
   });
-  const filenameTimestamp = new Date(epoch * 1000).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const filenameTimestamp = deletionCsvFilenameTimestamp(epoch);
   return {
     csv,
-    filename: `chart-of-accounts-delete-${filenameTimestamp}.csv`,
+    filename: `${filenameTimestamp}-chart-of-accounts-delete-result.csv`,
     summary: {
       deletionbatchid: deletionBatchId,
       requested: impacts.length,
@@ -1590,6 +1672,15 @@ export module chartAccountLifecycleService {
       organizationId,
       actor,
       accountIds: request.body?.accountids,
+    });
+  };
+
+  export const exportDeletionPreview = async (request: any) => {
+    const { organizationId, actor } = resolveFinanceContext(request);
+    return exportChartAccountDeletionPreviewWithClient(pool, {
+      organizationId,
+      actor,
+      deletionToken: request.body?.deletiontoken,
     });
   };
 

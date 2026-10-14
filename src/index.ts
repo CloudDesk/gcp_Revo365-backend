@@ -39,7 +39,17 @@ fs.stat(logFilePath, (err, stats) => {
   }
 });
 
-fastify.register(cors);
+fastify.register(cors, {
+  exposedHeaders: [
+    "Content-Disposition",
+    "X-Preview-Account-Count",
+    "X-Deletable-Account-Count",
+    "X-Deletion-Batch-Id",
+    "X-Deleted-Account-Count",
+    "X-Blocked-Account-Count",
+    "X-Skipped-Account-Count",
+  ],
+});
 fastify.register(fastifyRawBody, {
   global: false,
   field: "rawBody",

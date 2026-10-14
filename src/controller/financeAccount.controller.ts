@@ -313,6 +313,29 @@ export module financeAccountController {
     }
   };
 
+  export const exportChartAccountDeletionPreview = async (
+    request: any,
+    reply: any
+  ) => {
+    try {
+      const result = await chartAccountLifecycleService.exportDeletionPreview(
+        request
+      );
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header(
+          "Content-Disposition",
+          `attachment; filename="${result.filename}"`
+        )
+        .header("X-Preview-Account-Count", String(result.summary.requested))
+        .header("X-Deletable-Account-Count", String(result.summary.deletable))
+        .header("X-Blocked-Account-Count", String(result.summary.blocked))
+        .send(Buffer.from(result.csv, "utf8"));
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const deleteChartAccounts = async (request: any, reply: any) => {
     try {
       const result = await chartAccountLifecycleService.deleteAccounts(request);

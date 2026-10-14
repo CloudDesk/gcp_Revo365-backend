@@ -6,6 +6,7 @@ import {
   buildChartAccountDeletionCsv,
   changeChartAccountStatusWithClient,
   deleteChartAccountsWithClient,
+  exportChartAccountDeletionPreviewWithClient,
   fingerprintChartAccountDeletionImpact,
   inspectChartAccountReferences,
   lockEligibleChartAccounts,
@@ -20,6 +21,7 @@ import {
 import {
   bulkChartAccountStatusSchema,
   chartAccountBulkDeleteSchema,
+  chartAccountDeleteExportSchema,
   chartAccountDeletePreviewSchema,
   chartAccountStatusSchema,
 } from "../schemas/finance.schema.js";
@@ -362,6 +364,7 @@ describe("Chart of Accounts lifecycle Phase 5 deletion", () => {
       directledgertransactions: 0,
       affectedbankaccounts: 0,
     });
+    assert.equal(preview.expiresat, epoch + 30 * 60);
     const payload = verifyChartAccountDeletionToken(preview.deletiontoken, {
       organizationId: 7,
       actor: "admin@example.com",
@@ -370,6 +373,44 @@ describe("Chart of Accounts lifecycle Phase 5 deletion", () => {
     });
     assert.deepEqual(payload.deletableids, [41]);
     assert.equal(payload.fingerprint, fingerprintChartAccountDeletionImpact(preview.accounts));
+  });
+
+  test("downloads a pre-delete CSV without mutating any finance data", async () => {
+    const calls: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        calls.push(sql);
+        if (/SELECT f\.\*/.test(sql)) {
+          return { rows: [lifecycleAccount(41, { description: "Review first" })] };
+        }
+        if (/FROM finance_accounts/.test(sql)) return { rows: [lifecycleAccount(41)] };
+        if (/SELECT bt\.id, bt\.counterpartyaccountid AS accountid/.test(sql)) return { rows: [] };
+        if (/SELECT jl\.id AS lineid/.test(sql)) return { rows: [] };
+        if (sql.includes("'bank_cash_account'::text AS referencetype") || /FROM pg_constraint/.test(sql)) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+    };
+    const preview = await previewChartAccountDeletionWithClient(client, {
+      organizationId: 7,
+      actor: "admin@example.com",
+      accountIds: [41],
+      now: epoch,
+      tokenSecret,
+    });
+    const result = await exportChartAccountDeletionPreviewWithClient(client, {
+      organizationId: 7,
+      actor: "admin@example.com",
+      deletionToken: preview.deletiontoken,
+      epoch,
+      tokenSecret,
+    });
+
+    assert.match(result.filename, /^\d{12}-chart-of-accounts-delete-preview\.csv$/);
+    assert.match(result.csv, /preview_deletable/);
+    assert.match(result.csv, /Review first/);
+    assert.equal(calls.some((sql) => /\b(?:UPDATE|DELETE|INSERT)\b/i.test(sql)), false);
   });
 
   test("skips an account whose state changed after preview without blocking the batch", async () => {
@@ -515,6 +556,7 @@ describe("Chart of Accounts lifecycle Phase 5 deletion", () => {
     assert.equal(result.summary.transactionsdeleted, 1);
     assert.equal(result.summary.journalsdeleted, 1);
     assert.equal(result.summary.bankaccountsrebuilt, 1);
+    assert.match(result.filename, /^\d{12}-chart-of-accounts-delete-result\.csv$/);
     assert.ok(result.csv.startsWith("\uFEFFdeletionbatchid,"));
     assert.match(result.csv, /Office, Rent/);
     assert.ok(result.csv.includes('"Rent, ""September"""'));
@@ -544,13 +586,15 @@ describe("Chart of Accounts lifecycle Phase 5 deletion", () => {
 
   test("publishes preview and confirmed-delete contracts behind delete permission", () => {
     assert.deepEqual(chartAccountDeletePreviewSchema.required, ["accountids"]);
+    assert.deepEqual(chartAccountDeleteExportSchema.required, ["deletiontoken"]);
     assert.deepEqual(chartAccountBulkDeleteSchema.required, ["deletiontoken"]);
     const routes = readFileSync(new URL("../routes/routes.ts", import.meta.url), "utf8");
     assert.match(routes, /\/finance\/chart-of-accounts\/delete-preview/);
+    assert.match(routes, /\/finance\/chart-of-accounts\/delete-preview-csv/);
     assert.match(routes, /\/finance\/chart-of-accounts\/bulk-delete/);
     assert.equal(
       routes.match(/requireFinancePermission\('delete', 'chart_of_accounts'\)/g)?.length,
-      2
+      3
     );
   });
 });

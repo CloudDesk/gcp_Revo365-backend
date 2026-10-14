@@ -318,6 +318,7 @@ large handler with unrelated behavior. It should provide:
 | `PATCH` | `/finance/chart-of-accounts/:accountId/status` | Activate or deactivate one COA | `edit` |
 | `POST` | `/finance/chart-of-accounts/bulk-status` | Activate or deactivate selected COAs | `edit` |
 | `POST` | `/finance/chart-of-accounts/delete-preview` | Validate references and return deletion impact | `delete` |
+| `POST` | `/finance/chart-of-accounts/delete-preview-csv` | Download the validated pre-delete snapshot without mutation | `delete` |
 | `POST` | `/finance/chart-of-accounts/bulk-delete` | Confirm soft deletion and return CSV | `delete` |
 | `GET` | `/finance/transactions` or existing route | Add transaction lifecycle-status filtering | Existing read permission |
 
@@ -677,7 +678,9 @@ Delete confirmation must show:
 - Deletable and blocked COAs.
 - Direct Ledger transaction count.
 - Affected Cash/Bank account count.
-- Confirmation that a CSV will be downloaded.
+- A first, non-mutating action to download and review the preview CSV.
+- A disabled `Continue to delete` action until that download succeeds.
+- A separate final confirmation after the CSV review step.
 - Confirmation that deleted records cannot be reactivated in the application.
 
 ### 12.6 Results and errors
@@ -913,6 +916,7 @@ encryption key as a compatibility fallback) before runtime use.
 Tasks:
 
 - [x] Implement preview endpoint and signed confirmation token.
+- [x] Implement a token-bound, non-mutating preview CSV endpoint.
 - [x] Implement final reference revalidation.
 - [x] Capture complete pre-delete snapshot.
 - [x] Apply soft deletion with batch metadata.
@@ -922,8 +926,11 @@ Tasks:
 
 Implementation notes:
 
-- Preview tokens expire after five minutes and are signed for the organization,
+- Preview tokens expire after thirty minutes so the administrator can inspect
+  the downloaded CSV. They are signed for the organization,
   actor, selected account IDs, deletable IDs and exact reference fingerprint.
+- The preview CSV endpoint revalidates that fingerprint and performs reads only;
+  it never changes the COA, Direct Ledger entries, journals or balances.
 - Confirmation runs at serializable isolation, locks selected COAs and affected
   Cash/Bank accounts deterministically, and skips only the accounts whose
   fingerprint became stale while continuing safe accounts in the same batch.
@@ -960,6 +967,7 @@ Tasks:
 - [x] Add individual detail-page actions.
 - [x] Add impact/confirmation dialogs.
 - [x] Add CSV Blob download handling.
+- [x] Require preview CSV download before enabling the final delete flow.
 - [x] Add permission-based visibility and disabled states.
 
 Implementation notes:
@@ -971,12 +979,13 @@ Implementation notes:
 - Activate/deactivate controls require the existing `edit` permission; delete
   controls require the existing `delete` permission. No permission-set SQL or
   permission records are added or modified by Phase 6.
-- Deletion loads the server preview before confirmation and displays deletable,
-  blocked, Direct Ledger transaction and affected Cash/Bank account counts,
-  plus per-account blocking reasons.
-- Successful deletion downloads the backend CSV Blob using its response
-  filename and reports deleted, blocked and skipped counts from response
-  headers.
+- Deletion loads the server preview and displays deletable, blocked, Direct
+  Ledger transaction and affected Cash/Bank account counts, plus per-account
+  blocking reasons.
+- The first download is a read-only preview CSV. Only after it succeeds does
+  the UI enable `Continue to delete`, which opens a separate final warning.
+- Successful confirmed deletion also downloads the final backend result CSV
+  and reports deleted, blocked and skipped counts from response headers.
 - The frontend production TypeScript/Vite build passed after implementation.
 
 Exit criteria:
@@ -1028,16 +1037,29 @@ Exit criteria:
 
 **Goal:** Complete security validation and deploy safely.
 
+**Status:** Implementation, automated verification, manual browser acceptance
+and the post-acceptance dev-database integrity audit were completed on 14
+October 2026. Resolution/acceptance of the existing AR/AP dashboard baseline
+and application deployment remain release activities. See
+`CHART_OF_ACCOUNT_LIFECYCLE_PHASE_8_RELEASE_REPORT.md`.
+
 Tasks:
 
-- [ ] Apply role permission migration.
-- [ ] Run backend unit/integration tests.
-- [ ] Run frontend TypeScript build and lint.
-- [ ] Perform manual end-to-end finance tests.
+- [x] Confirm the administrator-managed role permission records. No permission
+      migration or permission SQL is part of this implementation.
+- [x] Run backend unit/integration tests (253 passed, 0 failed).
+- [x] Run frontend TypeScript build and lint.
+- [x] Perform manual end-to-end finance tests.
 - [ ] Verify trial balance, profit and loss, balance sheet and dashboard totals.
-- [ ] Verify concurrency with simultaneous posting and lifecycle requests.
-- [ ] Deploy database migration before application code.
-- [ ] Monitor lifecycle and balance-rebuild audit events.
+      Trial Balance, P&L and Balance Sheet pass; the existing AR/AP dashboard
+      control-ledger variances remain a release gate.
+- [x] Verify the deterministic concurrency lock-order contract used by Direct
+      Ledger posting and lifecycle requests. A simultaneous dev/UAT browser/API
+      exercise remains part of manual acceptance.
+- [ ] Deploy database migration before application code. The configured dev DB
+      already passes the lifecycle schema verifier; no application deploy was
+      performed here.
+- [x] Add and baseline the read-only lifecycle/balance-rebuild audit monitor.
 
 Exit criteria:
 
@@ -1079,28 +1101,33 @@ Exit criteria:
 
 ### 17.3 Reporting tests
 
-- [ ] COA detail excludes inactive and deleted journal entries from totals.
-- [ ] Trial Balance excludes inactive/deleted journal entries.
-- [ ] Profit & Loss excludes inactive/deleted journal entries.
-- [ ] Balance Sheet excludes inactive/deleted journal entries.
+- [x] COA detail excludes inactive and deleted journal entries from totals.
+- [x] Trial Balance excludes inactive/deleted journal entries.
+- [x] Profit & Loss excludes inactive/deleted journal entries.
+- [x] Balance Sheet excludes inactive/deleted journal entries.
 - [ ] Finance dashboard totals reconcile after each lifecycle action.
 
 ### 17.4 Frontend tests
 
-- [ ] Active COA filter is selected by default.
-- [ ] Inactive and All filters request the correct backend scope.
-- [ ] Row selection and current-page select-all behave correctly.
-- [ ] Confirmation preview displays impact counts and blockers.
-- [ ] CSV downloads only after a successful confirmed delete.
-- [ ] Global transaction status combines with Direct Ledger Transaction Type.
-- [ ] Account transaction status combines with Manual Source.
-- [ ] Inactive rows display a status badge.
-- [ ] Deleted rows never appear.
-- [ ] Unauthorized users cannot see or invoke restricted actions.
+- [x] Active COA filter is selected by default.
+- [x] Inactive and All filters request the correct backend scope.
+- [x] Row selection and current-page select-all behave correctly.
+- [x] Confirmation preview displays impact counts and blockers.
+- [x] Preview CSV downloads without changing any data.
+- [x] `Continue to delete` stays disabled until the preview CSV downloads.
+- [x] Final deletion occurs only from the separate confirmation step.
+- [x] Confirmed deletion downloads the final result CSV.
+- [x] Global transaction status combines with Direct Ledger Transaction Type.
+- [x] Account transaction status combines with Manual Source.
+- [x] Inactive rows display a status badge.
+- [x] Deleted rows never appear.
+- [x] Unauthorized users cannot see or invoke restricted actions.
 
 ## 18. Manual Acceptance Scenarios
 
 ### Scenario A — Deactivate and reactivate one COA
+
+**Manual status:** Passed on 14 October 2026.
 
 1. Create a COA.
 2. Post two Direct Ledger transactions against different Cash/Bank accounts.
@@ -1114,6 +1141,11 @@ Exit criteria:
 
 ### Scenario B — Delete a Direct-Ledger-only COA
 
+**Manual status:** Passed on 14 October 2026. The post-test database audit
+confirmed that the tested `LAND` account, its Direct Ledger transaction and its
+journal were soft-deleted under one deletion batch and its Cash/Bank balance
+reconciled.
+
 1. Create a COA and post Direct Ledger transactions.
 2. Start deletion and inspect the preview.
 3. Confirm deletion.
@@ -1124,6 +1156,8 @@ Exit criteria:
 
 ### Scenario C — Block unsafe deletion
 
+**Manual status:** Passed on 14 October 2026.
+
 1. Create a COA referenced by a manual Journal or expense bill.
 2. Request deletion.
 3. Confirm the preview reports the blocking reference.
@@ -1131,6 +1165,8 @@ Exit criteria:
 5. Confirm deactivation remains available.
 
 ### Scenario D — Bulk mixed selection
+
+**Manual status:** Passed on 14 October 2026.
 
 1. Select active, inactive, deletable and blocked COAs.
 2. Verify actions are permission controlled.

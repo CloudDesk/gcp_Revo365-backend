@@ -73,6 +73,15 @@ export const chartAccountBulkDeleteSchema = {
   required: ["deletiontoken"],
 };
 
+export const chartAccountDeleteExportSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    deletiontoken: { type: "string", minLength: 40, maxLength: 20000 },
+  },
+  required: ["deletiontoken"],
+};
+
 export const createBankCashAccountSchema = {
   type: "object",
   additionalProperties: false,

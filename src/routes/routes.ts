@@ -101,6 +101,7 @@ import {
     chartAccountStatusSchema,
     bulkChartAccountStatusSchema,
     chartAccountDeletePreviewSchema,
+    chartAccountDeleteExportSchema,
     chartAccountBulkDeleteSchema,
     postCustomerTransferSchema,
     replaceCustomerTransferSchema,
@@ -460,6 +461,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/chart-of-accounts/delete-preview',
         { preHandler: [getSession, requireFinancePermission('delete', 'chart_of_accounts'), validateRequestBody(chartAccountDeletePreviewSchema)] },
         financeAccountController.previewChartAccountDeletion
+    );
+    fastify.post(
+        '/finance/chart-of-accounts/delete-preview-csv',
+        { preHandler: [getSession, requireFinancePermission('delete', 'chart_of_accounts'), validateRequestBody(chartAccountDeleteExportSchema)] },
+        financeAccountController.exportChartAccountDeletionPreview
     );
     fastify.post(
         '/finance/chart-of-accounts/bulk-delete',
