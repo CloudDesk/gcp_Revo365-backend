@@ -85,6 +85,7 @@ export var poinvoiceservice;
            WHERE allocation.documenttype = 'purchase_bill'
              AND allocation.documentid = bill.id
              AND allocation.status = 'applied'
+             AND bank_tx.isdeleted = FALSE
              AND bank_tx.postingstatus = 'posted'
          ) AS hastransactions
        FROM poinvoice bill
@@ -371,6 +372,7 @@ export var poinvoiceservice;
           WHERE allocation.documenttype = 'purchase_bill'
             AND allocation.documentid = poinvoice.id
             AND allocation.status = 'applied'
+            AND bank_tx.isdeleted = FALSE
             AND bank_tx.postingstatus = 'posted'
         ) AS hastransactions
         FROM poinvoice ${whereClause} ${orderByClause}`;

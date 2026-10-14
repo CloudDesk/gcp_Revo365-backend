@@ -12,7 +12,9 @@ export const assertTransactionDateIsWithinAccountHistory = (transactionDate, ope
 export const rebuildBankCashAccountBalances = async (client, bankCashAccount, actor, epoch) => {
     const transactionsResult = await client.query(`SELECT id, transactiondate, entryside, amount
      FROM bank_transactions
-     WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
+     WHERE bankcashaccountid = $1
+       AND postingstatus = 'posted'
+       AND isdeleted = FALSE
      ORDER BY transactiondate ASC, posteddate ASC, id ASC`, [bankCashAccount.id]);
     let currentBalance = toMoney(bankCashAccount.openingbalance, "openingbalance");
     const balances = new Map();

@@ -118,6 +118,7 @@ export module supplierStatementService {
                 AND allocation.status = 'applied'
                 AND bank_tx.organizationid = $2
                 AND bank_tx.postingstatus = 'posted'
+                AND bank_tx.isdeleted = FALSE
             ),
             0
           ) AS finance_settled_amount
@@ -176,6 +177,7 @@ export module supplierStatementService {
           AND t.partytype = 'supplier'
           AND t.partyid = $2
           AND t.postingstatus = 'posted'
+          AND t.isdeleted = FALSE
         ORDER BY t.transactiondate, t.posteddate, t.id
         `,
         [organizationId, supplierId]

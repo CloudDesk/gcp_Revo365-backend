@@ -212,7 +212,8 @@ The Chart of Accounts implementation is deliberately simpler than Zoho Books:
 
 - Flat account list; no parent/child tree in the current scope.
 - Fixed backend-controlled Account Type catalogue.
-- Organization-scoped unique Account Name and Account Code.
+- Organization-scoped unique Account Name and optional Account Code; when an
+  Account Code is supplied, its uniqueness is enforced case-insensitively.
 - User-created posting accounts are separated from system, Customer, Supplier,
   and Bank/Cash records.
 - Account list, creation, detail, ledger entries, and ledger totals are

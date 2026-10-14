@@ -30,7 +30,9 @@ export const rebuildBankCashAccountBalances = async (
   const transactionsResult = await client.query(
     `SELECT id, transactiondate, entryside, amount
      FROM bank_transactions
-     WHERE bankcashaccountid = $1 AND postingstatus = 'posted'
+     WHERE bankcashaccountid = $1
+       AND postingstatus = 'posted'
+       AND isdeleted = FALSE
      ORDER BY transactiondate ASC, posteddate ASC, id ASC`,
     [bankCashAccount.id]
   );

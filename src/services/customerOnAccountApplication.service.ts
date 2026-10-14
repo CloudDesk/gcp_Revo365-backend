@@ -69,6 +69,7 @@ const getExistingApplication = async (
     LEFT JOIN journal_entries j
       ON j.id = m.journalentryid
      AND j.organizationid = a.organizationid
+     AND j.isdeleted = FALSE
     WHERE a.organizationid = $1
       AND a.idempotencykey = $2
       AND a.status = 'applied'
@@ -356,6 +357,7 @@ export module customerOnAccountApplicationService {
         WHERE organizationid = $1
           AND accountcode = ANY($2::text[])
           AND status = 'active'
+          AND isdeleted = FALSE
         `,
         [
           organizationId,

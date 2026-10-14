@@ -80,6 +80,7 @@ const selectSupplierBills = `
           AND allocation.documentid = bill.id
           AND allocation.status = 'applied'
           AND bank_tx.postingstatus = 'posted'
+          AND bank_tx.isdeleted = FALSE
       ),
       0
     ) AS finance_settled_amount,
@@ -174,7 +175,7 @@ const getExistingPayment = async (
         '[]'::jsonb
       ) AS allocations
     FROM bank_transactions t
-    LEFT JOIN journal_entries j ON j.id = t.journalentryid
+    LEFT JOIN journal_entries j ON j.id = t.journalentryid AND j.isdeleted = FALSE
     LEFT JOIN on_account_references oa
       ON oa.organizationid = t.organizationid
      AND oa.sourcebanktransactionid = t.id
@@ -183,6 +184,7 @@ const getExistingPayment = async (
       AND t.sourcetype = ANY($2::text[])
       AND t.sourcepaymentid = $3
       AND t.postingstatus <> 'reversed'
+      AND t.isdeleted = FALSE
     LIMIT 1
     `,
     [
@@ -303,6 +305,7 @@ const postSupplierOnAccountPayment = async ({
       WHERE organizationid = $1
         AND accountcode = 'SYS-SUPPLIER-ADVANCE'
         AND status = 'active'
+        AND isdeleted = FALSE
       LIMIT 1
       `,
       [organizationId]
@@ -842,6 +845,7 @@ export module supplierPaymentFinanceService {
                 AND allocation.documentid = bill.id
                 AND allocation.status = 'applied'
                 AND bank_tx.postingstatus = 'posted'
+                AND bank_tx.isdeleted = FALSE
             ),
             0
           ) AS finance_settled_amount,
@@ -908,6 +912,7 @@ export module supplierPaymentFinanceService {
         WHERE organizationid = $1
           AND accountcode = 'SYS-AP'
           AND status = 'active'
+          AND isdeleted = FALSE
         LIMIT 1
         `,
         [organizationId]
@@ -931,6 +936,7 @@ export module supplierPaymentFinanceService {
           WHERE organizationid = $1
             AND accountcode = 'SYS-TDS-PAYABLE'
             AND status = 'active'
+            AND isdeleted = FALSE
           LIMIT 1
           `,
           [organizationId]
