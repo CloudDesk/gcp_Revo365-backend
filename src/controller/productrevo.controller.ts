@@ -33,6 +33,20 @@ export module productrevoController {
             reply.status(500).send(error.message);
         }
     }
+    export const searchInStoreProducts = async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+            const searchValue = String((request.query as any)?.q ?? "").trim();
+            if (searchValue.length === 1) {
+                return reply.status(200).send([]);
+            }
+
+            const result = await productrevoService.searchInStoreProducts(request);
+            return reply.status(200).send(result);
+        } catch (error) {
+            console.error('ERROR IN Controller searchInStoreProducts', error);
+            return reply.status(500).send({ message: 'Unable to search in-store products.' });
+        }
+    }
     //get
     export const getProductsEcomrevoData = async (request: FastifyRequest, reply: FastifyReply) => {
         try {

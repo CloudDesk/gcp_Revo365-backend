@@ -103,6 +103,7 @@ export const invoiceIncludesCogs = (invoice) => {
     const documentType = resolveInvoiceDocumentType(invoice);
     return documentType === "product" || documentType === "product + service";
 };
+export const invoiceIncludesRentalIncome = (invoice) => resolveInvoiceDocumentType(invoice) === "rental";
 export const resolveInvoiceGst = (invoice) => {
     const invoiceFor = String(invoice?.invoicefor || "").trim().toLowerCase();
     if (!new Set(["product", "rental", "service"]).has(invoiceFor)) {

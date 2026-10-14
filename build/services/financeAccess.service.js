@@ -2,12 +2,12 @@ import { query } from "../database/postgres.js";
 export const requireFinanceModulePermission = (objectAPI, permission = "read") => {
     return async (request, reply) => {
         const role = String(request.session?.role || "").trim().toLowerCase();
-        if (!["admin", "accountant"].includes(role)) {
+        if (!role) {
             return reply.status(403).send({
                 success: false,
                 error: {
                     code: "FINANCE_MODULE_ACCESS_DENIED",
-                    message: "Finance Dashboard and Reports are restricted to Admin and Accountant roles.",
+                    message: "Finance access is restricted to authorized internal users.",
                 },
             });
         }
@@ -40,20 +40,21 @@ export const requireJournalPermission = (permission) => {
                 },
             });
         }
-        if (!["accountant", "admin"].includes(role)) {
-            return reply.status(403).send({
-                success: false,
-                error: {
-                    code: "JOURNAL_ACCESS_DENIED",
-                    message: "Journal access is restricted to Accountant and Admin roles.",
-                },
-            });
-        }
-        // Journal capabilities are deliberately granted as one Finance policy to
-        // both approved roles. Routes still declare the exact capability
-        // (transfer/replace/etc.) so the UI and audit boundary remain explicit.
-        void permission;
-        return;
+        const result = await query(`SELECT item->'permissions' AS permissions
+       FROM permissions p
+       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.permissionset, '[]'::jsonb)) item
+       WHERE LOWER(TRIM(p.role)) = $1
+         AND item->>'objectAPI' = 'journal'
+       LIMIT 1`, [role]);
+        if (result.rows[0]?.permissions?.[permission] === true)
+            return;
+        return reply.status(403).send({
+            success: false,
+            error: {
+                code: "JOURNAL_ACCESS_DENIED",
+                message: `You do not have ${permission} permission for Journals.`,
+            },
+        });
     };
 };
 export const requireFinancePermission = (permission, resource = "cash_bank_account") => {
@@ -68,15 +69,6 @@ export const requireFinancePermission = (permission, resource = "cash_bank_accou
                 },
             });
         }
-        if (!["accountant", "admin"].includes(role)) {
-            return reply.status(403).send({
-                success: false,
-                error: {
-                    code: "FINANCE_ACCESS_DENIED",
-                    message: "Finance access is restricted to Accountant and Admin roles.",
-                },
-            });
-        }
         const result = await query(`
       SELECT permission_item->'permissions' AS permissions
       FROM permissions p
@@ -84,17 +76,15 @@ export const requireFinancePermission = (permission, resource = "cash_bank_accou
         COALESCE(p.permissionset, '[]'::jsonb)
       ) permission_item
       WHERE LOWER(p.role) = $1
-        AND permission_item->>'objectAPI' = $2
-      LIMIT 1
+        AND permission_item->>'objectAPI' ${Array.isArray(resource) ? '= ANY($2::text[])' : '= $2'}
       `, [role, resource]);
-        const permissions = result.rows[0]?.permissions || {};
-        if (permissions?.[permission] === true)
+        if (result.rows.some((row) => row.permissions?.[permission] === true))
             return;
         return reply.status(403).send({
             success: false,
             error: {
                 code: "FINANCE_ACCESS_DENIED",
-                message: `You do not have ${permission} permission for ${resource === "chart_of_accounts" ? "Chart of Accounts" : "Cash and Bank Account"}.`,
+                message: `You do not have ${permission} permission for ${resource}.`,
             },
         });
     };

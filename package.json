@@ -16,6 +16,7 @@
     "verify:tds-summary": "node build/scripts/verifyTdsSummaryReadOnly.js",
     "verify:tds-document-links": "node build/scripts/verifyTdsDocumentLinksReadOnly.js",
     "test:service-estimation-stock": "tsx --test src/tests/serviceEstimationStockPolicy.test.ts",
+    "test:instore-products": "tsx --test src/tests/inStoreProductAvailability.test.ts",
     "test:service-invoice-flow": "tsx --test src/tests/financeFoundation.test.ts src/tests/serviceRequestInvoiceFlow.test.ts",
     "verify:product-stock-api": "npx tsx src/scripts/verifyProductStockApi.ts",
     "build": "tsc",
