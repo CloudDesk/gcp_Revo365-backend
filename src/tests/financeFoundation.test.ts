@@ -115,6 +115,22 @@ import {
   inspectFixtureChartAccountReferences,
 } from "./fixtures/chartAccountLifecycle.fixture.js";
 
+import {
+  buildControlAccountHistory,
+  summarizeControlAccountHistory,
+} from "../utils/finance/controlAccountHistory.utils.js";
+
+const LISTED_SYSTEM_SUBTYPES = [
+  "accounts_receivable",
+  "accounts_payable",
+  "gst_output_cgst",
+  "gst_output_sgst",
+  "gst_output_igst",
+  "gst_input_cgst",
+  "gst_input_sgst",
+  "gst_input_igst",
+];
+
 describe("Finance foundation regression suite", { concurrency: false }, () => {
 describe("On Account Phase 1 foundation", () => {
   test("formats stable Customer and Supplier reference numbers", () => {
@@ -720,18 +736,23 @@ describe("Chart of Accounts list period filtering", () => {
     );
     assert.ok(countCall);
     assert.match(countCall.sql, /EXISTS \([\s\S]*period_entry\.status = 'posted'/);
-    assert.match(countCall.sql, /period_entry\.entrydate >= \$3::DATE/);
-    assert.match(countCall.sql, /period_entry\.entrydate <= \$4::DATE/);
-    assert.deepEqual(countCall.params, [7, "active", "2026-10-23", "2026-10-23"]);
+    assert.match(countCall.sql, /f\.issystem = TRUE AND f\.accountsubtype = ANY\(\$2::TEXT\[\]\)/);
+    assert.match(countCall.sql, /period_entry\.entrydate >= \$4::DATE/);
+    assert.match(countCall.sql, /period_entry\.entrydate <= \$5::DATE/);
+    assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23"]);
 
     const listCall = calls.find(({ sql }) =>
       /LEFT JOIN LATERAL \([\s\S]*SUM\(jl\.debitamount\)/s.test(sql)
     );
     assert.ok(listCall);
     assert.match(listCall.sql, /je\.status = 'posted'/);
-    assert.match(listCall.sql, /je\.entrydate >= \$3::DATE/);
-    assert.match(listCall.sql, /je\.entrydate <= \$4::DATE/);
-    assert.deepEqual(listCall.params, [7, "active", "2026-10-23", "2026-10-23", 0, 10]);
+    assert.match(
+      listCall.sql,
+      /ORDER BY\s+-- System accounts first[\s\S]*array_position\(\$2::TEXT\[\], f\.accountsubtype\)[\s\S]*NULLS LAST,\s+f\.modifieddate DESC/
+    );
+    assert.match(listCall.sql, /je\.entrydate >= \$4::DATE/);
+    assert.match(listCall.sql, /je\.entrydate <= \$5::DATE/);
+    assert.deepEqual(listCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23", 0, 10]);
   });
 });
 
@@ -1180,8 +1201,8 @@ describe("Chart of Accounts lifecycle Phase 2 read behavior", () => {
     );
     assert.ok(countCall);
     assert.match(countCall.sql, /f\.isdeleted = FALSE/);
-    assert.match(countCall.sql, /f\.status = \$2/);
-    assert.deepEqual(countCall.params, [7, "active", null, null]);
+    assert.match(countCall.sql, /f\.status = \$3/);
+    assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", null, null]);
   });
 
   test("supports inactive and all non-deleted COA views", async (t) => {
@@ -1211,11 +1232,11 @@ describe("Chart of Accounts lifecycle Phase 2 read behavior", () => {
     );
     assert.equal(countCalls.length, 2);
     assert.match(countCalls[0].sql, /f\.isdeleted = FALSE/);
-    assert.match(countCalls[0].sql, /f\.status = \$2/);
-    assert.deepEqual(countCalls[0].params, [7, "inactive", null, null]);
+    assert.match(countCalls[0].sql, /f\.status = \$3/);
+    assert.deepEqual(countCalls[0].params, [7, LISTED_SYSTEM_SUBTYPES, "inactive", null, null]);
     assert.match(countCalls[1].sql, /f\.isdeleted = FALSE/);
     assert.doesNotMatch(countCalls[1].sql, /f\.status =/);
-    assert.deepEqual(countCalls[1].params, [7, null, null]);
+    assert.deepEqual(countCalls[1].params, [7, LISTED_SYSTEM_SUBTYPES, null, null]);
   });
 
   test("rebuilds Cash and Bank balances from active posted transactions only", async () => {
@@ -2162,6 +2183,121 @@ describe("Bank account number protection", () => {
       (error: any) =>
         error instanceof FinanceValidationError &&
         error.code === "FINANCE_ENCRYPTION_KEY_MISSING"
+    );
+  });
+});
+
+describe("Accounts Receivable and Payable history", () => {
+  test("lists invoices as Debit and receipts as Credit with a running balance", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 1,
+        invoicenumber: "INV-1",
+        invoicedate: "2026-10-01",
+        totalorderamount: 10000,
+        partyname: "Customer A",
+        paymentdata: [
+          {
+            paymentamount: 5400,
+            tdsamount: 600,
+            settlementamount: 6000,
+            paymentdate: "2026-10-05",
+            transactionreference: "RCPT-1",
+            paymentmethod: "bank_transfer",
+            banktransactionid: 99,
+            status: "success",
+          },
+        ],
+      },
+      {
+        id: 2,
+        invoicenumber: "INV-2",
+        invoicedate: "2026-10-03",
+        totalorderamount: 5000,
+        paymentdata: [],
+      },
+    ], new Map([[99, "HDFC Current"]]));
+
+    assert.deepEqual(
+      history.map((entry) => [
+        entry.transactionnumber,
+        entry.debitamount,
+        entry.creditamount,
+        entry.runningbalance,
+      ]),
+      [
+        ["INV-1", 10000, 0, 10000],
+        ["INV-2", 5000, 0, 15000],
+        ["RCPT-1", 0, 6000, 9000],
+      ]
+    );
+    const receipt = history[2];
+    assert.equal(receipt.documentnumber, "INV-1");
+    assert.equal(receipt.bankcashaccountname, "HDFC Current");
+    assert.match(String(receipt.remarks), /TDS/);
+    assert.deepEqual(summarizeControlAccountHistory(history), {
+      totaldebit: 15000,
+      totalcredit: 6000,
+    });
+  });
+
+  test("adds a settlement row when an invoice is paid without payment details", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 3,
+        invoicenumber: "INV-3",
+        invoicedate: "2026-09-01",
+        totalorderamount: 2000,
+        paidamount: 2000,
+        paymentdata: [],
+      },
+    ]);
+    assert.equal(history.length, 2);
+    assert.equal(history[1].sourcetype, "settlement_adjustment");
+    assert.equal(history[1].creditamount, 2000);
+    assert.equal(history[1].runningbalance, 0);
+  });
+
+  test("orders a payment made before the invoice after that invoice", () => {
+    const history = buildControlAccountHistory("receivable", [
+      {
+        id: 4,
+        invoicenumber: "INV-4",
+        invoicedate: "2026-10-10",
+        totalorderamount: 1000,
+        paymentdata: [{ paymentamount: 1000, paymentdate: "2026-10-08", status: "success" }],
+      },
+    ]);
+    assert.deepEqual(history.map((entry) => entry.runningbalance), [1000, 0]);
+    assert.equal(history[1].transactiondate, "2026-10-08");
+  });
+
+  test("lists bills as Credit and payments as Debit and skips failed payments", () => {
+    const history = buildControlAccountHistory("payable", [
+      {
+        id: 7,
+        invoicenumber: "BILL-7",
+        invoicedate: "2026-10-02",
+        invoiceamount: 8000,
+        balanceamount: 5000,
+        parentreference: "PO-12",
+        paymentdata: [
+          { paymentamount: 3000, paymentdate: "2026-10-04", status: "success", transactionreference: "PAY-1" },
+          { paymentamount: 1000, paymentdate: "2026-10-05", status: "failed" },
+        ],
+      },
+    ]);
+    assert.deepEqual(
+      history.map((entry) => [entry.debitamount, entry.creditamount, entry.runningbalance]),
+      [
+        [0, 8000, -8000],
+        [3000, 0, -5000],
+      ]
+    );
+    assert.equal(history[0].remarks, "PO: PO-12");
+    assert.deepEqual(
+      summarizeControlAccountHistory(history, "2026-10-03", "2026-10-31"),
+      { totaldebit: 3000, totalcredit: 0 }
     );
   });
 });

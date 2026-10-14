@@ -21,11 +21,7 @@ import {
   getCustomerReceiptSourceTypes,
   getRetailReceiptSourceTypes,
 } from "../utils/finance/financeSource.utils.js";
-import {
-  getRetailInvoicePaymentState,
-  getRetailInvoicesOutstandingTotal,
-} from "../utils/finance/retailReceipt.utils.js";
-import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
+import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
 import { toCustomerStatementDate } from "../utils/finance/customerStatement.utils.js";
 import {
   getBillGstSummary,
@@ -34,6 +30,12 @@ import {
   resolveInvoiceGst,
 } from "../utils/finance/gstSummary.utils.js";
 import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
+import {
+  ControlAccountKind,
+  buildControlAccountHistory,
+  collectBankTransactionIds,
+  summarizeControlAccountHistory,
+} from "../utils/finance/controlAccountHistory.utils.js";
 
 const CHART_ACCOUNT_CATEGORIES = new Set([
   "asset",
@@ -42,6 +44,18 @@ const CHART_ACCOUNT_CATEGORIES = new Set([
   "income",
   "expense",
 ]);
+
+// System-managed control accounts listed alongside user-created accounts.
+const LISTED_SYSTEM_ACCOUNT_SUBTYPES = [
+  "accounts_receivable",
+  "accounts_payable",
+  "gst_output_cgst",
+  "gst_output_sgst",
+  "gst_output_igst",
+  "gst_input_cgst",
+  "gst_input_sgst",
+  "gst_input_igst",
+];
 
 type GstComponent = "cgst" | "sgst" | "igst";
 
@@ -60,6 +74,116 @@ const listedChartAccountCondition = (alias = "f") =>
   `(${alias}.isusercreatedchartaccount = TRUE OR (` +
   `${alias}.issystem = TRUE AND ${alias}.accountsubtype = ANY($2::TEXT[])` +
   `))`;
+
+const getControlAccountKind = (
+  accountSubtype: unknown
+): ControlAccountKind | null => {
+  if (accountSubtype === "accounts_receivable") return "receivable";
+  if (accountSubtype === "accounts_payable") return "payable";
+  return null;
+};
+
+// Non-cancelled customer invoices that make up Accounts Receivable.
+const RECEIVABLE_DOCUMENTS_SQL = `
+  SELECT
+    invoice.*,
+    COALESCE(
+      NULLIF(TRIM(CONCAT_WS(' ', customer.firstname, customer.lastname)), ''),
+      customer.useremail,
+      CONCAT('Customer ', invoice.customerid)
+    ) AS partyname
+  FROM revoinvoice invoice
+  LEFT JOIN users customer ON customer.id = invoice.customerid
+  WHERE invoice.organizationid = $1
+    AND LOWER(COALESCE(invoice.paymentstatus, 'pending')) <> 'cancelled'
+`;
+
+// Non-cancelled supplier bills that make up Accounts Payable.
+const PAYABLE_DOCUMENTS_SQL = `
+  SELECT
+    bill.*,
+    COALESCE(supplier.suppliername, bill.payeename, 'Supplier') AS partyname,
+    bill.ponumber AS parentreference,
+    COALESCE(
+      (
+        SELECT SUM(allocation.totalsettledamount)
+        FROM bank_transaction_allocations allocation
+        JOIN bank_transactions bank_tx
+          ON bank_tx.id = allocation.banktransactionid
+        WHERE allocation.documenttype = 'purchase_bill'
+          AND allocation.documentid = bill.id
+          AND allocation.status = 'applied'
+          AND bank_tx.organizationid = $1
+          AND bank_tx.postingstatus = 'posted'
+      ),
+      0
+    ) AS finance_settled_amount
+  FROM poinvoice bill
+  LEFT JOIN LATERAL (
+    SELECT purchase_order.supplierid
+    FROM purchaseorder purchase_order
+    WHERE purchase_order.ponumber = bill.ponumber
+    ORDER BY purchase_order.id DESC
+    LIMIT 1
+  ) linked_po ON TRUE
+  LEFT JOIN supplier
+    ON supplier.id = CASE
+      WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+      ELSE linked_po.supplierid
+    END
+  WHERE bill.organizationid = $1
+    AND LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
+`;
+
+const loadControlAccountHistory = async (
+  organizationId: number,
+  kind: ControlAccountKind
+) => {
+  const documentsResult = await query(
+    kind === "receivable" ? RECEIVABLE_DOCUMENTS_SQL : PAYABLE_DOCUMENTS_SQL,
+    [organizationId]
+  );
+  const bankTransactionIds = collectBankTransactionIds(documentsResult.rows);
+  const bankAccountNames = new Map<number, string>();
+  if (bankTransactionIds.length > 0) {
+    const bankResult = await query(
+      `SELECT bank_tx.id, bank_account.accountname
+       FROM bank_transactions bank_tx
+       JOIN bank_cash_accounts bank_account
+         ON bank_account.id = bank_tx.bankcashaccountid
+        AND bank_account.organizationid = bank_tx.organizationid
+       WHERE bank_tx.organizationid = $1
+         AND bank_tx.id = ANY($2::BIGINT[])`,
+      [organizationId, bankTransactionIds]
+    );
+    bankResult.rows.forEach((row: any) =>
+      bankAccountNames.set(Number(row.id), row.accountname)
+    );
+  }
+  return buildControlAccountHistory(kind, documentsResult.rows, bankAccountNames);
+};
+
+// GST total for one component, limited to documents dated inside the period.
+const sumGstComponentForPeriod = (
+  documents: any[],
+  direction: "input" | "output",
+  component: GstComponent,
+  fromDate: string,
+  toDate: string
+) =>
+  toMoney(
+    documents.reduce((total: number, document: any) => {
+      const date = toCustomerStatementDate(
+        document.invoicedate || document.createddate
+      );
+      if (!date || date < fromDate || date > toDate) return total;
+      const gst =
+        direction === "output"
+          ? resolveInvoiceGst(document)
+          : resolveBillGst(document);
+      return total + gst[component];
+    }, 0)
+  );
 
 const normalizeText = (
   value: unknown,
@@ -298,11 +422,13 @@ export module financeAccountService {
         typename AS label,
         accountcategory AS category,
         categorylabel,
-        displayorder
+        displayorder,
+        typecode = ANY($1::TEXT[]) AS issystemtype
       FROM finance_account_types
       WHERE status = 'active'
       ORDER BY displayorder ASC, id ASC
-      `
+      `,
+      [LISTED_SYSTEM_ACCOUNT_SUBTYPES]
     );
     const types = result.rows;
     const groups = Array.from(
@@ -371,6 +497,13 @@ export module financeAccountService {
           "Select a valid Account Type.",
           400,
           "CHART_ACCOUNT_TYPE_INVALID"
+        );
+      }
+      if (LISTED_SYSTEM_ACCOUNT_SUBTYPES.includes(selectedType.value)) {
+        throw new FinanceValidationError(
+          "This Account Type is managed automatically and cannot be created manually.",
+          400,
+          "CHART_ACCOUNT_TYPE_SYSTEM"
         );
       }
 
@@ -510,10 +643,10 @@ export module financeAccountService {
   export const listChartAccounts = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
     const queryData = request.query || {};
-    const params: any[] = [organizationId];
+    const params: any[] = [organizationId, LISTED_SYSTEM_ACCOUNT_SUBTYPES];
     const conditions = [
       "f.organizationid = $1",
-      "f.isusercreatedchartaccount = TRUE",
+      listedChartAccountCondition("f"),
       "f.isdeleted = FALSE",
     ];
 
@@ -578,7 +711,7 @@ export module financeAccountService {
           AND period_entry.entrydate <= $${toDateParam}::DATE
       )
       OR (
-        f.accountsubtype LIKE 'gst_output_%'
+        (f.accountsubtype LIKE 'gst_output_%' OR f.accountsubtype = 'accounts_receivable')
         AND EXISTS (
           SELECT 1
           FROM revoinvoice period_invoice
@@ -601,7 +734,7 @@ export module financeAccountService {
         )
       )
       OR (
-        f.accountsubtype LIKE 'gst_input_%'
+        (f.accountsubtype LIKE 'gst_input_%' OR f.accountsubtype = 'accounts_payable')
         AND EXISTS (
           SELECT 1
           FROM poinvoice period_bill
@@ -648,36 +781,14 @@ export module financeAccountService {
           COUNT(*) FILTER (WHERE f.accounttype = 'liability')::INTEGER AS liability,
           COUNT(*) FILTER (WHERE f.accounttype = 'equity')::INTEGER AS equity,
           COUNT(*) FILTER (WHERE f.accounttype = 'income')::INTEGER AS income,
-          COUNT(*) FILTER (WHERE f.accounttype = 'expense')::INTEGER AS expense,
-          COALESCE((
-            SELECT SUM(
-              GREATEST(
-                COALESCE(bill.balanceamount, bill.invoiceamount, 0),
-                0
-              )
-            )
-            FROM poinvoice bill
-            WHERE LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
-          ), 0) AS accountspayable
+          COUNT(*) FILTER (WHERE f.accounttype = 'expense')::INTEGER AS expense
         FROM finance_accounts f
         WHERE ${whereClause}
         `,
         filterParams
       ),
-      query(
-        `SELECT *
-         FROM revoinvoice
-         WHERE organizationid = $1
-           AND LOWER(COALESCE(paymentstatus, 'pending')) <> 'cancelled'`,
-        [organizationId]
-      ),
-      query(
-        `SELECT *
-         FROM poinvoice
-         WHERE organizationid = $1
-           AND LOWER(COALESCE(invoicestatus, 'in_progress')) <> 'cancelled'`,
-        [organizationId]
-      ),
+      query(RECEIVABLE_DOCUMENTS_SQL, [organizationId]),
+      query(PAYABLE_DOCUMENTS_SQL, [organizationId]),
       query(
         `
         SELECT
@@ -757,7 +868,13 @@ export module financeAccountService {
           AND ($${toDateParam}::DATE IS NULL OR je.entrydate <= $${toDateParam}::DATE)
       ) ledger_totals ON TRUE
       WHERE ${whereClause}
-      ORDER BY f.modifieddate DESC, f.id DESC
+      ORDER BY
+        -- System accounts first, in LISTED_SYSTEM_ACCOUNT_SUBTYPES order.
+        CASE
+          WHEN f.issystem = TRUE THEN array_position($2::TEXT[], f.accountsubtype)
+        END ASC NULLS LAST,
+        f.modifieddate DESC,
+        f.id DESC
       OFFSET $${offsetParam} LIMIT $${countParam}
       `,
       params
@@ -765,14 +882,36 @@ export module financeAccountService {
 
     const invoiceGstSummary = getInvoiceGstSummary(receivableInvoiceResult.rows);
     const billGstSummary = getBillGstSummary(billResult.rows);
+    const receivableHistory = buildControlAccountHistory(
+      "receivable",
+      receivableInvoiceResult.rows
+    );
+    const payableHistory = buildControlAccountHistory("payable", billResult.rows);
+    const payableTotals = summarizeControlAccountHistory(payableHistory);
     const records = result.rows.map((account: any) => {
       const gstContext = getGstAccountContext(account.accountsubtype);
-      const totalDebit = gstContext?.direction === "input"
-        ? billGstSummary[gstContext.component]
-        : account.totaldebit;
-      const totalCredit = gstContext?.direction === "output"
-        ? invoiceGstSummary[gstContext.component]
-        : account.totalcredit;
+      const controlKind = getControlAccountKind(account.accountsubtype);
+      let totalDebit = account.totaldebit;
+      let totalCredit = account.totalcredit;
+      if (controlKind) {
+        // With a period selected, show that period's movement, matching
+        // how journal-based accounts are totalled.
+        const totals = summarizeControlAccountHistory(
+          controlKind === "receivable" ? receivableHistory : payableHistory,
+          fromDate,
+          toDate
+        );
+        totalDebit = totals.totaldebit;
+        totalCredit = totals.totalcredit;
+      } else if (gstContext?.direction === "input") {
+        totalDebit = fromDate && toDate
+          ? sumGstComponentForPeriod(billResult.rows, "input", gstContext.component, fromDate, toDate)
+          : billGstSummary[gstContext.component];
+      } else if (gstContext?.direction === "output") {
+        totalCredit = fromDate && toDate
+          ? sumGstComponentForPeriod(receivableInvoiceResult.rows, "output", gstContext.component, fromDate, toDate)
+          : invoiceGstSummary[gstContext.component];
+      }
       return ({
         ...account,
         totaldebit: totalDebit,
@@ -832,7 +971,9 @@ export module financeAccountService {
         accountsreceivable: getRetailInvoicesOutstandingTotal(
           receivableInvoiceResult.rows
         ),
-        accountspayable: Number(summary.accountspayable || 0),
+        accountspayable: toMoney(
+          Math.max(payableTotals.totalcredit - payableTotals.totaldebit, 0)
+        ),
         invoicegst: invoiceGstSummary,
         billgst: billGstSummary,
       },
@@ -901,7 +1042,14 @@ export module financeAccountService {
     let totalDebit = Number(account.totaldebit || 0);
     let totalCredit = Number(account.totalcredit || 0);
     const gstContext = getGstAccountContext(account.accountsubtype);
-    if (gstContext?.direction === "input") {
+    const controlKind = getControlAccountKind(account.accountsubtype);
+    if (controlKind) {
+      const totals = summarizeControlAccountHistory(
+        await loadControlAccountHistory(organizationId, controlKind)
+      );
+      totalDebit = totals.totaldebit;
+      totalCredit = totals.totalcredit;
+    } else if (gstContext?.direction === "input") {
       const bills = await query(
         `SELECT * FROM poinvoice
          WHERE organizationid = $1
@@ -1072,14 +1220,7 @@ export module financeAccountService {
     const page = Math.max(Number(request.query?.page) || 1, 1);
     const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 200);
     const offset = (page - 1) * count;
-    const documentPage = Math.max(Number(request.query?.documentpage) || 1, 1);
-    const documentCount = Math.min(
-      Math.max(Number(request.query?.documentcount) || 5, 1),
-      50
-    );
-    const documentOffset = (documentPage - 1) * documentCount;
-    const isReceivable = account.accountsubtype === "accounts_receivable";
-    const isPayable = account.accountsubtype === "accounts_payable";
+    const controlKind = getControlAccountKind(account.accountsubtype);
     const gstContext = getGstAccountContext(account.accountsubtype);
     const isGstInput = gstContext?.direction === "input";
     const isGstOutput = gstContext?.direction === "output";
@@ -1241,224 +1382,6 @@ export module financeAccountService {
       [accountId, organizationId, offset, count]
     );
 
-    let documentActivity = {
-      records: [] as any[],
-      total: 0,
-      page: documentPage,
-      count: documentCount,
-      documenttype: null as "invoice" | "bill" | null,
-    };
-
-    if (isReceivable || isPayable) {
-      const documentType = isReceivable ? "sales_invoice" : "purchase_bill";
-      const countSql = isReceivable
-        ? `SELECT COUNT(*)::INTEGER AS total
-           FROM revoinvoice invoice
-           WHERE invoice.organizationid = $1
-             AND LOWER(COALESCE(invoice.paymentstatus, 'pending')) IN ('pending', 'partially_paid', 'paid')`
-        : `SELECT COUNT(*)::INTEGER AS total
-           FROM poinvoice bill
-           WHERE bill.organizationid = $1
-             AND LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'`;
-      const documentSql = isReceivable
-        ? `SELECT
-             invoice.id,
-             invoice.invoicenumber AS documentnumber,
-             invoice.invoicedate AS documentdate,
-             invoice.createddate,
-             invoice.totalorderamount,
-             invoice.invoicedata,
-             invoice.supportingdocumentdata,
-             invoice.summaryinvoicedata,
-             invoice.invoicefor,
-             invoice.paidamount,
-             invoice.balanceamount,
-             invoice.paymentstatus AS documentstatus,
-             invoice.invoiceurl AS documenturl,
-             invoice.customerid AS partyid,
-             COALESCE(
-               NULLIF(TRIM(CONCAT_WS(' ', customer.firstname, customer.lastname)), ''),
-               customer.useremail,
-               CONCAT('Customer ', invoice.customerid)
-             ) AS partyname,
-             NULL::VARCHAR AS parentreference,
-             NULL::BIGINT AS parentid,
-             invoice.paymentdata
-           FROM revoinvoice invoice
-           LEFT JOIN users customer ON customer.id = invoice.customerid
-           WHERE invoice.organizationid = $1
-             AND LOWER(COALESCE(invoice.paymentstatus, 'pending')) IN ('pending', 'partially_paid', 'paid')
-           ORDER BY COALESCE(invoice.invoicedate, invoice.createddate) DESC NULLS LAST, invoice.id DESC
-           OFFSET $2 LIMIT $3`
-        : `SELECT
-             bill.id,
-             bill.invoicenumber AS documentnumber,
-             bill.invoicedate AS documentdate,
-             bill.createddate,
-             bill.invoiceamount,
-             NULL::NUMERIC AS paidamount,
-             bill.balanceamount,
-             bill.invoicestatus AS documentstatus,
-             bill.invoiceurl AS documenturl,
-             CASE
-               WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
-               ELSE linked_po.supplierid
-             END AS partyid,
-             COALESCE(supplier.suppliername, bill.payeename, 'Supplier') AS partyname,
-             bill.ponumber AS parentreference,
-             linked_po.id AS parentid,
-             bill.paymentdata,
-             COALESCE(
-               (
-                 SELECT SUM(allocation.totalsettledamount)
-                 FROM bank_transaction_allocations allocation
-                 JOIN bank_transactions bank_tx
-                   ON bank_tx.id = allocation.banktransactionid
-                 WHERE allocation.documenttype = 'purchase_bill'
-                   AND allocation.documentid = bill.id
-                   AND allocation.status = 'applied'
-                   AND bank_tx.organizationid = $1
-                   AND bank_tx.postingstatus = 'posted'
-               ),
-               0
-             ) AS finance_settled_amount
-           FROM poinvoice bill
-           LEFT JOIN LATERAL (
-             SELECT purchase_order.id, purchase_order.supplierid
-             FROM purchaseorder purchase_order
-             WHERE purchase_order.ponumber = bill.ponumber
-             ORDER BY purchase_order.id DESC
-             LIMIT 1
-           ) linked_po ON TRUE
-           LEFT JOIN supplier
-             ON supplier.id = CASE
-               WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
-               ELSE linked_po.supplierid
-             END
-           WHERE bill.organizationid = $1
-             AND LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
-           ORDER BY COALESCE(bill.invoicedate, bill.createddate) DESC NULLS LAST, bill.id DESC
-           OFFSET $2 LIMIT $3`;
-
-      const [documentTotalResult, documentsResult] = await Promise.all([
-        query(countSql, [organizationId]),
-        query(documentSql, [organizationId, documentOffset, documentCount]),
-      ]);
-      const documentIds = documentsResult.rows.map((document: any) => Number(document.id));
-      let settlementRows: any[] = [];
-
-      if (documentIds.length > 0) {
-        const settlementsResult = await query(
-          `SELECT
-             CONCAT('bank-', allocation.id) AS id,
-             allocation.documentid,
-             'bank_transaction' AS settlementtype,
-             bank_tx.transactionnumber AS reference,
-             bank_tx.transactiondate::TEXT AS settlementdate,
-             allocation.allocationamount AS appliedamount,
-             allocation.tdsamount,
-             allocation.totalsettledamount,
-             bank_account.accountname AS bankcashaccountname,
-             bank_tx.remarks,
-             bank_tx.id AS transactionid
-           FROM bank_transaction_allocations allocation
-           JOIN bank_transactions bank_tx
-             ON bank_tx.id = allocation.banktransactionid
-            AND bank_tx.organizationid = $1
-            AND bank_tx.postingstatus = 'posted'
-           LEFT JOIN bank_cash_accounts bank_account
-             ON bank_account.id = bank_tx.bankcashaccountid
-            AND bank_account.organizationid = bank_tx.organizationid
-           WHERE allocation.documenttype = $2
-             AND allocation.documentid = ANY($3::BIGINT[])
-             AND allocation.status = 'applied'
-
-           UNION ALL
-
-           SELECT
-             CONCAT('on-account-', allocation.id) AS id,
-             allocation.documentid,
-             'on_account' AS settlementtype,
-             reference.referencenumber AS reference,
-             allocation.createddate::TEXT AS settlementdate,
-             allocation.bankportion AS appliedamount,
-             allocation.tdsamount,
-             allocation.totalsettlement AS totalsettledamount,
-             NULL::VARCHAR AS bankcashaccountname,
-             movement.description AS remarks,
-             NULL::BIGINT AS transactionid
-           FROM on_account_document_allocations allocation
-           JOIN on_account_references reference
-             ON reference.id = allocation.onaccountreferenceid
-            AND reference.organizationid = allocation.organizationid
-           JOIN on_account_movements movement
-             ON movement.id = allocation.onaccountmovementid
-            AND movement.organizationid = allocation.organizationid
-           WHERE allocation.organizationid = $1
-             AND allocation.documenttype = $2
-             AND allocation.documentid = ANY($3::BIGINT[])
-             AND allocation.status = 'applied'
-           ORDER BY settlementdate, id`,
-          [organizationId, documentType, documentIds]
-        );
-        settlementRows = settlementsResult.rows;
-      }
-
-      documentActivity = {
-        records: documentsResult.rows.map((document: any) => {
-          let documentAmount = 0;
-          let settledAmount = 0;
-          let outstandingAmount = 0;
-          if (isReceivable) {
-            const paymentState = getRetailInvoicePaymentState(document);
-            documentAmount = paymentState.invoiceAmount;
-            settledAmount = paymentState.paidAmount;
-            outstandingAmount = paymentState.outstandingAmount;
-          } else {
-            const paymentState = getSupplierBillPaymentState(document);
-            documentAmount = paymentState.invoiceAmount;
-            settledAmount = paymentState.settledAmount;
-            outstandingAmount = paymentState.outstandingAmount;
-          }
-          return {
-            id: Number(document.id),
-            documenttype: isReceivable ? "invoice" : "bill",
-            documentnumber:
-              document.documentnumber ||
-              `${isReceivable ? "INV" : "BILL"}-${document.id}`,
-            documentdate:
-              toCustomerStatementDate(
-                document.documentdate || document.createddate
-              ) || document.documentdate,
-            partyid: Number(document.partyid) || null,
-            partyname: document.partyname || null,
-            parentreference: document.parentreference || null,
-            parentid: Number(document.parentid) || null,
-            documenturl: document.documenturl || null,
-            amount: documentAmount,
-            settledamount: settledAmount,
-            outstandingamount: outstandingAmount,
-            status: document.documentstatus || null,
-            settlements: settlementRows
-              .filter(
-                (settlement: any) =>
-                  Number(settlement.documentid) === Number(document.id)
-              )
-              .map((settlement: any) => ({
-                ...settlement,
-                settlementdate:
-                  toCustomerStatementDate(settlement.settlementdate) ||
-                  settlement.settlementdate,
-              })),
-          };
-        }),
-        total: Number(documentTotalResult.rows[0]?.total || 0),
-        page: documentPage,
-        count: documentCount,
-        documenttype: isReceivable ? "invoice" : "bill",
-      };
-    }
-
     const summary = summaryResult.rows[0] || {};
     let ledgerRecords = entriesResult.rows;
     let ledgerTotal = Number(summary.total || 0);
@@ -1540,6 +1463,16 @@ export module financeAccountService {
       ledgerRecords = calculatedEntries.reverse().slice(offset, offset + count);
     }
 
+    if (controlKind) {
+      // AR/AP: invoices/bills with their receipts/payments, newest first.
+      const history = await loadControlAccountHistory(organizationId, controlKind);
+      const totals = summarizeControlAccountHistory(history);
+      ledgerTotal = history.length;
+      totalDebit = totals.totaldebit;
+      totalCredit = totals.totalcredit;
+      ledgerRecords = history.reverse().slice(offset, offset + count);
+    }
+
     return {
       records: ledgerRecords.map((entry: any) => ({
         ...entry,
@@ -1558,7 +1491,7 @@ export module financeAccountService {
           totalCredit
         ),
       },
-      documentactivity: documentActivity,
+      historytype: controlKind,
     };
   };
 
