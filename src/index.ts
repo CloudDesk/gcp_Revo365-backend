@@ -12,7 +12,6 @@ import fastifyRawBody from "fastify-raw-body";
 
 import fs from "fs";
 
-
 import { connectGetSessionredis } from "./database/redis.session.js";
 
 interface CustomRequest extends FastifyRequest {
