@@ -45,7 +45,7 @@ describe("Journal Phase 4 foundation", () => {
     assert.equal(draft.totalcredit, 30000);
     assert.equal(draft.difference, 0);
     assert.deepEqual(draft.lines.map((line) => line.lineorder), [1, 2]);
-    assert.equal(draft.journalpurpose, "general");
+    assert.equal(draft.journalpurpose, "accrual");
     assert.equal(draft.relatedjournalentryid, null);
   });
 
@@ -74,16 +74,19 @@ describe("Journal Phase 4 foundation", () => {
     );
   });
 
-  test("allows an unbalanced Draft without treating it as posted", () => {
-    const draft = normalizeJournalDraft({
-      entrydate: "2026-08-17",
-      description: "Work in progress",
-      lines: [
-        { financeaccountid: 11, debitamount: 100, creditamount: 0 },
-        { financeaccountid: 12, debitamount: 0, creditamount: 75 },
-      ],
-    });
-    assert.equal(draft.difference, 25);
+  test("rejects an unbalanced Draft before it can be saved", () => {
+    assert.throws(() => normalizeJournalDraft({
+        entrydate: "2026-08-17",
+        description: "Work in progress",
+        lines: [
+          { financeaccountid: 11, debitamount: 100, creditamount: 0 },
+          { financeaccountid: 12, debitamount: 0, creditamount: 75 },
+        ],
+      }),
+      (error: unknown) =>
+        error instanceof FinanceValidationError &&
+        error.code === "JOURNAL_NOT_BALANCED"
+    );
   });
 
   test("rejects invalid line sides and over-precision money", () => {

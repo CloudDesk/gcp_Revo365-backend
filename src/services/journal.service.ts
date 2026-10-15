@@ -1,4 +1,5 @@
 import pool, { query } from "../database/postgres.js";
+import { PROTOCOL } from "../config/config.js";
 import {
   FinanceValidationError,
   nowEpoch,
@@ -678,6 +679,121 @@ export module journalService {
       });
       await client.query("COMMIT");
       return await getById(request);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const attachFile = async (request: any) => {
+    const { organizationId, actor } = resolveFinanceContext(request);
+    const journalId = requireId(request.params?.journalId, "journalId");
+    const files = Array.isArray(request.files) ? request.files : [];
+    const file = files[0];
+    const host = String(request.headers?.host || "").trim();
+    if (!file?.filename || !file?.originalname || !host) {
+      throw new FinanceValidationError("Select a Journal attachment to upload.");
+    }
+    const allowedMimeTypes = new Set([
+      "application/pdf",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/csv",
+      "image/jpeg",
+      "image/png",
+    ]);
+    if (!allowedMimeTypes.has(String(file.mimetype || "").toLowerCase())) {
+      throw new FinanceValidationError(
+        "Journal attachments must be PDF, Excel, Word, CSV, JPG, or PNG files."
+      );
+    }
+    if (Number(file.size || 0) > 10 * 1024 * 1024) {
+      throw new FinanceValidationError("Journal attachments must not exceed 10 MB.");
+    }
+    const epoch = nowEpoch();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE journal_entries
+         SET attachmenturl = $1, attachmentname = $2,
+             modifiedby = $3, modifieddate = $4, version = version + 1
+         WHERE id = $5 AND organizationid = $6 AND isdeleted = FALSE
+         RETURNING id`,
+        [
+          `${PROTOCOL}://${host}/${file.filename}`,
+          String(file.originalname).slice(0, 500),
+          actor,
+          epoch,
+          journalId,
+          organizationId,
+        ]
+      );
+      if (!result.rows[0]) {
+        throw new FinanceValidationError("Journal not found.", 404, "JOURNAL_NOT_FOUND");
+      }
+      await insertAuditEvent(client, organizationId, journalId, "attachment_uploaded", actor, {
+        filename: String(file.originalname).slice(0, 500),
+      });
+      await client.query("COMMIT");
+      return await getById(request);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const deleteDraft = async (request: any) => {
+    const { organizationId, actor } = resolveFinanceContext(request);
+    const journalId = requireId(request.params?.journalId, "journalId");
+    const version = requireId(request.body?.version, "version");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const currentResult = await client.query(
+        `SELECT id, journalnumber, sourcetype, status, version
+         FROM journal_entries
+         WHERE id = $1 AND organizationid = $2 AND isdeleted = FALSE
+         FOR UPDATE`,
+        [journalId, organizationId]
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        throw new FinanceValidationError("Journal not found.", 404, "JOURNAL_NOT_FOUND");
+      }
+      if (current.sourcetype !== MANUAL_JOURNAL_SOURCE || current.status !== "draft") {
+        throw new FinanceValidationError(
+          "Only a manual Journal Draft can be deleted.",
+          409,
+          "JOURNAL_NOT_DELETABLE"
+        );
+      }
+      if (Number(current.version) !== version) {
+        throw new FinanceValidationError(
+          "The Journal changed after you selected it. Refresh and try again.",
+          409,
+          "JOURNAL_VERSION_CONFLICT"
+        );
+      }
+      const epoch = nowEpoch();
+      await client.query(
+        `UPDATE journal_entries
+         SET isdeleted = TRUE, modifiedby = $1, modifieddate = $2, version = version + 1
+         WHERE id = $3`,
+        [actor, epoch, journalId]
+      );
+      await insertAuditEvent(client, organizationId, journalId, "draft_deleted", actor, {
+        journalnumber: current.journalnumber,
+        previousversion: version,
+      });
+      await client.query("COMMIT");
+      return { id: journalId, journalnumber: current.journalnumber };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

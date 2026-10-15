@@ -70,7 +70,7 @@ export const normalizeJournalDraft = (
     true,
     2000
   )!;
-  const journalpurpose = String(payload?.journalpurpose || "general") as NormalizedJournalDraft["journalpurpose"];
+  const journalpurpose = String(payload?.journalpurpose || "accrual") as NormalizedJournalDraft["journalpurpose"];
   if (!["general", "accrual", "reclassification", "correction"].includes(journalpurpose)) {
     throw new FinanceValidationError(
       "journalpurpose must be general, accrual, reclassification, or correction."
@@ -133,6 +133,14 @@ export const normalizeJournalDraft = (
       lineorder: index + 1,
     };
   });
+
+  if (totalDebitCents <= 0 || totalDebitCents !== totalCreditCents) {
+    throw new FinanceValidationError(
+      "Total Debit and Total Credit must be equal before saving the Journal.",
+      409,
+      "JOURNAL_NOT_BALANCED"
+    );
+  }
 
   return {
     entrydate,

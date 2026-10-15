@@ -59,6 +59,30 @@ export module journalController {
     }
   };
 
+  export const attachFile = async (request: any, reply: any) => {
+    try {
+      return reply.send({
+        success: true,
+        message: "Journal attachment uploaded successfully.",
+        data: await journalService.attachFile(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const deleteDraft = async (request: any, reply: any) => {
+    try {
+      return reply.send({
+        success: true,
+        message: "Journal Draft deleted successfully.",
+        data: await journalService.deleteDraft(request),
+      });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const postDraft = async (request: any, reply: any) => {
     try {
       return reply.send({

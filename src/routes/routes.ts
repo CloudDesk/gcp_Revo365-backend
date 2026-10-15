@@ -703,6 +703,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         journalController.updateDraft
     );
     fastify.post(
+        '/finance/journals/:journalId/attachment',
+        { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] },
+        journalController.attachFile
+    );
+    fastify.post(
+        '/finance/journals/:journalId/delete',
+        { preHandler: [getSession, requireJournalPermission('delete'), validateRequestBody(postJournalSchema)] },
+        journalController.deleteDraft
+    );
+    fastify.post(
         '/finance/journals/:journalId/post',
         { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] },
         journalController.postDraft
