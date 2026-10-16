@@ -20,6 +20,11 @@ export type CustomerStatementRow = {
   bankcashaccountname?: string | null;
   bankname?: string | null;
   documentnumbers?: string[];
+  documentlinks?: Array<{
+    documentnumber: string;
+    invoiceurl: string | null;
+  }>;
+  invoiceurl?: string | null;
 };
 
 type StatementInputRow = Omit<CustomerStatementRow, "balance">;

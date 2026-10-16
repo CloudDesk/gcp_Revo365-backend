@@ -2,7 +2,7 @@ import pool, { query } from "../database/postgres.js";
 import { FinanceValidationError, calculateAvailableBalance, nowEpoch, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
 import { applyRetailInvoiceAllocation, resolveCustomerReceiptAllocationMethod, getCustomerReceiptInvoiceSourceMetadata, getRetailInvoicePaymentState, isEligibleCustomerReceiptInvoice, resolveCustomerReceiptSourceType, } from "../utils/finance/retailReceipt.utils.js";
 import { allocateOnAccountReferenceNumber } from "./onAccountFoundation.service.js";
-import { getCustomerReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
+import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
 import { assertTransactionDateIsWithinAccountHistory, rebuildBankCashAccountBalances, } from "../utils/finance/bankTransactionBalance.utils.js";
 const RECEIPT_SOURCE_TYPES = getCustomerReceiptSourceTypes();
 const resolveCustomerReceiptMode = (value) => {
@@ -177,7 +177,8 @@ const getExistingReceipt = async (client, organizationId, requestReference) => {
         }
         : null;
 };
-const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, customerId, transactionDate, amount, remarks, requestReference, }) => {
+const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, customerId, transactionDate, amount, remarks, requestReference, allocationMethod, }) => {
+    const isAdvance = allocationMethod === "advance";
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
@@ -199,7 +200,7 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
             throw new FinanceValidationError("Bank/Cash account was not found.", 404, "BANK_CASH_ACCOUNT_NOT_FOUND");
         }
         if (account.status !== "active") {
-            throw new FinanceValidationError("Customer advances can only be posted to an active Bank/Cash account.");
+            throw new FinanceValidationError(`${isAdvance ? "Customer advances" : "On Account receipts"} can only be posted to an active Bank/Cash account.`);
         }
         const customerResult = await client.query(`
       SELECT id, firstname, lastname, useremail, usermobilenumber
@@ -225,22 +226,28 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
         if (latestTransactionDate && transactionDate < latestTransactionDate) {
             throw new FinanceValidationError("Backdated transactions are not enabled in the foundation release.");
         }
-        const customerAdvanceResult = await client.query(`
+        const counterpartyAccountCode = isAdvance
+            ? "SYS-CUSTOMER-ADVANCE"
+            : "SYS-AR";
+        const counterpartyAccountResult = await client.query(`
       SELECT id
       FROM finance_accounts
       WHERE organizationid = $1
-        AND accountcode = 'SYS-CUSTOMER-ADVANCE'
+        AND accountcode = $2
         AND status = 'active'
         AND isdeleted = FALSE
       LIMIT 1
-      `, [organizationId]);
-        const customerAdvanceAccountId = Number(customerAdvanceResult.rows[0]?.id);
-        if (!Number.isSafeInteger(customerAdvanceAccountId)) {
-            throw new FinanceValidationError("Customer Advances system ledger is unavailable.", 409, "CUSTOMER_ADVANCE_LEDGER_MISSING");
+      `, [organizationId, counterpartyAccountCode]);
+        const counterpartyAccountId = Number(counterpartyAccountResult.rows[0]?.id);
+        if (!Number.isSafeInteger(counterpartyAccountId)) {
+            throw new FinanceValidationError(`${isAdvance ? "Customer Advances" : "Accounts Receivable"} system ledger is unavailable.`, 409, isAdvance ? "CUSTOMER_ADVANCE_LEDGER_MISSING" : "ACCOUNTS_RECEIVABLE_LEDGER_MISSING");
         }
         const balanceAfter = calculateAvailableBalance(account.currentbalance, "debit", amount);
         const epoch = nowEpoch();
-        const receiptRemarks = remarks || `Advance received On Account from ${customerName}`;
+        const receiptRemarks = remarks ||
+            (isAdvance
+                ? `Advance received from ${customerName}`
+                : `Receipt recorded On Account from ${customerName}`);
         const bankTransactionResult = await client.query(`
       INSERT INTO bank_transactions (
         organizationid, bankcashaccountid, transactiondate,
@@ -253,8 +260,8 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
       VALUES (
         $1, $2, $3, 'customer', $4, $5, $6,
         'debit', $7, $7, 0, $8,
-        'on_account', 'customer_on_account', $9, $9,
-        $10, 'posted', 'manual', $11, $11, $12, $12
+        $9, $10, $11, $11,
+        $12, 'posted', 'manual', $13, $13, $14, $14
       )
       RETURNING *
       `, [
@@ -263,9 +270,13 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
             transactionDate,
             customerId,
             customerName,
-            customerAdvanceAccountId,
+            counterpartyAccountId,
             amount,
             balanceAfter,
+            allocationMethod,
+            isAdvance
+                ? FINANCE_SOURCE_TYPES.customerAdvance
+                : FINANCE_SOURCE_TYPES.customerOnAccount,
             requestReference,
             receiptRemarks,
             actor,
@@ -297,7 +308,7 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
             customerId,
             amount,
             receiptRemarks,
-            customerAdvanceAccountId,
+            counterpartyAccountId,
         ]);
         const onAccountReferenceNumber = await allocateOnAccountReferenceNumber(client, organizationId, "customer");
         const onAccountReferenceResult = await client.query(`
@@ -360,10 +371,11 @@ const postCustomerOnAccountReceipt = async ({ actor, organizationId, accountId, 
       INSERT INTO finance_audit_events (
         organizationid, entitytype, entityid, action, actor, eventdata, createddate
       )
-      VALUES ($1, 'bank_transaction', $2, 'customer_on_account_posted', $3, $4::jsonb, $5)
+      VALUES ($1, 'bank_transaction', $2, $3, $4, $5::jsonb, $6)
       `, [
             organizationId,
             bankTransaction.id,
+            isAdvance ? "customer_advance_posted" : "customer_on_account_posted",
             actor,
             JSON.stringify({
                 transactionnumber: transactionNumber,
@@ -417,7 +429,7 @@ export var retailReceiptFinanceService;
         const search = String(request.query?.search || "").trim().toLowerCase();
         const allocationMethod = resolveCustomerReceiptAllocationMethod(request.query?.allocationmethod);
         const receiptMode = resolveCustomerReceiptMode(request.query?.mode);
-        if (allocationMethod === "on_account") {
+        if (allocationMethod === "on_account" || allocationMethod === "advance") {
             const result = await query(`
         SELECT
           u.id,
@@ -427,13 +439,25 @@ export var retailReceiptFinanceService;
           u.usermobilenumber,
           u.isbusinessuser
         FROM users u
-        WHERE $1 = ''
-           OR LOWER(CONCAT_WS(' ', u.firstname, u.lastname)) LIKE '%' || $1 || '%'
-           OR LOWER(COALESCE(u.useremail, '')) LIKE '%' || $1 || '%'
-           OR LOWER(COALESCE(u.usermobilenumber::text, '')) LIKE '%' || $1 || '%'
+        WHERE ($2 = 'advance' OR EXISTS (
+            SELECT 1
+            FROM revoinvoice r
+            WHERE r.customerid = u.id
+              AND LOWER(TRIM(COALESCE(r.invoicefor, ''))) IN (
+                'product',
+                'service',
+                'rental'
+              )
+          ))
+          AND (
+            $1 = ''
+            OR LOWER(CONCAT_WS(' ', u.firstname, u.lastname)) LIKE '%' || $1 || '%'
+            OR LOWER(COALESCE(u.useremail, '')) LIKE '%' || $1 || '%'
+            OR LOWER(COALESCE(u.usermobilenumber::text, '')) LIKE '%' || $1 || '%'
+          )
         ORDER BY LOWER(CONCAT_WS(' ', u.firstname, u.lastname)), u.id
         LIMIT 50
-        `, [search]);
+        `, [search, allocationMethod]);
             return result.rows.map((row) => ({
                 id: Number(row.id),
                 name: buildCustomerName(row),
@@ -584,12 +608,12 @@ export var retailReceiptFinanceService;
         const amount = requirePositiveMoney(request.body?.amount);
         const remarks = normalizeText(request.body?.remarks, "remarks", false, 2000);
         const requestReference = normalizeText(request.body?.requestreference, "requestreference", true, 100);
-        if (allocationMethod === "on_account") {
+        if (allocationMethod === "on_account" || allocationMethod === "advance") {
             const requestedAllocations = Array.isArray(request.body?.allocations)
                 ? request.body.allocations
                 : [];
             if (requestedAllocations.length > 0) {
-                throw new FinanceValidationError("Invoice allocations are not allowed for an On Account receipt.");
+                throw new FinanceValidationError(`Invoice allocations are not allowed for a${allocationMethod === "advance" ? "n advance" : "n On Account"} receipt.`);
             }
             return postCustomerOnAccountReceipt({
                 actor,
@@ -600,6 +624,7 @@ export var retailReceiptFinanceService;
                 amount,
                 remarks,
                 requestReference,
+                allocationMethod,
             });
         }
         const requestedAllocations = Array.isArray(request.body?.allocations)

@@ -172,7 +172,7 @@ export const createRetailReceiptSchema = {
     },
     allocationmethod: {
       type: "string",
-      enum: ["against_document", "on_account"],
+      enum: ["against_document", "on_account", "advance"],
     },
     remarks: nullableString,
     allocations: {
@@ -201,7 +201,7 @@ export const createRetailReceiptSchema = {
     {
       if: {
         properties: {
-          allocationmethod: { const: "on_account" },
+          allocationmethod: { enum: ["on_account", "advance"] },
         },
         required: ["allocationmethod"],
       },
@@ -344,7 +344,7 @@ export const createSupplierPaymentSchema = {
     },
     allocationmethod: {
       type: "string",
-      enum: ["against_document", "on_account"],
+      enum: ["against_document", "on_account", "advance"],
     },
     remarks: nullableString,
     allocations: {
@@ -374,7 +374,7 @@ export const createSupplierPaymentSchema = {
     {
       if: {
         properties: {
-          allocationmethod: { const: "on_account" },
+          allocationmethod: { enum: ["on_account", "advance"] },
         },
         required: ["allocationmethod"],
       },

@@ -11,7 +11,10 @@ export type OnAccountStatus =
   | "partially_applied"
   | "fully_applied"
   | "reversed";
-export type OnAccountAllocationMethod = "against_document" | "on_account";
+export type OnAccountAllocationMethod =
+  | "against_document"
+  | "on_account"
+  | "advance";
 
 export const resolveOnAccountAllocationMethod = (
   value: unknown
@@ -23,8 +26,9 @@ export const resolveOnAccountAllocationMethod = (
     return "against_document";
   }
   if (normalized === "on_account") return "on_account";
+  if (normalized === "advance") return "advance";
   throw new FinanceValidationError(
-    "allocationmethod must be against_document or on_account."
+    "allocationmethod must be against_document, on_account, or advance."
   );
 };
 

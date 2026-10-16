@@ -61,12 +61,21 @@ export const lockOnAccountReferences = async (
 
   const result = await client.query(
     `
-    SELECT *
-    FROM on_account_references
-    WHERE organizationid = $1
-      AND id = ANY($2::bigint[])
-    ORDER BY id
-    FOR UPDATE
+    SELECT
+      reference.*,
+      CASE
+        WHEN transaction.allocationmethod = 'on_account' THEN 'on_account'
+        ELSE 'advance'
+      END AS entrytype
+    FROM on_account_references reference
+    LEFT JOIN bank_transactions transaction
+      ON transaction.id = reference.sourcebanktransactionid
+     AND transaction.organizationid = reference.organizationid
+     AND transaction.isdeleted = FALSE
+    WHERE reference.organizationid = $1
+      AND reference.id = ANY($2::bigint[])
+    ORDER BY reference.id
+    FOR UPDATE OF reference
     `,
     [organizationId, normalizedIds]
   );

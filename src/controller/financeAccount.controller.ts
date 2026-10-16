@@ -170,6 +170,15 @@ export module financeAccountController {
     }
   };
 
+  export const getCustomerInvoiceDocument = async (request: any, reply: any) => {
+    try {
+      const data = await customerStatementService.getCustomerInvoiceDocument(request);
+      return reply.send({ success: true, data });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listCustomerPayments = async (request: any, reply: any) => {
     try {
       const data = await customerStatementService.listCustomerPayments(request);
@@ -477,10 +486,13 @@ export module financeAccountController {
       const allocationMethod = String(
         request.body?.allocationmethod || "against_document"
       ).toLowerCase();
-      if (allocationMethod === "on_account") {
+      if (allocationMethod === "on_account" || allocationMethod === "advance") {
         return reply.status(201).send({
           success: true,
-          message: "Customer advance posted On Account successfully.",
+          message:
+            allocationMethod === "advance"
+              ? "Customer advance posted successfully."
+              : "Customer receipt posted On Account successfully.",
           data,
         });
       }
@@ -533,8 +545,10 @@ export module financeAccountController {
       return reply.status(201).send({
         success: true,
         message:
-          allocationMethod === "on_account"
-            ? "Supplier advance posted On Account successfully."
+          allocationMethod === "advance"
+            ? "Supplier advance posted successfully."
+            : allocationMethod === "on_account"
+              ? "Supplier payment posted On Account successfully."
             : "Supplier payment posted and allocated successfully.",
         data,
       });

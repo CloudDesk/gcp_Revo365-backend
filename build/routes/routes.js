@@ -381,6 +381,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/suppliers/:supplierId/statement', { preHandler: [getSession, requireFinancePermission('read')] }, financeAccountController.getSupplierStatement);
     fastify.get('/finance/customers/:customerId/estimates', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] }, financeAccountController.listCustomerEstimates);
     fastify.get('/finance/customers/:customerId/invoices', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] }, financeAccountController.listCustomerInvoices);
+    fastify.get('/finance/customers/:customerId/invoices/:invoiceId/document', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] }, financeAccountController.getCustomerInvoiceDocument);
     fastify.get('/finance/customers/:customerId/payments', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] }, financeAccountController.listCustomerPayments);
     fastify.get('/finance/customers/:customerId/delivery-challans', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('read')] }, financeAccountController.listDeliveryChallans);
     fastify.post('/finance/customers/:customerId/delivery-challan-addresses', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.createDeliveryChallanCustomerAddress);
@@ -421,6 +422,8 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.getById);
     fastify.post('/finance/journals', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(createJournalDraftSchema)] }, journalController.createDraft);
     fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
+    fastify.post('/finance/journals/:journalId/attachment', { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] }, journalController.attachFile);
+    fastify.post('/finance/journals/:journalId/delete', { preHandler: [getSession, requireJournalPermission('delete'), validateRequestBody(postJournalSchema)] }, journalController.deleteDraft);
     fastify.post('/finance/journals/:journalId/post', { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] }, journalController.postDraft);
     fastify.post('/finance/journals/:journalId/reverse', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] }, journalController.reversePosted);
     fastify.post('/finance/journals/transfer-customer-on-account', { preHandler: [getSession, requireJournalPermission('transfer'), validateRequestBody(postCustomerTransferSchema)] }, journalController.postCustomerTransfer);

@@ -514,6 +514,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.listCustomerInvoices
     );
     fastify.get(
+        '/finance/customers/:customerId/invoices/:invoiceId/document',
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
+        financeAccountController.getCustomerInvoiceDocument
+    );
+    fastify.get(
         '/finance/customers/:customerId/payments',
         { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerPayments

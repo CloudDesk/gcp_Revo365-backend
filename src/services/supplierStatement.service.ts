@@ -98,7 +98,7 @@ export module supplierStatementService {
       supplierId
     );
 
-    const [billResult, paymentResult] = await Promise.all([
+    const [billResult, paymentResult, onAccountApplicationResult] = await Promise.all([
       query(
         `
         SELECT
@@ -145,6 +145,7 @@ export module supplierStatementService {
           t.transactionnumber,
           t.transactiondate,
           t.amount,
+          t.allocationmethod,
           t.sourcetype,
           t.remarks,
           t.postingstatus,
@@ -182,6 +183,61 @@ export module supplierStatementService {
         `,
         [organizationId, supplierId]
       ),
+      query(
+        `
+        SELECT
+          j.id,
+          j.journalnumber AS transactionnumber,
+          j.entrydate AS transactiondate,
+          SUM(CASE
+            WHEN COALESCE(source_bt.allocationmethod, 'advance') = 'advance'
+              THEN a.bankportion
+            ELSE 0
+          END)::numeric(18, 2) AS amount,
+          'on_account_application'::text AS allocationmethod,
+          'on_account_application'::text AS sourcetype,
+          j.description AS remarks,
+          j.status AS postingstatus,
+          NULL::text AS bankcashaccountname,
+          NULL::text AS bankname,
+          SUM(a.bankportion)::numeric(18, 2) AS allocationamount,
+          SUM(a.tdsamount)::numeric(18, 2) AS tdsamount,
+          SUM(
+            CASE
+              WHEN COALESCE(source_bt.allocationmethod, 'advance') = 'advance'
+                THEN a.bankportion
+              ELSE 0
+            END + a.tdsamount
+          )::numeric(18, 2) AS totalsettledamount,
+          array_agg(DISTINCT a.documentnumber ORDER BY a.documentnumber)
+            FILTER (WHERE a.documentnumber IS NOT NULL AND TRIM(a.documentnumber) <> '')
+            AS documentnumbers
+        FROM on_account_document_allocations a
+        JOIN on_account_references r
+          ON r.id = a.onaccountreferenceid
+         AND r.organizationid = a.organizationid
+        LEFT JOIN bank_transactions source_bt
+          ON source_bt.id = r.sourcebanktransactionid
+         AND source_bt.organizationid = r.organizationid
+         AND source_bt.isdeleted = FALSE
+        JOIN on_account_movements m
+          ON m.id = a.onaccountmovementid
+         AND m.organizationid = a.organizationid
+        JOIN journal_entries j
+          ON j.id = m.journalentryid
+         AND j.organizationid = a.organizationid
+         AND j.isdeleted = FALSE
+        WHERE a.organizationid = $1
+          AND r.partytype = 'supplier'
+          AND r.partyid = $2
+          AND a.documenttype = 'purchase_bill'
+          AND a.status = 'applied'
+          AND j.status = 'posted'
+        GROUP BY j.id, j.journalnumber, j.entrydate, j.description, j.status
+        ORDER BY j.entrydate, j.id
+        `,
+        [organizationId, supplierId]
+      ),
     ]);
 
     const activeBills = billResult.rows.filter(isNonCancelledBill);
@@ -211,7 +267,10 @@ export module supplierStatementService {
       }];
     });
 
-    const paymentRows = paymentResult.rows.flatMap((payment: any) => {
+    const paymentRows = [
+      ...paymentResult.rows,
+      ...onAccountApplicationResult.rows,
+    ].flatMap((payment: any) => {
       const transactionDate = toCustomerStatementDate(payment.transactiondate);
       if (!transactionDate) return [];
       return [{
@@ -225,10 +284,17 @@ export module supplierStatementService {
         billamount: 0,
         paymentamount: toMoney(payment.amount),
         allocatedamount: toMoney(payment.allocationamount),
-        settledamount: toMoney(payment.totalsettledamount),
+        settledamount: toMoney(
+          payment.allocationmethod === "on_account"
+            ? payment.amount
+            : payment.allocationmethod === "advance"
+              ? 0
+              : payment.totalsettledamount
+        ),
         tdsamount: toMoney(payment.tdsamount),
         status: String(payment.postingstatus || "posted"),
         source: String(payment.sourcetype || "supplier_bill_payment"),
+        allocationmethod: String(payment.allocationmethod || "invoice_allocation"),
         bankcashaccountname: payment.bankcashaccountname || null,
         bankname: payment.bankname || null,
         documentnumbers: Array.isArray(payment.documentnumbers)
@@ -241,13 +307,7 @@ export module supplierStatementService {
       [...billRows, ...paymentRows],
       { fromdate: fromDate, todate: toDate }
     );
-    const currentPayable = toMoney(
-      activeBills.reduce(
-        (total: number, bill: any) =>
-          total + getSupplierBillPaymentState(bill).outstandingAmount,
-        0
-      )
-    );
+    const currentPayable = toMoney(Math.max(statement.summary.closingpayable, 0));
     const filteredRecords = transactionType
       ? statement.records.filter(
           (record) => record.transactiontype === transactionType
