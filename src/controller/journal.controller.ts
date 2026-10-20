@@ -19,6 +19,14 @@ export module journalController {
     }
   };
 
+  export const listEligibleContacts = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await journalService.listEligibleContacts(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listRelatedEntries = async (request: any, reply: any) => {
     try {
       return reply.send({ success: true, data: await journalService.listRelatedEntries(request) });

@@ -409,6 +409,8 @@ const journalLineSchema = {
   additionalProperties: false,
   properties: {
     financeaccountid: { type: "integer", minimum: 1 },
+    partytype: { type: ["string", "null"], enum: ["customer", "supplier", null] },
+    partyid: { type: ["integer", "null"], minimum: 1 },
     description: { type: ["string", "null"], maxLength: 2000 },
     debitamount: { type: "number", minimum: 0 },
     creditamount: { type: "number", minimum: 0 },

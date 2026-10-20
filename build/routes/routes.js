@@ -417,6 +417,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/bank-accounts/:accountId/transactions/direct-ledger', { preHandler: [getSession, requireFinancePermission('create', 'finance_transactions'), validateRequestBody(createDirectBankTransactionSchema)] }, financeAccountController.postDirectLedgerTransaction);
     // Phase 4 Journal module: manual Draft, Post, and linked Reverse lifecycle.
     fastify.get('/finance/journals/accounts', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listEligibleAccounts);
+    fastify.get('/finance/journals/contacts', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listEligibleContacts);
     fastify.get('/finance/journals/related-entries', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.listRelatedEntries);
     fastify.get('/finance/journals', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.list);
     fastify.get('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.getById);

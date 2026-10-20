@@ -21,6 +21,10 @@ const RESTRICTED_MANUAL_ACCOUNT_SUBTYPES = [
   "credit_card",
   "payment_clearing",
 ];
+const MANUAL_PARTY_ACCOUNT_SUBTYPES = [
+  "accounts_receivable",
+  "accounts_payable",
+];
 
 const requireId = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -59,21 +63,67 @@ const validateEligibleAccounts = async (
 ) => {
   const ids = Array.from(new Set(draft.lines.map((line) => line.financeaccountid)));
   const result = await client.query(
-    `SELECT id
+    `SELECT id, accountsubtype
      FROM finance_accounts
      WHERE organizationid = $1
        AND id = ANY($2::bigint[])
        AND status = 'active'
        AND isdeleted = FALSE
-       AND isusercreatedchartaccount = TRUE
-       AND issystem = FALSE
-       AND accountsubtype <> ALL($3::text[])`,
-    [organizationId, ids, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES]
+       AND (
+         (isusercreatedchartaccount = TRUE AND issystem = FALSE
+          AND accountsubtype <> ALL($3::text[]))
+         OR accountsubtype = ANY($4::text[])
+       )`,
+    [organizationId, ids, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES, MANUAL_PARTY_ACCOUNT_SUBTYPES]
   );
   if (result.rows.length !== ids.length) {
     throw new FinanceValidationError(
       "One or more selected accounts are not available for manual Journal posting."
     );
+  }
+  const subtypeById = new Map(
+    result.rows.map((row: any) => [Number(row.id), String(row.accountsubtype)])
+  );
+  const customerIds = new Set<number>();
+  const supplierIds = new Set<number>();
+  draft.lines.forEach((line, index) => {
+    const subtype = subtypeById.get(line.financeaccountid);
+    const expectedPartyType = subtype === "accounts_receivable"
+      ? "customer"
+      : subtype === "accounts_payable"
+        ? "supplier"
+        : null;
+    if (expectedPartyType && (line.partytype !== expectedPartyType || line.partyid == null)) {
+      throw new FinanceValidationError(
+        `${expectedPartyType === "customer" ? "Customer" : "Supplier"} Contact is required for Journal line ${index + 1}.`
+      );
+    }
+    if (!expectedPartyType && (line.partytype !== null || line.partyid !== null)) {
+      throw new FinanceValidationError(
+        `Contact can only be selected for Accounts Receivable or Accounts Payable on Journal line ${index + 1}.`
+      );
+    }
+    if (line.partytype === "customer" && line.partyid != null) customerIds.add(line.partyid);
+    if (line.partytype === "supplier" && line.partyid != null) supplierIds.add(line.partyid);
+  });
+  if (customerIds.size) {
+    const customers = await client.query(
+      `SELECT id FROM users WHERE id = ANY($1::bigint[])`,
+      [Array.from(customerIds)]
+    );
+    if (customers.rows.length !== customerIds.size) {
+      throw new FinanceValidationError("One or more selected customer Contacts are unavailable.");
+    }
+  }
+  if (supplierIds.size) {
+    const suppliers = await client.query(
+      `SELECT id FROM supplier
+       WHERE id = ANY($1::bigint[]) AND COALESCE(isdeleted, FALSE) = FALSE`,
+      [Array.from(supplierIds)]
+    );
+    if (suppliers.rows.length !== supplierIds.size) {
+      throw new FinanceValidationError("One or more selected supplier Contacts are unavailable.");
+    }
   }
 };
 
@@ -132,12 +182,14 @@ const insertLines = async (
   for (const line of draft.lines) {
     await client.query(
       `INSERT INTO journal_lines (
-         journalentryid, financeaccountid, debitamount, creditamount,
-         description, lineorder
-       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+         journalentryid, financeaccountid, partytype, partyid,
+         debitamount, creditamount, description, lineorder
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         journalId,
         line.financeaccountid,
+        line.partytype,
+        line.partyid,
         line.debitamount,
         line.creditamount,
         line.description,
@@ -377,11 +429,9 @@ export module journalService {
   export const listEligibleAccounts = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
     const search = String(request.query?.search || "").trim();
-    const values: any[] = [organizationId, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES];
     let searchClause = "";
     if (search) {
-      values.push(`%${search}%`);
-      searchClause = `AND (accountname ILIKE $3 OR accountcode ILIKE $3)`;
+      searchClause = `AND (accountname ILIKE $4 OR accountcode ILIKE $4)`;
     }
     const result = await query(
       `SELECT id, accountcode, accountname, accounttype, accountsubtype
@@ -389,15 +439,51 @@ export module journalService {
        WHERE organizationid = $1
          AND status = 'active'
          AND isdeleted = FALSE
-         AND isusercreatedchartaccount = TRUE
-         AND issystem = FALSE
-         AND accountsubtype <> ALL($2::text[])
+         AND (
+           (isusercreatedchartaccount = TRUE AND issystem = FALSE
+            AND accountsubtype <> ALL($2::text[]))
+           OR accountsubtype = ANY($3::text[])
+         )
          ${searchClause}
        ORDER BY accountname ASC, id ASC
        LIMIT 200`,
-      values
+      [organizationId, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES, MANUAL_PARTY_ACCOUNT_SUBTYPES,
+        ...(search ? [`%${search}%`] : [])]
     );
     return result.rows.map((row: any) => ({ ...row, id: Number(row.id) }));
+  };
+
+  export const listEligibleContacts = async (request: any) => {
+    resolveFinanceContext(request);
+    const [customerResult, supplierResult] = await Promise.all([
+      query(
+        `SELECT id,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', firstname, lastname)), ''),
+                         NULLIF(TRIM(COALESCE(useremail, '')), ''),
+                         'Customer ' || id::text) AS name,
+                useremail AS email
+         FROM users
+         ORDER BY LOWER(COALESCE(NULLIF(TRIM(CONCAT_WS(' ', firstname, lastname)), ''), useremail, '')), id`
+      ),
+      query(
+        `SELECT id,
+                COALESCE(NULLIF(TRIM(COALESCE(suppliername::text, '')), ''),
+                         'Supplier ' || id::text) AS name,
+                supplieremail AS email
+         FROM supplier
+         WHERE COALESCE(isdeleted, FALSE) = FALSE
+         ORDER BY LOWER(COALESCE(suppliername::text, '')), id`
+      ),
+    ]);
+    const serialize = (row: any) => ({
+      id: Number(row.id),
+      name: row.name,
+      email: row.email || null,
+    });
+    return {
+      customers: customerResult.rows.map(serialize),
+      suppliers: supplierResult.rows.map(serialize),
+    };
   };
 
   export const getById = async (request: any) => {
@@ -474,13 +560,23 @@ export module journalService {
       throw new FinanceValidationError("Journal not found.", 404, "JOURNAL_NOT_FOUND");
     }
     const lineResult = await query(
-      `SELECT jl.id, jl.financeaccountid, jl.description, jl.debitamount,
+      `SELECT jl.id, jl.financeaccountid, jl.partytype, jl.partyid,
+              jl.description, jl.debitamount,
               jl.creditamount, jl.lineorder, fa.accountcode, fa.accountname,
-              fa.accounttype, fa.accountsubtype
+              fa.accounttype, fa.accountsubtype,
+              CASE
+                WHEN jl.partytype = 'customer' THEN COALESCE(NULLIF(TRIM(CONCAT_WS(' ', customer.firstname, customer.lastname)), ''), customer.useremail, 'Customer ' || customer.id::text)
+                WHEN jl.partytype = 'supplier' THEN COALESCE(NULLIF(TRIM(COALESCE(supplier.suppliername::text, '')), ''), 'Supplier ' || supplier.id::text)
+                ELSE NULL
+              END AS contactname
        FROM journal_lines jl
        JOIN finance_accounts fa
          ON fa.id = jl.financeaccountid
         AND fa.isdeleted = FALSE
+       LEFT JOIN users customer
+         ON jl.partytype = 'customer' AND customer.id = jl.partyid
+       LEFT JOIN supplier supplier
+         ON jl.partytype = 'supplier' AND supplier.id = jl.partyid
        WHERE jl.journalentryid = $1
        ORDER BY jl.lineorder ASC, jl.id ASC`,
       [journalId]
@@ -543,6 +639,7 @@ export module journalService {
         ...row,
         id: Number(row.id),
         financeaccountid: Number(row.financeaccountid),
+        partyid: row.partyid == null ? null : Number(row.partyid),
         debitamount: Number(row.debitamount || 0),
         creditamount: Number(row.creditamount || 0),
       })),
@@ -857,32 +954,20 @@ export module journalService {
           "JOURNAL_NOT_BALANCED"
         );
       }
-      const eligibleResult = await client.query(
-        `SELECT COUNT(DISTINCT jl.financeaccountid)::integer AS eligiblecount,
-                (COUNT(DISTINCT jl.financeaccountid) FILTER (
-                  WHERE fa.id IS NOT NULL
-                    AND fa.status = 'active'
-                    AND fa.isdeleted = FALSE
-                    AND fa.isusercreatedchartaccount = TRUE
-                    AND fa.issystem = FALSE
-                    AND fa.accountsubtype <> ALL($3::text[])
-                ))::integer AS validcount
-         FROM journal_lines jl
-         LEFT JOIN finance_accounts fa
-           ON fa.id = jl.financeaccountid
-          AND fa.organizationid = $2
-          AND fa.isdeleted = FALSE
-         WHERE jl.journalentryid = $1`,
-        [journalId, organizationId, RESTRICTED_MANUAL_ACCOUNT_SUBTYPES]
+      const storedLines = await client.query(
+        `SELECT financeaccountid, partytype, partyid
+         FROM journal_lines
+         WHERE journalentryid = $1
+         ORDER BY lineorder, id`,
+        [journalId]
       );
-      const eligibility = eligibleResult.rows[0];
-      if (Number(eligibility?.eligiblecount || 0) !== Number(eligibility?.validcount || 0)) {
-        throw new FinanceValidationError(
-          "One or more Journal accounts are no longer eligible for posting.",
-          409,
-          "JOURNAL_ACCOUNT_INELIGIBLE"
-        );
-      }
+      await validateEligibleAccounts(client, organizationId, {
+        lines: storedLines.rows.map((line: any) => ({
+          financeaccountid: Number(line.financeaccountid),
+          partytype: line.partytype || null,
+          partyid: line.partyid == null ? null : Number(line.partyid),
+        })),
+      } as NormalizedJournalDraft);
       const epoch = nowEpoch();
       await client.query(
         `UPDATE journal_entries

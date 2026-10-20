@@ -49,6 +49,32 @@ describe("Journal Phase 4 foundation", () => {
     assert.equal(draft.relatedjournalentryid, null);
   });
 
+  test("normalizes optional customer and supplier contacts on Journal lines", () => {
+    const draft = normalizeJournalDraft({
+      entrydate: "2026-10-20",
+      description: "Party-linked control account adjustment",
+      lines: [
+        { financeaccountid: 11, partytype: "customer", partyid: 41, debitamount: 250, creditamount: 0 },
+        { financeaccountid: 12, debitamount: 0, creditamount: 250 },
+      ],
+    });
+    assert.equal(draft.lines[0].partytype, "customer");
+    assert.equal(draft.lines[0].partyid, 41);
+    assert.equal(draft.lines[1].partytype, null);
+    assert.equal(draft.lines[1].partyid, null);
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-10-20",
+        description: "Incomplete Contact",
+        lines: [
+          { financeaccountid: 11, partytype: "customer", debitamount: 250, creditamount: 0 },
+          { financeaccountid: 12, debitamount: 0, creditamount: 250 },
+        ],
+      }),
+      FinanceValidationError
+    );
+  });
+
   test("requires a structured related entry for reclassification and correction", () => {
     const lines = [
       { financeaccountid: 11, debitamount: 10000, creditamount: 0 },

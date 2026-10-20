@@ -683,6 +683,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         journalController.listEligibleAccounts
     );
     fastify.get(
+        '/finance/journals/contacts',
+        { preHandler: [getSession, requireJournalPermission('read')] },
+        journalController.listEligibleContacts
+    );
+    fastify.get(
         '/finance/journals/related-entries',
         { preHandler: [getSession, requireJournalPermission('read')] },
         journalController.listRelatedEntries

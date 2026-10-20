@@ -285,7 +285,7 @@ export module customerStatementService {
       customerId
     );
 
-    const [invoiceResult, paymentResult, onAccountPaymentResult, transferResult, addressResult, onAccountCreditResult] = await Promise.all([
+    const [invoiceResult, paymentResult, onAccountPaymentResult, transferResult, addressResult, onAccountCreditResult, journalPartyResult] = await Promise.all([
       query(
         `
         SELECT
@@ -578,6 +578,26 @@ export module customerStatementService {
         `,
         [organizationId, customerId, toDate]
       ),
+      query(
+        `SELECT jl.id, je.id AS journalid, je.journalnumber, je.entrydate,
+                je.description AS journaldescription, jl.description AS linedescription,
+                jl.debitamount, jl.creditamount
+         FROM journal_lines jl
+         JOIN journal_entries je
+           ON je.id = jl.journalentryid
+          AND je.organizationid = $1
+          AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+         JOIN finance_accounts fa
+           ON fa.id = jl.financeaccountid
+          AND fa.organizationid = je.organizationid
+          AND fa.accountsubtype = 'accounts_receivable'
+         WHERE jl.partytype = 'customer'
+           AND jl.partyid = $2
+           AND ($3::date IS NULL OR je.entrydate <= $3::date)
+         ORDER BY je.entrydate, je.id, jl.lineorder, jl.id`,
+        [organizationId, customerId, summaryOnly ? toDate : null]
+      ),
     ]);
 
     const activeInvoices = invoiceResult.rows.filter(isActiveInvoice);
@@ -610,7 +630,14 @@ export module customerStatementService {
       onAccountCreditResult.rows[0]?.amount || 0
     );
     const adjustedCurrentReceivable = toMoney(
-      Math.max(invoiceSummary.currentreceivable - unallocatedOnAccountCredit, 0)
+      Math.max(
+        invoiceSummary.currentreceivable - unallocatedOnAccountCredit +
+          journalPartyResult.rows.reduce(
+            (total: number, line: any) => total + Number(line.debitamount || 0) - Number(line.creditamount || 0),
+            0
+          ),
+        0
+      )
     );
     const tdsSettled = toMoney(Math.min(
       invoiceSummary.paidamount,
@@ -752,8 +779,37 @@ export module customerStatementService {
       }];
     });
 
+    const journalRows = journalPartyResult.rows.flatMap((line: any) => {
+      const transactionDate = toCustomerStatementDate(line.entrydate);
+      if (!transactionDate) return [];
+      const debit = toMoney(line.debitamount);
+      const credit = toMoney(line.creditamount);
+      return [{
+        id: `journal-${line.journalid}-${line.id}`,
+        sourceid: Number(line.journalid),
+        transactiontype: debit > 0 ? "invoice" as const : "customer_payment" as const,
+        transactiondate: transactionDate,
+        reference: String(line.journalnumber || `JE-${line.journalid}`),
+        description: String(line.linedescription || line.journaldescription || "Manual Journal adjustment"),
+        invoiceamount: debit,
+        paymentamount: 0,
+        allocatedamount: 0,
+        settledamount: credit,
+        tdsamount: 0,
+        unappliedamount: 0,
+        status: "posted",
+        source: "manual_journal",
+        allocationmethod: null,
+        bankcashaccountname: null,
+        bankname: null,
+        invoiceurl: null,
+        documentnumbers: [],
+        documentlinks: [],
+      }];
+    });
+
     const statement = buildCustomerStatement(
-      [...invoiceRows, ...paymentRows],
+      [...invoiceRows, ...paymentRows, ...journalRows],
       { fromdate: fromDate, todate: toDate }
     );
     const filteredRecords = transactionType

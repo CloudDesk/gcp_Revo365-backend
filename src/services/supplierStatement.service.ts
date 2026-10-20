@@ -98,7 +98,7 @@ export module supplierStatementService {
       supplierId
     );
 
-    const [billResult, paymentResult, onAccountApplicationResult] = await Promise.all([
+    const [billResult, paymentResult, onAccountApplicationResult, journalPartyResult] = await Promise.all([
       query(
         `
         SELECT
@@ -238,6 +238,25 @@ export module supplierStatementService {
         `,
         [organizationId, supplierId]
       ),
+      query(
+        `SELECT jl.id, je.id AS journalid, je.journalnumber, je.entrydate,
+                je.description AS journaldescription, jl.description AS linedescription,
+                jl.debitamount, jl.creditamount
+         FROM journal_lines jl
+         JOIN journal_entries je
+           ON je.id = jl.journalentryid
+          AND je.organizationid = $1
+          AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+         JOIN finance_accounts fa
+           ON fa.id = jl.financeaccountid
+          AND fa.organizationid = je.organizationid
+          AND fa.accountsubtype = 'accounts_payable'
+         WHERE jl.partytype = 'supplier'
+           AND jl.partyid = $2
+         ORDER BY je.entrydate, je.id, jl.lineorder, jl.id`,
+        [organizationId, supplierId]
+      ),
     ]);
 
     const activeBills = billResult.rows.filter(isNonCancelledBill);
@@ -303,8 +322,34 @@ export module supplierStatementService {
       }];
     });
 
+    const journalRows = journalPartyResult.rows.flatMap((line: any) => {
+      const transactionDate = toCustomerStatementDate(line.entrydate);
+      if (!transactionDate) return [];
+      const debit = toMoney(line.debitamount);
+      const credit = toMoney(line.creditamount);
+      return [{
+        id: `journal-${line.journalid}-${line.id}`,
+        sourceid: Number(line.journalid),
+        transactiontype: credit > 0 ? "bill" as const : "supplier_payment" as const,
+        transactiondate: transactionDate,
+        reference: String(line.journalnumber || `JE-${line.journalid}`),
+        description: String(line.linedescription || line.journaldescription || "Manual Journal adjustment"),
+        billamount: credit,
+        paymentamount: 0,
+        allocatedamount: 0,
+        settledamount: debit,
+        tdsamount: 0,
+        status: "posted",
+        source: "manual_journal",
+        allocationmethod: null,
+        bankcashaccountname: null,
+        bankname: null,
+        documentnumbers: [],
+      }];
+    });
+
     const statement = buildSupplierStatement(
-      [...billRows, ...paymentRows],
+      [...billRows, ...paymentRows, ...journalRows],
       { fromdate: fromDate, todate: toDate }
     );
     const currentPayable = toMoney(Math.max(statement.summary.closingpayable, 0));
