@@ -26,7 +26,7 @@ const DEFAULT_LOGO_PATH = path.resolve(__dirname, "../../assets/teqit_logo.jpeg"
 let cachedDefaultLogoDataUrl: string | null | undefined;
 
 const COMPANY_DETAILS = {
-  companyName: "Rev0365Global Private Limited",
+  companyName: "Rev0365 Global Private Limited",
   companyAddressLine1: "1/54,OMR,PERUNGUDI,",
   companyAddressLine2: "Chennai-600096",
   companyAddress: "1/54,OMR,PERUNGUDI,\nChennai-600096",
