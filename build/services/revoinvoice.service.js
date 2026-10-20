@@ -412,7 +412,7 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
 };
 export var revoinvoiceservice;
 (function (revoinvoiceservice) {
-    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds) => {
+    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds, organizationId = 1) => {
         const normalizedCustomerIds = Array.from(new Set(customerIds
             .map((customerId) => Number(customerId))
             .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
@@ -420,12 +420,75 @@ export var revoinvoiceservice;
         if (normalizedCustomerIds.length === 0) {
             return {};
         }
-        const invoiceResult = await query(`
-            SELECT *
-            FROM revoinvoice
-            WHERE customerid = ANY($1::int[])
-            ORDER BY customerid, id
-            `, [normalizedCustomerIds]);
+        const [invoiceResult, journalResult, onAccountResult] = await Promise.all([
+            query(`
+                SELECT *
+                FROM revoinvoice
+                WHERE customerid = ANY($1::int[])
+                ORDER BY customerid, id
+                `, [normalizedCustomerIds]),
+            query(`
+                SELECT
+                    jl.partyid AS customerid,
+                    COALESCE(SUM(
+                        COALESCE(jl.debitamount, 0) - COALESCE(jl.creditamount, 0)
+                    ), 0)::numeric(18, 2)
+                        AS journaladjustment
+                FROM journal_lines jl
+                JOIN journal_entries je
+                  ON je.id = jl.journalentryid
+                 AND je.organizationid = $1
+                 AND je.status = 'posted'
+                 AND je.isdeleted = FALSE
+                JOIN finance_accounts fa
+                  ON fa.id = jl.financeaccountid
+                 AND fa.organizationid = je.organizationid
+                 AND fa.accountsubtype = 'accounts_receivable'
+                WHERE jl.partytype = 'customer'
+                  AND jl.partyid = ANY($2::int[])
+                GROUP BY jl.partyid
+                `, [organizationId, normalizedCustomerIds]),
+            query(`
+                SELECT
+                    r.partyid AS customerid,
+                    COALESCE(SUM(movement_balance.amount), 0)::numeric(18, 2)
+                        AS availableamount
+                FROM on_account_references r
+                JOIN bank_transactions origin
+                  ON origin.id = r.sourcebanktransactionid
+                 AND origin.organizationid = r.organizationid
+                 AND origin.isdeleted = FALSE
+                 AND origin.allocationmethod = 'on_account'
+                JOIN LATERAL (
+                    SELECT COALESCE(SUM(
+                        CASE WHEN m.direction = 'increase' THEN m.amount ELSE -m.amount END
+                    ), 0)::numeric(18, 2) AS amount
+                    FROM on_account_movements m
+                    LEFT JOIN bank_transactions movement_bank
+                      ON movement_bank.id = m.banktransactionid
+                     AND movement_bank.organizationid = m.organizationid
+                     AND movement_bank.isdeleted = FALSE
+                    LEFT JOIN journal_entries movement_journal
+                      ON movement_journal.id = m.journalentryid
+                     AND movement_journal.organizationid = m.organizationid
+                     AND movement_journal.isdeleted = FALSE
+                    WHERE m.organizationid = r.organizationid
+                      AND m.onaccountreferenceid = r.id
+                ) movement_balance ON TRUE
+                WHERE r.organizationid = $1
+                  AND r.partytype = 'customer'
+                  AND r.partyid = ANY($2::int[])
+                GROUP BY r.partyid
+                `, [organizationId, normalizedCustomerIds]),
+        ]);
+        const journalAdjustmentByCustomer = new Map(journalResult.rows.map((row) => [
+            Number(row.customerid),
+            Number(row.journaladjustment || 0),
+        ]));
+        const onAccountCreditByCustomer = new Map(onAccountResult.rows.map((row) => [
+            Number(row.customerid),
+            Number(row.availableamount || 0),
+        ]));
         const summaryByCustomer = new Map();
         invoiceResult.rows.forEach((invoice) => {
             const customerId = Number(invoice?.customerid);
@@ -451,6 +514,9 @@ export var revoinvoiceservice;
                 paidamount: 0,
                 balanceamount: 0,
             };
+            summary.balanceamount = Number(Math.max(summary.balanceamount
+                - (onAccountCreditByCustomer.get(customerId) || 0)
+                + (journalAdjustmentByCustomer.get(customerId) || 0), 0).toFixed(2));
             const paymentstatus = summary.invoicecount === 0
                 ? "no_invoices"
                 : summary.invoiceamount > 0 && summary.balanceamount === 0

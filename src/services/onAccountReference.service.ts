@@ -43,6 +43,7 @@ const serializeReference = (row: any) => ({
   customermobile: row.customermobile || null,
   isbusinessuser: Boolean(row.isbusinessuser),
   currencycode: row.currencycode,
+  entrytype: row.entrytype === "on_account" ? "on_account" : "advance",
   sourcetype: row.sourcetype,
   sourceid: row.sourceid || null,
   originalamount: toMoney(row.originalamount),
@@ -95,6 +96,7 @@ const serializeSupplierReference = (row: any) => ({
   suppliermobile: row.suppliermobile || null,
   suppliercode: row.suppliercode || null,
   currencycode: row.currencycode,
+  entrytype: row.entrytype === "on_account" ? "on_account" : "advance",
   sourcetype: row.sourcetype,
   sourceid: row.sourceid || null,
   originalamount: toMoney(row.originalamount),
@@ -172,6 +174,10 @@ const buildReferenceSelect = (conditions: string[]) => `
     bt.bankcashaccountid,
     bt.sourcepaymentid,
     bt.merchanttransactionid,
+    CASE
+      WHEN bt.allocationmethod = 'on_account' THEN 'on_account'
+      ELSE 'advance'
+    END AS entrytype,
     bca.accountname AS bankcashaccountname,
     j.id AS journalentryid,
     j.journalnumber,
@@ -212,6 +218,10 @@ const buildSupplierReferenceSelect = (conditions: string[]) => `
     COALESCE(mt.movementbalance, 0) AS movementbalance,
     bt.id AS banktransactionid, bt.transactionnumber, bt.transactiondate,
     bt.bankcashaccountid, bt.sourcepaymentid, bt.merchanttransactionid,
+    CASE
+      WHEN bt.allocationmethod = 'on_account' THEN 'on_account'
+      ELSE 'advance'
+    END AS entrytype,
     bca.accountname AS bankcashaccountname,
     j.id AS journalentryid, j.journalnumber, j.entrydate AS journaldate
   FROM on_account_references r
@@ -293,7 +303,10 @@ export module onAccountReferenceService {
     const page = positiveInteger(request.query?.page, "page", 1, 1_000_000);
     const count = positiveInteger(request.query?.count, "count", 10, 100);
     const search = String(request.query?.search || "").trim();
-    const status = normalizeOnAccountStatusFilter(request.query?.status);
+    const rawStatus = String(request.query?.status || "").trim().toLowerCase();
+    const status = rawStatus === "all"
+      ? null
+      : normalizeOnAccountStatusFilter(request.query?.status);
     const customerId = request.query?.customerid
       ? positiveInteger(request.query.customerid, "customerid")
       : null;
@@ -317,7 +330,9 @@ export module onAccountReferenceService {
         OR j.journalnumber ILIKE $${params.length}
       )`);
     }
-    if (status) {
+    if (!rawStatus) {
+      conditions.push("r.status IN ('open', 'partially_applied') AND r.availableamount > 0");
+    } else if (status) {
       params.push(status);
       conditions.push(`r.status = $${params.length}`);
     }
@@ -490,7 +505,10 @@ export module onAccountReferenceService {
     const page = positiveInteger(request.query?.page, "page", 1, 1_000_000);
     const count = positiveInteger(request.query?.count, "count", 10, 100);
     const search = String(request.query?.search || "").trim();
-    const status = normalizeOnAccountStatusFilter(request.query?.status);
+    const rawStatus = String(request.query?.status || "").trim().toLowerCase();
+    const status = rawStatus === "all"
+      ? null
+      : normalizeOnAccountStatusFilter(request.query?.status);
     const supplierId = request.query?.supplierid
       ? positiveInteger(request.query.supplierid, "supplierid")
       : null;
@@ -516,7 +534,9 @@ export module onAccountReferenceService {
         OR j.journalnumber ILIKE $${params.length}
       )`);
     }
-    if (status) {
+    if (!rawStatus) {
+      conditions.push("r.status IN ('open', 'partially_applied') AND r.availableamount > 0");
+    } else if (status) {
       params.push(status);
       conditions.push(`r.status = $${params.length}`);
     }

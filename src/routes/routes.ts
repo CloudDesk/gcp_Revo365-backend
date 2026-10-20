@@ -515,6 +515,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.listCustomerInvoices
     );
     fastify.get(
+        '/finance/customers/:customerId/invoices/:invoiceId/document',
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
+        financeAccountController.getCustomerInvoiceDocument
+    );
+    fastify.get(
         '/finance/customers/:customerId/payments',
         { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerPayments
@@ -679,6 +684,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         journalController.listEligibleAccounts
     );
     fastify.get(
+        '/finance/journals/contacts',
+        { preHandler: [getSession, requireJournalPermission('read')] },
+        journalController.listEligibleContacts
+    );
+    fastify.get(
         '/finance/journals/related-entries',
         { preHandler: [getSession, requireJournalPermission('read')] },
         journalController.listRelatedEntries
@@ -702,6 +712,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/journals/:journalId',
         { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] },
         journalController.updateDraft
+    );
+    fastify.post(
+        '/finance/journals/:journalId/attachment',
+        { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] },
+        journalController.attachFile
+    );
+    fastify.post(
+        '/finance/journals/:journalId/delete',
+        { preHandler: [getSession, requireJournalPermission('delete'), validateRequestBody(postJournalSchema)] },
+        journalController.deleteDraft
     );
     fastify.post(
         '/finance/journals/:journalId/post',

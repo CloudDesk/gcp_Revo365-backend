@@ -10,11 +10,13 @@ import { getOtp, saveOtp } from "./otp.service.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
 import { firebaseAuth } from "../firebase/firebaseAdmin.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 let generatedotp;
 
 export module userService {
   export const getUsersData = async (request: any) => {
     try {
+      const { organizationId } = resolveFinanceContext(request);
       const pageNumber = parseInt(request.query.page) || 1;
       const recordCount = parseInt(request.query.count) || 5000;
       const paymentStatusFilter = String(
@@ -147,7 +149,10 @@ export module userService {
       const rentalDeliveryLocationsPromise =
         revoinvoiceservice.getRentalDeliveryLocationsByCustomerIds(customerIds);
       const paymentSummariesPromise = includePaymentSummary
-        ? revoinvoiceservice.getPaymentSummariesByCustomerIds(customerIds)
+        ? revoinvoiceservice.getPaymentSummariesByCustomerIds(
+            customerIds,
+            organizationId
+          )
         : Promise.resolve({});
       const [rentalCounts, rentalDeliveryLocations, paymentSummaries] = await Promise.all([
         rentalCountsPromise,

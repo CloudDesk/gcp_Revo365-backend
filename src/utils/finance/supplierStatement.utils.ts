@@ -15,6 +15,7 @@ export type SupplierStatementRow = {
   balance: number;
   status?: string | null;
   source?: string | null;
+  allocationmethod?: string | null;
   bankcashaccountname?: string | null;
   bankname?: string | null;
   documentnumbers?: string[];

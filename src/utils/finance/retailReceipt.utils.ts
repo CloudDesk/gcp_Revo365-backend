@@ -230,7 +230,8 @@ export type CustomerReceiptMode = "retail" | "rental" | "all";
 
 export type CustomerReceiptAllocationMethod =
   | "against_document"
-  | "on_account";
+  | "on_account"
+  | "advance";
 
 export const resolveCustomerReceiptAllocationMethod = (
   value: unknown
@@ -242,8 +243,9 @@ export const resolveCustomerReceiptAllocationMethod = (
     return "against_document";
   }
   if (normalized === "on_account") return "on_account";
+  if (normalized === "advance") return "advance";
   throw new FinanceValidationError(
-    "Allocation method must be against_document or on_account."
+    "Allocation method must be against_document, on_account, or advance."
   );
 };
 
