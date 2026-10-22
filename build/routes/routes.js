@@ -1,5 +1,5 @@
 import { validateRequestBody } from "../schemas/ajv.schema.js";
-import { filesUpload } from "../multer/Multer.js";
+import { filesUpload, journalAttachmentUpload } from "../multer/Multer.js";
 import { gets3DataStream, gets3Dataurl } from "../aws/getDatafroms3.js";
 import { picklistControler } from "../controller/picklist.controller.js";
 import { recordCount } from "../controller/recordcount.controller.js";
@@ -423,7 +423,7 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.get('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('read')] }, journalController.getById);
     fastify.post('/finance/journals', { preHandler: [getSession, requireJournalPermission('create'), validateRequestBody(createJournalDraftSchema)] }, journalController.createDraft);
     fastify.patch('/finance/journals/:journalId', { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] }, journalController.updateDraft);
-    fastify.post('/finance/journals/:journalId/attachment', { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] }, journalController.attachFile);
+    fastify.post('/finance/journals/:journalId/attachment', { preHandler: [getSession, requireJournalPermission('edit'), journalAttachmentUpload] }, journalController.attachFile);
     fastify.post('/finance/journals/:journalId/delete', { preHandler: [getSession, requireJournalPermission('delete'), validateRequestBody(postJournalSchema)] }, journalController.deleteDraft);
     fastify.post('/finance/journals/:journalId/post', { preHandler: [getSession, requireJournalPermission('post'), validateRequestBody(postJournalSchema)] }, journalController.postDraft);
     fastify.post('/finance/journals/:journalId/reverse', { preHandler: [getSession, requireJournalPermission('reverse'), validateRequestBody(reverseJournalSchema)] }, journalController.reversePosted);

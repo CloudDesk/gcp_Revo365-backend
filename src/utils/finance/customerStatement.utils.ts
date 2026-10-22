@@ -29,6 +29,21 @@ export type CustomerStatementRow = {
 
 type StatementInputRow = Omit<CustomerStatementRow, "balance">;
 
+export const deriveCustomerPaymentStatus = ({
+  invoiceCount,
+  invoiceAmount,
+  adjustedBalance,
+}: {
+  invoiceCount: number;
+  invoiceAmount: number;
+  adjustedBalance: number;
+}) => {
+  if (invoiceCount === 0) return "no_invoices";
+  if (adjustedBalance <= 0) return "paid";
+  if (adjustedBalance < invoiceAmount) return "partially_paid";
+  return "pending";
+};
+
 const compareRows = (left: StatementInputRow, right: StatementInputRow) => {
   const dateOrder = left.transactiondate.localeCompare(right.transactiondate);
   if (dateOrder !== 0) return dateOrder;

@@ -7,7 +7,7 @@ import {
 import { invoiceIncludesCogs, invoiceIncludesRentalIncome, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
 import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
-import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
+import { fillMonthlyFinanceTrend, mergeOperationalIncomeTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation, resolveInventoryStockUnitCost } from "../utils/finance/inventoryStockValuation.utils.js";
 import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
@@ -247,8 +247,8 @@ export module financeDashboardReportsService {
     const [trendResult, invoiceResult, billResult, cashResult, exceptionResult, topExpenseResult] = await Promise.all([
       query(
         `SELECT TO_CHAR(DATE_TRUNC('month', je.entrydate), 'YYYY-MM') AS period,
-                COALESCE(SUM(CASE WHEN fa.accounttype='income' THEN jl.creditamount-jl.debitamount ELSE 0 END),0) AS income,
-                COALESCE(SUM(CASE WHEN fa.accounttype='expense' THEN jl.debitamount-jl.creditamount ELSE 0 END),0) AS expense
+                COALESCE(SUM(CASE WHEN LOWER(BTRIM(fa.accounttype))='income' THEN jl.creditamount-jl.debitamount ELSE 0 END),0) AS income,
+                COALESCE(SUM(CASE WHEN LOWER(BTRIM(fa.accounttype))='expense' THEN jl.debitamount-jl.creditamount ELSE 0 END),0) AS expense
          FROM journal_entries je JOIN journal_lines jl ON jl.journalentryid=je.id
          JOIN finance_accounts fa ON fa.id=jl.financeaccountid
          WHERE je.organizationid=$1 AND je.status='posted' AND je.isdeleted=FALSE
@@ -304,7 +304,7 @@ export module financeDashboardReportsService {
          JOIN journal_lines jl ON jl.journalentryid=je.id
          JOIN finance_accounts fa ON fa.id=jl.financeaccountid
          WHERE je.organizationid=$1 AND je.status='posted' AND je.isdeleted=FALSE
-           AND fa.isdeleted=FALSE AND je.entrydate BETWEEN $2 AND $3 AND fa.accounttype='expense'
+            AND fa.isdeleted=FALSE AND je.entrydate BETWEEN $2 AND $3 AND LOWER(BTRIM(fa.accounttype))='expense'
          GROUP BY fa.id, fa.accountname
          HAVING ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) >= 0.01
          ORDER BY ABS(COALESCE(SUM(jl.debitamount - jl.creditamount), 0)) DESC, fa.accountname ASC`,
@@ -328,6 +328,22 @@ export module financeDashboardReportsService {
     };
     const invoicePeriod = invoiceResult.rows.filter((row: any) => normalizeFinanceEpochSeconds(row.invoicedate || row.createddate) >= fromEpoch);
     const billPeriod = billResult.rows.filter((row: any) => normalizeFinanceEpochSeconds(row.invoicedate || row.createddate) >= fromEpoch);
+    // Operational invoices are the source of the dashboard's Net Sales value.
+    // Use the same source for each chart month so income is not hidden merely
+    // because an older invoice has no matching income journal entry.
+    const operationalIncomeByMonth = invoicePeriod.reduce((months: Map<string, number>, invoice: any) => {
+      const epoch = normalizeFinanceEpochSeconds(invoice.invoicedate || invoice.createddate);
+      const period = new Date(epoch * 1000).toISOString().slice(0, 7);
+      const payment = getRetailInvoicePaymentState(invoice);
+      const netIncome = money(payment.invoiceAmount - resolveInvoiceGst(invoice).total);
+      months.set(period, money((months.get(period) || 0) + netIncome));
+      return months;
+    }, new Map<string, number>());
+    const monthlyTrend = mergeOperationalIncomeTrend(trendResult.rows.map((row: any) => ({
+      period: row.period,
+      income: money(row.income),
+      expense: money(row.expense),
+    })), operationalIncomeByMonth);
     const invoiceGst = invoicePeriod.reduce((sum: any, row: any) => { const gst=resolveInvoiceGst(row); sum.cgst+=gst.cgst; sum.sgst+=gst.sgst; sum.igst+=gst.igst; sum.total+=gst.total; return sum; }, {cgst:0,sgst:0,igst:0,total:0});
     const billGst = billPeriod.reduce((sum: any, row: any) => { const gst=resolveBillGst(row); sum.cgst+=gst.cgst; sum.sgst+=gst.sgst; sum.igst+=gst.igst; sum.total+=gst.total; return sum; }, {cgst:0,sgst:0,igst:0,total:0});
     [invoiceGst, billGst].forEach((gst) => Object.keys(gst).forEach((key) => gst[key]=money(gst[key])));
@@ -336,7 +352,7 @@ export module financeDashboardReportsService {
     const topAccounts = Array.isArray(cashResult.rows[0]?.topaccounts) ? cashResult.rows[0].topaccounts : [];
     return {
       meta: { from, to, currency: "INR", generatedAt: new Date().toISOString() },
-      trend: fillMonthlyFinanceTrend(from, to, trendResult.rows.map((row: any) => ({ period: row.period, income: money(row.income), expense: money(row.expense) }))),
+      trend: fillMonthlyFinanceTrend(from, to, monthlyTrend),
       topExpenses: topExpenseResult.rows.map((row: any) => ({ id: Number(row.id), name: String(row.name || "Expense"), amount: money(row.amount) })),
       receivablesAgeing: receivablesAgeing.buckets,
       payablesAgeing: payablesAgeing.buckets,
@@ -349,7 +365,7 @@ export module financeDashboardReportsService {
   };
 
   export const getDashboardAgeingDetails = async (request: any) => {
-    resolveFinanceContext(request);
+    const { organizationId } = resolveFinanceContext(request);
     const { to } = getFilters(request);
     const { toEpoch } = epochRange(to, to);
     const kind = String(request.query?.kind || "").trim().toLowerCase();
@@ -374,9 +390,10 @@ export module financeDashboardReportsService {
          FROM revoinvoice r
          LEFT JOIN users u ON u.id=r.customerid
          WHERE ${REVO_INVOICE_DATE_SECONDS} <= $1
+           AND r.organizationid = $2
            AND LOWER(COALESCE(r.paymentstatus,'pending')) NOT IN ('cancelled','void')
          ORDER BY COALESCE(r.paymentduedate,r.invoicedate,r.createddate) ASC, r.id ASC`,
-        [toEpoch]
+        [toEpoch, organizationId]
       );
       details = result.rows.map((row: any) => {
         const outstandingAmount = getRetailInvoicePaymentState(row).outstandingAmount;
@@ -389,10 +406,11 @@ export module financeDashboardReportsService {
          FROM poinvoice b
          LEFT JOIN LATERAL (SELECT supplierid FROM purchaseorder WHERE ponumber=b.ponumber ORDER BY id DESC LIMIT 1) po ON TRUE
          LEFT JOIN supplier s ON s.id=COALESCE(b.supplierid,po.supplierid)
-         WHERE COALESCE(b.invoicedate,b.createddate) <= $1
+         WHERE ${REVO_BILL_DATE_SECONDS} <= $1
+           AND b.organizationid = $2
            AND LOWER(COALESCE(b.invoicestatus,'in_progress')) NOT IN ('cancelled','void')
          ORDER BY COALESCE(b.paymentduedate,b.invoicedate,b.createddate) ASC, b.id ASC`,
-        [toEpoch]
+        [toEpoch, organizationId]
       );
       details = result.rows.map((row: any) => {
         const outstandingAmount = getSupplierBillPaymentState(row).outstandingAmount;
@@ -964,6 +982,7 @@ export module financeDashboardReportsService {
       const rows = recordsResult.rows.map((invoice: any) => {
         const payment = getRetailInvoicePaymentState(invoice);
         const gst = resolveInvoiceGst(invoice);
+        const dueDate = normalizeFinanceEpochSeconds(invoice.paymentduedate || invoice.invoicedate || invoice.createddate, toEpoch);
         return {
           id: Number(invoice.id),
           date: Number(invoice.invoicedate || invoice.createddate),
@@ -980,7 +999,9 @@ export module financeDashboardReportsService {
           grossAmount: payment.invoiceAmount,
           paidAmount: payment.paidAmount,
           balanceAmount: payment.outstandingAmount,
-          status: invoice.paymentstatus || "pending",
+          dueDate,
+          daysOutstanding: payment.outstandingAmount > 0 ? Math.max(Math.floor((toEpoch - dueDate) / 86400), 0) : null,
+          status: payment.outstandingAmount <= 0 ? "paid" : (invoice.paymentstatus || "pending"),
         };
       });
       // Use the same validated resolvers for both detail rows and report totals.
@@ -1022,16 +1043,17 @@ export module financeDashboardReportsService {
              FROM purchaseorder WHERE ponumber = b.ponumber ORDER BY id DESC LIMIT 1
            ) po ON TRUE
            LEFT JOIN supplier s ON s.id = COALESCE(b.supplierid, po.supplierid)
-           WHERE COALESCE(b.invoicedate, b.createddate) BETWEEN $1 AND $2
+           WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
+              AND b.organizationid = $10
              AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(b.invoicenumber, '') ILIKE $4
                   OR COALESCE(s.suppliername, '') ILIKE $4)
              AND ($5 = '' OR LOWER(COALESCE(b.invoicestatus, 'in_progress')) = $5)
              AND ($6 = '' OR LOWER(COALESCE(b.billtype, 'inventory')) = $6)
              AND ($7 = '' OR LOWER(COALESCE(b.expensecategory, '')) = $7)
-           ORDER BY COALESCE(b.invoicedate, b.createddate) DESC, b.id DESC
+           ORDER BY ${REVO_BILL_DATE_SECONDS} DESC, b.id DESC
            OFFSET $8 LIMIT $9`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType, category, offset, count]
+           [fromEpoch, toEpoch, search, searchPattern, status, documentType, category, offset, count, organizationId]
         ),
         query(
           `SELECT b.*,
@@ -1043,19 +1065,21 @@ export module financeDashboardReportsService {
              FROM purchaseorder WHERE ponumber = b.ponumber ORDER BY id DESC LIMIT 1
            ) po ON TRUE
            LEFT JOIN supplier s ON s.id = COALESCE(b.supplierid, po.supplierid)
-           WHERE COALESCE(b.invoicedate, b.createddate) BETWEEN $1 AND $2
+           WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
+              AND b.organizationid = $8
              AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(b.invoicenumber, '') ILIKE $4 OR COALESCE(s.suppliername, '') ILIKE $4)
              AND ($5 = '' OR LOWER(COALESCE(b.invoicestatus, 'in_progress')) = $5)
              AND ($6 = '' OR LOWER(COALESCE(b.billtype, 'inventory')) = $6)
              AND ($7 = '' OR LOWER(COALESCE(b.expensecategory, '')) = $7)`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType, category]
+           [fromEpoch, toEpoch, search, searchPattern, status, documentType, category, organizationId]
         ),
       ]);
       const billLines: SupplierBillLineDetail[] = [];
       const rows = recordsResult.rows.map((bill: any) => {
         const payment = getSupplierBillPaymentState(bill);
         const gst = resolveBillGst(bill);
+        const dueDate = normalizeFinanceEpochSeconds(bill.paymentduedate || bill.invoicedate || bill.createddate, toEpoch);
         const lines = resolveSupplierBillLineDetails(bill.id, bill.productdata);
         const lineSummary = summarizeSupplierBillLines(lines);
         billLines.push(...lines);
@@ -1070,7 +1094,9 @@ export module financeDashboardReportsService {
           grossAmount: payment.invoiceAmount, paidAmount: payment.settledAmount, balanceAmount: payment.outstandingAmount,
           lineCount: lineSummary.lineCount, lineQuantity: lineSummary.totalQuantity,
           lineSubtotal: lineSummary.lineSubtotal, lineVariance: lineSummary.lineVariance,
-          status: bill.invoicestatus || "in_progress",
+          dueDate,
+          daysOutstanding: payment.outstandingAmount > 0 ? Math.max(Math.floor((toEpoch - dueDate) / 86400), 0) : null,
+          status: payment.outstandingAmount <= 0 ? "paid" : (bill.invoicestatus || "in_progress"),
         };
       });
       const summary = countResult.rows.reduce(

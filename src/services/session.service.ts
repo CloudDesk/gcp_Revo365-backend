@@ -1,11 +1,18 @@
-import { REDIS_SESSIONEXSEC } from '../config/config.js';
+import { FINANCE_DEFAULT_ORGANIZATION_ID, REDIS_SESSIONEXSEC } from '../config/config.js';
 import { redisClient } from '../database/redis.session.js';
 
 export const saveSession = async (sessionId, sessionData): Promise<string> => {
   const createdTime = Math.floor(Date.now() / 1000);
+  const configuredOrganizationId = Number(FINANCE_DEFAULT_ORGANIZATION_ID);
+  const organizationId = Number(
+    sessionData?.organizationid ?? sessionData?.organizationId ?? configuredOrganizationId
+  );
 
   const sessionDataWithCreatedTime = {
     ...sessionData,
+    ...(Number.isSafeInteger(organizationId) && organizationId > 0
+      ? { organizationid: organizationId }
+      : {}),
     createddate: createdTime
   };
   let sessionDataString;
@@ -34,6 +41,13 @@ export const getSession = async (req: any, reply: any): Promise<any> => {
         await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, sessionData);
         // Attach to req so controllers can access the logged-in user's data
         req.session = JSON.parse(sessionData);
+        if (!req.session?.organizationid && !req.session?.organizationId) {
+          console.warn('[finance-context] Session has no organization ID.', {
+            actor: req.session?.useremail || req.session?.id || 'unknown',
+            role: req.session?.role || 'unknown',
+            path: req.url,
+          });
+        }
         return;
       } else {
         return reply.status(401).send({ error: 'Unauthorized: No valid session' });

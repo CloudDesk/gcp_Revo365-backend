@@ -420,7 +420,7 @@ export var poinvoiceservice;
             }
             if (id) {
                 querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
+                params = [...fieldValues, id, Number(upsertFields.organizationid)];
             }
             else {
                 querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
@@ -462,7 +462,7 @@ export var poinvoiceservice;
             }
             if (id) {
                 querydata = `UPDATE poinvoice SET ${fieldNames.map((field, index) => `${field} = $${index + 1}`).join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
+                params = [...fieldValues, id, Number(upsertFields.organizationid)];
             }
             else {
                 querydata = `INSERT INTO poinvoice (${fieldNames.join(", ")}) VALUES (${fieldNames.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;

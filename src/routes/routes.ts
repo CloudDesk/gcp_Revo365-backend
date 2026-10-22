@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { productController } from "../controller/Product.controller.js";
 import { productInsertSchema } from "../schemas/v1/product.schema.js";
 import { validateRequestBody } from "../schemas/ajv.schema.js";
-import { filesUpload } from "../multer/Multer.js";
+import { filesUpload, journalAttachmentUpload } from "../multer/Multer.js";
 import { gets3DataStream, gets3Dataurl } from "../aws/getDatafroms3.js";
 import { picklistControler } from "../controller/picklist.controller.js";
 import { recordCount } from "../controller/recordcount.controller.js";
@@ -714,7 +714,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.post(
         '/finance/journals/:journalId/attachment',
-        { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] },
+        { preHandler: [getSession, requireJournalPermission('edit'), journalAttachmentUpload] },
         journalController.attachFile
     );
     fastify.post(

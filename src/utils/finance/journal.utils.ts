@@ -72,7 +72,10 @@ export const normalizeJournalDraft = (
     true,
     2000
   )!;
-  const journalpurpose = String(payload?.journalpurpose || "accrual") as NormalizedJournalDraft["journalpurpose"];
+  const journalpurpose = String(payload?.journalpurpose || "").trim() as NormalizedJournalDraft["journalpurpose"];
+  if (!journalpurpose) {
+    throw new FinanceValidationError("journalpurpose is required.");
+  }
   if (!["general", "accrual", "reclassification", "correction"].includes(journalpurpose)) {
     throw new FinanceValidationError(
       "journalpurpose must be general, accrual, reclassification, or correction."

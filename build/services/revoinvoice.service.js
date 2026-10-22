@@ -412,7 +412,10 @@ const enrichRentalInvoiceAssets = async (invoiceRows) => {
 };
 export var revoinvoiceservice;
 (function (revoinvoiceservice) {
-    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds, organizationId = 1) => {
+    revoinvoiceservice.getPaymentSummariesByCustomerIds = async (customerIds, organizationId) => {
+        if (!Number.isSafeInteger(Number(organizationId)) || Number(organizationId) <= 0) {
+            throw new Error("A valid organization ID is required for customer payment summaries.");
+        }
         const normalizedCustomerIds = Array.from(new Set(customerIds
             .map((customerId) => Number(customerId))
             .filter((customerId) => Number.isFinite(customerId) && customerId > 0)
@@ -765,7 +768,7 @@ export var revoinvoiceservice;
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
+                params = [...fieldValues, id, Number(upsertFields.organizationid)];
             }
             else {
                 console.log('inside else');

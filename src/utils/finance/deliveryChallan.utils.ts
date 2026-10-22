@@ -8,6 +8,11 @@ export type DeliverableInvoiceLine = {
   unit: string;
   unitrate: number | null;
   lineamount: number | null;
+  hsnsaccode: string | null;
+  taxableamount: number | null;
+  gstrate: number | null;
+  gstamount: number | null;
+  totalamount: number | null;
 };
 
 const parseInvoiceJson = (value: unknown): any => {
@@ -58,7 +63,16 @@ export const extractDeliverableInvoiceLines = (
 
     const productId = Number(item?.productid);
     const unitrate = moneyValue(item?.unitrate ?? item?.unitPrice ?? item?.rate ?? item?.price ?? item?.mrp);
-    const lineamount = moneyValue(item?.totalamount ?? item?.totalMRP ?? item?.amount ?? item?.subtotal);
+    const taxableamount = moneyValue(item?.taxableamount ?? item?.taxableAmount ?? item?.subtotal ?? item?.amount);
+    const cgst = moneyValue(item?.cgstamount ?? item?.cgstAmount) || 0;
+    const sgst = moneyValue(item?.sgstamount ?? item?.sgstAmount) || 0;
+    const igst = moneyValue(item?.igstamount ?? item?.igstAmount) || 0;
+    const gstamount = moneyValue(item?.gstamount ?? item?.gstAmount) ?? Math.round((cgst + sgst + igst) * 100) / 100;
+    const totalamount = moneyValue(item?.totalamount ?? item?.totalMRP ?? item?.grandtotal)
+      ?? (taxableamount == null ? moneyValue(item?.amount) : Math.round((taxableamount + gstamount) * 100) / 100);
+    const lineamount = totalamount;
+    const explicitRate = moneyValue(item?.gstrate ?? item?.gstRate ?? item?.taxpercentage ?? item?.taxPercentage);
+    const gstrate = explicitRate ?? (taxableamount && gstamount ? Math.round((gstamount / taxableamount) * 10000) / 100 : 0);
     return [{
       invoicelinekey,
       productid: Number.isSafeInteger(productId) && productId > 0 ? productId : null,
@@ -67,6 +81,11 @@ export const extractDeliverableInvoiceLines = (
       unit: String(item?.unit || "Nos").trim() || "Nos",
       unitrate,
       lineamount,
+      hsnsaccode: String(item?.hsnsaccode ?? item?.hsncode ?? item?.saccode ?? item?.hsn ?? "").trim() || null,
+      taxableamount,
+      gstrate,
+      gstamount,
+      totalamount,
     }];
   });
 };
@@ -115,6 +134,12 @@ export type ManualDeliveryLine = {
   deliveryquantity: number;
   unit: string;
   assetreference: string | null;
+  hsnsaccode: string | null;
+  unitrate: number | null;
+  taxableamount: number | null;
+  gstrate: number | null;
+  gstamount: number | null;
+  totalamount: number | null;
 };
 
 export const validateManualDeliveryLines = (requestedLines: any): ManualDeliveryLine[] => {
@@ -128,6 +153,12 @@ export const validateManualDeliveryLines = (requestedLines: any): ManualDelivery
     const deliveryquantity = Number(line?.deliveryquantity);
     const unit = String(line?.unit || "Nos").trim();
     const assetreference = String(line?.assetreference || "").trim() || null;
+    const hsnsaccode = String(line?.hsnsaccode || "").trim() || null;
+    const unitrate = moneyValue(line?.unitrate);
+    const taxableamount = moneyValue(line?.taxableamount) ?? (unitrate == null ? null : Math.round(unitrate * deliveryquantity * 100) / 100);
+    const gstrate = moneyValue(line?.gstrate) ?? 0;
+    const gstamount = moneyValue(line?.gstamount) ?? (taxableamount == null ? null : Math.round(taxableamount * gstrate) / 100);
+    const totalamount = moneyValue(line?.totalamount) ?? (taxableamount == null ? null : Math.round((taxableamount + (gstamount || 0)) * 100) / 100);
     if (!productname || productname.length > 500) {
       throw new FinanceValidationError(`Item description for line ${index + 1} is required and cannot exceed 500 characters.`);
     }
@@ -140,6 +171,12 @@ export const validateManualDeliveryLines = (requestedLines: any): ManualDelivery
     if (assetreference && assetreference.length > 255) {
       throw new FinanceValidationError(`Asset reference for ${productname} cannot exceed 255 characters.`);
     }
-    return { linesource: productid ? "product" : "custom", productid, productname, deliveryquantity, unit, assetreference };
+    if (hsnsaccode && hsnsaccode.length > 64) {
+      throw new FinanceValidationError(`HSN/SAC code for ${productname} cannot exceed 64 characters.`);
+    }
+    if ([unitrate, taxableamount, gstrate, gstamount, totalamount].some((value) => value != null && value < 0)) {
+      throw new FinanceValidationError(`Amounts for ${productname} cannot be negative.`);
+    }
+    return { linesource: productid ? "product" : "custom", productid, productname, deliveryquantity, unit, assetreference, hsnsaccode, unitrate, taxableamount, gstrate, gstamount, totalamount };
   });
 };

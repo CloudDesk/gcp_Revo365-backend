@@ -493,8 +493,11 @@ const enrichRentalInvoiceAssets = async (invoiceRows: any[]) => {
 export module revoinvoiceservice {
     export const getPaymentSummariesByCustomerIds = async (
         customerIds: any[],
-        organizationId = 1
+        organizationId: number
     ) => {
+        if (!Number.isSafeInteger(Number(organizationId)) || Number(organizationId) <= 0) {
+            throw new Error("A valid organization ID is required for customer payment summaries.");
+        }
         const normalizedCustomerIds = Array.from(
             new Set(
                 customerIds
@@ -945,7 +948,7 @@ export module revoinvoiceservice {
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
+                params = [...fieldValues, id, Number(upsertFields.organizationid)];
             } else {
                 console.log('inside else')
                 querydata = `INSERT INTO revoinvoice (${fieldNames.join(

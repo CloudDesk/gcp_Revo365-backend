@@ -291,6 +291,11 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     unit: "Nos",
                     unitrate: null,
                     lineamount: null,
+                    hsnsaccode: null,
+                    taxableamount: null,
+                    gstrate: 0,
+                    gstamount: 0,
+                    totalamount: null,
                 },
                 {
                     invoicelinekey: "item:2",
@@ -300,6 +305,11 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     unit: "Nos",
                     unitrate: null,
                     lineamount: null,
+                    hsnsaccode: null,
+                    taxableamount: null,
+                    gstrate: 0,
+                    gstamount: 0,
+                    totalamount: null,
                 },
             ]);
         });
@@ -324,6 +334,12 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     deliveryquantity: 2,
                     unit: "Nos",
                     assetreference: "RFID-1",
+                    hsnsaccode: null,
+                    unitrate: null,
+                    taxableamount: null,
+                    gstrate: 0,
+                    gstamount: null,
+                    totalamount: null,
                 }]);
             assert.throws(() => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]), FinanceValidationError);
         });

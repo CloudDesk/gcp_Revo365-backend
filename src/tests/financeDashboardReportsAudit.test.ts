@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { auditFinanceDashboard, auditFinanceReport } from "../utils/finance/financeReportAudit.utils.js";
 import { buildNetGstBalanceSheetRow, invoiceIncludesCogs, invoiceIncludesRentalIncome, resolveBillGst } from "../utils/finance/gstSummary.utils.js";
-import { fillMonthlyFinanceTrend, listFinanceMonths, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
+import { fillMonthlyFinanceTrend, listFinanceMonths, mergeOperationalIncomeTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation } from "../utils/finance/inventoryStockValuation.utils.js";
 import { classifyM4Document, requiredM4Movement } from "../utils/finance/m4Reconciliation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
@@ -132,6 +132,24 @@ test("fills every selected dashboard month including zero and cross-year periods
     { period: "2025-12", income: 100, expense: 40 },
     { period: "2026-01", income: 0, expense: 0 },
     { period: "2026-02", income: 25, expense: -5 },
+  ]);
+});
+
+test("uses operational invoice income in the dashboard trend without losing posted expenses", () => {
+  const result = mergeOperationalIncomeTrend(
+    [
+      { period: "2026-08", income: 0, expense: 400 },
+      { period: "2026-09", income: 250, expense: 100 },
+    ],
+    new Map([
+      ["2026-08", 1000],
+      ["2026-10", 500],
+    ])
+  );
+  assert.deepEqual(result, [
+    { period: "2026-08", income: 1000, expense: 400 },
+    { period: "2026-09", income: 250, expense: 100 },
+    { period: "2026-10", income: 500, expense: 0 },
   ]);
 });
 
