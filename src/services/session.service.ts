@@ -55,9 +55,24 @@ export const getSession = async (req: any, reply: any): Promise<any> => {
             }
           } catch (error: any) {
             // Organization columns are introduced by the pending tenant-context
-            // migration. Keep non-finance authentication working on databases
-            // where that migration has intentionally not been applied yet.
+            // migration. Until it is approved, a legacy single-tenant database
+            // may derive its sole existing finance organization. Never choose an
+            // organization when the data contains more than one candidate.
             if (error?.code !== '42703') throw error;
+            const organizations = await query(
+              `SELECT organizationid
+               FROM finance_accounts
+               WHERE organizationid IS NOT NULL
+               GROUP BY organizationid
+               ORDER BY organizationid
+               LIMIT 2`
+            );
+            if (organizations.rows.length === 1) {
+              const organizationId = Number(organizations.rows[0].organizationid);
+              if (Number.isSafeInteger(organizationId) && organizationId > 0) {
+                req.session.organizationid = organizationId;
+              }
+            }
           }
           if (!req.session?.organizationid && !req.session?.organizationId) {
             console.warn('[finance-context] Session has no organization ID.', {
