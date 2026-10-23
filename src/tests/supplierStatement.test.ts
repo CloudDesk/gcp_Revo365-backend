@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
 
 describe("Supplier Statement Phase 3 foundation", () => {
-  test("orders Bills before Supplier Payments and calculates running payable", () => {
+  test("returns the latest Supplier Statement rows first with chronological balances", () => {
     const statement = buildSupplierStatement([
       {
         id: "payment-1",
@@ -31,9 +31,9 @@ describe("Supplier Statement Phase 3 foundation", () => {
       },
     ]);
 
-    assert.equal(statement.records[0].reference, "BILL-1");
-    assert.equal(statement.records[0].balance, 1000);
-    assert.equal(statement.records[1].balance, 550);
+    assert.equal(statement.records[0].reference, "BT-1");
+    assert.equal(statement.records[0].balance, 550);
+    assert.equal(statement.records[1].balance, 1000);
     assert.equal(statement.summary.paymentamount, 400);
     assert.equal(statement.summary.tdspayable, 50);
     assert.equal(statement.summary.closingpayable, 550);

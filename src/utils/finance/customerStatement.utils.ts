@@ -76,13 +76,17 @@ export const buildCustomerStatement = (
   );
 
   let runningBalance = openingReceivable;
-  const records: CustomerStatementRow[] = periodRows.map((row) => {
+  const chronologicalRecords: CustomerStatementRow[] = periodRows.map((row) => {
     runningBalance = toMoney(
       runningBalance + statementEffect(row),
       "statement balance"
     );
     return { ...row, balance: runningBalance };
   });
+
+  // Calculate balances oldest-to-newest, then present the latest activity first.
+  // Reversing after the calculation preserves the balance as of each transaction.
+  const records = chronologicalRecords.reverse();
 
   return {
     records,

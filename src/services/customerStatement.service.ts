@@ -789,7 +789,7 @@ export module customerStatementService {
         reference: String(line.journalnumber || `JE-${line.journalid}`),
         description: String(line.linedescription || line.journaldescription || "Manual Journal adjustment"),
         invoiceamount: debit,
-        paymentamount: 0,
+        paymentamount: credit,
         allocatedamount: 0,
         settledamount: credit,
         tdsamount: 0,
