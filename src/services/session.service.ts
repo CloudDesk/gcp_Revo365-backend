@@ -44,14 +44,22 @@ export const getSession = async (req: any, reply: any): Promise<any> => {
         req.session = JSON.parse(sessionData);
         if (!req.session?.organizationid && !req.session?.organizationId) {
           const table = req.session?.role ? 'inventoryusers' : 'users';
-          const persisted = await query(
-            `SELECT organizationid FROM ${table} WHERE id = $1 LIMIT 1`,
-            [req.session?.id]
-          );
-          const organizationId = Number(persisted.rows[0]?.organizationid);
-          if (Number.isSafeInteger(organizationId) && organizationId > 0) {
-            req.session.organizationid = organizationId;
-          } else {
+          try {
+            const persisted = await query(
+              `SELECT organizationid FROM ${table} WHERE id = $1 LIMIT 1`,
+              [req.session?.id]
+            );
+            const organizationId = Number(persisted.rows[0]?.organizationid);
+            if (Number.isSafeInteger(organizationId) && organizationId > 0) {
+              req.session.organizationid = organizationId;
+            }
+          } catch (error: any) {
+            // Organization columns are introduced by the pending tenant-context
+            // migration. Keep non-finance authentication working on databases
+            // where that migration has intentionally not been applied yet.
+            if (error?.code !== '42703') throw error;
+          }
+          if (!req.session?.organizationid && !req.session?.organizationId) {
             console.warn('[finance-context] Session has no organization ID.', {
               actor: req.session?.useremail || req.session?.id || 'unknown',
               role: req.session?.role || 'unknown',
