@@ -335,7 +335,7 @@ export module supplierStatementService {
         reference: String(line.journalnumber || `JE-${line.journalid}`),
         description: String(line.linedescription || line.journaldescription || "Manual Journal adjustment"),
         billamount: credit,
-        paymentamount: 0,
+        paymentamount: debit,
         allocatedamount: 0,
         settledamount: debit,
         tdsamount: 0,
