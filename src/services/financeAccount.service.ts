@@ -1,0 +1,2573 @@
+import { randomUUID } from "crypto";
+import pool, { query } from "../database/postgres.js";
+import { FINANCE_ENCRYPTION_KEY } from "../config/config.js";
+import {
+  FinanceValidationError,
+  calculateAvailableBalance,
+  calculateLedgerBalance,
+  maskAccountNumber,
+  normalizeAccountType,
+  normalizeEntrySide,
+  nowEpoch,
+  protectAccountNumber,
+  requireIsoDate,
+  requirePositiveMoney,
+  resolveFinanceContext,
+  toFinanceDateOnly,
+  toMoney,
+} from "../utils/finance/finance.utils.js";
+import {
+  FINANCE_SOURCE_TYPES,
+  getCustomerReceiptSourceTypes,
+  getRetailReceiptSourceTypes,
+} from "../utils/finance/financeSource.utils.js";
+import { getRetailInvoicesOutstandingTotal } from "../utils/finance/retailReceipt.utils.js";
+import { toCustomerStatementDate } from "../utils/finance/customerStatement.utils.js";
+import {
+  getBillGstSummary,
+  getInvoiceGstSummary,
+  resolveBillGst,
+  resolveInvoiceGst,
+} from "../utils/finance/gstSummary.utils.js";
+import {
+  assertTransactionDateIsWithinAccountHistory,
+  rebuildBankCashAccountBalances,
+} from "../utils/finance/bankTransactionBalance.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
+import {
+  ControlAccountKind,
+  buildControlAccountHistory,
+  collectBankTransactionIds,
+  summarizeControlAccountHistory,
+} from "../utils/finance/controlAccountHistory.utils.js";
+
+const CHART_ACCOUNT_CATEGORIES = new Set([
+  "asset",
+  "liability",
+  "equity",
+  "income",
+  "expense",
+]);
+
+// System-managed control accounts listed alongside user-created accounts.
+const LISTED_SYSTEM_ACCOUNT_SUBTYPES = [
+  "accounts_receivable",
+  "accounts_payable",
+  "gst_output_cgst",
+  "gst_output_sgst",
+  "gst_output_igst",
+  "gst_input_cgst",
+  "gst_input_sgst",
+  "gst_input_igst",
+];
+
+type GstComponent = "cgst" | "sgst" | "igst";
+
+const getGstAccountContext = (accountSubtype: unknown) => {
+  const subtype = String(accountSubtype || "").toLowerCase();
+  const match = subtype.match(/^gst_(input|output)_(cgst|sgst|igst)$/);
+  return match
+    ? {
+      direction: match[1] as "input" | "output",
+      component: match[2] as GstComponent,
+    }
+    : null;
+};
+
+const listedChartAccountCondition = (alias = "f") =>
+  `(${alias}.isusercreatedchartaccount = TRUE OR (` +
+  `${alias}.issystem = TRUE AND ${alias}.accountsubtype = ANY($2::TEXT[])` +
+  `))`;
+
+const getControlAccountKind = (
+  accountSubtype: unknown
+): ControlAccountKind | null => {
+  if (accountSubtype === "accounts_receivable") return "receivable";
+  if (accountSubtype === "accounts_payable") return "payable";
+  return null;
+};
+
+// Non-cancelled customer invoices that make up Accounts Receivable.
+const RECEIVABLE_DOCUMENTS_SQL = `
+  SELECT
+    invoice.*,
+    COALESCE(
+      NULLIF(TRIM(CONCAT_WS(' ', customer.firstname, customer.lastname)), ''),
+      customer.useremail,
+      CONCAT('Customer ', invoice.customerid)
+    ) AS partyname
+  FROM revoinvoice invoice
+  LEFT JOIN users customer ON customer.id = invoice.customerid
+  WHERE invoice.organizationid = $1
+    AND LOWER(COALESCE(invoice.paymentstatus, 'pending')) <> 'cancelled'
+`;
+
+// Non-cancelled supplier bills that make up Accounts Payable.
+const PAYABLE_DOCUMENTS_SQL = `
+  SELECT
+    bill.*,
+    COALESCE(supplier.suppliername, bill.payeename, 'Supplier') AS partyname,
+    bill.ponumber AS parentreference,
+    COALESCE(
+      (
+        SELECT SUM(allocation.totalsettledamount)
+        FROM bank_transaction_allocations allocation
+        JOIN bank_transactions bank_tx
+          ON bank_tx.id = allocation.banktransactionid
+        WHERE allocation.documenttype = 'purchase_bill'
+          AND allocation.documentid = bill.id
+          AND allocation.status = 'applied'
+          AND bank_tx.organizationid = $1
+          AND bank_tx.postingstatus = 'posted'
+      ),
+      0
+    ) AS finance_settled_amount
+  FROM poinvoice bill
+  LEFT JOIN LATERAL (
+    SELECT purchase_order.supplierid
+    FROM purchaseorder purchase_order
+    WHERE purchase_order.ponumber = bill.ponumber
+    ORDER BY purchase_order.id DESC
+    LIMIT 1
+  ) linked_po ON TRUE
+  LEFT JOIN supplier
+    ON supplier.id = CASE
+      WHEN COALESCE(bill.billtype, 'inventory') = 'expense' THEN bill.supplierid
+      ELSE linked_po.supplierid
+    END
+  WHERE bill.organizationid = $1
+    AND LOWER(COALESCE(bill.invoicestatus, 'in_progress')) <> 'cancelled'
+`;
+
+const loadControlAccountHistory = async (
+  organizationId: number,
+  kind: ControlAccountKind
+) => {
+  const documentsResult = await query(
+    kind === "receivable" ? RECEIVABLE_DOCUMENTS_SQL : PAYABLE_DOCUMENTS_SQL,
+    [organizationId]
+  );
+  const bankTransactionIds = collectBankTransactionIds(documentsResult.rows);
+  const bankAccountNames = new Map<number, string>();
+  if (bankTransactionIds.length > 0) {
+    const bankResult = await query(
+      `SELECT bank_tx.id, bank_account.accountname
+       FROM bank_transactions bank_tx
+       JOIN bank_cash_accounts bank_account
+         ON bank_account.id = bank_tx.bankcashaccountid
+        AND bank_account.organizationid = bank_tx.organizationid
+       WHERE bank_tx.organizationid = $1
+         AND bank_tx.id = ANY($2::BIGINT[])`,
+      [organizationId, bankTransactionIds]
+    );
+    bankResult.rows.forEach((row: any) =>
+      bankAccountNames.set(Number(row.id), row.accountname)
+    );
+  }
+  return buildControlAccountHistory(kind, documentsResult.rows, bankAccountNames);
+};
+
+// GST total for one component, limited to documents dated inside the period.
+const sumGstComponentForPeriod = (
+  documents: any[],
+  direction: "input" | "output",
+  component: GstComponent,
+  fromDate: string,
+  toDate: string
+) =>
+  toMoney(
+    documents.reduce((total: number, document: any) => {
+      const date = toCustomerStatementDate(
+        document.invoicedate || document.createddate
+      );
+      if (!date || date < fromDate || date > toDate) return total;
+      const gst =
+        direction === "output"
+          ? resolveInvoiceGst(document)
+          : resolveBillGst(document);
+      return total + gst[component];
+    }, 0)
+  );
+
+const normalizeText = (
+  value: unknown,
+  fieldName: string,
+  required = false,
+  maxLength = 255
+): string | null => {
+  const normalized = value == null ? "" : String(value).trim();
+  if (required && !normalized) {
+    throw new FinanceValidationError(`${fieldName} is required.`);
+  }
+  if (normalized.length > maxLength) {
+    throw new FinanceValidationError(
+      `${fieldName} must not exceed ${maxLength} characters.`
+    );
+  }
+  return normalized || null;
+};
+
+const normalizeCurrency = (value: unknown): string => {
+  const currency = String(value || "INR").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new FinanceValidationError("currencycode must contain three letters.");
+  }
+  return currency;
+};
+
+const requireChartAccountId = (value: unknown): number => {
+  const accountId = Number(value);
+  if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+    throw new FinanceValidationError("A valid accountId is required.");
+  }
+  return accountId;
+};
+
+const sanitizeAccount = (row: any) => {
+  if (!row) return row;
+  const {
+    accountnumberencrypted: _encrypted,
+    accountnumberhash: _hash,
+    ...safe
+  } = row;
+  return {
+    ...safe,
+    openingbalancedate:
+      toFinanceDateOnly(row.openingbalancedate) ?? row.openingbalancedate,
+    maskedaccountnumber: maskAccountNumber(row.accountnumberlast4),
+  };
+};
+
+const insertAuditEvent = async (
+  client: any,
+  organizationId: number,
+  entityType: string,
+  entityId: number,
+  action: string,
+  actor: string,
+  eventData: Record<string, any>
+) => {
+  await client.query(
+    `
+    INSERT INTO finance_audit_events (
+      organizationid, entitytype, entityid, action, actor, eventdata
+    )
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [
+      organizationId,
+      entityType,
+      entityId,
+      action,
+      actor,
+      JSON.stringify(eventData),
+    ]
+  );
+};
+
+const ensureSystemAccounts = async (
+  client: any,
+  organizationId: number,
+  actor: string
+) => {
+  await client.query(
+    `
+    INSERT INTO finance_accounts (
+      organizationid,
+      accountcode,
+      accountname,
+      accounttype,
+      accountsubtype,
+      currencycode,
+      issystem,
+      status,
+      createdby,
+      modifiedby
+    )
+    VALUES
+      ($1, 'SYS-OPENING-BALANCE', 'Opening Balance Equity', 'equity', 'opening_balance', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-AR', 'Accounts Receivable', 'asset', 'accounts_receivable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-AP', 'Accounts Payable', 'liability', 'accounts_payable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-CUSTOMER-ADVANCE', 'Customer Advances', 'liability', 'customer_advance', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-SUPPLIER-ADVANCE', 'Supplier Advances', 'asset', 'supplier_advance', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-RECEIVABLE', 'TDS Receivable', 'asset', 'tds_receivable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-PAYABLE', 'TDS Payable', 'liability', 'tds_payable', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-INTEREST-EXPENSE', 'TDS Interest Expense', 'expense', 'tds_interest', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-LATE-FEE-EXPENSE', 'TDS Late Fee Expense', 'expense', 'tds_late_fee', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-TDS-PENALTY-EXPENSE', 'TDS Penalty Expense', 'expense', 'tds_penalty', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-CGST-OUTPUT', 'Output CGST', 'liability', 'gst_output_cgst', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-SGST-OUTPUT', 'Output SGST', 'liability', 'gst_output_sgst', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-IGST-OUTPUT', 'Output IGST', 'liability', 'gst_output_igst', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-CGST-INPUT', 'Input CGST', 'asset', 'gst_input_cgst', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-SGST-INPUT', 'Input SGST', 'asset', 'gst_input_sgst', 'INR', TRUE, 'active', $2, $2),
+      ($1, 'SYS-IGST-INPUT', 'Input IGST', 'asset', 'gst_input_igst', 'INR', TRUE, 'active', $2, $2)
+    ON CONFLICT DO NOTHING
+    `,
+    [organizationId, actor]
+  );
+};
+
+const getSystemAccount = async (
+  client: any,
+  organizationId: number,
+  accountCode: string
+) => {
+  const result = await client.query(
+    `
+    SELECT *
+    FROM finance_accounts
+    WHERE organizationid = $1
+      AND LOWER(accountcode) = LOWER($2)
+      AND status = 'active'
+      AND isdeleted = FALSE
+    LIMIT 1
+    `,
+    [organizationId, accountCode]
+  );
+  if (!result.rows[0]) {
+    throw new FinanceValidationError(
+      `Required system account ${accountCode} is not configured.`,
+      500,
+      "FINANCE_SYSTEM_ACCOUNT_MISSING"
+    );
+  }
+  return result.rows[0];
+};
+
+const postOpeningBalance = async ({
+  client,
+  organizationId,
+  bankCashAccount,
+  bankLedger,
+  openingBalance,
+  openingBalanceDate,
+  actor,
+}: any) => {
+  if (openingBalance === 0) return null;
+
+  const offsetAccount = await getSystemAccount(
+    client,
+    organizationId,
+    "SYS-OPENING-BALANCE"
+  );
+  const epoch = nowEpoch();
+  const entryResult = await client.query(
+    `
+    INSERT INTO journal_entries (
+      organizationid,
+      entrydate,
+      sourcetype,
+      sourceid,
+      status,
+      description,
+      createdby,
+      postedby,
+      posteddate
+    )
+    VALUES ($1, $2, 'bank_account_opening', $3, 'posted', $4, $5, $5, $6)
+    RETURNING *
+    `,
+    [
+      organizationId,
+      openingBalanceDate,
+      bankCashAccount.id,
+      `Opening balance for ${bankCashAccount.accountname}`,
+      actor,
+      epoch,
+    ]
+  );
+  const journalEntry = entryResult.rows[0];
+  const journalNumber = `JE-${String(journalEntry.id).padStart(8, "0")}`;
+  await client.query(
+    `UPDATE journal_entries SET journalnumber = $1 WHERE id = $2`,
+    [journalNumber, journalEntry.id]
+  );
+
+  const absoluteAmount = Math.abs(openingBalance);
+  const bankDebit = openingBalance > 0 ? absoluteAmount : 0;
+  const bankCredit = openingBalance < 0 ? absoluteAmount : 0;
+  const offsetDebit = openingBalance < 0 ? absoluteAmount : 0;
+  const offsetCredit = openingBalance > 0 ? absoluteAmount : 0;
+
+  await client.query(
+    `
+    INSERT INTO journal_lines (
+      journalentryid,
+      financeaccountid,
+      debitamount,
+      creditamount,
+      description
+    )
+    VALUES
+      ($1, $2, $3, $4, $5),
+      ($1, $6, $7, $8, $5)
+    `,
+    [
+      journalEntry.id,
+      bankLedger.id,
+      bankDebit,
+      bankCredit,
+      `Opening balance for ${bankCashAccount.accountname}`,
+      offsetAccount.id,
+      offsetDebit,
+      offsetCredit,
+    ]
+  );
+
+  return { ...journalEntry, journalnumber: journalNumber };
+};
+
+export module financeAccountService {
+  export const listChartAccountTypes = async () => {
+    const result = await query(
+      `
+      SELECT
+        typecode AS value,
+        typename AS label,
+        accountcategory AS category,
+        categorylabel,
+        displayorder,
+        typecode = ANY($1::TEXT[]) AS issystemtype
+      FROM finance_account_types
+      WHERE status = 'active'
+      ORDER BY displayorder ASC, id ASC
+      `,
+      [LISTED_SYSTEM_ACCOUNT_SUBTYPES]
+    );
+    const types = result.rows;
+    const groups = Array.from(
+      types.reduce((grouped: Map<string, any[]>, accountType: any) => {
+        const existing = grouped.get(accountType.categorylabel) || [];
+        existing.push(accountType);
+        grouped.set(accountType.categorylabel, existing);
+        return grouped;
+      }, new Map<string, any[]>())
+    ).map(([label, groupTypes]) => ({ label, types: groupTypes }));
+
+    return {
+      types,
+      groups,
+    };
+  };
+
+  export const createChartAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const data = request.body || {};
+    const accountTypeCode = String(data.accounttype || "").trim().toLowerCase();
+
+    const accountName = normalizeText(
+      data.accountname,
+      "Account Name",
+      true,
+      255
+    )!;
+    const accountCode = normalizeText(
+      data.accountcode,
+      "Account Code",
+      false,
+      40
+    );
+    const description = normalizeText(
+      data.description,
+      "Description",
+      false,
+      2000
+    );
+    const normalizedName = accountName.toLocaleLowerCase("en-US");
+    const normalizedCode = accountCode?.toLocaleLowerCase("en-US") ?? null;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await ensureSystemAccounts(client, organizationId, actor);
+
+      const accountTypeResult = await client.query(
+        `
+        SELECT
+          typecode AS value,
+          typename AS label,
+          accountcategory AS category,
+          categorylabel
+        FROM finance_account_types
+        WHERE typecode = $1
+          AND status = 'active'
+        LIMIT 1
+        `,
+        [accountTypeCode]
+      );
+      const selectedType = accountTypeResult.rows[0];
+      if (!selectedType) {
+        throw new FinanceValidationError(
+          "Select a valid Account Type.",
+          400,
+          "CHART_ACCOUNT_TYPE_INVALID"
+        );
+      }
+      if (LISTED_SYSTEM_ACCOUNT_SUBTYPES.includes(selectedType.value)) {
+        throw new FinanceValidationError(
+          "This Account Type is managed automatically and cannot be created manually.",
+          400,
+          "CHART_ACCOUNT_TYPE_SYSTEM"
+        );
+      }
+
+      // Serialize matching names/codes so service validation remains reliable
+      // even when two create requests arrive concurrently.
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        [`chart-account-name:${organizationId}:${normalizedName}`]
+      );
+      if (normalizedCode) {
+        await client.query(
+          `SELECT pg_advisory_xact_lock(hashtext($1))`,
+          [`chart-account-code:${organizationId}:${normalizedCode}`]
+        );
+      }
+
+      const duplicateResult = await client.query(
+        `
+        SELECT
+          BOOL_OR(LOWER(TRIM(accountname)) = $2) AS duplicatename,
+          BOOL_OR(
+            $3::TEXT IS NOT NULL
+            AND LOWER(TRIM(accountcode)) = $3
+          ) AS duplicatecode
+        FROM finance_accounts
+        WHERE organizationid = $1
+          AND isdeleted = FALSE
+          AND (
+            LOWER(TRIM(accountname)) = $2
+            OR (
+              $3::TEXT IS NOT NULL
+              AND LOWER(TRIM(accountcode)) = $3
+            )
+          )
+        `,
+        [organizationId, normalizedName, normalizedCode]
+      );
+      if (duplicateResult.rows[0]?.duplicatename === true) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      if (duplicateResult.rows[0]?.duplicatecode === true) {
+        throw new FinanceValidationError(
+          "An account with this Account Code already exists.",
+          409,
+          "CHART_ACCOUNT_CODE_DUPLICATE"
+        );
+      }
+
+      const epoch = nowEpoch();
+      const result = await client.query(
+        `
+        INSERT INTO finance_accounts (
+          organizationid,
+          accountcode,
+          accountname,
+          accounttype,
+          accountsubtype,
+          description,
+          isusercreatedchartaccount,
+          currencycode,
+          issystem,
+          status,
+          createdby,
+          modifiedby,
+          createddate,
+          modifieddate
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, TRUE, 'INR', FALSE, 'active', $7, $7, $8, $8)
+        RETURNING *
+        `,
+        [
+          organizationId,
+          accountCode,
+          accountName,
+          selectedType.category,
+          selectedType.value,
+          description,
+          actor,
+          epoch,
+        ]
+      );
+      const account = result.rows[0];
+
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "finance_account",
+        account.id,
+        "created",
+        actor,
+        {
+          accountcode: accountCode,
+          accountname: accountName,
+          accounttype: selectedType.category,
+          accountsubtype: selectedType.value,
+        }
+      );
+
+      await client.query("COMMIT");
+      return {
+        ...account,
+        accounttypelabel: selectedType.label,
+        categorylabel: selectedType.categorylabel,
+      };
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (
+        error?.code === "23505" &&
+        error?.constraint === "uq_finance_chart_accounts_name_normalized"
+      ) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      if (
+        error?.code === "23505" &&
+        error?.constraint === "uq_finance_accounts_code_normalized"
+      ) {
+        throw new FinanceValidationError(
+          "An account with this Account Code already exists.",
+          409,
+          "CHART_ACCOUNT_CODE_DUPLICATE"
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listChartAccounts = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const queryData = request.query || {};
+    const params: any[] = [organizationId, LISTED_SYSTEM_ACCOUNT_SUBTYPES];
+    const conditions = [
+      "f.organizationid = $1",
+      listedChartAccountCondition("f"),
+      "f.isdeleted = FALSE",
+    ];
+
+    if (queryData.search) {
+      params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(f.accountname) LIKE $${params.length}
+        OR LOWER(f.accountcode) LIKE $${params.length}
+      )`);
+    }
+    if (queryData.category) {
+      const category = String(queryData.category).trim().toLowerCase();
+      if (!CHART_ACCOUNT_CATEGORIES.has(category)) {
+        throw new FinanceValidationError("Select a valid account category.");
+      }
+      params.push(category);
+      conditions.push(`f.accounttype = $${params.length}`);
+    }
+    if (queryData.accounttype) {
+      const accountTypeCode = String(queryData.accounttype).trim().toLowerCase();
+      const accountTypeResult = await query(
+        `SELECT typecode
+         FROM finance_account_types
+         WHERE typecode = $1 AND status = 'active'
+         LIMIT 1`,
+        [accountTypeCode]
+      );
+      if (!accountTypeResult.rows[0]) {
+        throw new FinanceValidationError("Select a valid Account Type.");
+      }
+      params.push(accountTypeCode);
+      conditions.push(`f.accountsubtype = $${params.length}`);
+    }
+    const status = String(queryData.status || "active").trim().toLowerCase();
+    if (!['active', 'inactive', 'all'].includes(status)) {
+      throw new FinanceValidationError("status must be active, inactive, or all.");
+    }
+    if (status !== "all") {
+      params.push(status);
+      conditions.push(`f.status = $${params.length}`);
+    }
+
+    const page = Math.max(Number(queryData.page) || 1, 1);
+    const count = Math.min(Math.max(Number(queryData.count) || 10, 1), 200);
+    const offset = (page - 1) * count;
+    const { fromDate, toDate } = resolveChartAccountDateRange(queryData);
+    const fromDateParam = params.length + 1;
+    const toDateParam = params.length + 2;
+    params.push(fromDate, toDate);
+    conditions.push(`(
+      $${fromDateParam}::DATE IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM journal_lines period_line
+        JOIN journal_entries period_entry
+          ON period_entry.id = period_line.journalentryid
+        WHERE period_line.financeaccountid = f.id
+          AND period_entry.organizationid = f.organizationid
+          AND period_entry.status = 'posted'
+          AND period_entry.isdeleted = FALSE
+          AND period_entry.entrydate >= $${fromDateParam}::DATE
+          AND period_entry.entrydate <= $${toDateParam}::DATE
+      )
+      OR (
+        (f.accountsubtype LIKE 'gst_output_%' OR f.accountsubtype = 'accounts_receivable')
+        AND EXISTS (
+          SELECT 1
+          FROM revoinvoice period_invoice
+          WHERE period_invoice.organizationid = f.organizationid
+            AND LOWER(COALESCE(period_invoice.paymentstatus, 'pending')) <> 'cancelled'
+            AND TO_TIMESTAMP(
+              CASE
+                WHEN COALESCE(period_invoice.invoicedate, period_invoice.createddate) > 99999999999
+                  THEN COALESCE(period_invoice.invoicedate, period_invoice.createddate) / 1000.0
+                ELSE COALESCE(period_invoice.invoicedate, period_invoice.createddate)
+              END
+            )::DATE >= $${fromDateParam}::DATE
+            AND TO_TIMESTAMP(
+              CASE
+                WHEN COALESCE(period_invoice.invoicedate, period_invoice.createddate) > 99999999999
+                  THEN COALESCE(period_invoice.invoicedate, period_invoice.createddate) / 1000.0
+                ELSE COALESCE(period_invoice.invoicedate, period_invoice.createddate)
+              END
+            )::DATE <= $${toDateParam}::DATE
+        )
+      )
+      OR (
+        (f.accountsubtype LIKE 'gst_input_%' OR f.accountsubtype = 'accounts_payable')
+        AND EXISTS (
+          SELECT 1
+          FROM poinvoice period_bill
+          WHERE period_bill.organizationid = f.organizationid
+            AND LOWER(COALESCE(period_bill.invoicestatus, 'in_progress')) <> 'cancelled'
+            AND TO_TIMESTAMP(
+              CASE
+                WHEN COALESCE(period_bill.invoicedate, period_bill.createddate) > 99999999999
+                  THEN COALESCE(period_bill.invoicedate, period_bill.createddate) / 1000.0
+                ELSE COALESCE(period_bill.invoicedate, period_bill.createddate)
+              END
+            )::DATE >= $${fromDateParam}::DATE
+            AND TO_TIMESTAMP(
+              CASE
+                WHEN COALESCE(period_bill.invoicedate, period_bill.createddate) > 99999999999
+                  THEN COALESCE(period_bill.invoicedate, period_bill.createddate) / 1000.0
+                ELSE COALESCE(period_bill.invoicedate, period_bill.createddate)
+              END
+            )::DATE <= $${toDateParam}::DATE
+        )
+      )
+    )`);
+    const whereClause = conditions.join(" AND ");
+    const filterParams = [...params];
+
+    const [
+      countResult,
+      summaryResult,
+      receivableInvoiceResult,
+      billResult,
+      inactiveAccountResult,
+    ] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::INTEGER AS total
+         FROM finance_accounts f
+         WHERE ${whereClause}`,
+        filterParams
+      ),
+      query(
+        `
+        SELECT
+          COUNT(*)::INTEGER AS total,
+          COUNT(*) FILTER (WHERE f.accounttype = 'asset')::INTEGER AS asset,
+          COUNT(*) FILTER (WHERE f.accounttype = 'liability')::INTEGER AS liability,
+          COUNT(*) FILTER (WHERE f.accounttype = 'equity')::INTEGER AS equity,
+          COUNT(*) FILTER (WHERE f.accounttype = 'income')::INTEGER AS income,
+          COUNT(*) FILTER (WHERE f.accounttype = 'expense')::INTEGER AS expense
+        FROM finance_accounts f
+        WHERE ${whereClause}
+        `,
+        filterParams
+      ),
+      query(RECEIVABLE_DOCUMENTS_SQL, [organizationId]),
+      query(PAYABLE_DOCUMENTS_SQL, [organizationId]),
+      query(
+        `
+        SELECT
+          f.id,
+          f.accountcode,
+          f.accountname,
+          f.accounttype,
+          f.accountsubtype,
+          f.description,
+          f.currencycode,
+          f.issystem,
+          f.status,
+          f.createddate,
+          f.modifieddate,
+          fat.typename AS accounttypelabel,
+          fat.categorylabel
+        FROM finance_accounts f
+        LEFT JOIN finance_account_types fat
+          ON fat.typecode = f.accountsubtype
+        WHERE f.organizationid = $1
+          AND f.isusercreatedchartaccount = TRUE
+          AND f.status = 'inactive'
+        ORDER BY
+          CASE f.accounttype
+            WHEN 'asset' THEN 1
+            WHEN 'liability' THEN 2
+            WHEN 'equity' THEN 3
+            WHEN 'income' THEN 4
+            WHEN 'expense' THEN 5
+            ELSE 6
+          END,
+          LOWER(f.accountname),
+          f.id
+        `,
+        [organizationId]
+      ),
+    ]);
+
+    const offsetParam = params.length + 1;
+    const countParam = params.length + 2;
+    params.push(offset, count);
+    const result = await query(
+      `
+      SELECT
+        f.id,
+        f.accountcode,
+        f.accountname,
+        f.accounttype,
+        f.accountsubtype,
+        f.description,
+        f.isusercreatedchartaccount,
+        f.currencycode,
+        f.issystem,
+        f.status,
+        f.createdby,
+        f.modifiedby,
+        f.createddate,
+        f.modifieddate,
+        fat.typename AS accounttypelabel,
+        fat.categorylabel,
+        COALESCE(ledger_totals.totaldebit, 0) AS totaldebit,
+        COALESCE(ledger_totals.totalcredit, 0) AS totalcredit
+      FROM finance_accounts f
+      LEFT JOIN finance_account_types fat
+        ON fat.typecode = f.accountsubtype
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(jl.debitamount) AS totaldebit,
+          SUM(jl.creditamount) AS totalcredit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journalentryid
+        WHERE jl.financeaccountid = f.id
+          AND je.organizationid = f.organizationid
+          AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+          AND ($${fromDateParam}::DATE IS NULL OR je.entrydate >= $${fromDateParam}::DATE)
+          AND ($${toDateParam}::DATE IS NULL OR je.entrydate <= $${toDateParam}::DATE)
+      ) ledger_totals ON TRUE
+      WHERE ${whereClause}
+      ORDER BY
+        -- System accounts first, in LISTED_SYSTEM_ACCOUNT_SUBTYPES order.
+        CASE
+          WHEN f.issystem = TRUE THEN array_position($2::TEXT[], f.accountsubtype)
+        END ASC NULLS LAST,
+        f.modifieddate DESC,
+        f.id DESC
+      OFFSET $${offsetParam} LIMIT $${countParam}
+      `,
+      params
+    );
+
+    const invoiceGstSummary = getInvoiceGstSummary(receivableInvoiceResult.rows);
+    const billGstSummary = getBillGstSummary(billResult.rows);
+    const receivableHistory = buildControlAccountHistory(
+      "receivable",
+      receivableInvoiceResult.rows
+    );
+    const payableHistory = buildControlAccountHistory("payable", billResult.rows);
+    const payableTotals = summarizeControlAccountHistory(payableHistory);
+    const records = result.rows.map((account: any) => {
+      const gstContext = getGstAccountContext(account.accountsubtype);
+      const controlKind = getControlAccountKind(account.accountsubtype);
+      let totalDebit = account.totaldebit;
+      let totalCredit = account.totalcredit;
+      if (controlKind) {
+        // With a period selected, show that period's movement, matching
+        // how journal-based accounts are totalled.
+        const totals = summarizeControlAccountHistory(
+          controlKind === "receivable" ? receivableHistory : payableHistory,
+          fromDate,
+          toDate
+        );
+        totalDebit = totals.totaldebit;
+        totalCredit = totals.totalcredit;
+      } else if (gstContext?.direction === "input") {
+        totalDebit = fromDate && toDate
+          ? sumGstComponentForPeriod(billResult.rows, "input", gstContext.component, fromDate, toDate)
+          : billGstSummary[gstContext.component];
+      } else if (gstContext?.direction === "output") {
+        totalCredit = fromDate && toDate
+          ? sumGstComponentForPeriod(receivableInvoiceResult.rows, "output", gstContext.component, fromDate, toDate)
+          : invoiceGstSummary[gstContext.component];
+      }
+      return ({
+        ...account,
+        totaldebit: totalDebit,
+        totalcredit: totalCredit,
+        currentledgerbalance: calculateLedgerBalance(
+          account.accounttype,
+          totalDebit,
+          totalCredit
+        ),
+        accounttypelabel:
+          account.accounttypelabel ||
+          String(account.accountsubtype || "")
+            .split("_")
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" "),
+        categorylabel:
+          account.categorylabel ||
+          String(account.accounttype || "").replace(/^./, (value) =>
+            value.toUpperCase()
+          ),
+      });
+    });
+    const summary = summaryResult.rows[0] || {};
+
+    return {
+      records,
+      inactiveaccounts: inactiveAccountResult.rows.map((account: any) => ({
+        ...account,
+        accounttypelabel:
+          account.accounttypelabel ||
+          String(account.accountsubtype || "")
+            .split("_")
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" "),
+        categorylabel:
+          account.categorylabel ||
+          String(account.accounttype || "").replace(/^./, (value) =>
+            value.toUpperCase()
+          ),
+      })),
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
+      period: {
+        fromdate: fromDate,
+        todate: toDate,
+      },
+      summary: {
+        total: Number(summary.total || 0),
+        asset: Number(summary.asset || 0),
+        liability: Number(summary.liability || 0),
+        equity: Number(summary.equity || 0),
+        income: Number(summary.income || 0),
+        expense: Number(summary.expense || 0),
+        accountsreceivable: getRetailInvoicesOutstandingTotal(
+          receivableInvoiceResult.rows
+        ),
+        accountspayable: toMoney(
+          Math.max(payableTotals.totalcredit - payableTotals.totaldebit, 0)
+        ),
+        invoicegst: invoiceGstSummary,
+        billgst: billGstSummary,
+      },
+    };
+  };
+
+  export const getChartAccount = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+
+    const result = await query(
+      `
+      SELECT
+        f.id,
+        f.accountcode,
+        f.accountname,
+        f.accounttype,
+        f.accountsubtype,
+        f.description,
+        f.isusercreatedchartaccount,
+        f.currencycode,
+        f.issystem,
+        f.status,
+        f.createdby,
+        f.modifiedby,
+        f.createddate,
+        f.modifieddate,
+        fat.typename AS accounttypelabel,
+        fat.categorylabel,
+        COALESCE(ledger_totals.totaldebit, 0) AS totaldebit,
+        COALESCE(ledger_totals.totalcredit, 0) AS totalcredit
+      FROM finance_accounts f
+      LEFT JOIN finance_account_types fat
+        ON fat.typecode = f.accountsubtype
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(jl.debitamount) AS totaldebit,
+          SUM(jl.creditamount) AS totalcredit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journalentryid
+        WHERE jl.financeaccountid = f.id
+          AND je.organizationid = f.organizationid
+          AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+      ) ledger_totals ON TRUE
+      WHERE f.id = $1
+        AND f.organizationid = $2
+        AND f.isdeleted = FALSE
+      LIMIT 1
+      `,
+      [accountId, organizationId]
+    );
+
+    const account = result.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Chart account was not found.",
+        404,
+        "CHART_ACCOUNT_NOT_FOUND"
+      );
+    }
+
+    let totalDebit = Number(account.totaldebit || 0);
+    let totalCredit = Number(account.totalcredit || 0);
+    const gstContext = getGstAccountContext(account.accountsubtype);
+    const controlKind = getControlAccountKind(account.accountsubtype);
+    if (controlKind) {
+      const totals = summarizeControlAccountHistory(
+        await loadControlAccountHistory(organizationId, controlKind)
+      );
+      totalDebit = totals.totaldebit;
+      totalCredit = totals.totalcredit;
+    } else if (gstContext?.direction === "input") {
+      const bills = await query(
+        `SELECT * FROM poinvoice
+         WHERE organizationid = $1
+           AND LOWER(COALESCE(invoicestatus, 'in_progress')) <> 'cancelled'`,
+        [organizationId]
+      );
+      totalDebit = getBillGstSummary(bills.rows)[gstContext.component];
+    } else if (gstContext?.direction === "output") {
+      const invoices = await query(
+        `SELECT * FROM revoinvoice
+         WHERE organizationid = $1
+           AND LOWER(COALESCE(paymentstatus, 'pending')) <> 'cancelled'`,
+        [organizationId]
+      );
+      totalCredit = getInvoiceGstSummary(invoices.rows)[gstContext.component];
+    }
+
+    return {
+      ...account,
+      totaldebit: totalDebit,
+      totalcredit: totalCredit,
+      currentledgerbalance: calculateLedgerBalance(
+        account.accounttype,
+        totalDebit,
+        totalCredit
+      ),
+      accounttypelabel:
+        account.accounttypelabel ||
+        String(account.accountsubtype || "")
+          .split("_")
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" "),
+      categorylabel:
+        account.categorylabel ||
+        String(account.accounttype || "").replace(/^./, (value) =>
+          value.toUpperCase()
+        ),
+    };
+  };
+
+  export const updateChartAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const accountId = requireChartAccountId(request.params?.accountId);
+    const accountName = normalizeText(
+      request.body?.accountname,
+      "Account Name",
+      true,
+      255
+    )!;
+    const normalizedName = accountName.toLocaleLowerCase("en-US");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const currentResult = await client.query(
+        `SELECT * FROM finance_accounts
+         WHERE id = $1 AND organizationid = $2
+           AND isdeleted = FALSE
+         LIMIT 1
+         FOR UPDATE`,
+        [accountId, organizationId]
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        throw new FinanceValidationError(
+          "Chart account was not found.",
+          404,
+          "CHART_ACCOUNT_NOT_FOUND"
+        );
+      }
+      if (current.issystem === true || current.isusercreatedchartaccount !== true) {
+        throw new FinanceValidationError(
+          "System and operational accounts cannot be renamed.",
+          409,
+          "CHART_ACCOUNT_EDIT_PROTECTED"
+        );
+      }
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        [`chart-account-name:${organizationId}:${normalizedName}`]
+      );
+      const duplicateResult = await client.query(
+        `SELECT id FROM finance_accounts
+         WHERE organizationid = $1
+           AND id <> $2
+           AND isdeleted = FALSE
+           AND LOWER(TRIM(accountname)) = $3
+         LIMIT 1`,
+        [organizationId, accountId, normalizedName]
+      );
+      if (duplicateResult.rows[0]) {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+
+      const epoch = nowEpoch();
+      const updatedResult = await client.query(
+        `UPDATE finance_accounts
+         SET accountname = $1, modifiedby = $2, modifieddate = $3
+         WHERE id = $4 AND organizationid = $5
+           AND isdeleted = FALSE
+         RETURNING *`,
+        [accountName, actor, epoch, accountId, organizationId]
+      );
+      await client.query(
+        `UPDATE bank_transactions
+         SET partyname = $1
+         WHERE organizationid = $2
+           AND counterpartyaccountid = $3
+           AND isdeleted = FALSE
+           AND partytype = 'ledger'`,
+        [accountName, organizationId, accountId]
+      );
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "chart_account",
+        accountId,
+        "renamed",
+        actor,
+        { previousname: current.accountname, accountname: accountName }
+      );
+      await client.query("COMMIT");
+      return updatedResult.rows[0];
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (error?.code === "23505") {
+        throw new FinanceValidationError(
+          "An account with this Account Name already exists.",
+          409,
+          "CHART_ACCOUNT_NAME_DUPLICATE"
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listChartAccountEntries = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+
+    const accountResult = await query(
+      `SELECT id, accounttype, accountsubtype
+       FROM finance_accounts
+       WHERE id = $1
+         AND organizationid = $2
+         AND isdeleted = FALSE
+       LIMIT 1`,
+      [accountId, organizationId]
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw new FinanceValidationError(
+        "Chart account was not found.",
+        404,
+        "CHART_ACCOUNT_NOT_FOUND"
+      );
+    }
+
+    const page = Math.max(Number(request.query?.page) || 1, 1);
+    const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 200);
+    const offset = (page - 1) * count;
+    const controlKind = getControlAccountKind(account.accountsubtype);
+    const gstContext = getGstAccountContext(account.accountsubtype);
+    const isGstInput = gstContext?.direction === "input";
+    const isGstOutput = gstContext?.direction === "output";
+
+    const summaryResult = await query(
+      `
+      SELECT
+        COUNT(*)::INTEGER AS total,
+        COALESCE(SUM(jl.debitamount), 0) AS totaldebit,
+        COALESCE(SUM(jl.creditamount), 0) AS totalcredit
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.id = jl.journalentryid
+      WHERE jl.financeaccountid = $1
+        AND je.organizationid = $2
+        AND je.status = 'posted'
+        AND je.isdeleted = FALSE
+      `,
+      [accountId, organizationId]
+    );
+
+    const entriesResult = await query(
+      `
+      SELECT
+        jl.id,
+        jl.journalentryid,
+        je.entrydate AS transactiondate,
+        COALESCE(bt.entryname, jl.description, je.description) AS entryname,
+        jl.description,
+        jl.debitamount,
+        jl.creditamount,
+        SUM(jl.debitamount - jl.creditamount) OVER (
+          ORDER BY
+            je.entrydate ASC,
+            COALESCE(je.posteddate, je.createddate) ASC,
+            jl.id ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS runningbalance,
+        je.journalnumber,
+        bt.transactionnumber,
+        CASE
+          WHEN bt.allocationmethod = 'direct_ledger' THEN 'direct_ledger'
+          ELSE je.sourcetype
+        END AS sourcetype,
+        bt.allocationmethod,
+        bt.remarks,
+        bca.id AS bankcashaccountid,
+        bca.accountname AS bankcashaccountname,
+        je.createdby,
+        je.postedby,
+        je.createddate,
+        je.posteddate,
+        je.status AS postingstatus,
+        CASE
+          WHEN bt.id IS NULL THEN NULL
+          ELSE
+            to_jsonb(bt)
+            || jsonb_build_object(
+              'bankcashaccountname', bca.accountname,
+              'bankname', bca.bankname,
+              'bankcashaccounttype', bca.accounttype,
+              'bankcashcurrencycode', bca.currencycode,
+              'bankcashaccountstatus', bca.status,
+              'journalnumber', je.journalnumber,
+              'counterpartyaccountname', counterparty.accountname,
+              'counterpartyaccountcode', counterparty.accountcode,
+              'creatorname', COALESCE(
+                NULLIF(
+                  TRIM(
+                    CONCAT_WS(
+                      ' ',
+                      NULLIF(creator.firstname, ''),
+                      NULLIF(creator.lastname, '')
+                    )
+                  ),
+                  ''
+                ),
+                creator.useremail,
+                bt.createdby
+              ),
+              'allocations', COALESCE(
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'id', allocation.id,
+                      'documenttype', allocation.documenttype,
+                      'documentid', allocation.documentid,
+                      'documentnumber', allocation.documentnumber,
+                      'invoiceid', allocation.documentid,
+                      'billid', CASE
+                        WHEN allocation.documenttype = 'purchase_bill'
+                          THEN allocation.documentid
+                        ELSE NULL
+                      END,
+                      'invoicenumber', allocation.documentnumber,
+                      'invoiceurl', COALESCE(invoice.invoiceurl, bill.invoiceurl),
+                      'allocationamount', allocation.allocationamount,
+                      'tdsapplied', allocation.tdsapplied,
+                      'tdssectionid', allocation.tdssectionid,
+                      'tdssection', CASE
+                        WHEN allocation.tdssectionid IS NOT NULL
+                          THEN allocation.statutorysnapshot
+                        ELSE NULL
+                      END,
+                      'adjustmenttype', allocation.statutorysnapshot->>'adjustmenttype',
+                      'tdsamount', allocation.tdsamount,
+                      'totalsettledamount', allocation.totalsettledamount,
+                      'status', allocation.status
+                    )
+                    ORDER BY allocation.id
+                  )
+                  FROM bank_transaction_allocations allocation
+                  LEFT JOIN revoinvoice invoice
+                    ON invoice.id = allocation.documentid
+                   AND allocation.documenttype = 'sales_invoice'
+                  LEFT JOIN poinvoice bill
+                    ON bill.id = allocation.documentid
+                   AND allocation.documenttype = 'purchase_bill'
+                  WHERE allocation.banktransactionid = bt.id
+                    AND allocation.status = 'applied'
+                ),
+                '[]'::jsonb
+              )
+            )
+        END AS transaction
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.id = jl.journalentryid
+      LEFT JOIN bank_transactions bt
+        ON je.sourcetype = 'bank_transaction'
+       AND bt.id = je.sourceid
+       AND bt.organizationid = je.organizationid
+       AND bt.isdeleted = FALSE
+      LEFT JOIN bank_cash_accounts bca
+        ON bca.id = bt.bankcashaccountid
+       AND bca.organizationid = je.organizationid
+      LEFT JOIN finance_accounts counterparty
+        ON counterparty.id = bt.counterpartyaccountid
+       AND counterparty.organizationid = je.organizationid
+      LEFT JOIN LATERAL (
+        SELECT
+          inventory_user.firstname,
+          inventory_user.lastname,
+          inventory_user.useremail
+        FROM inventoryusers inventory_user
+        WHERE inventory_user.id::TEXT = bt.createdby
+           OR LOWER(inventory_user.useremail) = LOWER(bt.createdby)
+        ORDER BY CASE
+          WHEN inventory_user.id::TEXT = bt.createdby THEN 0
+          ELSE 1
+        END
+        LIMIT 1
+      ) creator ON bt.id IS NOT NULL
+      WHERE jl.financeaccountid = $1
+        AND je.organizationid = $2
+        AND je.status = 'posted'
+        AND je.isdeleted = FALSE
+      ORDER BY je.entrydate DESC, je.posteddate DESC NULLS LAST, jl.id DESC
+      OFFSET $3 LIMIT $4
+      `,
+      [accountId, organizationId, offset, count]
+    );
+
+    const summary = summaryResult.rows[0] || {};
+    let ledgerRecords = entriesResult.rows;
+    let ledgerTotal = Number(summary.total || 0);
+    let totalDebit = Number(summary.totaldebit || 0);
+    let totalCredit = Number(summary.totalcredit || 0);
+
+    if (isGstInput || isGstOutput) {
+      const documentsResult = isGstOutput
+        ? await query(
+          `SELECT * FROM revoinvoice
+             WHERE organizationid = $1
+               AND LOWER(COALESCE(paymentstatus, 'pending')) <> 'cancelled'
+             ORDER BY COALESCE(invoicedate, createddate) ASC, id ASC`,
+          [organizationId]
+        )
+        : await query(
+          `SELECT * FROM poinvoice
+             WHERE organizationid = $1
+               AND LOWER(COALESCE(invoicestatus, 'in_progress')) <> 'cancelled'
+             ORDER BY COALESCE(invoicedate, createddate) ASC, id ASC`,
+          [organizationId]
+        );
+      let runningBalance = 0;
+      const calculatedEntries = documentsResult.rows
+        .map((document: any) => {
+          const gst = isGstOutput
+            ? resolveInvoiceGst(document)
+            : resolveBillGst(document);
+          const gstAmount = gstContext ? gst[gstContext.component] : 0;
+          if (gstAmount <= 0) return null;
+          const debitAmount = isGstInput ? gstAmount : 0;
+          const creditAmount = isGstOutput ? gstAmount : 0;
+          runningBalance += debitAmount - creditAmount;
+          const documentNumber =
+            document.invoicenumber ||
+            `${isGstOutput ? "INV" : "BILL"}-${document.id}`;
+          return {
+            id: `${isGstOutput ? "gst-output" : "gst-input"}-${document.id}`,
+            journalentryid: null,
+            transactiondate:
+              toFinanceDateOnly(document.invoicedate || document.createddate) ||
+              document.invoicedate,
+            entryname: `${isGstOutput ? "Output" : "Input"} ${gstContext?.component.toUpperCase()} - ${documentNumber}`,
+            description: `${gstContext?.component.toUpperCase()} ${gstAmount.toFixed(2)}`,
+            debitamount: debitAmount,
+            creditamount: creditAmount,
+            runningbalance: runningBalance,
+            journalnumber: null,
+            transactionnumber: documentNumber,
+            sourcetype: isGstOutput ? "sales_invoice" : "purchase_bill",
+            allocationmethod: null,
+            remarks: null,
+            bankcashaccountid: null,
+            bankcashaccountname: null,
+            createdby: document.createdby || null,
+            postedby: null,
+            createddate: document.createddate || null,
+            posteddate: null,
+            postingstatus: "calculated",
+            transaction: null,
+            iscalculated: true,
+          };
+        })
+        .filter(Boolean);
+
+      ledgerTotal = calculatedEntries.length;
+      totalDebit = isGstInput
+        ? calculatedEntries.reduce(
+          (sum: number, entry: any) => sum + Number(entry.debitamount || 0),
+          0
+        )
+        : 0;
+      totalCredit = isGstOutput
+        ? calculatedEntries.reduce(
+          (sum: number, entry: any) => sum + Number(entry.creditamount || 0),
+          0
+        )
+        : 0;
+      ledgerRecords = calculatedEntries.reverse().slice(offset, offset + count);
+    }
+
+    if (controlKind) {
+      // AR/AP: invoices/bills with their receipts/payments, newest first.
+      const history = await loadControlAccountHistory(organizationId, controlKind);
+      const totals = summarizeControlAccountHistory(history);
+      ledgerTotal = history.length;
+      totalDebit = totals.totaldebit;
+      totalCredit = totals.totalcredit;
+      ledgerRecords = history.reverse().slice(offset, offset + count);
+    }
+
+    return {
+      records: ledgerRecords.map((entry: any) => ({
+        ...entry,
+        transactiondate:
+          toFinanceDateOnly(entry.transactiondate) ?? entry.transactiondate,
+      })),
+      total: ledgerTotal,
+      page,
+      count,
+      summary: {
+        totaldebit: totalDebit,
+        totalcredit: totalCredit,
+        currentledgerbalance: calculateLedgerBalance(
+          account.accounttype,
+          totalDebit,
+          totalCredit
+        ),
+      },
+      historytype: controlKind,
+    };
+  };
+
+  export const createBankCashAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const data = request.body || {};
+    const accountType = normalizeAccountType(data.accounttype);
+    const accountName = normalizeText(data.accountname, "accountname", true)!;
+    const openingBalance = toMoney(data.openingbalance, "openingbalance");
+    const openingBalanceDate = requireIsoDate(
+      data.openingbalancedate,
+      "openingbalancedate"
+    );
+    const currencyCode = normalizeCurrency(data.currencycode);
+    const status =
+      String(data.status || "active").toLowerCase() === "inactive"
+        ? "inactive"
+        : "active";
+    const isEcommerceDefault = data.isecommercedefault === true;
+    if (isEcommerceDefault && accountType !== "bank") {
+      throw new FinanceValidationError(
+        "Only a Bank account can be the e-commerce default."
+      );
+    }
+    if (isEcommerceDefault && status !== "active") {
+      throw new FinanceValidationError(
+        "The e-commerce default account must be active."
+      );
+    }
+
+    const bankName =
+      accountType === "bank"
+        ? normalizeText(data.bankname, "bankname", true)
+        : null;
+    const ifscCode =
+      accountType === "bank"
+        ? normalizeText(data.ifsccode, "ifsccode", true, 20)?.toUpperCase()
+        : null;
+    const branchName = normalizeText(data.branchname, "branchname");
+    const protectedAccountNumber =
+      accountType === "bank"
+        ? protectAccountNumber(
+          normalizeText(data.accountnumber, "accountnumber", true),
+          FINANCE_ENCRYPTION_KEY
+        )
+        : null;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await ensureSystemAccounts(client, organizationId, actor);
+      const epoch = nowEpoch();
+      if (isEcommerceDefault) {
+        const currentDefaultResult = await client.query(
+          `
+          SELECT id, accountname
+          FROM bank_cash_accounts
+          WHERE organizationid = $1
+            AND isecommercedefault = TRUE
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [organizationId]
+        );
+        const currentDefault = currentDefaultResult.rows[0];
+        if (currentDefault && data.confirmdefaultreplacement !== true) {
+          throw new FinanceValidationError(
+            `${currentDefault.accountname} is currently the e-commerce default account. Confirm before replacing it.`,
+            409,
+            "ECOMMERCE_DEFAULT_REPLACEMENT_CONFIRMATION_REQUIRED"
+          );
+        }
+        await client.query(
+          `
+          UPDATE bank_cash_accounts
+          SET isecommercedefault = FALSE,
+              version = version + 1,
+              modifiedby = $1,
+              modifieddate = $2
+          WHERE organizationid = $3
+            AND isecommercedefault = TRUE
+          `,
+          [actor, epoch, organizationId]
+        );
+      }
+      const accountCode = `${accountType === "bank" ? "BANK" : "CASH"}-${randomUUID()
+        .replace(/-/g, "")
+        .slice(0, 12)
+        .toUpperCase()}`;
+
+      const ledgerResult = await client.query(
+        `
+        INSERT INTO finance_accounts (
+          organizationid,
+          accountcode,
+          accountname,
+          accounttype,
+          accountsubtype,
+          currencycode,
+          issystem,
+          status,
+          createdby,
+          modifiedby,
+          createddate,
+          modifieddate
+        )
+        VALUES ($1, $2, $3, 'asset', $4, $5, FALSE, $6, $7, $7, $8, $8)
+        RETURNING *
+        `,
+        [
+          organizationId,
+          accountCode,
+          accountName,
+          accountType,
+          currencyCode,
+          status,
+          actor,
+          epoch,
+        ]
+      );
+      const bankLedger = ledgerResult.rows[0];
+
+      const accountResult = await client.query(
+        `
+        INSERT INTO bank_cash_accounts (
+          organizationid,
+          financeaccountid,
+          accounttype,
+          accountname,
+          bankname,
+          accountnumberencrypted,
+          accountnumberhash,
+          accountnumberlast4,
+          ifsccode,
+          branchname,
+          openingbalance,
+          openingbalancedate,
+          currentbalance,
+          currencycode,
+          status,
+          isecommercedefault,
+          createdby,
+          modifiedby,
+          createddate,
+          modifieddate
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $11, $13, $14, $15, $16, $16, $17, $17
+        )
+        RETURNING *
+        `,
+        [
+          organizationId,
+          bankLedger.id,
+          accountType,
+          accountName,
+          bankName,
+          protectedAccountNumber?.encrypted ?? null,
+          protectedAccountNumber?.hash ?? null,
+          protectedAccountNumber?.last4 ?? null,
+          ifscCode,
+          branchName,
+          openingBalance,
+          openingBalanceDate,
+          currencyCode,
+          status,
+          isEcommerceDefault,
+          actor,
+          epoch,
+        ]
+      );
+      const bankCashAccount = accountResult.rows[0];
+
+      const openingJournal = await postOpeningBalance({
+        client,
+        organizationId,
+        bankCashAccount,
+        bankLedger,
+        openingBalance,
+        openingBalanceDate,
+        actor,
+      });
+
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "bank_cash_account",
+        bankCashAccount.id,
+        "created",
+        actor,
+        {
+          accounttype: accountType,
+          accountname: accountName,
+          openingbalance: openingBalance,
+          openingbalancedate: openingBalanceDate,
+          openingjournalid: openingJournal?.id ?? null,
+          isecommercedefault: isEcommerceDefault,
+        }
+      );
+
+      await client.query("COMMIT");
+      return sanitizeAccount(bankCashAccount);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listBankCashAccounts = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const queryData = request.query || {};
+    const params: any[] = [organizationId];
+    const conditions = ["b.organizationid = $1"];
+
+    if (queryData.accounttype) {
+      params.push(normalizeAccountType(queryData.accounttype));
+      conditions.push(`b.accounttype = $${params.length}`);
+    }
+    if (queryData.status) {
+      const status = String(queryData.status).trim().toLowerCase();
+      if (!["active", "inactive"].includes(status)) {
+        throw new FinanceValidationError("status must be active or inactive.");
+      }
+      params.push(status);
+      conditions.push(`b.status = $${params.length}`);
+    }
+    if (queryData.search) {
+      params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(b.accountname) LIKE $${params.length}
+        OR LOWER(COALESCE(b.bankname, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(b.accountnumberlast4, '')) LIKE $${params.length}
+      )`);
+    }
+
+    const page = Math.max(Number(queryData.page) || 1, 1);
+    const count = Math.min(Math.max(Number(queryData.count) || 100, 1), 500);
+    const offset = (page - 1) * count;
+    const filterParams = [...params];
+    const countResult = await query(
+      `
+      SELECT COUNT(*)::INTEGER AS total
+      FROM bank_cash_accounts b
+      WHERE ${conditions.join(" AND ")}
+      `,
+      filterParams
+    );
+    const summaryResult = await query(
+      `
+      SELECT
+        COUNT(*)::INTEGER AS total,
+        COUNT(*) FILTER (WHERE accounttype = 'bank')::INTEGER AS bank,
+        COUNT(*) FILTER (WHERE accounttype = 'cash')::INTEGER AS cash,
+        COALESCE(SUM(currentbalance), 0) AS available
+      FROM bank_cash_accounts
+      WHERE organizationid = $1
+      `,
+      [organizationId]
+    );
+    params.push(offset, count);
+
+    const result = await query(
+      `
+      SELECT
+        b.*,
+        f.accountcode,
+        f.accountsubtype
+      FROM bank_cash_accounts b
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY b.modifieddate DESC, b.id DESC
+      OFFSET $${params.length - 1} LIMIT $${params.length}
+      `,
+      params
+    );
+    return {
+      records: result.rows.map(sanitizeAccount),
+      total: Number(countResult.rows[0]?.total || 0),
+      page,
+      count,
+      summary: {
+        total: Number(summaryResult.rows[0]?.total || 0),
+        bank: Number(summaryResult.rows[0]?.bank || 0),
+        cash: Number(summaryResult.rows[0]?.cash || 0),
+        available: Number(summaryResult.rows[0]?.available || 0),
+      },
+    };
+  };
+
+  export const getBankCashAccount = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+    const result = await query(
+      `
+      SELECT
+        b.*,
+        f.accountcode,
+        f.accounttype AS ledgeraccounttype,
+        f.accountsubtype,
+        (
+          SELECT bt.transactiondate
+          FROM bank_transactions bt
+          WHERE bt.bankcashaccountid = b.id
+            AND bt.postingstatus = 'posted'
+            AND bt.isdeleted = FALSE
+          ORDER BY
+            bt.transactiondate DESC,
+            bt.posteddate DESC NULLS LAST,
+            bt.id DESC
+          LIMIT 1
+        ) AS closingdate
+      FROM bank_cash_accounts b
+      JOIN finance_accounts f
+        ON f.id = b.financeaccountid
+       AND f.isdeleted = FALSE
+      WHERE b.id = $1 AND b.organizationid = $2
+      LIMIT 1
+      `,
+      [accountId, organizationId]
+    );
+    if (!result.rows[0]) {
+      throw new FinanceValidationError(
+        "Bank/Cash account was not found.",
+        404,
+        "BANK_CASH_ACCOUNT_NOT_FOUND"
+      );
+    }
+    return sanitizeAccount(result.rows[0]);
+  };
+
+  export const updateBankCashAccount = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const accountId = Number(request.params?.accountId);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+    const data = request.body || {};
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existingResult = await client.query(
+        `
+        SELECT *
+        FROM bank_cash_accounts
+        WHERE id = $1 AND organizationid = $2
+        FOR UPDATE
+        `,
+        [accountId, organizationId]
+      );
+      const existing = existingResult.rows[0];
+      if (!existing) {
+        throw new FinanceValidationError(
+          "Bank/Cash account was not found.",
+          404,
+          "BANK_CASH_ACCOUNT_NOT_FOUND"
+        );
+      }
+      if (data.version != null && Number(data.version) !== Number(existing.version)) {
+        throw new FinanceValidationError(
+          "This account was updated by another user. Refresh and try again.",
+          409,
+          "FINANCE_VERSION_CONFLICT"
+        );
+      }
+
+      const accountName =
+        data.accountname !== undefined
+          ? normalizeText(data.accountname, "accountname", true)!
+          : existing.accountname;
+      const status =
+        data.status !== undefined
+          ? String(data.status).trim().toLowerCase()
+          : existing.status;
+      if (!["active", "inactive"].includes(status)) {
+        throw new FinanceValidationError("status must be active or inactive.");
+      }
+      const isEcommerceDefault =
+        data.isecommercedefault !== undefined
+          ? data.isecommercedefault === true
+          : existing.isecommercedefault === true;
+      if (isEcommerceDefault && existing.accounttype !== "bank") {
+        throw new FinanceValidationError(
+          "Only a Bank account can be the e-commerce default."
+        );
+      }
+      if (isEcommerceDefault && status !== "active") {
+        throw new FinanceValidationError(
+          "The e-commerce default account must be active."
+        );
+      }
+
+      const bankName =
+        existing.accounttype === "bank" && data.bankname !== undefined
+          ? normalizeText(data.bankname, "bankname", true)
+          : existing.bankname;
+      const ifscCode =
+        existing.accounttype === "bank" && data.ifsccode !== undefined
+          ? normalizeText(data.ifsccode, "ifsccode", true, 20)?.toUpperCase()
+          : existing.ifsccode;
+      const branchName =
+        data.branchname !== undefined
+          ? normalizeText(data.branchname, "branchname")
+          : existing.branchname;
+      const protectedAccountNumber =
+        existing.accounttype === "bank" && data.accountnumber
+          ? protectAccountNumber(data.accountnumber, FINANCE_ENCRYPTION_KEY)
+          : null;
+      const epoch = nowEpoch();
+      if (isEcommerceDefault) {
+        const currentDefaultResult = await client.query(
+          `
+          SELECT id, accountname
+          FROM bank_cash_accounts
+          WHERE organizationid = $1
+            AND id <> $2
+            AND isecommercedefault = TRUE
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [organizationId, accountId]
+        );
+        const currentDefault = currentDefaultResult.rows[0];
+        if (currentDefault && data.confirmdefaultreplacement !== true) {
+          throw new FinanceValidationError(
+            `${currentDefault.accountname} is currently the e-commerce default account. Confirm before replacing it.`,
+            409,
+            "ECOMMERCE_DEFAULT_REPLACEMENT_CONFIRMATION_REQUIRED"
+          );
+        }
+        await client.query(
+          `
+          UPDATE bank_cash_accounts
+          SET isecommercedefault = FALSE,
+              version = version + 1,
+              modifiedby = $1,
+              modifieddate = $2
+          WHERE organizationid = $3
+            AND id <> $4
+            AND isecommercedefault = TRUE
+          `,
+          [actor, epoch, organizationId, accountId]
+        );
+      }
+
+      const updatedResult = await client.query(
+        `
+        UPDATE bank_cash_accounts
+        SET accountname = $1,
+            bankname = $2,
+            accountnumberencrypted = COALESCE($3, accountnumberencrypted),
+            accountnumberhash = COALESCE($4, accountnumberhash),
+            accountnumberlast4 = COALESCE($5, accountnumberlast4),
+            ifsccode = $6,
+            branchname = $7,
+            status = $8,
+            isecommercedefault = $9,
+            version = version + 1,
+            modifiedby = $10,
+            modifieddate = $11
+        WHERE id = $12
+        RETURNING *
+        `,
+        [
+          accountName,
+          bankName,
+          protectedAccountNumber?.encrypted ?? null,
+          protectedAccountNumber?.hash ?? null,
+          protectedAccountNumber?.last4 ?? null,
+          ifscCode,
+          branchName,
+          status,
+          isEcommerceDefault,
+          actor,
+          epoch,
+          accountId,
+        ]
+      );
+
+      await client.query(
+        `
+        UPDATE finance_accounts
+        SET accountname = $1,
+            status = $2,
+            modifiedby = $3,
+            modifieddate = $4
+        WHERE id = $5
+        `,
+        [accountName, status, actor, epoch, existing.financeaccountid]
+      );
+
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "bank_cash_account",
+        accountId,
+        "updated",
+        actor,
+        {
+          previousversion: existing.version,
+          newversion: Number(existing.version) + 1,
+          status,
+          accountnumberchanged: Boolean(protectedAccountNumber),
+          isecommercedefault: isEcommerceDefault,
+        }
+      );
+      await client.query("COMMIT");
+      return sanitizeAccount(updatedResult.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listFinanceAccounts = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const search = String(request.query?.search || "").trim().toLowerCase();
+    const params: any[] = [organizationId];
+    let searchClause = "";
+    if (search) {
+      params.push(`%${search}%`);
+      searchClause = `AND (
+        LOWER(accountcode) LIKE $2 OR LOWER(accountname) LIKE $2
+      )`;
+    }
+    const result = await query(
+      `
+      SELECT
+        id,
+        accountcode,
+        accountname,
+        accounttype,
+        accountsubtype,
+        currencycode,
+        issystem,
+        status
+      FROM finance_accounts
+      WHERE organizationid = $1
+        AND status = 'active'
+        AND isdeleted = FALSE
+        AND isusercreatedchartaccount = TRUE
+        AND accountsubtype NOT IN ('bank', 'cash')
+        ${searchClause}
+      ORDER BY accountname ASC
+      LIMIT 200
+      `,
+      params
+    );
+    return result.rows;
+  };
+
+  export const postDirectLedgerTransaction = async (request: any) => {
+    const { actor, organizationId } = resolveFinanceContext(request);
+    const bankCashAccountId = Number(request.params?.accountId);
+    const counterpartyAccountId = Number(request.body?.counterpartyaccountid);
+    if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
+      throw new FinanceValidationError("A valid accountId is required.");
+    }
+    if (!Number.isSafeInteger(counterpartyAccountId) || counterpartyAccountId <= 0) {
+      throw new FinanceValidationError(
+        "A valid counterpartyaccountid is required."
+      );
+    }
+
+    const transactionDate = requireIsoDate(
+      request.body?.transactiondate,
+      "transactiondate"
+    );
+    const entrySide = normalizeEntrySide(request.body?.entryside);
+    const amount = requirePositiveMoney(request.body?.amount);
+    const narration = normalizeText(
+      request.body?.entryname,
+      "Narration",
+      false,
+      255
+    );
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Lifecycle operations lock Chart Accounts before Cash/Bank accounts.
+      // Direct Ledger posting uses the same order to prevent a transaction
+      // from being inserted while its counterparty account is deactivated.
+      const counterpartyResult = await client.query(
+        `
+        SELECT *
+        FROM finance_accounts
+        WHERE id = $1
+          AND organizationid = $2
+          AND status = 'active'
+          AND isdeleted = FALSE
+          AND isusercreatedchartaccount = TRUE
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [counterpartyAccountId, organizationId]
+      );
+      const counterparty = counterpartyResult.rows[0];
+      if (!counterparty) {
+        throw new FinanceValidationError(
+          "The selected counterparty ledger was not found."
+        );
+      }
+      if (["bank", "cash"].includes(counterparty.accountsubtype)) {
+        throw new FinanceValidationError(
+          "Bank-to-bank and cash transfers require the transfer workflow."
+        );
+      }
+
+      const accountResult = await client.query(
+        `
+        SELECT b.*, f.id AS ledgerid
+        FROM bank_cash_accounts b
+        JOIN finance_accounts f
+          ON f.id = b.financeaccountid
+         AND f.isdeleted = FALSE
+        WHERE b.id = $1 AND b.organizationid = $2
+        FOR UPDATE OF b
+        `,
+        [bankCashAccountId, organizationId]
+      );
+      const bankCashAccount = accountResult.rows[0];
+      if (!bankCashAccount) {
+        throw new FinanceValidationError(
+          "Bank/Cash account was not found.",
+          404,
+          "BANK_CASH_ACCOUNT_NOT_FOUND"
+        );
+      }
+      if (bankCashAccount.status !== "active") {
+        throw new FinanceValidationError(
+          "The selected Bank/Cash account is inactive."
+        );
+      }
+      if (Number(counterparty.id) === Number(bankCashAccount.financeaccountid)) {
+        throw new FinanceValidationError(
+          "The counterparty ledger must differ from the selected Bank/Cash account."
+        );
+      }
+
+      assertTransactionDateIsWithinAccountHistory(
+        transactionDate,
+        bankCashAccount.openingbalancedate
+      );
+
+      const balanceAfter = calculateAvailableBalance(
+        bankCashAccount.currentbalance,
+        entrySide,
+        amount
+      );
+      const debitAmount = entrySide === "debit" ? amount : 0;
+      const creditAmount = entrySide === "credit" ? amount : 0;
+      const epoch = nowEpoch();
+
+      const transactionResult = await client.query(
+        `
+        INSERT INTO bank_transactions (
+          organizationid,
+          bankcashaccountid,
+          transactiondate,
+          partytype,
+          partyid,
+          partyname,
+          counterpartyaccountid,
+          entryside,
+          amount,
+          debitamount,
+          creditamount,
+          balanceafter,
+          allocationmethod,
+          sourcetype,
+          remarks,
+          entryname,
+          postingstatus,
+          entrymode,
+          createdby,
+          postedby,
+          createddate,
+          posteddate
+        )
+        VALUES (
+          $1, $2, $3, 'ledger', $4, $5, $4, $6, $7, $8, $9,
+          $10, 'direct_ledger', 'manual', $11, $12, 'posted', 'manual',
+          $13, $13, $14, $14
+        )
+        RETURNING *
+        `,
+        [
+          organizationId,
+          bankCashAccountId,
+          transactionDate,
+          counterparty.id,
+          counterparty.accountname,
+          entrySide,
+          amount,
+          debitAmount,
+          creditAmount,
+          balanceAfter,
+          null,
+          narration,
+          actor,
+          epoch,
+        ]
+      );
+      const bankTransaction = transactionResult.rows[0];
+      const transactionNumber = `BT-${String(bankTransaction.id).padStart(8, "0")}`;
+
+      const journalResult = await client.query(
+        `
+        INSERT INTO journal_entries (
+          organizationid,
+          entrydate,
+          sourcetype,
+          sourceid,
+          status,
+          description,
+          createdby,
+          postedby,
+          createddate,
+          posteddate
+        )
+        VALUES (
+          $1, $2, 'bank_transaction', $3, 'posted', $4, $5, $5, $6, $6
+        )
+        RETURNING *
+        `,
+        [
+          organizationId,
+          transactionDate,
+          bankTransaction.id,
+          narration,
+          actor,
+          epoch,
+        ]
+      );
+      const journalEntry = journalResult.rows[0];
+      const journalNumber = `JE-${String(journalEntry.id).padStart(8, "0")}`;
+
+      const bankDebit = entrySide === "debit" ? amount : 0;
+      const bankCredit = entrySide === "credit" ? amount : 0;
+      const counterpartyDebit = entrySide === "credit" ? amount : 0;
+      const counterpartyCredit = entrySide === "debit" ? amount : 0;
+
+      await client.query(
+        `
+        INSERT INTO journal_lines (
+          journalentryid,
+          financeaccountid,
+          debitamount,
+          creditamount,
+          description
+        )
+        VALUES
+          ($1, $2, $3, $4, $5),
+          ($1, $6, $7, $8, $5)
+        `,
+        [
+          journalEntry.id,
+          bankCashAccount.financeaccountid,
+          bankDebit,
+          bankCredit,
+          narration,
+          counterparty.id,
+          counterpartyDebit,
+          counterpartyCredit,
+        ]
+      );
+
+      await client.query(
+        `
+        UPDATE journal_entries
+        SET journalnumber = $1
+        WHERE id = $2
+        `,
+        [journalNumber, journalEntry.id]
+      );
+      await client.query(
+        `
+        UPDATE bank_transactions
+        SET transactionnumber = $1,
+            journalentryid = $2
+        WHERE id = $3
+        `,
+        [transactionNumber, journalEntry.id, bankTransaction.id]
+      );
+      const rebuiltBalances = await rebuildBankCashAccountBalances(
+        client,
+        bankCashAccount,
+        actor,
+        epoch
+      );
+      const transactionBalanceAfter =
+        rebuiltBalances.balances.get(Number(bankTransaction.id)) ?? balanceAfter;
+      bankTransaction.balanceafter = transactionBalanceAfter;
+
+      await insertAuditEvent(
+        client,
+        organizationId,
+        "bank_transaction",
+        bankTransaction.id,
+        "posted",
+        actor,
+        {
+          transactionnumber: transactionNumber,
+          entryside: entrySide,
+          amount,
+          narration,
+          previousbalance: toMoney(bankCashAccount.currentbalance),
+          balanceafter: transactionBalanceAfter,
+          allocationmethod: "direct_ledger",
+          journalentryid: journalEntry.id,
+        }
+      );
+
+      await client.query("COMMIT");
+      return {
+        ...bankTransaction,
+        transactiondate:
+          toFinanceDateOnly(bankTransaction.transactiondate) ??
+          bankTransaction.transactiondate,
+        transactionnumber: transactionNumber,
+        journalentryid: journalEntry.id,
+        journalnumber: journalNumber,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+
+  export const listBankTransactions = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const accountIdParam = request.params?.accountId;
+    const queryData = request.query || {};
+    const params: any[] = [organizationId];
+    const conditions = ["t.organizationid = $1", "t.isdeleted = FALSE"];
+
+    const lifecycleStatus = String(queryData.status || "active").trim().toLowerCase();
+    if (!["active", "inactive", "all"].includes(lifecycleStatus)) {
+      throw new FinanceValidationError("status must be active, inactive, or all.");
+    }
+    if (lifecycleStatus === "active") {
+      conditions.push("t.postingstatus = 'posted'");
+    } else if (lifecycleStatus === "inactive") {
+      conditions.push("t.postingstatus = 'inactive'");
+    } else {
+      conditions.push("t.postingstatus IN ('posted', 'inactive')");
+    }
+
+    if (
+      queryData.transactionid != null &&
+      String(queryData.transactionid).trim() !== ""
+    ) {
+      const transactionId = Number(queryData.transactionid);
+      if (!Number.isSafeInteger(transactionId) || transactionId <= 0) {
+        throw new FinanceValidationError("A valid transactionid is required.");
+      }
+      params.push(transactionId);
+      conditions.push(`t.id = $${params.length}`);
+    }
+
+    if (accountIdParam != null) {
+      const bankCashAccountId = Number(accountIdParam);
+      if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
+        throw new FinanceValidationError("A valid accountId is required.");
+      }
+      params.push(bankCashAccountId);
+      conditions.push(`t.bankcashaccountid = $${params.length}`);
+    }
+    if (queryData.bankcashaccountid) {
+      const bankCashAccountId = Number(queryData.bankcashaccountid);
+      if (!Number.isSafeInteger(bankCashAccountId) || bankCashAccountId <= 0) {
+        throw new FinanceValidationError(
+          "A valid bankcashaccountid is required."
+        );
+      }
+      params.push(bankCashAccountId);
+      conditions.push(`t.bankcashaccountid = $${params.length}`);
+    }
+
+    if (queryData.fromdate) {
+      params.push(requireIsoDate(queryData.fromdate, "fromdate"));
+      conditions.push(`t.transactiondate >= $${params.length}`);
+    }
+    if (queryData.todate) {
+      params.push(requireIsoDate(queryData.todate, "todate"));
+      conditions.push(`t.transactiondate <= $${params.length}`);
+    }
+    if (queryData.entryside) {
+      params.push(normalizeEntrySide(queryData.entryside));
+      conditions.push(`t.entryside = $${params.length}`);
+    }
+    if (queryData.sourcetype) {
+      const sourceType = String(queryData.sourcetype).trim().toLowerCase();
+      if (sourceType === FINANCE_SOURCE_TYPES.retailReceipt) {
+        params.push(getRetailReceiptSourceTypes());
+        conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
+      } else {
+        params.push(sourceType);
+        conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
+      }
+    }
+    if (queryData.transactiontype) {
+      const transactionType = String(queryData.transactiontype)
+        .trim()
+        .toLowerCase();
+      if (transactionType === "customer_receipt") {
+        params.push([
+          FINANCE_SOURCE_TYPES.ecommerceOrder,
+          ...getCustomerReceiptSourceTypes(),
+        ]);
+        conditions.push(`LOWER(t.sourcetype) = ANY($${params.length}::text[])`);
+      } else if (transactionType === "supplier_payment") {
+        params.push(FINANCE_SOURCE_TYPES.supplierBillPayment);
+        conditions.push(`LOWER(t.sourcetype) = $${params.length}`);
+      } else if (transactionType === "direct_ledger") {
+        conditions.push("t.allocationmethod = 'direct_ledger'");
+      } else {
+        throw new FinanceValidationError(
+          "transactiontype must be customer_receipt, supplier_payment, or direct_ledger."
+        );
+      }
+    }
+    if (queryData.search) {
+      params.push(`%${String(queryData.search).trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(COALESCE(t.transactionnumber, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.partyname, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.remarks, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(b.accountname, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(b.bankname, '')) LIKE $${params.length}
+      )`);
+    }
+
+    const page = Math.max(Number(queryData.page) || 1, 1);
+    const count = Math.min(Math.max(Number(queryData.count) || 100, 1), 500);
+    const offset = (page - 1) * count;
+    const filterParams = [...params];
+    const summaryResult = await query(
+      `
+      SELECT
+        COUNT(*)::INTEGER AS total,
+        COALESCE(SUM(t.debitamount), 0) AS debit,
+        COALESCE(SUM(t.creditamount), 0) AS credit
+      FROM bank_transactions t
+      JOIN bank_cash_accounts b
+        ON b.id = t.bankcashaccountid
+       AND b.organizationid = t.organizationid
+      WHERE ${conditions.join(" AND ")}
+      `,
+      filterParams
+    );
+    params.push(offset, count);
+
+    const result = await query(
+      `
+      SELECT
+        t.*,
+        b.accountname AS bankcashaccountname,
+        b.bankname AS bankname,
+        b.accounttype AS bankcashaccounttype,
+        b.currencycode AS bankcashcurrencycode,
+        b.status AS bankcashaccountstatus,
+        j.journalnumber,
+        f.accountname AS counterpartyaccountname,
+        f.accountcode AS counterpartyaccountcode,
+        COALESCE(
+          NULLIF(
+            TRIM(
+              CONCAT_WS(
+                ' ',
+                NULLIF(creator.firstname, ''),
+                NULLIF(creator.lastname, '')
+              )
+            ),
+            ''
+          ),
+          creator.useremail,
+          t.createdby
+        ) AS creatorname,
+        COALESCE(
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', a.id,
+                'documenttype', a.documenttype,
+                'documentid', a.documentid,
+                'documentnumber', a.documentnumber,
+                'invoiceid', a.documentid,
+                'billid', CASE
+                  WHEN a.documenttype = 'purchase_bill' THEN a.documentid
+                  ELSE NULL
+                END,
+                'invoicenumber', a.documentnumber,
+                'invoiceurl', COALESCE(r.invoiceurl, bill.invoiceurl),
+                'allocationamount', a.allocationamount,
+                'tdsapplied', a.tdsapplied,
+                'tdssectionid', a.tdssectionid,
+                'tdssection', CASE
+                  WHEN a.tdssectionid IS NOT NULL THEN a.statutorysnapshot
+                  ELSE NULL
+                END,
+                'adjustmenttype', a.statutorysnapshot->>'adjustmenttype',
+                'tdsamount', a.tdsamount,
+                'totalsettledamount', a.totalsettledamount,
+                'status', a.status
+              )
+              ORDER BY a.id
+            )
+            FROM bank_transaction_allocations a
+            LEFT JOIN revoinvoice r
+              ON r.id = a.documentid
+             AND a.documenttype = 'sales_invoice'
+            LEFT JOIN poinvoice bill
+              ON bill.id = a.documentid
+             AND a.documenttype = 'purchase_bill'
+            WHERE a.banktransactionid = t.id
+              AND a.status = 'applied'
+          ),
+          '[]'::jsonb
+        ) AS allocations
+      FROM bank_transactions t
+      JOIN bank_cash_accounts b
+        ON b.id = t.bankcashaccountid
+       AND b.organizationid = t.organizationid
+      LEFT JOIN journal_entries j
+        ON j.id = t.journalentryid
+       AND j.isdeleted = FALSE
+      LEFT JOIN finance_accounts f
+        ON f.id = t.counterpartyaccountid
+       AND f.isdeleted = FALSE
+      LEFT JOIN LATERAL (
+        SELECT
+          iu.firstname,
+          iu.lastname,
+          iu.useremail
+        FROM inventoryusers iu
+        WHERE iu.id::TEXT = t.createdby
+           OR LOWER(iu.useremail) = LOWER(t.createdby)
+        ORDER BY CASE WHEN iu.id::TEXT = t.createdby THEN 0 ELSE 1 END
+        LIMIT 1
+      ) creator ON TRUE
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY t.transactiondate DESC, t.posteddate DESC, t.id DESC
+      OFFSET $${params.length - 1} LIMIT $${params.length}
+      `,
+      params
+    );
+    return {
+      records: result.rows.map((row: any) => ({
+        ...row,
+        transactiondate:
+          toFinanceDateOnly(row.transactiondate) ?? row.transactiondate,
+      })),
+      total: Number(summaryResult.rows[0]?.total || 0),
+      page,
+      count,
+      summary: {
+        debit: Number(summaryResult.rows[0]?.debit || 0),
+        credit: Number(summaryResult.rows[0]?.credit || 0),
+      },
+    };
+  };
+}

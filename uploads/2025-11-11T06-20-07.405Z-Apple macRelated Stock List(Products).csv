@@ -1,0 +1,6 @@
+puc,category,subcategory,colour,processor,serialnumber,manufacturedyear,releaseyear,ecompublish,productname,rfid,location,solddate,stocktype,thirdpartyquantity
+la-nw-0000000070,new,laptop,Grey,,App-105,,,TRUE,Apple mac,1111111112,head_office,,on_catalogue_product,
+la-nw-0000000070,new,laptop,Grey,,App-101,,,TRUE,Apple mac,1111111113,head_office,,on_catalogue_product,
+la-nw-0000000070,new,laptop,Grey,,App-102,,,TRUE,Apple mac,1111111114,head_office,,on_catalogue_product,
+la-nw-0000000070,new,laptop,Grey,,App-103,,,TRUE,Apple mac,1111111115,head_office,,off_catalogue_product,
+la-nw-0000000070,new,laptop,Grey,,App-104,,,TRUE,Apple mac,1111111116,head_office,,off_catalogue_product,

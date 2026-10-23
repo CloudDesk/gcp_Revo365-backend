@@ -1,0 +1,1679 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+const require = createRequire(import.meta.url);
+const Ajv = require("ajv");
+import { FinanceValidationError, calculateAvailableBalance, financeDateToEpochSeconds, calculateLedgerBalance, formatTdsSectionDisplayName, maskAccountNumber, normalizeAccountType, normalizeEntrySide, protectAccountNumber, requireIsoDate, requirePositiveMoney, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
+import { buildEcommerceCustomerName, isEligibleEcommerceOrder, resolveEcommercePaymentDate, resolveEcommercePaymentMethod, resolveEcommercePaymentProvider, resolveEcommercePaymentReference, } from "../utils/finance/ecommerceFinance.utils.js";
+import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, getRetailInvoicesOutstandingTotal, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveCustomerReceiptAllocationMethod, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
+import { assertSupplierBillCanBeModified, assertSupplierTdsMapping, applySupplierBillAllocation, assertSupplierBillTotalWithinPurchaseOrder, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, validateSupplierBillProductInput, } from "../utils/finance/supplierBill.utils.js";
+import { createChartAccountSchema, createDirectBankTransactionSchema, applyCustomerOnAccountSchema, applySupplierOnAccountSchema, createRetailReceiptSchema, createSupplierPaymentSchema, } from "../schemas/finance.schema.js";
+import { directExpenseBillSchema } from "../schemas/directBill.schema.js";
+import { FINANCE_SOURCE_TYPES, getCustomerReceiptSourceTypes, getRetailReceiptSourceTypes, resolveAgainstDocumentSourceId, } from "../utils/finance/financeSource.utils.js";
+import { getBillGstSummary, getInvoiceGstSummary, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst, } from "../utils/finance/gstSummary.utils.js";
+import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPeriod.utils.js";
+import pool from "../database/postgres.js";
+import { financeAccountService } from "../services/financeAccount.service.js";
+import { buildCustomerStatement, toCustomerStatementDate, } from "../utils/finance/customerStatement.utils.js";
+import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
+import { extractDeliverableInvoiceLines, validateManualDeliveryLines, validateDeliveryQuantities, } from "../utils/finance/deliveryChallan.utils.js";
+import { assertOnAccountMovementBalance, calculateOnAccountAvailableFromMovements, deriveOnAccountStatus, formatOnAccountReferenceNumber, normalizeOnAccountPartyType, normalizeOnAccountStatusFilter, resolveOnAccountAllocationMethod, isOnAccountReferenceReconciled, validateOnAccountSettlementAmounts, buildOnAccountApplicationMatrix, buildOnAccountReadScope, summarizeOnAccountStatement, } from "../utils/finance/onAccount.utils.js";
+import { requireFinancePermission } from "../services/financeAccess.service.js";
+import { allocateOnAccountReferenceNumber, findOnAccountMovementByIdempotency, lockOnAccountReferences, } from "../services/onAccountFoundation.service.js";
+import { assertTransactionDateIsWithinAccountHistory, rebuildBankCashAccountBalances, } from "../utils/finance/bankTransactionBalance.utils.js";
+import { createBlockingReferenceFixture, createMultiBankDirectLedgerFixture, createSingleBankDirectLedgerFixture, inspectFixtureChartAccountReferences, } from "./fixtures/chartAccountLifecycle.fixture.js";
+import { buildControlAccountHistory, summarizeControlAccountHistory, } from "../utils/finance/controlAccountHistory.utils.js";
+const LISTED_SYSTEM_SUBTYPES = [
+    "accounts_receivable",
+    "accounts_payable",
+    "gst_output_cgst",
+    "gst_output_sgst",
+    "gst_output_igst",
+    "gst_input_cgst",
+    "gst_input_sgst",
+    "gst_input_igst",
+];
+describe("Finance foundation regression suite", { concurrency: false }, () => {
+    describe("On Account Phase 1 foundation", () => {
+        test("formats stable Customer and Supplier reference numbers", () => {
+            assert.equal(formatOnAccountReferenceNumber("customer", 1), "OA-C-00000001");
+            assert.equal(formatOnAccountReferenceNumber("SUPPLIER", 42), "OA-S-00000042");
+            assert.equal(normalizeOnAccountPartyType(" Customer "), "customer");
+            assert.throws(() => formatOnAccountReferenceNumber("ledger", 1), FinanceValidationError);
+            assert.throws(() => formatOnAccountReferenceNumber("customer", 0), FinanceValidationError);
+        });
+        test("derives the lifecycle from original, used, and available amounts", () => {
+            assert.equal(deriveOnAccountStatus(1000, 0, 1000), "open");
+            assert.equal(deriveOnAccountStatus(1000, 250, 750), "partially_applied");
+            assert.equal(deriveOnAccountStatus(1000, 1000, 0), "fully_applied");
+            assert.equal(deriveOnAccountStatus(1000, 0, 1000, true), "reversed");
+            assert.throws(() => deriveOnAccountStatus(1000, 500, 400), FinanceValidationError);
+        });
+        test("reconciles append-only increases and decreases", () => {
+            const movements = [
+                { direction: "increase", amount: 1000 },
+                { direction: "decrease", amount: 250 },
+                { direction: "decrease", amount: 100 },
+            ];
+            assert.equal(calculateOnAccountAvailableFromMovements(movements), 650);
+            assert.equal(assertOnAccountMovementBalance(650, movements), 650);
+            assert.throws(() => assertOnAccountMovementBalance(700, movements), (error) => error instanceof FinanceValidationError &&
+                error.code === "ON_ACCOUNT_RECONCILIATION_FAILED");
+        });
+        test("keeps TDS outside the On Account bank portion", () => {
+            assert.deepEqual(validateOnAccountSettlementAmounts(45000, 5000), {
+                bankportion: 45000,
+                tdsamount: 5000,
+                totalsettlement: 50000,
+            });
+            assert.throws(() => validateOnAccountSettlementAmounts(0, 5000), FinanceValidationError);
+            assert.throws(() => validateOnAccountSettlementAmounts(45000, -1), FinanceValidationError);
+        });
+        test("allocates organization-scoped reference numbers from the database counter", async () => {
+            const calls = [];
+            const client = {
+                query: async (text, values) => {
+                    calls.push({ text, values });
+                    return { rows: [{ lastnumber: "7" }] };
+                },
+            };
+            assert.equal(await allocateOnAccountReferenceNumber(client, 3, "customer"), "OA-C-00000007");
+            assert.deepEqual(calls[0].values, [3, "customer"]);
+            assert.match(calls[0].text, /ON CONFLICT \(organizationid, partytype\)/);
+        });
+        test("locks references in a stable order and rejects reversed references", async () => {
+            const client = {
+                query: async (_text, values) => ({
+                    rows: (values?.[1]).map((id) => ({
+                        id,
+                        status: id === 2 ? "reversed" : "open",
+                    })),
+                }),
+            };
+            await assert.rejects(() => lockOnAccountReferences(client, 1, [3, 2]), (error) => error instanceof FinanceValidationError &&
+                error.code === "ON_ACCOUNT_REFERENCE_REVERSED");
+            await assert.rejects(() => lockOnAccountReferences(client, 1, [3, 3]), FinanceValidationError);
+        });
+        test("returns an existing idempotent movement when present", async () => {
+            const client = {
+                query: async (_text, values) => ({
+                    rows: [{ id: 9, idempotencykey: values?.[1] }],
+                }),
+            };
+            const movement = await findOnAccountMovementByIdempotency(client, 1, "request-100", 2);
+            assert.equal(movement.id, 9);
+            assert.equal(movement.idempotencykey, "request-100");
+        });
+    });
+    describe("On Account Phase 3 read model", () => {
+        test("normalizes supported reference status filters", () => {
+            assert.equal(normalizeOnAccountStatusFilter(undefined), null);
+            assert.equal(normalizeOnAccountStatusFilter(" Open "), "open");
+            assert.equal(normalizeOnAccountStatusFilter("PARTIALLY_APPLIED"), "partially_applied");
+            assert.equal(normalizeOnAccountStatusFilter("fully_applied"), "fully_applied");
+            assert.equal(normalizeOnAccountStatusFilter("reversed"), "reversed");
+            assert.throws(() => normalizeOnAccountStatusFilter("pending"), FinanceValidationError);
+        });
+        test("compares displayed available value with the movement ledger at money precision", () => {
+            assert.equal(isOnAccountReferenceReconciled("1000.00", "1000"), true);
+            assert.equal(isOnAccountReferenceReconciled(1000, 999.99), false);
+        });
+    });
+    describe("On Account Phase 4 Customer Invoice application", () => {
+        test("distributes one reference across multiple Invoices", () => {
+            assert.deepEqual(buildOnAccountApplicationMatrix([{ referenceid: 1, amount: 1000 }], [
+                { invoiceid: 10, bankportion: 400, tdsamount: 0 },
+                { invoiceid: 11, bankportion: 600, tdsamount: 0 },
+            ]), [
+                { referenceid: 1, invoiceid: 10, bankportion: 400, tdsamount: 0, totalsettlement: 400 },
+                { referenceid: 1, invoiceid: 11, bankportion: 600, tdsamount: 0, totalsettlement: 600 },
+            ]);
+        });
+        test("distributes multiple references to one Invoice and counts TDS once", () => {
+            assert.deepEqual(buildOnAccountApplicationMatrix([
+                { referenceid: 1, amount: 300 },
+                { referenceid: 2, amount: 700 },
+            ], [{ invoiceid: 10, bankportion: 1000, tdsamount: 100 }]), [
+                { referenceid: 1, invoiceid: 10, bankportion: 300, tdsamount: 100, totalsettlement: 400 },
+                { referenceid: 2, invoiceid: 10, bankportion: 700, tdsamount: 0, totalsettlement: 700 },
+            ]);
+        });
+        test("rejects a mismatch between selected references and Invoice bank portions", () => {
+            assert.throws(() => buildOnAccountApplicationMatrix([{ referenceid: 1, amount: 999 }], [{ invoiceid: 10, bankportion: 1000, tdsamount: 0 }]), FinanceValidationError);
+        });
+        test("validates the Phase 4 request contract", () => {
+            const validate = new Ajv({ strict: false }).compile(applyCustomerOnAccountSchema);
+            assert.equal(validate({
+                customerid: 7,
+                applicationdate: "2026-08-18",
+                requestreference: "oa-application-request-1",
+                referenceallocations: [{ referenceid: 1, amount: 900 }],
+                invoiceallocations: [
+                    {
+                        invoiceid: 10,
+                        bankportion: 900,
+                        tdsapplied: true,
+                        tdsamount: 100,
+                    },
+                ],
+            }), true);
+        });
+    });
+    describe("On Account Phase 6 Supplier read model", () => {
+        test("scopes Supplier references by Organization and party type", () => {
+            assert.deepEqual(buildOnAccountReadScope(7, "supplier"), {
+                params: [7],
+                conditions: ["r.organizationid = $1", "r.partytype = 'supplier'"],
+            });
+            assert.deepEqual(buildOnAccountReadScope(7, "customer"), {
+                params: [7],
+                conditions: ["r.organizationid = $1", "r.partytype = 'customer'"],
+            });
+            assert.throws(() => buildOnAccountReadScope(0, "supplier"), FinanceValidationError);
+            assert.throws(() => buildOnAccountReadScope(7, "vendor"), FinanceValidationError);
+        });
+        test("keeps Supplier lifecycle totals and movement reconciliation consistent", () => {
+            assert.equal(deriveOnAccountStatus(1000, 0, 1000), "open");
+            assert.equal(deriveOnAccountStatus(1000, 300, 700), "partially_applied");
+            assert.equal(deriveOnAccountStatus(1000, 1000, 0), "fully_applied");
+            assert.equal(isOnAccountReferenceReconciled(700, 700), true);
+            assert.equal(isOnAccountReferenceReconciled(700, 699.99), false);
+        });
+    });
+    describe("On Account Phase 7 Supplier Bill application", () => {
+        test("distributes multiple Supplier references across multiple Bills", () => {
+            assert.deepEqual(buildOnAccountApplicationMatrix([
+                { referenceid: 41, amount: 400 },
+                { referenceid: 42, amount: 600 },
+            ], [
+                { invoiceid: 81, bankportion: 750, tdsamount: 50 },
+                { invoiceid: 82, bankportion: 250, tdsamount: 0 },
+            ]), [
+                { referenceid: 41, invoiceid: 81, bankportion: 400, tdsamount: 50, totalsettlement: 450 },
+                { referenceid: 42, invoiceid: 81, bankportion: 350, tdsamount: 0, totalsettlement: 350 },
+                { referenceid: 42, invoiceid: 82, bankportion: 250, tdsamount: 0, totalsettlement: 250 },
+            ]);
+        });
+        test("settles a Supplier Bill with OA Bank Portion and TDS Payable", () => {
+            const result = applySupplierBillAllocation({ id: 81, invoicenumber: "BILL-81", invoiceamount: 1000, paymentdata: [] }, 900, 100);
+            assert.equal(result.allocationAmount, 900);
+            assert.equal(result.tdsAmount, 100);
+            assert.equal(result.totalSettledAmount, 1000);
+            assert.equal(result.balanceAmount, 0);
+        });
+        test("rejects excessive settlement and invalid Supplier TDS mapping", () => {
+            assert.throws(() => applySupplierBillAllocation({ id: 81, invoicenumber: "BILL-81", invoiceamount: 1000, paymentdata: [] }, 900, 101), /exceeds its outstanding amount/);
+            assert.throws(() => assertSupplierTdsMapping(true, 100, null), /valid TDS section/);
+        });
+        test("validates the Phase 7 Supplier application contract", () => {
+            const validate = new Ajv({ strict: false }).compile(applySupplierOnAccountSchema);
+            assert.equal(validate({
+                supplierid: 5,
+                applicationdate: "2026-08-19",
+                requestreference: "supplier-oa-application-1",
+                referenceallocations: [{ referenceid: 41, amount: 900 }],
+                billallocations: [{
+                        billid: 81,
+                        bankportion: 900,
+                        tdsapplied: true,
+                        tdssectionid: 2,
+                        tdsamount: 100,
+                    }],
+            }), true);
+            assert.equal(validate({
+                supplierid: 5,
+                applicationdate: "2026-08-19",
+                requestreference: "supplier-oa-application-2",
+                referenceallocations: [{ referenceid: 41, amount: 900 }],
+                billallocations: [{ billid: 81, bankportion: 900, unexpected: true }],
+            }), false);
+        });
+    });
+    describe("On Account Phase 8 statements and release controls", () => {
+        test("calculates opening, period movement, TDS, and closing availability", () => {
+            const result = summarizeOnAccountStatement([
+                { eventdate: "2026-08-01", direction: "increase", amount: 1000 },
+                { eventdate: "2026-08-05", direction: "decrease", amount: 200, tdsamount: 20 },
+                { eventdate: "2026-08-10", direction: "increase", amount: 500 },
+                { eventdate: "2026-08-20", direction: "decrease", amount: 300, tdsamount: 30 },
+            ], "2026-08-05", "2026-08-10");
+            assert.equal(result.openingavailable, 1000);
+            assert.equal(result.increases, 500);
+            assert.equal(result.decreases, 200);
+            assert.equal(result.tdssettled, 20);
+            assert.equal(result.closingavailable, 1300);
+            assert.equal(result.period.length, 2);
+        });
+        test("keeps TDS outside availability while retaining it in statement reporting", () => {
+            const result = summarizeOnAccountStatement([
+                { eventdate: "2026-08-01", direction: "increase", amount: 1000 },
+                { eventdate: "2026-08-02", direction: "decrease", amount: 900, tdsamount: 100 },
+            ]);
+            assert.equal(result.closingavailable, 100);
+            assert.equal(result.tdssettled, 100);
+        });
+        test("rejects invalid statement periods and movement audit values", () => {
+            assert.throws(() => summarizeOnAccountStatement([], "2026-08-10", "2026-08-01"), /From Date cannot be later/);
+            assert.throws(() => summarizeOnAccountStatement([
+                { eventdate: "invalid", direction: "increase", amount: 100 },
+            ]), /eventdate must use YYYY-MM-DD/);
+        });
+        test("denies On Account finance access to missing and non-finance roles", async () => {
+            const responses = [];
+            const reply = {
+                status(code) {
+                    return { send: (payload) => responses.push({ code, payload }) };
+                },
+            };
+            const middleware = requireFinancePermission("read");
+            await middleware({ session: {} }, reply);
+            await middleware({ session: { role: "sales" } }, reply);
+            assert.equal(responses.length, 2);
+            assert.deepEqual(responses.map((item) => item.code), [403, 403]);
+            assert.ok(responses.every((item) => item.payload.error.code === "FINANCE_ACCESS_DENIED"));
+        });
+    });
+    describe("Delivery Challan Phase 3 quantity rules", () => {
+        const invoiceLines = extractDeliverableInvoiceLines({
+            items: [
+                { id: 1, orderlineid: 792, name: "Laptop", quantity: 10 },
+                { id: 2, productid: 44, productname: "Dock", quantity: 2 },
+            ],
+        });
+        test("extracts stable Invoice line keys from legacy Invoice JSON", () => {
+            assert.deepEqual(invoiceLines, [
+                {
+                    invoicelinekey: "orderline:792",
+                    productid: null,
+                    productname: "Laptop",
+                    invoicequantity: 10,
+                    unit: "Nos",
+                    unitrate: null,
+                    lineamount: null,
+                },
+                {
+                    invoicelinekey: "item:2",
+                    productid: 44,
+                    productname: "Dock",
+                    invoicequantity: 2,
+                    unit: "Nos",
+                    unitrate: null,
+                    lineamount: null,
+                },
+            ]);
+        });
+        test("allows partial delivery up to the server-calculated remaining quantity", () => {
+            const lines = validateDeliveryQuantities(invoiceLines, new Map([["orderline:792", 4]]), [{ invoicelinekey: "orderline:792", deliveryquantity: 6 }]);
+            assert.equal(lines[0].deliveryquantity, 6);
+        });
+        test("rejects over-delivery and duplicate submitted lines", () => {
+            assert.throws(() => validateDeliveryQuantities(invoiceLines, new Map([["orderline:792", 4]]), [{ invoicelinekey: "orderline:792", deliveryquantity: 7 }]), FinanceValidationError);
+            assert.throws(() => validateDeliveryQuantities(invoiceLines, new Map(), [
+                { invoicelinekey: "item:2", deliveryquantity: 1 },
+                { invoicelinekey: "item:2", deliveryquantity: 1 },
+            ]), FinanceValidationError);
+        });
+        test("validates Manual/General lines without Invoice data", () => {
+            assert.deepEqual(validateManualDeliveryLines([
+                { productname: "Demo equipment", deliveryquantity: 2, unit: "Nos", assetreference: "RFID-1" },
+            ]), [{
+                    linesource: "custom",
+                    productid: null,
+                    productname: "Demo equipment",
+                    deliveryquantity: 2,
+                    unit: "Nos",
+                    assetreference: "RFID-1",
+                }]);
+            assert.throws(() => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]), FinanceValidationError);
+        });
+    });
+    describe("Customer Statement Phase 3 foundation", () => {
+        test("orders Invoice and Customer Payment rows and calculates running receivable", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "payment-1",
+                    sourceid: 1,
+                    transactiontype: "customer_payment",
+                    transactiondate: "2026-08-11",
+                    reference: "BT-1",
+                    description: "Receipt",
+                    invoiceamount: 0,
+                    paymentamount: 400,
+                    settledamount: 400,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "invoice-1",
+                    sourceid: 1,
+                    transactiontype: "invoice",
+                    transactiondate: "2026-08-10",
+                    reference: "INV-1",
+                    description: "Invoice",
+                    invoiceamount: 1000,
+                    paymentamount: 0,
+                    settledamount: 0,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+            ]);
+            assert.equal(statement.records[0].reference, "INV-1");
+            assert.equal(statement.records[0].balance, 1000);
+            assert.equal(statement.records[1].balance, 600);
+            assert.equal(statement.summary.closingreceivable, 600);
+        });
+        test("reduces receivable by bank payment plus TDS while keeping both amounts separate", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-tds",
+                    sourceid: 1,
+                    transactiontype: "invoice",
+                    transactiondate: "2026-10-15",
+                    reference: "INV-TDS",
+                    description: "Invoice",
+                    invoiceamount: 1180,
+                    paymentamount: 0,
+                    settledamount: 0,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "payment-tds",
+                    sourceid: 1,
+                    transactiontype: "customer_payment",
+                    transactiondate: "2026-10-16",
+                    reference: "BT-TDS",
+                    description: "Receipt with TDS",
+                    invoiceamount: 0,
+                    paymentamount: 1080,
+                    settledamount: 1180,
+                    tdsamount: 100,
+                    unappliedamount: 0,
+                },
+            ]);
+            assert.equal(statement.records[1].paymentamount, 1080);
+            assert.equal(statement.records[1].tdsamount, 100);
+            assert.equal(statement.records[1].balance, 0);
+            assert.equal(statement.summary.paymentamount, 1080);
+            assert.equal(statement.summary.tdsreceivable, 100);
+            assert.equal(statement.summary.closingreceivable, 0);
+        });
+        test("uses pre-period rows for the opening receivable", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-1",
+                    sourceid: 1,
+                    transactiontype: "invoice",
+                    transactiondate: "2026-07-01",
+                    reference: "INV-1",
+                    description: "Invoice",
+                    invoiceamount: 1000,
+                    paymentamount: 0,
+                    settledamount: 0,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "payment-1",
+                    sourceid: 1,
+                    transactiontype: "customer_payment",
+                    transactiondate: "2026-08-02",
+                    reference: "BT-1",
+                    description: "Receipt",
+                    invoiceamount: 0,
+                    paymentamount: 250,
+                    settledamount: 250,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+            ], { fromdate: "2026-08-01", todate: "2026-08-31" });
+            assert.equal(statement.summary.openingreceivable, 1000);
+            assert.equal(statement.summary.closingreceivable, 750);
+        });
+        test("reduces customer receivable immediately for On Account but not for Advance until allocation", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-1", sourceid: 1, transactiontype: "invoice",
+                    transactiondate: "2026-10-01", reference: "INV-1", description: "Invoice",
+                    invoiceamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "on-account-1", sourceid: 2, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+                    invoiceamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+                    unappliedamount: 300, allocationmethod: "on_account",
+                },
+                {
+                    id: "advance-1", sourceid: 3, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+                    invoiceamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+                    unappliedamount: 200, allocationmethod: "advance",
+                },
+                {
+                    id: "advance-application-1", sourceid: 4, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+                    invoiceamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+                    unappliedamount: 0, allocationmethod: "on_account_application",
+                },
+            ]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.equal(statement.summary.closingreceivable, 500);
+        });
+        test("applies the equivalent On Account and Advance timing to Supplier payable", () => {
+            const statement = buildSupplierStatement([
+                {
+                    id: "bill-1", sourceid: 1, transactiontype: "bill",
+                    transactiondate: "2026-10-01", reference: "BILL-1", description: "Bill",
+                    billamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+                },
+                {
+                    id: "on-account-1", sourceid: 2, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+                    billamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+                    allocationmethod: "on_account",
+                },
+                {
+                    id: "advance-1", sourceid: 3, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+                    billamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+                    allocationmethod: "advance",
+                },
+                {
+                    id: "advance-application-1", sourceid: 4, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+                    billamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+                    allocationmethod: "on_account_application",
+                },
+            ]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.equal(statement.summary.closingpayable, 500);
+        });
+        test("serializes epoch Invoice dates in the India business date", () => {
+            assert.equal(toCustomerStatementDate(1786386600), "2026-08-11");
+        });
+    });
+    describe("Chart of Accounts Phase 1", () => {
+        test("requires Account Type and Account Name while Account Code is optional", () => {
+            assert.deepEqual(createChartAccountSchema.required, [
+                "accounttype",
+                "accountname",
+            ]);
+            assert.deepEqual(createChartAccountSchema.properties.accountcode.type, ["string", "null"]);
+            assert.equal(createChartAccountSchema.properties.description.maxLength, 2000);
+        });
+    });
+    describe("Chart of Accounts list period filtering", () => {
+        test("accepts all time or an inclusive date range", () => {
+            assert.deepEqual(resolveChartAccountDateRange({}), {
+                fromDate: null,
+                toDate: null,
+            });
+            assert.deepEqual(resolveChartAccountDateRange({
+                fromdate: "2026-04-01",
+                todate: "2027-03-31",
+            }), { fromDate: "2026-04-01", toDate: "2027-03-31" });
+        });
+        test("rejects incomplete, invalid, and reversed ranges", () => {
+            assert.throws(() => resolveChartAccountDateRange({ fromdate: "2026-04-01" }), /Select both From date and To date/);
+            assert.throws(() => resolveChartAccountDateRange({
+                fromdate: "2026-04-31",
+                todate: "2026-05-01",
+            }), /valid date/);
+            assert.throws(() => resolveChartAccountDateRange({
+                fromdate: "2026-10-12",
+                todate: "2026-10-01",
+            }), /From date cannot be later than To date/);
+        });
+        test("uses posted ledger entry dates for both row inclusion and period balance", async (t) => {
+            const calls = [];
+            t.mock.method(pool, "query", async (sql, params = []) => {
+                calls.push({ sql, params });
+                if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+                    return { rows: [{ total: 0 }] };
+                }
+                if (/COUNT\(\*\) FILTER \(WHERE accounttype = 'asset'\)/s.test(sql)) {
+                    return { rows: [{}] };
+                }
+                return { rows: [] };
+            });
+            await financeAccountService.listChartAccounts({
+                session: { organizationid: 7 },
+                query: { fromdate: "2026-10-23", todate: "2026-10-23" },
+            });
+            const countCall = calls.find(({ sql }) => /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql));
+            assert.ok(countCall);
+            assert.match(countCall.sql, /EXISTS \([\s\S]*period_entry\.status = 'posted'/);
+            assert.match(countCall.sql, /f\.issystem = TRUE AND f\.accountsubtype = ANY\(\$2::TEXT\[\]\)/);
+            assert.match(countCall.sql, /period_entry\.entrydate >= \$4::DATE/);
+            assert.match(countCall.sql, /period_entry\.entrydate <= \$5::DATE/);
+            assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23"]);
+            const listCall = calls.find(({ sql }) => /LEFT JOIN LATERAL \([\s\S]*SUM\(jl\.debitamount\)/s.test(sql));
+            assert.ok(listCall);
+            assert.match(listCall.sql, /je\.status = 'posted'/);
+            assert.match(listCall.sql, /ORDER BY\s+-- System accounts first[\s\S]*array_position\(\$2::TEXT\[\], f\.accountsubtype\)[\s\S]*NULLS LAST,\s+f\.modifieddate DESC/);
+            assert.match(listCall.sql, /je\.entrydate >= \$4::DATE/);
+            assert.match(listCall.sql, /je\.entrydate <= \$5::DATE/);
+            assert.deepEqual(listCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", "2026-10-23", "2026-10-23", 0, 10]);
+        });
+    });
+    describe("Chart of Accounts editing", () => {
+        const account = {
+            id: 41,
+            organizationid: 7,
+            accountcode: "OFFICE-RENT",
+            accountname: "Office rent",
+            accounttype: "expense",
+            accountsubtype: "expense",
+            description: null,
+            currencycode: "INR",
+            issystem: false,
+            isusercreatedchartaccount: true,
+            status: "active",
+            createdby: "owner@example.com",
+            modifiedby: "owner@example.com",
+            createddate: 1,
+            modifieddate: 1,
+        };
+        test("renames a user account and updates Direct Ledger display names", async (t) => {
+            const calls = [];
+            const client = {
+                query: async (sql, params) => {
+                    calls.push({ sql, params });
+                    if (/SELECT \* FROM finance_accounts[\s\S]*FOR UPDATE/s.test(sql))
+                        return { rows: [account] };
+                    if (/SELECT id FROM finance_accounts/s.test(sql))
+                        return { rows: [] };
+                    if (/UPDATE finance_accounts/s.test(sql))
+                        return { rows: [{ ...account, accountname: "Premises rent" }] };
+                    return { rows: [] };
+                },
+                release: () => undefined,
+            };
+            t.mock.method(pool, "connect", async () => client);
+            const result = await financeAccountService.updateChartAccount({
+                session: { organizationid: 7, useremail: "accountant@example.com" },
+                params: { accountId: 41 },
+                body: { accountname: "Premises rent" },
+            });
+            assert.equal(result.accountname, "Premises rent");
+            assert.ok(calls.some(({ sql, params }) => /UPDATE bank_transactions/s.test(sql) && params?.[0] === "Premises rent"));
+            assert.ok(calls.some(({ sql }) => /INSERT INTO finance_audit_events/s.test(sql)));
+            assert.equal(calls.at(-1)?.sql, "COMMIT");
+        });
+    });
+    describe("Chart of Accounts Phase 2", () => {
+        test("Direct Ledger Entry accepts optional narration and excludes remarks", () => {
+            assert.deepEqual(createDirectBankTransactionSchema.required, [
+                "transactiondate",
+                "counterpartyaccountid",
+                "entryside",
+                "amount",
+            ]);
+            assert.deepEqual(createDirectBankTransactionSchema.properties.entryname.type, ["string", "null"]);
+            assert.equal("remarks" in createDirectBankTransactionSchema.properties, false);
+            assert.equal(createDirectBankTransactionSchema.properties.amount
+                .exclusiveMinimum, 0);
+        });
+        test("summarizes invoice Output GST amounts across supported sales flows", () => {
+            assert.deepEqual(getInvoiceGstSummary([
+                {
+                    invoicefor: "product",
+                    taxamount: 180,
+                    invoicedata: { taxmode: "cgst_sgst", cgst: 90, sgst: 90 },
+                },
+                {
+                    invoicefor: "rental",
+                    taxamount: 360,
+                    invoicedata: { taxmode: "igst", igstamount: 360 },
+                },
+                {
+                    invoicefor: "service",
+                    taxamount: 90,
+                    invoicedata: { taxtype: "intra_state", cgst: 9, sgst: 9 },
+                },
+                { invoicefor: "penalty", taxamount: 999 },
+            ]), { igst: 360, cgst: 135, sgst: 135, total: 630 });
+        });
+        test("summarizes supplier Bill Input GST from tax amounts, not rates", () => {
+            assert.deepEqual(getBillGstSummary([
+                { payabletaxamount: 1800, cgst: 9, sgst: 9 },
+                { payabletaxamount: 500, cgst: 0, sgst: 0 },
+            ]), { igst: 0, cgst: 1150, sgst: 1150, total: 2300 });
+        });
+        test("classifies interstate supplier Bill tax as IGST from GSTIN state codes", () => {
+            assert.deepEqual(resolveBillGst({
+                payabletaxamount: 103680,
+                cgst: 9,
+                sgst: 9,
+                suppliergstin: "29ABCDE1234F1Z5",
+                destinationgstin: "33ABCDE1234F1Z5",
+            }), { igst: 103680, cgst: 0, sgst: 0, total: 103680 });
+            assert.deepEqual(resolveBillGst({
+                payabletaxamount: 126000,
+                cgst: 9,
+                sgst: 9,
+                suppliergstin: "33AAGCM7654K1Z8",
+                destinationgstin: "33ABCDE1234F1Z5",
+            }), { igst: 0, cgst: 63000, sgst: 63000, total: 126000 });
+        });
+        test("reads only the first amount from legacy formatted tax text", () => {
+            assert.equal(parseGstMoney("₹6,896.55 (CGST ₹3,448.28)"), 6896.55);
+            assert.deepEqual(resolveInvoiceGst({
+                invoicefor: "service",
+                taxamount: "₹6,896.55 (CGST ₹3,448.28)",
+                invoicedata: { taxtype: "intra_state", cgst: 9, sgst: 9 },
+            }), { igst: 0, cgst: 3448.28, sgst: 3448.27, total: 6896.55 });
+        });
+        test("combines product and service GST stored in one sales invoice", () => {
+            const invoice = {
+                invoicefor: "service",
+                totalorderamount: 128608.2,
+                // Legacy top-level tax contains only the product tax and must not win.
+                taxamount: 17638.2,
+                invoicedata: {
+                    items: [{ productname: "Lenovo IdeaPad" }],
+                    total: 115628.2,
+                    taxamount: 17638.2,
+                    cgst: 9,
+                    sgst: 9,
+                    igst: 0,
+                },
+                servicedata: {
+                    items: [{ description: "service" }],
+                    total: 12980,
+                    taxamount: 1980,
+                    cgst: 9,
+                    sgst: 9,
+                    igst: 0,
+                },
+            };
+            assert.deepEqual(resolveInvoiceGst(invoice), {
+                igst: 0,
+                cgst: 9809.1,
+                sgst: 9809.1,
+                total: 19618.2,
+            });
+            assert.equal(resolveInvoiceDocumentType(invoice), "product + service");
+            assert.equal(toMoney(invoice.totalorderamount - resolveInvoiceGst(invoice).total), 108990);
+        });
+        test("supports service-only and interstate mixed sales invoices", () => {
+            assert.deepEqual(resolveInvoiceGst({
+                invoicefor: "service",
+                invoicedata: { items: [], taxamount: 0 },
+                servicedata: {
+                    items: [{ description: "repair" }],
+                    taxamount: 1800,
+                    cgst: 9,
+                    sgst: 9,
+                },
+            }), { igst: 0, cgst: 900, sgst: 900, total: 1800 });
+            const interstate = {
+                invoicefor: "service",
+                invoicedata: { items: [{}], taxamount: 1800, igst: 18, cgst: 0, sgst: 0 },
+                servicedata: { items: [{}], taxamount: 900, igst: 18, cgst: 0, sgst: 0 },
+            };
+            assert.deepEqual(resolveInvoiceGst(interstate), {
+                igst: 2700,
+                cgst: 0,
+                sgst: 0,
+                total: 2700,
+            });
+            assert.equal(resolveInvoiceDocumentType(interstate), "product + service");
+        });
+    });
+    describe("Chart of Accounts Phase 3", () => {
+        test("uses debit balances for Assets and Expenses", () => {
+            assert.equal(calculateLedgerBalance("asset", 50000, 10000), 40000);
+            assert.equal(calculateLedgerBalance("expense", 50000, 10000), 40000);
+        });
+        test("uses credit balances for Liabilities, Equity, and Income", () => {
+            assert.equal(calculateLedgerBalance("liability", 10000, 50000), 40000);
+            assert.equal(calculateLedgerBalance("equity", 10000, 50000), 40000);
+            assert.equal(calculateLedgerBalance("income", 10000, 50000), 40000);
+        });
+        test("Amount Receivable sums canonical invoice outstanding balances", () => {
+            assert.equal(getRetailInvoicesOutstandingTotal([
+                {
+                    totalorderamount: 1000,
+                    paidamount: 250,
+                    paymentdata: [],
+                },
+                {
+                    totalorderamount: 500,
+                    paidamount: 500,
+                    paymentdata: [],
+                },
+            ]), 750);
+        });
+    });
+    describe("Cash and Bank foundation calculations", () => {
+        test("Debit increases available balance", () => {
+            assert.equal(calculateAvailableBalance(10000, "debit", 5000), 15000);
+        });
+        test("Credit decreases available balance", () => {
+            assert.equal(calculateAvailableBalance(10000, "credit", 3000), 7000);
+        });
+        test("Money values are normalized to two decimal places", () => {
+            assert.equal(toMoney(10.005), 10.01);
+            assert.equal(toMoney("90.10"), 90.1);
+        });
+        test("Transaction amount must be greater than zero", () => {
+            assert.throws(() => requirePositiveMoney(0), (error) => error instanceof FinanceValidationError &&
+                error.message === "amount must be greater than zero.");
+        });
+    });
+    describe("Chart of Accounts lifecycle Phase 0 baseline", () => {
+        const rebuildFixtureAccount = async (fixture, bankCashAccountId) => {
+            const account = fixture.bankCashAccounts.find((candidate) => candidate.id === bankCashAccountId);
+            assert.ok(account);
+            const transactions = fixture.bankTransactions
+                .filter((transaction) => transaction.bankcashaccountid === bankCashAccountId &&
+                transaction.postingstatus === "posted")
+                .sort((left, right) => left.transactiondate.localeCompare(right.transactiondate) ||
+                left.posteddate - right.posteddate ||
+                left.id - right.id);
+            const calls = [];
+            const client = {
+                query: async (sql, params) => {
+                    calls.push({ sql, params });
+                    if (/SELECT id, transactiondate, entryside, amount/.test(sql)) {
+                        return { rows: transactions };
+                    }
+                    return { rows: [] };
+                },
+            };
+            const rebuilt = await rebuildBankCashAccountBalances(client, account, "phase0@example.com", 1789000000);
+            return { account, calls, rebuilt };
+        };
+        test("captures the current single-bank Direct Ledger balances", async () => {
+            const fixture = createSingleBankDirectLedgerFixture();
+            const { calls, rebuilt } = await rebuildFixtureAccount(fixture, 11);
+            const chartLines = fixture.journalLines.filter((line) => line.financeaccountid === fixture.chartAccount.id);
+            assert.equal(rebuilt.currentBalance, 7000);
+            assert.equal(rebuilt.balances.get(501), 7000);
+            assert.equal(calculateLedgerBalance(fixture.chartAccount.accounttype, chartLines.reduce((total, line) => total + line.debitamount, 0), chartLines.reduce((total, line) => total + line.creditamount, 0)), 3000);
+            assert.ok(calls.some(({ sql, params }) => /UPDATE bank_cash_accounts/.test(sql) && params?.[0] === 7000));
+        });
+        test("captures one COA used by Direct Ledger entries in multiple bank accounts", async () => {
+            const fixture = createMultiBankDirectLedgerFixture();
+            const mainBank = await rebuildFixtureAccount(fixture, 11);
+            const pettyCash = await rebuildFixtureAccount(fixture, 12);
+            const chartLines = fixture.journalLines.filter((line) => line.financeaccountid === fixture.chartAccount.id);
+            assert.equal(mainBank.rebuilt.currentBalance, 7000);
+            assert.equal(pettyCash.rebuilt.currentBalance, 3500);
+            assert.equal(calculateLedgerBalance(fixture.chartAccount.accounttype, chartLines.reduce((total, line) => total + line.debitamount, 0), chartLines.reduce((total, line) => total + line.creditamount, 0)), 4500);
+        });
+        test("classifies Direct Ledger references separately from deletion blockers without mutation", () => {
+            const fixture = createBlockingReferenceFixture();
+            const before = JSON.stringify(fixture);
+            const references = inspectFixtureChartAccountReferences(fixture, fixture.chartAccount.id);
+            assert.deepEqual(references.cascadeSafe, {
+                bankTransactionIds: [501],
+                journalEntryIds: [701],
+                journalLineIds: [901, 902],
+            });
+            assert.deepEqual(references.blocking, {
+                manualJournalLineIds: [905],
+                expenseBillIds: [801],
+                reconciliationSettingIds: [301],
+            });
+            assert.equal(JSON.stringify(fixture), before);
+        });
+    });
+    describe("Chart of Accounts lifecycle Phase 1 migration", () => {
+        const migrationSql = readFileSync(new URL("../database/migrations/20261013_chart_account_lifecycle_foundation.sql", import.meta.url), "utf8");
+        test("adds soft-delete and lifecycle ownership fields with safe defaults", () => {
+            for (const tableName of [
+                "finance_accounts",
+                "bank_transactions",
+                "journal_entries",
+            ]) {
+                assert.match(migrationSql, new RegExp(`ALTER TABLE ${tableName}`));
+            }
+            assert.match(migrationSql, /isdeleted BOOLEAN NOT NULL DEFAULT FALSE/g);
+            assert.match(migrationSql, /deletionbatchid UUID/);
+            assert.match(migrationSql, /deactivatedbychartaccountid BIGINT/);
+        });
+        test("extends bank transaction and journal status constraints with inactive", () => {
+            assert.match(migrationSql, /postingstatus IN \('draft', 'posted', 'inactive', 'reversed'\)/);
+            assert.match(migrationSql, /status IN \('draft', 'posted', 'inactive', 'reversed'\)/);
+        });
+        test("allows deleted account names and codes to be reused while indexing lifecycle lookups", () => {
+            assert.match(migrationSql, /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_accounts_code_normalized[\s\S]*WHERE isdeleted = FALSE/);
+            assert.match(migrationSql, /CREATE UNIQUE INDEX IF NOT EXISTS uq_finance_chart_accounts_name_normalized[\s\S]*isusercreatedchartaccount = TRUE[\s\S]*isdeleted = FALSE/);
+            assert.match(migrationSql, /idx_bank_transactions_chart_account_lifecycle/);
+            assert.match(migrationSql, /idx_finance_accounts_deletion_batch/);
+        });
+        test("records the lifecycle foundation schema version", () => {
+            assert.match(migrationSql, /20261013_chart_account_lifecycle_foundation_v1/);
+            assert.match(migrationSql, /ON CONFLICT \(version\) DO NOTHING/);
+        });
+    });
+    describe("Chart of Accounts lifecycle Phase 2 read behavior", () => {
+        test("defaults the COA list to active and always excludes soft-deleted accounts", async (t) => {
+            const calls = [];
+            t.mock.method(pool, "query", async (sql, params = []) => {
+                calls.push({ sql, params });
+                if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+                    return { rows: [{ total: 0 }] };
+                }
+                if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+                    return { rows: [{}] };
+                }
+                return { rows: [] };
+            });
+            await financeAccountService.listChartAccounts({
+                session: { organizationid: 7 },
+                query: {},
+            });
+            const countCall = calls.find(({ sql }) => /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql));
+            assert.ok(countCall);
+            assert.match(countCall.sql, /f\.isdeleted = FALSE/);
+            assert.match(countCall.sql, /f\.status = \$3/);
+            assert.deepEqual(countCall.params, [7, LISTED_SYSTEM_SUBTYPES, "active", null, null]);
+        });
+        test("supports inactive and all non-deleted COA views", async (t) => {
+            const calls = [];
+            t.mock.method(pool, "query", async (sql, params = []) => {
+                calls.push({ sql, params });
+                if (/SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql)) {
+                    return { rows: [{ total: 0 }] };
+                }
+                if (/COUNT\(\*\) FILTER \(WHERE f\.accounttype = 'asset'\)/s.test(sql)) {
+                    return { rows: [{}] };
+                }
+                return { rows: [] };
+            });
+            await financeAccountService.listChartAccounts({
+                session: { organizationid: 7 },
+                query: { status: "inactive" },
+            });
+            await financeAccountService.listChartAccounts({
+                session: { organizationid: 7 },
+                query: { status: "all" },
+            });
+            const countCalls = calls.filter(({ sql }) => /SELECT COUNT\(\*\)::INTEGER AS total\s+FROM finance_accounts f/s.test(sql));
+            assert.equal(countCalls.length, 2);
+            assert.match(countCalls[0].sql, /f\.isdeleted = FALSE/);
+            assert.match(countCalls[0].sql, /f\.status = \$3/);
+            assert.deepEqual(countCalls[0].params, [7, LISTED_SYSTEM_SUBTYPES, "inactive", null, null]);
+            assert.match(countCalls[1].sql, /f\.isdeleted = FALSE/);
+            assert.doesNotMatch(countCalls[1].sql, /f\.status =/);
+            assert.deepEqual(countCalls[1].params, [7, LISTED_SYSTEM_SUBTYPES, null, null]);
+        });
+        test("rebuilds Cash and Bank balances from active posted transactions only", async () => {
+            const calls = [];
+            const client = {
+                query: async (sql, params) => {
+                    calls.push({ sql, params });
+                    return { rows: [] };
+                },
+            };
+            await rebuildBankCashAccountBalances(client, { id: 11, openingbalance: 1000, openingbalancedate: "2026-04-01" }, "phase2@example.com", 1789000000);
+            const transactionRead = calls.find(({ sql }) => /FROM bank_transactions/.test(sql));
+            assert.ok(transactionRead);
+            assert.match(transactionRead.sql, /postingstatus = 'posted'/);
+            assert.match(transactionRead.sql, /isdeleted = FALSE/);
+        });
+        test("applies active, inactive, and all lifecycle scopes to transaction rows and totals", async (t) => {
+            const calls = [];
+            t.mock.method(pool, "query", async (sql, params = []) => {
+                calls.push({ sql, params });
+                return /COUNT\(\*\)::INTEGER AS total/.test(sql)
+                    ? { rows: [{ total: 0, debit: 0, credit: 0 }] }
+                    : { rows: [] };
+            });
+            await financeAccountService.listBankTransactions({
+                session: { organizationid: 7 },
+                query: {},
+                params: {},
+            });
+            await financeAccountService.listBankTransactions({
+                session: { organizationid: 7 },
+                query: { status: "inactive", transactiontype: "direct_ledger" },
+                params: {},
+            });
+            await financeAccountService.listBankTransactions({
+                session: { organizationid: 7 },
+                query: { status: "all" },
+                params: {},
+            });
+            await financeAccountService.listBankTransactions({
+                session: { organizationid: 7 },
+                query: { status: "inactive", sourcetype: "manual" },
+                params: {},
+            });
+            const summaries = calls.filter(({ sql }) => /COUNT\(\*\)::INTEGER AS total/.test(sql));
+            assert.equal(summaries.length, 4);
+            for (const { sql } of summaries)
+                assert.match(sql, /t\.isdeleted = FALSE/);
+            assert.match(summaries[0].sql, /t\.postingstatus = 'posted'/);
+            assert.match(summaries[1].sql, /t\.postingstatus = 'inactive'/);
+            assert.match(summaries[1].sql, /t\.allocationmethod = 'direct_ledger'/);
+            assert.match(summaries[2].sql, /t\.postingstatus IN \('posted', 'inactive'\)/);
+            assert.match(summaries[3].sql, /t\.postingstatus = 'inactive'/);
+            assert.match(summaries[3].sql, /LOWER\(t\.sourcetype\)/);
+            assert.ok(summaries[3].params.includes("manual"));
+        });
+    });
+    describe("Cash and Bank foundation validation", () => {
+        test("Backdated transactions after the opening balance date are allowed", () => {
+            assert.doesNotThrow(() => assertTransactionDateIsWithinAccountHistory("2026-08-01", "2026-01-01"));
+        });
+        test("Transactions before the opening balance date are rejected", () => {
+            assert.throws(() => assertTransactionDateIsWithinAccountHistory("2025-12-31", "2026-01-01"), (error) => error instanceof FinanceValidationError);
+        });
+        test("Stores a backdated accounting date as India-local midnight", () => {
+            const epoch = financeDateToEpochSeconds("2026-10-09");
+            assert.equal(new Date((epoch + 5.5 * 60 * 60) * 1000).toISOString().slice(0, 10), "2026-10-09");
+        });
+        test("Rebuilds all later running balances after a backdated transaction", async () => {
+            const persistedBalances = new Map();
+            let persistedCurrentBalance = null;
+            const client = {
+                query: async (sql, params) => {
+                    if (sql.includes("SELECT id, transactiondate, entryside, amount")) {
+                        return {
+                            rows: [
+                                { id: 2, transactiondate: "2026-01-10", entryside: "debit", amount: 50 },
+                                { id: 3, transactiondate: "2026-01-15", entryside: "credit", amount: 20 },
+                                { id: 1, transactiondate: "2026-01-20", entryside: "debit", amount: 100 },
+                            ],
+                        };
+                    }
+                    if (sql.includes("UPDATE bank_transactions SET balanceafter")) {
+                        persistedBalances.set(Number(params[1]), Number(params[0]));
+                        return { rows: [] };
+                    }
+                    if (sql.includes("UPDATE bank_cash_accounts")) {
+                        persistedCurrentBalance = Number(params[0]);
+                        return { rows: [] };
+                    }
+                    throw new Error(`Unexpected query in balance rebuild test: ${sql}`);
+                },
+            };
+            const rebuilt = await rebuildBankCashAccountBalances(client, {
+                id: 4,
+                openingbalance: 1000,
+                openingbalancedate: "2026-01-01",
+            }, "test-user", 1);
+            assert.deepEqual([...rebuilt.balances.entries()], [
+                [2, 1050],
+                [3, 1030],
+                [1, 1130],
+            ]);
+            assert.deepEqual([...persistedBalances.entries()], [
+                [2, 1050],
+                [3, 1030],
+                [1, 1130],
+            ]);
+            assert.equal(rebuilt.currentBalance, 1130);
+            assert.equal(persistedCurrentBalance, 1130);
+        });
+        test("Retail receipt schema accepts TDS allocation fields", () => {
+            const allocationSchema = createRetailReceiptSchema.properties.allocations
+                .items;
+            assert.deepEqual(Object.keys(allocationSchema.properties).sort(), ["allocationamount", "invoiceid", "tdsamount", "tdsapplied"].sort());
+        });
+        test("Customer receipt schema accepts retail, rental, and customer-workspace modes", () => {
+            assert.deepEqual(createRetailReceiptSchema.properties.receiptmode.enum, ["retail", "rental", "all"]);
+        });
+        test("Customer receipt allocation method defaults to the existing invoice flow", () => {
+            assert.equal(resolveCustomerReceiptAllocationMethod(undefined), "against_document");
+            assert.equal(resolveCustomerReceiptAllocationMethod("on_account"), "on_account");
+            assert.equal(resolveCustomerReceiptAllocationMethod("advance"), "advance");
+        });
+        test("Customer receipt schema keeps legacy allocations and permits allocation-free On Account receipts", () => {
+            const validate = new Ajv({ strict: false }).compile(createRetailReceiptSchema);
+            const base = {
+                transactiondate: "2026-08-18",
+                customerid: 7,
+                amount: 1000,
+                requestreference: "phase-2-request-001",
+            };
+            assert.equal(validate({
+                ...base,
+                allocations: [{ invoiceid: 11, allocationamount: 1000 }],
+            }), true);
+            assert.equal(validate({
+                ...base,
+                allocationmethod: "on_account",
+                allocations: [],
+            }), true);
+            assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "against_document" }), false);
+            assert.equal(validate({
+                ...base,
+                allocationmethod: "on_account",
+                allocations: [{ invoiceid: 11, allocationamount: 1000 }],
+            }), false);
+        });
+        test("Supplier payment schema accepts bill and TDS Payable fields", () => {
+            const allocationSchema = createSupplierPaymentSchema.properties.allocations.items;
+            assert.deepEqual(Object.keys(allocationSchema.properties).sort(), [
+                "allocationamount",
+                "billid",
+                "tdsamount",
+                "tdsapplied",
+                "tdssectionid",
+            ].sort());
+        });
+        test("Supplier payment allocation method defaults to the existing bill flow", () => {
+            assert.equal(resolveOnAccountAllocationMethod(undefined), "against_document");
+            assert.equal(resolveOnAccountAllocationMethod("on_account"), "on_account");
+            assert.equal(resolveOnAccountAllocationMethod("advance"), "advance");
+        });
+        test("Supplier payment schema preserves bill payments and permits allocation-free advances", () => {
+            const validate = new Ajv({ strict: false }).compile(createSupplierPaymentSchema);
+            const base = {
+                transactiondate: "2026-08-18",
+                supplierid: 9,
+                amount: 2500,
+                requestreference: "phase-5-request-001",
+            };
+            assert.equal(validate({
+                ...base,
+                allocations: [{ billid: 15, allocationamount: 2500 }],
+            }), true);
+            assert.equal(validate({ ...base, allocationmethod: "on_account", allocations: [] }), true);
+            assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "against_document" }), false);
+            assert.equal(validate({
+                ...base,
+                allocationmethod: "on_account",
+                allocations: [{ billid: 15, allocationamount: 2500 }],
+            }), false);
+        });
+        test("TDS Receivable and TDS Payable schema amounts allow zero", () => {
+            const receiptAllocation = createRetailReceiptSchema.properties.allocations.items;
+            const paymentAllocation = createSupplierPaymentSchema.properties.allocations.items;
+            assert.equal(receiptAllocation.properties.tdsamount.minimum, 0);
+            assert.equal(paymentAllocation.properties.tdsamount.minimum, 0);
+        });
+        test("Account and entry types are normalized", () => {
+            assert.equal(normalizeAccountType(" BANK "), "bank");
+            assert.equal(normalizeAccountType("cash"), "cash");
+            assert.equal(normalizeEntrySide("Debit"), "debit");
+            assert.equal(normalizeEntrySide(" CREDIT "), "credit");
+        });
+        test("Invalid accounting date is rejected", () => {
+            assert.equal(requireIsoDate("2026-07-30", "date"), "2026-07-30");
+            assert.throws(() => requireIsoDate("2026-02-30", "date"));
+            assert.throws(() => requireIsoDate("30/07/2026", "date"));
+        });
+        test("PostgreSQL DATE values are serialized without a timezone shift", () => {
+            assert.equal(toFinanceDateOnly(new Date(2026, 6, 31)), "2026-07-31");
+            assert.equal(toFinanceDateOnly("2026-07-31"), "2026-07-31");
+        });
+    });
+    describe("Finance source classification", () => {
+        test("New E-commerce and Retail entries use the approved source types", () => {
+            assert.equal(FINANCE_SOURCE_TYPES.ecommerceOrder, "ecommerce_order");
+            assert.equal(FINANCE_SOURCE_TYPES.customerReceipt, "customer_receipt");
+            assert.equal(FINANCE_SOURCE_TYPES.customerOnAccount, "customer_on_account");
+            assert.equal(FINANCE_SOURCE_TYPES.retailReceipt, "retail_receipt");
+            assert.equal(FINANCE_SOURCE_TYPES.serviceRequestReceipt, "service_request_receipt");
+            assert.equal(FINANCE_SOURCE_TYPES.rentalReceipt, "rental_receipt");
+            assert.equal(FINANCE_SOURCE_TYPES.supplierBillPayment, "supplier_bill_payment");
+            assert.equal(FINANCE_SOURCE_TYPES.supplierOnAccount, "supplier_on_account");
+        });
+        test("Customer receipt filters include single-source and mixed receipts", () => {
+            assert.deepEqual(getCustomerReceiptSourceTypes(), [
+                "customer_receipt",
+                "customer_on_account",
+                "customer_advance",
+                "retail_receipt",
+                "retail_instore_receipt",
+                "service_request_receipt",
+                "rental_receipt",
+            ]);
+        });
+        test("Legacy Retail source type remains readable for idempotent retries", () => {
+            assert.deepEqual(getRetailReceiptSourceTypes(), [
+                "retail_receipt",
+                "retail_instore_receipt",
+            ]);
+        });
+        test("A single document uses its order reference as transaction source ID", () => {
+            assert.equal(resolveAgainstDocumentSourceId(["ORDER-1001"], "request-1001"), "ORDER-1001");
+        });
+        test("A multi-document receipt uses the idempotent request reference", () => {
+            assert.equal(resolveAgainstDocumentSourceId(["ORDER-1001", "ORDER-1002"], "request-1001"), "request-1001");
+        });
+    });
+    describe("Direct Expense Bill schema", () => {
+        test("allows an Expense Bill without PO or Supplier", () => {
+            const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema);
+            assert.equal(validate({
+                billtype: "expense",
+                supplierid: null,
+                expenseaccountid: 22,
+                invoicenumber: "EXP-1001",
+                invoicedate: 1787184000,
+                productdata: [{ name: "Internet subscription", quantity: 1, unitPrice: 999 }],
+            }), true);
+        });
+        test("does not require an Expense Account before Direct Bill journal posting is enabled", () => {
+            const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema);
+            assert.equal(validate({
+                billtype: "expense",
+                invoicenumber: "EXP-1002",
+                invoicedate: 1787184000,
+                productdata: [{ name: "Courier charges", quantity: 1, unitPrice: 250 }],
+            }), true);
+        });
+        test("does not allow a PO reference or inventory type", () => {
+            const validate = new Ajv({ strict: false }).compile(directExpenseBillSchema);
+            assert.equal(validate({
+                billtype: "inventory",
+                ponumber: "PO-1",
+                expenseaccountid: 22,
+                invoicenumber: "EXP-1001",
+                invoicedate: 1787184000,
+                productdata: [{ name: "Internet subscription", quantity: 1, unitPrice: 999 }],
+            }), false);
+        });
+    });
+    describe("Supplier bill payment allocation", () => {
+        const openBill = {
+            id: 34,
+            invoicenumber: "SUP-INV-34",
+            invoiceamount: 50000,
+            balanceamount: 50000,
+            paymentdata: [],
+            invoicestatus: "in_progress",
+            iscreditpayment: true,
+            paymentduedate: 2000000000,
+        };
+        test("Multiple Bills can exactly consume the Purchase Order total", () => {
+            const result = assertSupplierBillTotalWithinPurchaseOrder(1000000, 600000, 400000);
+            assert.equal(result.aggregateBillTotal, 1000000);
+            assert.equal(result.remainingAmount, 0);
+        });
+        test("Aggregate Bill amount cannot exceed the Purchase Order total", () => {
+            assert.throws(() => assertSupplierBillTotalWithinPurchaseOrder(1000000, 600000, 400001), /exceeds the remaining purchase order amount 400000/);
+        });
+        test("Bill product quantity must be a whole number greater than zero", () => {
+            assert.throws(() => validateSupplierBillProductInput("Apple MacBook M3", 0), /whole number greater than 0/);
+            assert.deepEqual(validateSupplierBillProductInput("Apple MacBook M3", "2"), { productName: "Apple MacBook M3", quantity: 2 });
+        });
+        test("Bill product name rejects null and false-like values", () => {
+            for (const invalidName of [null, undefined, false, "", "null", "false"]) {
+                assert.throws(() => validateSupplierBillProductInput(invalidName, 1), /Product Name must contain a valid value/);
+            }
+        });
+        test("Bank payment and TDS Payable settle the Supplier bill together", () => {
+            const result = applySupplierBillAllocation(openBill, 45000, 5000);
+            assert.equal(result.allocationAmount, 45000);
+            assert.equal(result.tdsAmount, 5000);
+            assert.equal(result.totalSettledAmount, 50000);
+            assert.equal(result.balanceAmount, 0);
+        });
+        test("Multiple Cash and Bank transactions can settle the same Supplier bill", () => {
+            const firstTransaction = applySupplierBillAllocation(openBill, 10000, 0);
+            const billAfterFirstTransaction = {
+                ...openBill,
+                balanceamount: firstTransaction.balanceAmount,
+                paymentdata: [
+                    {
+                        paymentamount: firstTransaction.allocationAmount,
+                        tdsamount: firstTransaction.tdsAmount,
+                        settlementamount: firstTransaction.totalSettledAmount,
+                        status: "success",
+                    },
+                ],
+            };
+            const secondTransaction = applySupplierBillAllocation(billAfterFirstTransaction, 30000, 10000);
+            assert.equal(firstTransaction.balanceAmount, 40000);
+            assert.equal(secondTransaction.totalSettledAmount, 40000);
+            assert.equal(secondTransaction.settledAmount, 50000);
+            assert.equal(secondTransaction.balanceAmount, 0);
+            assert.equal(resolveSupplierBillStatus(billAfterFirstTransaction, secondTransaction.balanceAmount, 1900000000), "complete");
+        });
+        test("Existing settlement history includes TDS when deriving outstanding", () => {
+            const state = getSupplierBillPaymentState({
+                ...openBill,
+                paymentdata: [
+                    {
+                        paymentamount: 18000,
+                        tdsamount: 2000,
+                        settlementamount: 20000,
+                        status: "success",
+                    },
+                ],
+                balanceamount: 30000,
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 50000,
+                settledAmount: 20000,
+                outstandingAmount: 30000,
+            });
+        });
+        test("Cash and Bank allocations are included when deriving Bill settlement", () => {
+            const state = getSupplierBillPaymentState({
+                ...openBill,
+                paymentdata: [
+                    {
+                        paymentamount: 5000,
+                        settlementamount: 5000,
+                        status: "success",
+                    },
+                ],
+                balanceamount: 45000,
+                finance_settled_amount: 12000,
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 50000,
+                settledAmount: 12000,
+                outstandingAmount: 38000,
+            });
+        });
+        test("A legacy bill without a stored balance uses its payment history", () => {
+            const state = getSupplierBillPaymentState({
+                ...openBill,
+                balanceamount: null,
+                paymentdata: [],
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 50000,
+                settledAmount: 0,
+                outstandingAmount: 50000,
+            });
+        });
+        test("Total bank and TDS settlement cannot exceed bill outstanding", () => {
+            assert.throws(() => applySupplierBillAllocation(openBill, 48000, 2001), /Total settlement.*exceeds its outstanding amount/);
+        });
+        test("Completed and cancelled bills are not eligible", () => {
+            assert.equal(isSupplierBillOpen(openBill), true);
+            assert.equal(isSupplierBillOpen({ ...openBill, invoicestatus: "cancelled" }), false);
+            assert.equal(isSupplierBillOpen({ ...openBill, invoicestatus: "complete" }), false);
+        });
+        test("A Supplier bill is locked after its first Cash and Bank transaction", () => {
+            assert.doesNotThrow(() => assertSupplierBillCanBeModified(false));
+            assert.throws(() => assertSupplierBillCanBeModified(true), /cannot be updated or deleted because a Cash & Bank transaction/);
+        });
+        test("Supplier TDS requires a section when enabled and allows zero amount", () => {
+            assert.doesNotThrow(() => assertSupplierTdsMapping(true, 0, 2));
+            assert.throws(() => assertSupplierTdsMapping(true, 0, null), /valid TDS section is required/);
+            assert.doesNotThrow(() => assertSupplierTdsMapping(false, 0, null));
+        });
+        test("Bill status preserves overdue completion semantics", () => {
+            assert.equal(resolveSupplierBillStatus(openBill, 0, 1900000000), "complete");
+            assert.equal(resolveSupplierBillStatus(openBill, 0, 2100000000), "overdue_complete");
+            assert.equal(resolveSupplierBillStatus(openBill, 1000, 2100000000), "overdue");
+        });
+    });
+    describe("TDS section dropdown", () => {
+        test("Display name follows nature, code, and rate format", () => {
+            assert.equal(formatTdsSectionDisplayName("Commission or Brokerage - others", "1006", "2%"), "Commission or Brokerage - others 1006(2%)");
+        });
+    });
+    describe("E-commerce automatic finance entry", () => {
+        test("Only online product orders are eligible", () => {
+            assert.equal(isEligibleEcommerceOrder([
+                { ordername: "Online", invoicefor: "Product" },
+            ]), true);
+            assert.equal(isEligibleEcommerceOrder([
+                { ordername: "StorePurchase", invoicefor: "Product" },
+            ]), false);
+            assert.equal(isEligibleEcommerceOrder([
+                { ordername: "Rental", invoicefor: "Product Rental" },
+            ]), false);
+            assert.equal(isEligibleEcommerceOrder([
+                { ordername: "Online", invoicefor: "Product" },
+                { ordername: "Rental", invoicefor: "Product Rental" },
+            ]), false);
+        });
+        test("Razorpay provider, method, and payment reference are resolved", () => {
+            const transaction = {
+                razorpay_payment_id: "pay_1001",
+                transactiondata: { method: "upi" },
+            };
+            assert.equal(resolveEcommercePaymentProvider(transaction), "razorpay");
+            assert.equal(resolveEcommercePaymentMethod(transaction, []), "upi");
+            assert.equal(resolveEcommercePaymentReference(transaction), "pay_1001");
+        });
+        test("PhonePe successful payment is resolved without Razorpay fields", () => {
+            const transaction = {
+                transactionid: "TXN-1002",
+                transactiondata: {
+                    code: "PAYMENT_SUCCESS",
+                    data: { paymentInstrument: { type: "PAY_PAGE" } },
+                },
+            };
+            assert.equal(resolveEcommercePaymentProvider(transaction), "phonepe");
+            assert.equal(resolveEcommercePaymentMethod(transaction, []), "pay_page");
+            assert.equal(resolveEcommercePaymentReference(transaction), "TXN-1002");
+        });
+        test("Payment date uses the India accounting date", () => {
+            const utcBoundaryEpoch = Math.floor(new Date("2026-07-30T20:00:00.000Z").getTime() / 1000);
+            assert.equal(resolveEcommercePaymentDate({
+                transactiondata: { created_at: utcBoundaryEpoch },
+            }), "2026-07-31");
+            assert.equal(resolveEcommercePaymentDate({
+                createddate: utcBoundaryEpoch * 1000,
+            }), "2026-07-31");
+        });
+        test("Customer name prefers the registered customer identity", () => {
+            assert.equal(buildEcommerceCustomerName({
+                firstname: "Asha",
+                lastname: "Kumar",
+                useremail: "asha@example.com",
+            }, { name: "Checkout Name" }), "Asha Kumar");
+            assert.equal(buildEcommerceCustomerName({ useremail: "asha@example.com" }, { name: "Checkout Name" }), "asha@example.com");
+        });
+    });
+    describe("Retail in-store receipt allocation", () => {
+        const manualStoreInvoice = {
+            id: 378,
+            invoicenumber: "TEQIT-Invoice-00270",
+            invoicefor: "product",
+            invoicedata: {
+                ordername: "storepurchase",
+                total: "₹23,500",
+            },
+            paidamount: 0,
+            paymentdata: [],
+        };
+        test("Manual-store invoice amount and eligibility are resolved", () => {
+            assert.equal(isRetailStoreProductOrder({
+                ordername: "StorePurchase",
+                invoicefor: "Product",
+            }), true);
+            assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
+            assert.equal(resolveRetailInvoiceAmount(manualStoreInvoice), 23500);
+            assert.deepEqual(getRetailInvoicePaymentState(manualStoreInvoice), {
+                invoiceAmount: 23500,
+                paidAmount: 0,
+                outstandingAmount: 23500,
+            });
+        });
+        test("Online, rental, and service orders retain their existing payment flow", () => {
+            assert.equal(isRetailStoreProductOrder({ ordername: "online", invoicefor: "product" }), false);
+            assert.equal(isRetailStoreProductOrder({
+                ordername: "rental",
+                invoicefor: "product rental",
+            }), false);
+            assert.equal(isRetailStoreProductOrder({
+                ordername: "storepurchase",
+                invoicefor: "service",
+            }), false);
+        });
+        test("Service Request invoice eligibility is isolated from retail eligibility", () => {
+            const serviceInvoice = {
+                id: 501,
+                invoicenumber: "TEQIT-Invoice-00501",
+                invoicefor: "service",
+                ticketnumber: "SR-000501",
+                totalorderamount: 10000,
+            };
+            assert.equal(isServiceRequestInvoice(serviceInvoice), true);
+            assert.equal(isRetailStoreInvoice(serviceInvoice), false);
+            assert.equal(isServiceRequestInvoice({ ...serviceInvoice, ticketnumber: "" }), false);
+            assert.equal(isServiceRequestInvoice(manualStoreInvoice), false);
+            assert.equal(isRetailStoreInvoice(manualStoreInvoice), true);
+        });
+        test("Partial allocation calculates the remaining balance and status", () => {
+            const result = applyRetailInvoiceAllocation(manualStoreInvoice, 10000);
+            assert.equal(result.paidAmount, 10000);
+            assert.equal(result.balanceAmount, 13500);
+            assert.equal(result.paymentStatus, "partially_paid");
+        });
+        test("Full allocation marks the invoice paid", () => {
+            const result = applyRetailInvoiceAllocation(manualStoreInvoice, 23500);
+            assert.equal(result.balanceAmount, 0);
+            assert.equal(result.paymentStatus, "paid");
+        });
+        test("TDS Receivable settles the invoice without increasing the bank allocation", () => {
+            const invoice = {
+                ...manualStoreInvoice,
+                invoicedata: {
+                    ordername: "storepurchase",
+                    total: "₹1,00,000",
+                },
+            };
+            const result = applyRetailInvoiceAllocation(invoice, 50000, 10000);
+            assert.equal(result.allocationAmount, 50000);
+            assert.equal(result.tdsAmount, 10000);
+            assert.equal(result.totalSettledAmount, 60000);
+            assert.equal(result.paidAmount, 60000);
+            assert.equal(result.balanceAmount, 40000);
+            assert.equal(result.paymentStatus, "partially_paid");
+        });
+        test("Manual in-store TDS Receivable does not depend on a statutory section", () => {
+            const result = applyRetailInvoiceAllocation({
+                ...manualStoreInvoice,
+                invoicedata: {
+                    ordername: "storepurchase",
+                    total: "₹1,00,000",
+                },
+            }, 50000, 10000);
+            assert.equal(result.tdsAmount, 10000);
+            assert.equal(result.balanceAmount, 40000);
+        });
+        test("TDS settlement remains part of invoice paid history", () => {
+            const state = getRetailInvoicePaymentState({
+                ...manualStoreInvoice,
+                invoicedata: {
+                    ordername: "storepurchase",
+                    total: "₹1,00,000",
+                },
+                paymentdata: [
+                    {
+                        paymentamount: 50000,
+                        tdsamount: 10000,
+                        settlementamount: 60000,
+                        status: "success",
+                    },
+                ],
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 100000,
+                paidAmount: 60000,
+                outstandingAmount: 40000,
+            });
+        });
+        test("Allocation cannot exceed the outstanding invoice amount", () => {
+            assert.throws(() => applyRetailInvoiceAllocation(manualStoreInvoice, 23501), /exceeds its outstanding amount/);
+        });
+        test("Allocation plus TDS cannot exceed the outstanding invoice amount", () => {
+            assert.throws(() => applyRetailInvoiceAllocation(manualStoreInvoice, 23000, 501), /Total settlement.*exceeds its outstanding amount/);
+        });
+    });
+    describe("Rental invoice receipt allocation", () => {
+        const rentalInvoice = {
+            id: 601,
+            invoicenumber: "TEQIT-Rental-00601",
+            invoicefor: "rental",
+            totalorderamount: 12000,
+            paidamount: 0,
+            paymentdata: [],
+        };
+        test("Rental eligibility is isolated from existing retail and service flows", () => {
+            assert.equal(isRentalInvoice(rentalInvoice), true);
+            assert.equal(isRetailStoreInvoice(rentalInvoice), false);
+            assert.equal(isServiceRequestInvoice(rentalInvoice), false);
+            assert.equal(resolveCustomerReceiptSourceType([rentalInvoice]), "rental_receipt");
+        });
+        test("Rental receipt allocation updates the shared invoice balance correctly", () => {
+            const result = applyRetailInvoiceAllocation(rentalInvoice, 7000, 500);
+            assert.equal(result.paidAmount, 7500);
+            assert.equal(result.balanceAmount, 4500);
+            assert.equal(result.paymentStatus, "partially_paid");
+        });
+        test("Legacy order payments do not pre-settle a rental receivable", () => {
+            const state = getRetailInvoicePaymentState({
+                ...rentalInvoice,
+                paidamount: 12000,
+                balanceamount: 0,
+                paymentstatus: "paid",
+                paymentdata: [
+                    {
+                        paymentamount: 12000,
+                        settlementamount: 12000,
+                        source: "order_payment",
+                        status: "success",
+                    },
+                ],
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 12000,
+                paidAmount: 0,
+                outstandingAmount: 12000,
+            });
+        });
+        test("Rental receipts remain counted when a legacy order payment is present", () => {
+            const state = getRetailInvoicePaymentState({
+                ...rentalInvoice,
+                paidamount: 12000,
+                balanceamount: 0,
+                paymentstatus: "paid",
+                paymentdata: [
+                    {
+                        paymentamount: 12000,
+                        settlementamount: 12000,
+                        source: "order_payment",
+                        status: "success",
+                    },
+                    {
+                        paymentamount: 7000,
+                        settlementamount: 7000,
+                        source: "finance_rental_receipt",
+                        status: "success",
+                    },
+                ],
+            });
+            assert.deepEqual(state, {
+                invoiceAmount: 12000,
+                paidAmount: 7000,
+                outstandingAmount: 5000,
+            });
+        });
+    });
+    describe("Bank account number protection", () => {
+        const key = "finance-test-key-with-at-least-16-characters";
+        test("Full account number is encrypted and only last four digits are displayed", () => {
+            const protectedValue = protectAccountNumber("1234 5678 9012", key);
+            assert.ok(protectedValue.encrypted.startsWith("v1:"));
+            assert.equal(protectedValue.last4, "9012");
+            assert.equal(maskAccountNumber(protectedValue.last4), "****9012");
+            assert.equal(protectedValue.encrypted.includes("123456789012"), false);
+        });
+        test("Hash is deterministic while ciphertext uses a random IV", () => {
+            const first = protectAccountNumber("123456789012", key);
+            const second = protectAccountNumber("123456789012", key);
+            assert.equal(first.hash, second.hash);
+            assert.notEqual(first.encrypted, second.encrypted);
+        });
+        test("Missing encryption key is rejected", () => {
+            assert.throws(() => protectAccountNumber("123456789012", undefined), (error) => error instanceof FinanceValidationError &&
+                error.code === "FINANCE_ENCRYPTION_KEY_MISSING");
+        });
+    });
+    describe("Accounts Receivable and Payable history", () => {
+        test("lists invoices as Debit and receipts as Credit with a running balance", () => {
+            const history = buildControlAccountHistory("receivable", [
+                {
+                    id: 1,
+                    invoicenumber: "INV-1",
+                    invoicedate: "2026-10-01",
+                    totalorderamount: 10000,
+                    partyname: "Customer A",
+                    paymentdata: [
+                        {
+                            paymentamount: 5400,
+                            tdsamount: 600,
+                            settlementamount: 6000,
+                            paymentdate: "2026-10-05",
+                            transactionreference: "RCPT-1",
+                            paymentmethod: "bank_transfer",
+                            banktransactionid: 99,
+                            status: "success",
+                        },
+                    ],
+                },
+                {
+                    id: 2,
+                    invoicenumber: "INV-2",
+                    invoicedate: "2026-10-03",
+                    totalorderamount: 5000,
+                    paymentdata: [],
+                },
+            ], new Map([[99, "HDFC Current"]]));
+            assert.deepEqual(history.map((entry) => [
+                entry.transactionnumber,
+                entry.debitamount,
+                entry.creditamount,
+                entry.runningbalance,
+            ]), [
+                ["INV-1", 10000, 0, 10000],
+                ["INV-2", 5000, 0, 15000],
+                ["RCPT-1", 0, 6000, 9000],
+            ]);
+            const receipt = history[2];
+            assert.equal(receipt.documentnumber, "INV-1");
+            assert.equal(receipt.bankcashaccountname, "HDFC Current");
+            assert.match(String(receipt.remarks), /TDS/);
+            assert.deepEqual(summarizeControlAccountHistory(history), {
+                totaldebit: 15000,
+                totalcredit: 6000,
+            });
+        });
+        test("adds a settlement row when an invoice is paid without payment details", () => {
+            const history = buildControlAccountHistory("receivable", [
+                {
+                    id: 3,
+                    invoicenumber: "INV-3",
+                    invoicedate: "2026-09-01",
+                    totalorderamount: 2000,
+                    paidamount: 2000,
+                    paymentdata: [],
+                },
+            ]);
+            assert.equal(history.length, 2);
+            assert.equal(history[1].sourcetype, "settlement_adjustment");
+            assert.equal(history[1].creditamount, 2000);
+            assert.equal(history[1].runningbalance, 0);
+        });
+        test("orders a payment made before the invoice after that invoice", () => {
+            const history = buildControlAccountHistory("receivable", [
+                {
+                    id: 4,
+                    invoicenumber: "INV-4",
+                    invoicedate: "2026-10-10",
+                    totalorderamount: 1000,
+                    paymentdata: [{ paymentamount: 1000, paymentdate: "2026-10-08", status: "success" }],
+                },
+            ]);
+            assert.deepEqual(history.map((entry) => entry.runningbalance), [1000, 0]);
+            assert.equal(history[1].transactiondate, "2026-10-08");
+        });
+        test("lists bills as Credit and payments as Debit and skips failed payments", () => {
+            const history = buildControlAccountHistory("payable", [
+                {
+                    id: 7,
+                    invoicenumber: "BILL-7",
+                    invoicedate: "2026-10-02",
+                    invoiceamount: 8000,
+                    balanceamount: 5000,
+                    parentreference: "PO-12",
+                    paymentdata: [
+                        { paymentamount: 3000, paymentdate: "2026-10-04", status: "success", transactionreference: "PAY-1" },
+                        { paymentamount: 1000, paymentdate: "2026-10-05", status: "failed" },
+                    ],
+                },
+            ]);
+            assert.deepEqual(history.map((entry) => [entry.debitamount, entry.creditamount, entry.runningbalance]), [
+                [0, 8000, -8000],
+                [3000, 0, -5000],
+            ]);
+            assert.equal(history[0].remarks, "PO: PO-12");
+            assert.deepEqual(summarizeControlAccountHistory(history, "2026-10-03", "2026-10-31"), { totaldebit: 3000, totalcredit: 0 });
+        });
+    });
+});
+//# sourceMappingURL=financeFoundation.test.js.map
