@@ -392,6 +392,10 @@ const Revo365Routes = async function (fastify, opts) {
     fastify.post('/finance/customers/:customerId/delivery-challans/:challanId/document', { preHandler: [getSession, requireFinancePermission('read', 'customer_statement'), requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/delivery-challans', { preHandler: [getSession, requireDeliveryChallanPermission('read')] }, financeAccountController.listDeliveryChallans);
     fastify.post('/finance/delivery-challans', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.createDeliveryChallan);
+    fastify.get('/finance/delivery-challans/customers', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.listDeliveryChallanCustomers);
+    fastify.get('/finance/delivery-challans/customers/:customerId/context', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.getDeliveryChallanCustomerContext);
+    fastify.get('/finance/delivery-challans/customers/:customerId/invoices', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.listDeliveryChallanInvoices);
+    fastify.get('/finance/delivery-challans/customers/:customerId/invoices/:invoiceId/lines', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.getDeliveryChallanInvoiceLines);
     fastify.get('/finance/delivery-challans/:challanId', { preHandler: [getSession, requireDeliveryChallanPermission('read')] }, financeAccountController.getDeliveryChallan);
     fastify.post('/finance/delivery-challans/:challanId/document', { preHandler: [getSession, requireDeliveryChallanPermission('create')] }, financeAccountController.retryDeliveryChallanDocument);
     fastify.get('/finance/bank-accounts', { preHandler: [getSession, requireFinancePermission('read', ['cash_bank_account', 'finance_transactions'])] }, financeAccountController.list);

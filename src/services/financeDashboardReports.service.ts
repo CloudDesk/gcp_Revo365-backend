@@ -6,8 +6,8 @@ import {
 } from "../utils/finance/finance.utils.js";
 import { invoiceIncludesCogs, invoiceIncludesRentalIncome, parseGstMoney, resolveBillGst, resolveInvoiceDocumentType, resolveInvoiceGst } from "../utils/finance/gstSummary.utils.js";
 import { getRetailInvoicePaymentState } from "../utils/finance/retailReceipt.utils.js";
-import { getSupplierBillPaymentState } from "../utils/finance/supplierBill.utils.js";
-import { fillMonthlyFinanceTrend, mergeOperationalIncomeTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
+import { getSupplierBillPaymentState, resolveSupplierBillStatus } from "../utils/finance/supplierBill.utils.js";
+import { fillMonthlyFinanceTrend, normalizeFinanceEpochSeconds } from "../utils/finance/financeDate.utils.js";
 import { buildInventoryStockValuation, resolveInventoryStockUnitCost } from "../utils/finance/inventoryStockValuation.utils.js";
 import { netPostedGstLedgerRows } from "../utils/finance/balanceSheetPresentation.utils.js";
 import { buildOutwardIstPortalDetails, buildOutwardIstPortalRows } from "../utils/finance/outwardIstPortal.utils.js";
@@ -328,22 +328,13 @@ export module financeDashboardReportsService {
     };
     const invoicePeriod = invoiceResult.rows.filter((row: any) => normalizeFinanceEpochSeconds(row.invoicedate || row.createddate) >= fromEpoch);
     const billPeriod = billResult.rows.filter((row: any) => normalizeFinanceEpochSeconds(row.invoicedate || row.createddate) >= fromEpoch);
-    // Operational invoices are the source of the dashboard's Net Sales value.
-    // Use the same source for each chart month so income is not hidden merely
-    // because an older invoice has no matching income journal entry.
-    const operationalIncomeByMonth = invoicePeriod.reduce((months: Map<string, number>, invoice: any) => {
-      const epoch = normalizeFinanceEpochSeconds(invoice.invoicedate || invoice.createddate);
-      const period = new Date(epoch * 1000).toISOString().slice(0, 7);
-      const payment = getRetailInvoicePaymentState(invoice);
-      const netIncome = money(payment.invoiceAmount - resolveInvoiceGst(invoice).total);
-      months.set(period, money((months.get(period) || 0) + netIncome));
-      return months;
-    }, new Map<string, number>());
-    const monthlyTrend = mergeOperationalIncomeTrend(trendResult.rows.map((row: any) => ({
+    // The trend uses one accounting basis for both series: posted journals.
+    // Net Sales remains an operational invoice metric and is shown separately.
+    const monthlyTrend = trendResult.rows.map((row: any) => ({
       period: row.period,
       income: money(row.income),
       expense: money(row.expense),
-    })), operationalIncomeByMonth);
+    }));
     const invoiceGst = invoicePeriod.reduce((sum: any, row: any) => { const gst=resolveInvoiceGst(row); sum.cgst+=gst.cgst; sum.sgst+=gst.sgst; sum.igst+=gst.igst; sum.total+=gst.total; return sum; }, {cgst:0,sgst:0,igst:0,total:0});
     const billGst = billPeriod.reduce((sum: any, row: any) => { const gst=resolveBillGst(row); sum.cgst+=gst.cgst; sum.sgst+=gst.sgst; sum.igst+=gst.igst; sum.total+=gst.total; return sum; }, {cgst:0,sgst:0,igst:0,total:0});
     [invoiceGst, billGst].forEach((gst) => Object.keys(gst).forEach((key) => gst[key]=money(gst[key])));
@@ -443,8 +434,9 @@ export module financeDashboardReportsService {
            ORDER BY a.modifieddate DESC NULLS LAST, a.id DESC LIMIT 1
          ) latest_address ON TRUE
          WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
+           AND r.organizationid = $3
            AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')`,
-        [fromEpoch, toEpoch]
+        [fromEpoch, toEpoch, organizationId]
       );
       const rows = buildOutwardIstPortalRows(result.rows);
       const details = buildOutwardIstPortalDetails(result.rows);
@@ -945,41 +937,31 @@ export module financeDashboardReportsService {
     const direction = String(request.query?.direction || "").trim().toLowerCase();
 
     if (["sales-invoices", "gst-outward"].includes(reportKey)) {
-      const [recordsResult, countResult] = await Promise.all([
-        query(
+      const allResult = await query(
           `SELECT r.*,
                   CONCAT_WS(' ', u.firstname, u.lastname) AS partyname,
                   u.gstnumber AS partygstin
            FROM revoinvoice r
            LEFT JOIN users u ON u.id = r.customerid
            WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
-             AND r.organizationid = $9
+             AND r.organizationid = $6
              AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(r.invoicenumber, '') ILIKE $4
                   OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $4)
-             AND ($5 = '' OR LOWER(COALESCE(r.paymentstatus, 'pending')) = $5)
-             AND ($6 = '' OR LOWER(COALESCE(r.invoicefor, 'invoice')) = $6)
-           ORDER BY ${REVO_INVOICE_DATE_SECONDS} DESC, r.id DESC
-           OFFSET $7 LIMIT $8`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType, offset, count, organizationId]
-        ),
-        query(
-          `SELECT r.id, r.invoicefor, r.invoicedata, r.servicedata, r.summaryinvoicedata,
-                  r.supportingdocumentdata, r.totalorderamount, r.taxamount,
-                  r.paidamount, r.paymentdata
-           FROM revoinvoice r
-           LEFT JOIN users u ON u.id = r.customerid
-           WHERE ${REVO_INVOICE_DATE_SECONDS} BETWEEN $1 AND $2
-             AND r.organizationid = $7
-             AND LOWER(COALESCE(r.paymentstatus, 'pending')) NOT IN ('cancelled','void')
-             AND ($3 = '' OR COALESCE(r.invoicenumber, '') ILIKE $4
-                  OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $4)
-             AND ($5 = '' OR LOWER(COALESCE(r.paymentstatus, 'pending')) = $5)
-             AND ($6 = '' OR LOWER(COALESCE(r.invoicefor, 'invoice')) = $6)`,
-          [fromEpoch, toEpoch, search, searchPattern, status, documentType, organizationId]
-        ),
-      ]);
-      const rows = recordsResult.rows.map((invoice: any) => {
+             AND ($5 = '' OR LOWER(COALESCE(r.invoicefor, 'invoice')) = $5)
+           ORDER BY ${REVO_INVOICE_DATE_SECONDS} DESC, r.id DESC`,
+          [fromEpoch, toEpoch, search, searchPattern, documentType, organizationId]
+        );
+      const matchingInvoices = allResult.rows.filter((invoice: any) => {
+        if (!status) return true;
+        const payment = getRetailInvoicePaymentState(invoice);
+        const effectiveStatus = payment.outstandingAmount <= 0
+          ? "paid"
+          : payment.paidAmount > 0 ? "partially_paid" : "pending";
+        return effectiveStatus === status;
+      });
+      const pageInvoices = matchingInvoices.slice(offset, offset + count);
+      const rows = pageInvoices.map((invoice: any) => {
         const payment = getRetailInvoicePaymentState(invoice);
         const gst = resolveInvoiceGst(invoice);
         const dueDate = normalizeFinanceEpochSeconds(invoice.paymentduedate || invoice.invoicedate || invoice.createddate, toEpoch);
@@ -1001,13 +983,13 @@ export module financeDashboardReportsService {
           balanceAmount: payment.outstandingAmount,
           dueDate,
           daysOutstanding: payment.outstandingAmount > 0 ? Math.max(Math.floor((toEpoch - dueDate) / 86400), 0) : null,
-          status: payment.outstandingAmount <= 0 ? "paid" : (invoice.paymentstatus || "pending"),
+          status: payment.outstandingAmount <= 0 ? "paid" : payment.paidAmount > 0 ? "partially_paid" : "pending",
         };
       });
       // Use the same validated resolvers for both detail rows and report totals.
       // Legacy paidamount values can exceed an individual invoice, so a raw
       // SQL SUM would overstate paid and incorrectly force balance to zero.
-      const summary = countResult.rows.reduce(
+      const summary = matchingInvoices.reduce(
         (sum: any, invoice: any) => {
           const payment = getRetailInvoicePaymentState(invoice);
           const gst = resolveInvoiceGst(invoice);
@@ -1027,12 +1009,11 @@ export module financeDashboardReportsService {
       const reportSummary = reportKey === "gst-outward"
         ? { taxableValue: summary.taxableValue, cgst: summary.cgst, sgst: summary.sgst, igst: summary.igst, tax: summary.tax }
         : summary;
-      return { meta: { reportKey, from, to, currency: "INR", generatedAt: new Date().toISOString(), totalsScope: "all_matching_rows" }, rows, summary: reportSummary, total: countResult.rows.length, page, count };
+      return { meta: { reportKey, from, to, currency: "INR", generatedAt: new Date().toISOString(), totalsScope: "all_matching_rows" }, rows, summary: reportSummary, total: matchingInvoices.length, page, count };
     }
 
     if (["supplier-bills", "gst-inward"].includes(reportKey)) {
-      const [recordsResult, countResult] = await Promise.all([
-        query(
+      const allResult = await query(
           `SELECT b.*, COALESCE(b.supplierid, po.supplierid) AS report_supplierid,
                   s.suppliername AS partyname,
                   COALESCE(b.suppliergstin, po.suppliergstnumber, s.gstnumber) AS partygstin,
@@ -1044,39 +1025,23 @@ export module financeDashboardReportsService {
            ) po ON TRUE
            LEFT JOIN supplier s ON s.id = COALESCE(b.supplierid, po.supplierid)
            WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
-              AND b.organizationid = $10
+              AND b.organizationid = $7
              AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled','void')
              AND ($3 = '' OR COALESCE(b.invoicenumber, '') ILIKE $4
                   OR COALESCE(s.suppliername, '') ILIKE $4)
-             AND ($5 = '' OR LOWER(COALESCE(b.invoicestatus, 'in_progress')) = $5)
-             AND ($6 = '' OR LOWER(COALESCE(b.billtype, 'inventory')) = $6)
-             AND ($7 = '' OR LOWER(COALESCE(b.expensecategory, '')) = $7)
-           ORDER BY ${REVO_BILL_DATE_SECONDS} DESC, b.id DESC
-           OFFSET $8 LIMIT $9`,
-           [fromEpoch, toEpoch, search, searchPattern, status, documentType, category, offset, count, organizationId]
-        ),
-        query(
-          `SELECT b.*,
-                  COALESCE(b.suppliergstin, po.suppliergstnumber, s.gstnumber) AS partygstin,
-                  COALESCE(po.dt_gstnumber, po.io_gstnumber) AS destinationgstin
-           FROM poinvoice b
-           LEFT JOIN LATERAL (
-             SELECT supplierid,suppliergstnumber,dt_gstnumber,io_gstnumber
-             FROM purchaseorder WHERE ponumber = b.ponumber ORDER BY id DESC LIMIT 1
-           ) po ON TRUE
-           LEFT JOIN supplier s ON s.id = COALESCE(b.supplierid, po.supplierid)
-           WHERE ${REVO_BILL_DATE_SECONDS} BETWEEN $1 AND $2
-              AND b.organizationid = $8
-             AND LOWER(COALESCE(b.invoicestatus, 'in_progress')) NOT IN ('cancelled','void')
-             AND ($3 = '' OR COALESCE(b.invoicenumber, '') ILIKE $4 OR COALESCE(s.suppliername, '') ILIKE $4)
-             AND ($5 = '' OR LOWER(COALESCE(b.invoicestatus, 'in_progress')) = $5)
-             AND ($6 = '' OR LOWER(COALESCE(b.billtype, 'inventory')) = $6)
-             AND ($7 = '' OR LOWER(COALESCE(b.expensecategory, '')) = $7)`,
-           [fromEpoch, toEpoch, search, searchPattern, status, documentType, category, organizationId]
-        ),
-      ]);
+             AND ($5 = '' OR LOWER(COALESCE(b.billtype, 'inventory')) = $5)
+             AND ($6 = '' OR LOWER(COALESCE(b.expensecategory, '')) = $6)
+           ORDER BY ${REVO_BILL_DATE_SECONDS} DESC, b.id DESC`,
+           [fromEpoch, toEpoch, search, searchPattern, documentType, category, organizationId]
+        );
+      const matchingBills = allResult.rows.filter((bill: any) => {
+        if (!status) return true;
+        const payment = getSupplierBillPaymentState(bill);
+        return resolveSupplierBillStatus(bill, payment.outstandingAmount, toEpoch) === status;
+      });
+      const pageBills = matchingBills.slice(offset, offset + count);
       const billLines: SupplierBillLineDetail[] = [];
-      const rows = recordsResult.rows.map((bill: any) => {
+      const rows = pageBills.map((bill: any) => {
         const payment = getSupplierBillPaymentState(bill);
         const gst = resolveBillGst(bill);
         const dueDate = normalizeFinanceEpochSeconds(bill.paymentduedate || bill.invoicedate || bill.createddate, toEpoch);
@@ -1096,10 +1061,10 @@ export module financeDashboardReportsService {
           lineSubtotal: lineSummary.lineSubtotal, lineVariance: lineSummary.lineVariance,
           dueDate,
           daysOutstanding: payment.outstandingAmount > 0 ? Math.max(Math.floor((toEpoch - dueDate) / 86400), 0) : null,
-          status: payment.outstandingAmount <= 0 ? "paid" : (bill.invoicestatus || "in_progress"),
+          status: resolveSupplierBillStatus(bill, payment.outstandingAmount, toEpoch),
         };
       });
-      const summary = countResult.rows.reduce(
+      const summary = matchingBills.reduce(
         (sum: any, bill: any) => {
           const payment = getSupplierBillPaymentState(bill);
           const gst = resolveBillGst(bill);
@@ -1127,7 +1092,7 @@ export module financeDashboardReportsService {
         rows,
         details: { billLines },
         summary: reportSummary,
-        total: countResult.rows.length,
+        total: matchingBills.length,
         page,
         count,
       };

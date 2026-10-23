@@ -1,10 +1,12 @@
 import Multer from 'fastify-multer';
 import { fileURLToPath } from 'url';
 import { dirname, join,resolve  } from 'path';
+import { mkdirSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const parentDir = resolve(__dirname, '../../uploads');
+mkdirSync(parentDir, { recursive: true });
 const fileMaxSize = 150 * 1024 * 1024;
 
 

@@ -273,7 +273,8 @@ export module userService {
           const sessionId = uuidv4();
           const sessionData = {
             id: ecomResult.rows[0]?.id,
-            useremail
+            useremail,
+            organizationid: ecomResult.rows[0]?.organizationid,
           };
           let sessionSaved = await saveSession(sessionId, sessionData);
 
@@ -305,7 +306,8 @@ export module userService {
               role: inventoryResult.rows[0].role,
               useremail: inventoryResult.rows[0].useremail,
               userpassword: inventoryResult.rows[0].userpassword,
-              usersphonenumber: inventoryResult.rows[0].usersphonenumber
+              usersphonenumber: inventoryResult.rows[0].usersphonenumber,
+              organizationid: inventoryResult.rows[0].organizationid,
 
             };
             let sessionSaved = await saveSession(sessionId, sessionData);
@@ -407,6 +409,7 @@ export module userService {
       const sessionData = {
         id: ecomResult.rows[0]?.id,
         useremail: ecomResult.rows[0]?.useremail,
+        organizationid: ecomResult.rows[0]?.organizationid,
       };
       const sessionSaved = await saveSession(sessionId, sessionData);
 

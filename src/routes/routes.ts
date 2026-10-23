@@ -569,6 +569,26 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.createDeliveryChallan
     );
     fastify.get(
+        '/finance/delivery-challans/customers',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanCustomers
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/context',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanCustomerContext
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanInvoices
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices/:invoiceId/lines',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanInvoiceLines
+    );
+    fastify.get(
         '/finance/delivery-challans/:challanId',
         { preHandler: [getSession, requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallan

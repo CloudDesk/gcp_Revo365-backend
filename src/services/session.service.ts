@@ -1,11 +1,11 @@
-import { FINANCE_DEFAULT_ORGANIZATION_ID, REDIS_SESSIONEXSEC } from '../config/config.js';
+import { REDIS_SESSIONEXSEC } from '../config/config.js';
 import { redisClient } from '../database/redis.session.js';
+import { query } from '../database/postgres.js';
 
 export const saveSession = async (sessionId, sessionData): Promise<string> => {
   const createdTime = Math.floor(Date.now() / 1000);
-  const configuredOrganizationId = Number(FINANCE_DEFAULT_ORGANIZATION_ID);
   const organizationId = Number(
-    sessionData?.organizationid ?? sessionData?.organizationId ?? configuredOrganizationId
+    sessionData?.organizationid ?? sessionData?.organizationId
   );
 
   const sessionDataWithCreatedTime = {
@@ -38,16 +38,28 @@ export const getSession = async (req: any, reply: any): Promise<any> => {
       const sessionData = await redisClient.get(sessionId);
   
       if (sessionData) {
-        await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, sessionData);
-        // Attach to req so controllers can access the logged-in user's data
+        // Attach to req so controllers can access the logged-in user's data.
+        // Upgrade legacy sessions from the user's persisted tenant assignment;
+        // this is a lookup, never a hard-coded organization fallback.
         req.session = JSON.parse(sessionData);
         if (!req.session?.organizationid && !req.session?.organizationId) {
-          console.warn('[finance-context] Session has no organization ID.', {
-            actor: req.session?.useremail || req.session?.id || 'unknown',
-            role: req.session?.role || 'unknown',
-            path: req.url,
-          });
+          const table = req.session?.role ? 'inventoryusers' : 'users';
+          const persisted = await query(
+            `SELECT organizationid FROM ${table} WHERE id = $1 LIMIT 1`,
+            [req.session?.id]
+          );
+          const organizationId = Number(persisted.rows[0]?.organizationid);
+          if (Number.isSafeInteger(organizationId) && organizationId > 0) {
+            req.session.organizationid = organizationId;
+          } else {
+            console.warn('[finance-context] Session has no organization ID.', {
+              actor: req.session?.useremail || req.session?.id || 'unknown',
+              role: req.session?.role || 'unknown',
+              path: req.url,
+            });
+          }
         }
+        await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, JSON.stringify(req.session));
         return;
       } else {
         return reply.status(401).send({ error: 'Unauthorized: No valid session' });

@@ -27,25 +27,3 @@ export const fillMonthlyFinanceTrend = <T extends { period: string; income: numb
   const byPeriod = new Map(rows.map((row) => [row.period, row]));
   return listFinanceMonths(from, to).map((period) => byPeriod.get(period) || { period, income: 0, expense: 0 });
 };
-
-/**
- * Replace a month's journal income with the operational invoice income used by
- * the dashboard whenever that month has invoice activity. Expenses continue to
- * come from posted journals. Months that exist only in invoice data are added.
- */
-export const mergeOperationalIncomeTrend = (
-  journalRows: Array<{ period: string; income: number; expense: number }>,
-  operationalIncomeByMonth: Map<string, number>
-) => {
-  const rows = journalRows.map((row) => ({
-    ...row,
-    income: operationalIncomeByMonth.has(row.period)
-      ? Number(operationalIncomeByMonth.get(row.period) || 0)
-      : Number(row.income || 0),
-    expense: Number(row.expense || 0),
-  }));
-  operationalIncomeByMonth.forEach((income, period) => {
-    if (!rows.some((row) => row.period === period)) rows.push({ period, income: Number(income || 0), expense: 0 });
-  });
-  return rows;
-};

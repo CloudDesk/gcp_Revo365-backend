@@ -12,6 +12,7 @@ import {
     isRetailStoreProductOrder,
 } from "../utils/finance/retailReceipt.utils.js";
 import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -884,6 +885,7 @@ export module revoinvoiceservice {
 
     export const generaterevoinvoice = async (request: any, invoicedata: any, reply: any) => {
         try {
+            const { organizationId } = resolveFinanceContext(request);
             let invoicefor = invoicedata[0].invoicefor
             let template = ''
             if (invoicefor === 'product' || invoicefor === 'penalty') {
@@ -900,7 +902,8 @@ export module revoinvoiceservice {
             delete result.fileurl;
             let data = {
                 id: result.id,
-                invoiceurl: result.invoiceUrl
+                invoiceurl: result.invoiceUrl,
+                organizationid: organizationId
             }
             let insertFileinvoice: any = await upsertRevoInvoice(data);
             if (insertFileinvoice.command === "UPDATE" || insertFileinvoice.command === "INSERT") {
@@ -923,6 +926,10 @@ export module revoinvoiceservice {
             let querydata: string;
             let params: any[];
             const { id, product, ...upsertFields } = invoicedata;
+            const organizationId = Number(upsertFields.organizationid);
+            if (!Number.isSafeInteger(organizationId) || organizationId <= 0) {
+                throw new Error("A valid organizationid is required to save an Invoice.");
+            }
 
             // Rental billing rows are internal source records. They must never
             // consume an official Sales Invoice number or expose a customer PDF.
@@ -948,7 +955,7 @@ export module revoinvoiceservice {
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid)];
+                params = [...fieldValues, id, organizationId];
             } else {
                 console.log('inside else')
                 querydata = `INSERT INTO revoinvoice (${fieldNames.join(

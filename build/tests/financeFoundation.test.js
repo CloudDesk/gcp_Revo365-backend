@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv");
-import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalance, formatTdsSectionDisplayName, maskAccountNumber, normalizeAccountType, normalizeEntrySide, protectAccountNumber, requireIsoDate, requirePositiveMoney, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
+import { FinanceValidationError, calculateAvailableBalance, calculateLedgerBalance, formatTdsSectionDisplayName, maskAccountNumber, normalizeAccountType, normalizeEntrySide, protectAccountNumber, requireIsoDate, requirePositiveMoney, resolveFinanceContext, toFinanceDateOnly, toMoney, } from "../utils/finance/finance.utils.js";
 import { buildEcommerceCustomerName, isEligibleEcommerceOrder, resolveEcommercePaymentDate, resolveEcommercePaymentMethod, resolveEcommercePaymentProvider, resolveEcommercePaymentReference, } from "../utils/finance/ecommerceFinance.utils.js";
 import { applyRetailInvoiceAllocation, getRetailInvoicePaymentState, getRetailInvoicesOutstandingTotal, isRentalInvoice, isRetailStoreInvoice, isRetailStoreProductOrder, isServiceRequestInvoice, resolveCustomerReceiptSourceType, resolveCustomerReceiptAllocationMethod, resolveRetailInvoiceAmount, } from "../utils/finance/retailReceipt.utils.js";
 import { assertSupplierBillCanBeModified, assertSupplierTdsMapping, applySupplierBillAllocation, assertSupplierBillTotalWithinPurchaseOrder, getSupplierBillPaymentState, isSupplierBillOpen, resolveSupplierBillStatus, validateSupplierBillProductInput, } from "../utils/finance/supplierBill.utils.js";
@@ -17,7 +17,7 @@ import pool from "../database/postgres.js";
 import { financeAccountService } from "../services/financeAccount.service.js";
 import { buildCustomerStatement, toCustomerStatementDate, } from "../utils/finance/customerStatement.utils.js";
 import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
-import { extractDeliverableInvoiceLines, validateManualDeliveryLines, validateDeliveryQuantities, } from "../utils/finance/deliveryChallan.utils.js";
+import { extractDeliverableInvoiceLines, resolveDeliveryChallanDocumentAccess, validateManualDeliveryLines, validateDeliveryQuantities, } from "../utils/finance/deliveryChallan.utils.js";
 import { assertOnAccountMovementBalance, calculateOnAccountAvailableFromMovements, deriveOnAccountStatus, formatOnAccountReferenceNumber, normalizeOnAccountPartyType, normalizeOnAccountStatusFilter, resolveOnAccountAllocationMethod, isOnAccountReferenceReconciled, validateOnAccountSettlementAmounts, buildOnAccountApplicationMatrix, buildOnAccountReadScope, summarizeOnAccountStatement, } from "../utils/finance/onAccount.utils.js";
 import { requireFinancePermission } from "../services/financeAccess.service.js";
 import { allocateOnAccountReferenceNumber, findOnAccountMovementByIdempotency, lockOnAccountReferences, } from "../services/onAccountFoundation.service.js";
@@ -342,6 +342,49 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     totalamount: null,
                 }]);
             assert.throws(() => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]), FinanceValidationError);
+        });
+        test("recalculates Manual/General amounts and rejects GST above 28 percent", () => {
+            const [line] = validateManualDeliveryLines([{
+                    productname: "Demo equipment",
+                    deliveryquantity: 3,
+                    unit: "Nos",
+                    unitrate: 99.99,
+                    gstrate: 18,
+                    taxableamount: 1,
+                    gstamount: 1,
+                    totalamount: 1,
+                }]);
+            assert.equal(line.taxableamount, 299.97);
+            assert.equal(line.gstamount, 53.99);
+            assert.equal(line.totalamount, 353.96);
+            assert.throws(() => validateManualDeliveryLines([{
+                    productname: "Demo equipment",
+                    deliveryquantity: 1,
+                    unitrate: 100,
+                    gstrate: 29,
+                }]), /between 0 and 28 percent/);
+        });
+        test("uses one document-access rule for Manual and Invoice-linked Challans", () => {
+            assert.deepEqual(resolveDeliveryChallanDocumentAccess(false, false), {
+                canViewAmounts: false,
+                canAccessDocument: true,
+            });
+            assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, false), {
+                canViewAmounts: false,
+                canAccessDocument: false,
+            });
+            assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, true), {
+                canViewAmounts: true,
+                canAccessDocument: true,
+            });
+        });
+    });
+    describe("Finance organization context", () => {
+        test("rejects missing organization context instead of falling back to tenant 1", () => {
+            assert.throws(() => resolveFinanceContext({ session: { useremail: "user@example.com" }, url: "/finance/dashboard" }), (error) => error?.code === "FINANCE_ORGANIZATION_CONTEXT_REQUIRED" && error?.statusCode === 401);
+        });
+        test("uses the positive organization stored in the authenticated session", () => {
+            assert.deepEqual(resolveFinanceContext({ session: { useremail: "user@example.com", organizationid: 7 } }), { actor: "user@example.com", organizationId: 7 });
         });
     });
     describe("Customer Statement Phase 3 foundation", () => {

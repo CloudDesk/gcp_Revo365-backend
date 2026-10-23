@@ -142,6 +142,17 @@ export type ManualDeliveryLine = {
   totalamount: number | null;
 };
 
+export const resolveDeliveryChallanDocumentAccess = (
+  showAmounts: unknown,
+  canViewInvoiceAmounts: boolean
+) => {
+  const canViewAmounts = showAmounts === true && canViewInvoiceAmounts;
+  return {
+    canViewAmounts,
+    canAccessDocument: showAmounts !== true || canViewAmounts,
+  };
+};
+
 export const validateManualDeliveryLines = (requestedLines: any): ManualDeliveryLine[] => {
   if (!Array.isArray(requestedLines) || requestedLines.length === 0) {
     throw new FinanceValidationError("At least one Delivery Challan line is required.");
@@ -155,10 +166,7 @@ export const validateManualDeliveryLines = (requestedLines: any): ManualDelivery
     const assetreference = String(line?.assetreference || "").trim() || null;
     const hsnsaccode = String(line?.hsnsaccode || "").trim() || null;
     const unitrate = moneyValue(line?.unitrate);
-    const taxableamount = moneyValue(line?.taxableamount) ?? (unitrate == null ? null : Math.round(unitrate * deliveryquantity * 100) / 100);
     const gstrate = moneyValue(line?.gstrate) ?? 0;
-    const gstamount = moneyValue(line?.gstamount) ?? (taxableamount == null ? null : Math.round(taxableamount * gstrate) / 100);
-    const totalamount = moneyValue(line?.totalamount) ?? (taxableamount == null ? null : Math.round((taxableamount + (gstamount || 0)) * 100) / 100);
     if (!productname || productname.length > 500) {
       throw new FinanceValidationError(`Item description for line ${index + 1} is required and cannot exceed 500 characters.`);
     }
@@ -174,9 +182,23 @@ export const validateManualDeliveryLines = (requestedLines: any): ManualDelivery
     if (hsnsaccode && hsnsaccode.length > 64) {
       throw new FinanceValidationError(`HSN/SAC code for ${productname} cannot exceed 64 characters.`);
     }
-    if ([unitrate, taxableamount, gstrate, gstamount, totalamount].some((value) => value != null && value < 0)) {
+    if (unitrate != null && unitrate < 0) {
       throw new FinanceValidationError(`Amounts for ${productname} cannot be negative.`);
     }
+    if (gstrate < 0 || gstrate > 28) {
+      throw new FinanceValidationError(`GST rate for ${productname} must be between 0 and 28 percent.`);
+    }
+    // Computed amounts are authoritative server values. Browser-supplied
+    // taxable/GST/total fields are intentionally ignored.
+    const taxableamount = unitrate == null
+      ? null
+      : Math.round(unitrate * deliveryquantity * 100) / 100;
+    const gstamount = taxableamount == null
+      ? null
+      : Math.round(taxableamount * gstrate) / 100;
+    const totalamount = taxableamount == null
+      ? null
+      : Math.round((taxableamount + (gstamount || 0)) * 100) / 100;
     return { linesource: productid ? "product" : "custom", productid, productname, deliveryquantity, unit, assetreference, hsnsaccode, unitrate, taxableamount, gstrate, gstamount, totalamount };
   });
 };

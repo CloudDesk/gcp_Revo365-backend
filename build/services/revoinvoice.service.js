@@ -7,6 +7,7 @@ import emailTemplates from "../utils/emailtemplates/emailtemplate.js";
 import { accessScopeService } from "./accessScope.service.js";
 import { getRetailInvoicePaymentState, isRentalInvoice, isRetailStoreProductOrder, } from "../utils/finance/retailReceipt.utils.js";
 import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 const fireInvoiceReadyEmail = async (ticketnumber, invoiceurl) => {
     try {
@@ -706,6 +707,7 @@ export var revoinvoiceservice;
     };
     revoinvoiceservice.generaterevoinvoice = async (request, invoicedata, reply) => {
         try {
+            const { organizationId } = resolveFinanceContext(request);
             let invoicefor = invoicedata[0].invoicefor;
             let template = '';
             if (invoicefor === 'product' || invoicefor === 'penalty') {
@@ -722,7 +724,8 @@ export var revoinvoiceservice;
             delete result.fileurl;
             let data = {
                 id: result.id,
-                invoiceurl: result.invoiceUrl
+                invoiceurl: result.invoiceUrl,
+                organizationid: organizationId
             };
             let insertFileinvoice = await revoinvoiceservice.upsertRevoInvoice(data);
             if (insertFileinvoice.command === "UPDATE" || insertFileinvoice.command === "INSERT") {
@@ -745,6 +748,10 @@ export var revoinvoiceservice;
             let querydata;
             let params;
             const { id, product, ...upsertFields } = invoicedata;
+            const organizationId = Number(upsertFields.organizationid);
+            if (!Number.isSafeInteger(organizationId) || organizationId <= 0) {
+                throw new Error("A valid organizationid is required to save an Invoice.");
+            }
             // Rental billing rows are internal source records. They must never
             // consume an official Sales Invoice number or expose a customer PDF.
             if (!id && String(upsertFields.invoicefor || "").toLowerCase() === "rental") {
@@ -768,7 +775,7 @@ export var revoinvoiceservice;
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid)];
+                params = [...fieldValues, id, organizationId];
             }
             else {
                 console.log('inside else');

@@ -1,7 +1,7 @@
 import pool, { query } from "../database/postgres.js";
 import { PUBLIC_API_BASE_URL } from "../config/config.js";
 import { randomUUID } from "crypto";
-import { unlink, writeFile } from "fs/promises";
+import { mkdir, unlink, writeFile } from "fs/promises";
 import { dirname, extname, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -21,6 +21,7 @@ import {
 import { accessScopeService } from "./accessScope.service.js";
 
 const uploadDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../uploads");
+await mkdir(uploadDirectory, { recursive: true });
 const JOURNAL_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const JOURNAL_ATTACHMENT_EXTENSIONS = new Set([
   ".pdf", ".xls", ".xlsx", ".doc", ".docx", ".csv", ".jpg", ".jpeg", ".png",

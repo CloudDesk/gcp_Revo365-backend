@@ -8,6 +8,7 @@ import {
 import {
   DeliverableInvoiceLine,
   extractDeliverableInvoiceLines,
+  resolveDeliveryChallanDocumentAccess,
   validateManualDeliveryLines,
   validateDeliveryQuantities,
 } from "../utils/finance/deliveryChallan.utils.js";
@@ -27,8 +28,12 @@ const normalizePage = (value: unknown, fallback: number, maximum: number) => {
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 };
 
-const requireCustomer = async (customerId: number) => {
-  const result = await query(`SELECT id, firstname, lastname, usermobilenumber FROM users WHERE id = $1 LIMIT 1`, [customerId]);
+const requireCustomer = async (customerId: number, organizationId: number) => {
+  const result = await query(
+    `SELECT id, firstname, lastname, usermobilenumber, useremail
+     FROM users WHERE id = $1 AND organizationid = $2 LIMIT 1`,
+    [customerId, organizationId]
+  );
   if (!result.rows[0]) {
     throw new FinanceValidationError("Customer not found.", 404, "FINANCE_CUSTOMER_NOT_FOUND");
   }
@@ -90,9 +95,9 @@ const startDeliveryChallanDocumentGeneration = (
 
 export module deliveryChallanService {
   export const createCustomerAddress = async (request: any) => {
-    resolveFinanceContext(request);
+    const { organizationId } = resolveFinanceContext(request);
     const customerId = requirePositiveInteger(request.params?.customerId, "customerId");
-    const customer = await requireCustomer(customerId);
+    const customer = await requireCustomer(customerId, organizationId);
     const address = limitedText(request.body?.address, "address", 1000);
     const city = limitedText(request.body?.city, "city", 255);
     const state = limitedText(request.body?.state, "state", 255);
@@ -125,6 +130,66 @@ export module deliveryChallanService {
     return result.rows[0];
   };
 
+  export const listCustomers = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const page = normalizePage(request.query?.page, 1, 1_000_000);
+    const count = normalizePage(request.query?.count, 20, 50);
+    const search = String(request.query?.search || "").trim();
+    const pattern = `%${search}%`;
+    const offset = (page - 1) * count;
+    const [records, total] = await Promise.all([
+      query(
+        `SELECT u.id,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.firstname, u.lastname)), ''), u.useremail, 'Customer ' || u.id) AS customername,
+                u.useremail AS email, u.usermobilenumber AS mobilenumber
+         FROM users u
+         WHERE u.organizationid = $1
+           AND ($2 = '' OR u.firstname ILIKE $3 OR u.lastname ILIKE $3
+                OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $3
+                OR u.useremail ILIKE $3 OR u.usermobilenumber::text ILIKE $3)
+         ORDER BY COALESCE(u.isbusinessuser, FALSE) DESC,
+                  u.modifieddate DESC NULLS LAST, u.id DESC
+         OFFSET $4 LIMIT $5`,
+        [organizationId, search, pattern, offset, count]
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total FROM users u
+         WHERE u.organizationid = $1
+           AND ($2 = '' OR u.firstname ILIKE $3 OR u.lastname ILIKE $3
+                OR CONCAT_WS(' ', u.firstname, u.lastname) ILIKE $3
+                OR u.useremail ILIKE $3 OR u.usermobilenumber::text ILIKE $3)`,
+        [organizationId, search, pattern]
+      ),
+    ]);
+    return {
+      records: records.rows.map((row: any) => ({ ...row, id: Number(row.id) })),
+      total: Number(total.rows[0]?.total || 0),
+      page,
+      count,
+    };
+  };
+
+  export const getCustomerContext = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const customerId = requirePositiveInteger(request.params?.customerId, "customerId");
+    const customer = await requireCustomer(customerId, organizationId);
+    const addresses = await query(
+      `SELECT id, userid, name, mobilenumber, pincode, doornumber, address,
+              landmark, city, state, email
+       FROM address WHERE userid = $1
+       ORDER BY modifieddate DESC NULLS LAST, id DESC`,
+      [customerId]
+    );
+    return {
+      id: Number(customer.id),
+      name: [customer.firstname, customer.lastname].filter(Boolean).join(" ").trim()
+        || customer.useremail || `Customer ${customerId}`,
+      email: customer.useremail || null,
+      mobilenumber: customer.usermobilenumber || null,
+      addresses: addresses.rows.map((row: any) => ({ ...row, id: Number(row.id) })),
+    };
+  };
+
   export const list = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
     const canViewInvoiceAmounts = await hasInvoiceFinancialVisibility(request);
@@ -134,7 +199,7 @@ export module deliveryChallanService {
     );
     const page = normalizePage(request.query?.page, 1, 1_000_000);
     const count = normalizePage(request.query?.count, 10, 100);
-    if (customerId) await requireCustomer(customerId);
+    if (customerId) await requireCustomer(customerId, organizationId);
     const offset = (page - 1) * count;
     const customerClause = customerId ? "AND dc.customerid = $2" : "";
     const recordParams = customerId
@@ -167,16 +232,23 @@ export module deliveryChallanService {
     ]);
 
     return {
-      records: records.rows.map((row: any) => ({
-        ...row,
-        documenturl: row.showamounts === true && !canViewInvoiceAmounts ? null : row.documenturl,
-        id: Number(row.id),
-        customerid: row.customerid == null ? null : Number(row.customerid),
-        invoiceid: row.invoiceid == null ? null : Number(row.invoiceid),
-        challandate: toCustomerStatementDate(row.challandate),
-        deliveredlinecount: Number(row.deliveredlinecount),
-        totaldeliveredquantity: Number(row.totaldeliveredquantity),
-      })),
+      records: records.rows.map((row: any) => {
+        const { canAccessDocument: documentaccess } = resolveDeliveryChallanDocumentAccess(
+          row.showamounts,
+          canViewInvoiceAmounts
+        );
+        return {
+          ...row,
+          documentaccess,
+          documenturl: documentaccess ? row.documenturl : null,
+          id: Number(row.id),
+          customerid: row.customerid == null ? null : Number(row.customerid),
+          invoiceid: row.invoiceid == null ? null : Number(row.invoiceid),
+          challandate: toCustomerStatementDate(row.challandate),
+          deliveredlinecount: Number(row.deliveredlinecount),
+          totaldeliveredquantity: Number(row.totaldeliveredquantity),
+        };
+      }),
       total: Number(total.rows[0]?.total || 0),
       page,
       count,
@@ -186,14 +258,14 @@ export module deliveryChallanService {
   export const listEligibleInvoices = async (request: any) => {
     const { organizationId } = resolveFinanceContext(request);
     const customerId = requirePositiveInteger(request.params?.customerId, "customerId");
-    await requireCustomer(customerId);
+    await requireCustomer(customerId, organizationId);
     const invoices = await query(
       `SELECT id, invoicenumber, invoicedate, createddate, invoicefor, invoicedata
        FROM revoinvoice
-       WHERE customerid = $1
+       WHERE customerid = $1 AND organizationid = $2
          AND LOWER(COALESCE(invoicefor, '')) <> 'penalty'
        ORDER BY COALESCE(invoicedate, createddate) DESC, id DESC`,
-      [customerId]
+      [customerId, organizationId]
     );
     const delivered = await query(
       `SELECT dc.invoiceid, dcl.invoicelinekey,
@@ -234,14 +306,14 @@ export module deliveryChallanService {
     const { organizationId } = resolveFinanceContext(request);
     const customerId = requirePositiveInteger(request.params?.customerId, "customerId");
     const invoiceId = requirePositiveInteger(request.params?.invoiceId, "invoiceId");
-    await requireCustomer(customerId);
+    await requireCustomer(customerId, organizationId);
     const invoice = await query(
       `SELECT id, invoicenumber, invoicedate, createddate, invoicefor, invoicedata
        FROM revoinvoice
-       WHERE id = $1 AND customerid = $2
+       WHERE id = $1 AND customerid = $2 AND organizationid = $3
          AND LOWER(COALESCE(invoicefor, '')) <> 'penalty'
        LIMIT 1`,
-      [invoiceId, customerId]
+      [invoiceId, customerId, organizationId]
     );
     if (!invoice.rows[0]) {
       throw new FinanceValidationError("Invoice not found for this customer.", 404, "DELIVERY_INVOICE_NOT_FOUND");
@@ -299,7 +371,7 @@ export module deliveryChallanService {
     let recipientaddress = limitedText(request.body?.recipientaddress, "recipientaddress", 2000);
     let billingaddress = limitedText(request.body?.billingaddress, "billingaddress", 2000);
     const showamounts = request.body?.showamounts === true;
-    if (mode === "invoice" && showamounts && !(await hasInvoiceFinancialVisibility(request))) {
+    if (showamounts && !(await hasInvoiceFinancialVisibility(request))) {
       throw new FinanceValidationError(
         "You do not have permission to include Invoice amounts on a Delivery Challan.",
         403,
@@ -313,8 +385,9 @@ export module deliveryChallanService {
       await client.query("BEGIN");
       if (customerId) {
         const customer = await client.query(
-          `SELECT id, firstname, lastname, usermobilenumber, useremail FROM users WHERE id = $1 LIMIT 1`,
-          [customerId]
+          `SELECT id, firstname, lastname, usermobilenumber, useremail
+           FROM users WHERE id = $1 AND organizationid = $2 LIMIT 1`,
+          [customerId, organizationId]
         );
         if (!customer.rows[0]) {
           throw new FinanceValidationError("Customer not found.", 404, "FINANCE_CUSTOMER_NOT_FOUND");
@@ -357,10 +430,10 @@ export module deliveryChallanService {
       if (mode === "invoice") {
         const invoiceResult = await client.query(
         `SELECT id, invoicenumber, invoicedata FROM revoinvoice
-         WHERE id = $1 AND customerid = $2
+         WHERE id = $1 AND customerid = $2 AND organizationid = $3
            AND LOWER(COALESCE(invoicefor, '')) <> 'penalty'
          FOR UPDATE`,
-        [invoiceId, customerId]
+        [invoiceId, customerId, organizationId]
         );
         invoice = invoiceResult.rows[0];
         if (!invoice) {
@@ -479,9 +552,10 @@ export module deliveryChallanService {
       throw new FinanceValidationError("Delivery Challan not found.", 404, "DELIVERY_CHALLAN_NOT_FOUND");
     }
     const row = result.rows[0];
-    const canViewAmounts = row.showamounts === true
-      && (row.challanmode === "manual" || await hasInvoiceFinancialVisibility(request));
-    const canAccessDocument = row.showamounts !== true || canViewAmounts;
+    const { canViewAmounts, canAccessDocument } = resolveDeliveryChallanDocumentAccess(
+      row.showamounts,
+      await hasInvoiceFinancialVisibility(request)
+    );
     return {
       ...row,
       id: Number(row.id),
@@ -520,14 +594,15 @@ export module deliveryChallanService {
            documentstarteddate = NULL, modifiedby = $${customerId ? 4 : 3},
            modifieddate = $${customerId ? 5 : 4}
        WHERE id = $1 AND organizationid = $2 ${customerClause}
-         AND documentstatus IN ('failed', 'not_generated')
+         AND (documentstatus IN ('failed', 'not_generated')
+              OR (documentstatus = 'ready' AND documenturl IS NULL))
        RETURNING id, challannumber, documentstatus`,
       [...params, request.session?.email || request.session?.username || "system", nowEpoch()]
     );
 
     if (!result.rows[0]) {
       const existing = await query(
-        `SELECT id, challannumber, documentstatus, documenturl
+        `SELECT id, challannumber, documentstatus
          FROM delivery_challans WHERE id = $1 AND organizationid = $2 ${customerClause} LIMIT 1`,
         params
       );

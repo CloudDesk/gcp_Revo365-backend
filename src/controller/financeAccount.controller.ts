@@ -196,6 +196,22 @@ export module financeAccountController {
     }
   };
 
+  export const listDeliveryChallanCustomers = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.listCustomers(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
+  export const getDeliveryChallanCustomerContext = async (request: any, reply: any) => {
+    try {
+      return reply.send({ success: true, data: await deliveryChallanService.getCustomerContext(request) });
+    } catch (error) {
+      return sendFinanceError(reply, error);
+    }
+  };
+
   export const listDeliveryChallanInvoices = async (request: any, reply: any) => {
     try {
       return reply.send({ success: true, data: await deliveryChallanService.listEligibleInvoices(request) });
