@@ -1224,6 +1224,14 @@ export module financeAccountService {
     const page = Math.max(Number(request.query?.page) || 1, 1);
     const count = Math.min(Math.max(Number(request.query?.count) || 10, 1), 200);
     const offset = (page - 1) * count;
+    const { fromDate, toDate } = resolveChartAccountDateRange(
+      request.query || {}
+    );
+    const isWithinSelectedPeriod = (value: unknown) => {
+      if (!fromDate || !toDate) return true;
+      const date = toFinanceDateOnly(value);
+      return Boolean(date && date >= fromDate && date <= toDate);
+    };
     const controlKind = getControlAccountKind(account.accountsubtype);
     const gstContext = getGstAccountContext(account.accountsubtype);
     const isGstInput = gstContext?.direction === "input";
@@ -1241,8 +1249,10 @@ export module financeAccountService {
         AND je.organizationid = $2
         AND je.status = 'posted'
         AND je.isdeleted = FALSE
+        AND ($3::DATE IS NULL OR je.entrydate >= $3::DATE)
+        AND ($4::DATE IS NULL OR je.entrydate <= $4::DATE)
       `,
-      [accountId, organizationId]
+      [accountId, organizationId, fromDate, toDate]
     );
 
     const entriesResult = await query(
@@ -1380,10 +1390,12 @@ export module financeAccountService {
         AND je.organizationid = $2
         AND je.status = 'posted'
         AND je.isdeleted = FALSE
+        AND ($3::DATE IS NULL OR je.entrydate >= $3::DATE)
+        AND ($4::DATE IS NULL OR je.entrydate <= $4::DATE)
       ORDER BY je.entrydate DESC, je.posteddate DESC NULLS LAST, jl.id DESC
-      OFFSET $3 LIMIT $4
+      OFFSET $5 LIMIT $6
       `,
-      [accountId, organizationId, offset, count]
+      [accountId, organizationId, fromDate, toDate, offset, count]
     );
 
     const summary = summaryResult.rows[0] || {};
@@ -1410,6 +1422,11 @@ export module financeAccountService {
         );
       let runningBalance = 0;
       const calculatedEntries = documentsResult.rows
+        .filter((document: any) =>
+          isWithinSelectedPeriod(
+            document.invoicedate || document.createddate
+          )
+        )
         .map((document: any) => {
           const gst = isGstOutput
             ? resolveInvoiceGst(document)
@@ -1470,11 +1487,14 @@ export module financeAccountService {
     if (controlKind) {
       // AR/AP: invoices/bills with their receipts/payments, newest first.
       const history = await loadControlAccountHistory(organizationId, controlKind);
-      const totals = summarizeControlAccountHistory(history);
-      ledgerTotal = history.length;
+      const selectedHistory = history.filter((entry: any) =>
+        isWithinSelectedPeriod(entry.transactiondate)
+      );
+      const totals = summarizeControlAccountHistory(selectedHistory);
+      ledgerTotal = selectedHistory.length;
       totalDebit = totals.totaldebit;
       totalCredit = totals.totalcredit;
-      ledgerRecords = history.reverse().slice(offset, offset + count);
+      ledgerRecords = selectedHistory.reverse().slice(offset, offset + count);
     }
 
     return {
@@ -1496,6 +1516,10 @@ export module financeAccountService {
         ),
       },
       historytype: controlKind,
+      period: {
+        fromdate: fromDate,
+        todate: toDate,
+      },
     };
   };
 

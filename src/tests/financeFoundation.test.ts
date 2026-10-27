@@ -757,6 +757,68 @@ describe("Chart of Accounts list period filtering", () => {
   });
 });
 
+describe("Chart of Accounts detail period filtering", () => {
+  test("applies the inclusive period to ledger rows and summary totals", async (t) => {
+    const calls: Array<{ sql: string; params: any[] }> = [];
+    t.mock.method(pool, "query", async (sql: string, params: any[] = []) => {
+      calls.push({ sql, params });
+      if (/SELECT id, accounttype, accountsubtype\s+FROM finance_accounts/s.test(sql)) {
+        return {
+          rows: [{ id: 41, accounttype: "expense", accountsubtype: "expense" }],
+        } as any;
+      }
+      if (/COUNT\(\*\)::INTEGER AS total[\s\S]*FROM journal_lines/s.test(sql)) {
+        return { rows: [{ total: 0, totaldebit: 0, totalcredit: 0 }] } as any;
+      }
+      if (/SELECT\s+jl\.id,[\s\S]*FROM journal_lines/s.test(sql)) {
+        return { rows: [] } as any;
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+
+    const result = await financeAccountService.listChartAccountEntries({
+      session: { organizationid: 7 },
+      params: { accountId: 41 },
+      query: {
+        page: 1,
+        count: 10,
+        fromdate: "2026-04-01",
+        todate: "2027-03-31",
+      },
+    });
+
+    const summaryCall = calls.find(({ sql }) =>
+      /COUNT\(\*\)::INTEGER AS total[\s\S]*FROM journal_lines/s.test(sql)
+    );
+    const entriesCall = calls.find(({ sql }) =>
+      /SELECT\s+jl\.id,[\s\S]*FROM journal_lines/s.test(sql)
+    );
+    assert.ok(summaryCall);
+    assert.ok(entriesCall);
+    assert.match(summaryCall.sql, /je\.entrydate >= \$3::DATE/);
+    assert.match(summaryCall.sql, /je\.entrydate <= \$4::DATE/);
+    assert.deepEqual(summaryCall.params, [
+      41,
+      7,
+      "2026-04-01",
+      "2027-03-31",
+    ]);
+    assert.match(entriesCall.sql, /OFFSET \$5 LIMIT \$6/);
+    assert.deepEqual(entriesCall.params, [
+      41,
+      7,
+      "2026-04-01",
+      "2027-03-31",
+      0,
+      10,
+    ]);
+    assert.deepEqual(result.period, {
+      fromdate: "2026-04-01",
+      todate: "2027-03-31",
+    });
+  });
+});
+
 describe("Chart of Accounts editing", () => {
   const account = {
     id: 41,
