@@ -388,7 +388,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
         });
     });
     describe("Customer Statement Phase 3 foundation", () => {
-        test("orders Invoice and Customer Payment rows and calculates running receivable", () => {
+        test("returns the latest Customer Statement rows first with chronological balances", () => {
             const statement = buildCustomerStatement([
                 {
                     id: "payment-1",
@@ -417,9 +417,9 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     unappliedamount: 0,
                 },
             ]);
-            assert.equal(statement.records[0].reference, "INV-1");
-            assert.equal(statement.records[0].balance, 1000);
-            assert.equal(statement.records[1].balance, 600);
+            assert.equal(statement.records[0].reference, "BT-1");
+            assert.equal(statement.records[0].balance, 600);
+            assert.equal(statement.records[1].balance, 1000);
             assert.equal(statement.summary.closingreceivable, 600);
         });
         test("reduces receivable by bank payment plus TDS while keeping both amounts separate", () => {
@@ -451,12 +451,46 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     unappliedamount: 0,
                 },
             ]);
-            assert.equal(statement.records[1].paymentamount, 1080);
-            assert.equal(statement.records[1].tdsamount, 100);
-            assert.equal(statement.records[1].balance, 0);
+            assert.equal(statement.records[0].paymentamount, 1080);
+            assert.equal(statement.records[0].tdsamount, 100);
+            assert.equal(statement.records[0].balance, 0);
             assert.equal(statement.summary.paymentamount, 1080);
             assert.equal(statement.summary.tdsreceivable, 100);
             assert.equal(statement.summary.closingreceivable, 0);
+        });
+        test("shows a Customer manual Journal credit as a payment with the correct balance", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-1",
+                    sourceid: 1,
+                    transactiontype: "invoice",
+                    transactiondate: "2026-09-22",
+                    reference: "INV-1",
+                    description: "Invoice",
+                    invoiceamount: 1100143,
+                    paymentamount: 0,
+                    settledamount: 0,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "journal-152-346",
+                    sourceid: 152,
+                    transactiontype: "customer_payment",
+                    transactiondate: "2026-10-23",
+                    reference: "JE-00000152",
+                    description: "Manual Journal adjustment",
+                    invoiceamount: 0,
+                    paymentamount: 1000,
+                    settledamount: 1000,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                    source: "manual_journal",
+                },
+            ]);
+            assert.equal(statement.records[0].reference, "JE-00000152");
+            assert.equal(statement.records[0].paymentamount, 1000);
+            assert.equal(statement.records[0].balance, 1099143);
         });
         test("uses pre-period rows for the opening receivable", () => {
             const statement = buildCustomerStatement([
@@ -517,7 +551,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     unappliedamount: 0, allocationmethod: "on_account_application",
                 },
             ]);
-            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [500, 700, 700, 1000]);
             assert.equal(statement.summary.closingreceivable, 500);
         });
         test("applies the equivalent On Account and Advance timing to Supplier payable", () => {
@@ -546,7 +580,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                     allocationmethod: "on_account_application",
                 },
             ]);
-            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [500, 700, 700, 1000]);
             assert.equal(statement.summary.closingpayable, 500);
         });
         test("serializes epoch Invoice dates in the India business date", () => {

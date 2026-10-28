@@ -33,6 +33,12 @@ export type DeliveryChallanDocumentData = {
 const escapeHtml = (value: unknown) => String(value ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+const formatAddress = (value: unknown, fallback: string) => String(value || fallback)
+  .split(/\r?\n|,\s*/)
+  .map((part) => part.trim())
+  .filter(Boolean)
+  .map(escapeHtml)
+  .join(",<br>");
 const formatDate = (value: string | Date) => {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? escapeHtml(value) : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }).format(date);
@@ -67,8 +73,8 @@ export const getDeliveryChallanDocumentHtml = (document: DeliveryChallanDocument
     .label,.section-title { color:#66748c; font-size:9px; font-weight:700; letter-spacing:.45px; text-transform:uppercase; }
     .value { margin-top:5px; font-size:12px; font-weight:700; } .section { margin-top:16px; } .section-title { margin-bottom:8px; }
     .address-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .recipient { min-height:92px; padding:13px; border:1px solid #dce3ed; border-radius:6px; line-height:1.55; }
-    .recipient-address { margin-top:8px; color:#46536a; } table { width:100%; border-collapse:collapse; border:1px solid #dce3ed; }
+    .recipient { min-width:0; min-height:92px; padding:13px; border:1px solid #dce3ed; border-radius:6px; line-height:1.55; overflow-wrap:anywhere; word-break:break-word; }
+    .recipient-address { margin-top:8px; color:#46536a; white-space:normal; overflow-wrap:anywhere; word-break:break-word; } table { width:100%; border-collapse:collapse; border:1px solid #dce3ed; }
     th { padding:8px 6px; background:#f3f6fa; color:#536079; font-size:8px; text-align:left; text-transform:uppercase; }
     td { padding:9px 6px; border-top:1px solid #e7ebf1; vertical-align:top; } small { display:block; margin-top:3px; color:#738096; font-size:8px; font-weight:400; }
     .center{text-align:center}.number{text-align:right}.strong{font-weight:700}.totals{display:flex;justify-content:flex-end;flex-wrap:wrap;border:1px solid #dce3ed;border-top:0}
@@ -78,7 +84,7 @@ export const getDeliveryChallanDocumentHtml = (document: DeliveryChallanDocument
   </style></head><body>
     <div class="header"><div>${document.logoDataUrl ? `<img class="logo" src="${escapeHtml(document.logoDataUrl)}" alt="TeqIT">` : ""}</div><div><h1>DELIVERY CHALLAN</h1><div class="number-label">${escapeHtml(document.challannumber)}</div></div></div>
     <div class="meta"><div><div class="label">Challan Date</div><div class="value">${formatDate(document.challandate)}</div></div><div><div class="label">Mode</div><div class="value">${document.challanmode === "invoice" ? "From Invoice" : "Manual / General"}</div></div><div><div class="label">Invoice / Reference</div><div class="value">${escapeHtml(reference)}</div></div></div>
-    <div class="section address-grid"><div><div class="section-title">Billing Address</div><div class="recipient">${escapeHtml(document.billingaddress || "No billing address recorded.")}</div></div><div><div class="section-title">Deliver To</div><div class="recipient"><div class="value">${escapeHtml(document.recipientname || "—")}</div>${document.recipientphone ? `<div>${escapeHtml(document.recipientphone)}</div>` : ""}${document.recipientemail ? `<div>${escapeHtml(document.recipientemail)}</div>` : ""}<div class="recipient-address">${escapeHtml(document.recipientaddress || "No delivery address recorded.")}</div></div></div></div>
+    <div class="section address-grid"><div><div class="section-title">Billing Address</div><div class="recipient">${formatAddress(document.billingaddress, "No billing address recorded.")}</div></div><div><div class="section-title">Deliver To</div><div class="recipient"><div class="value">${escapeHtml(document.recipientname || "—")}</div>${document.recipientphone ? `<div>${escapeHtml(document.recipientphone)}</div>` : ""}${document.recipientemail ? `<div>${escapeHtml(document.recipientemail)}</div>` : ""}<div class="recipient-address">${formatAddress(document.recipientaddress, "No delivery address recorded.")}</div></div></div></div>
     <div class="section"><div class="section-title">Purpose</div><div class="notes">${escapeHtml(document.purpose || "—")}</div></div>
     <div class="section"><div class="section-title">Delivered Items</div><table><thead><tr><th class="center">S.No</th><th>Item Description</th><th class="center">HSN/SAC</th><th class="center">Delivery Qty</th><th class="center">Unit</th>${amountHeaders}</tr></thead><tbody>${rows}</tbody></table><div class="totals"><div><span>Total Quantity</span><strong>${formatQuantity(totalQuantity)}</strong></div>${document.showamounts ? `<div><span>Taxable</span><strong>${formatMoney(taxableTotal)}</strong></div><div><span>GST</span><strong>${formatMoney(gstTotal)}</strong></div><div><span>Total</span><strong>${formatMoney(grandTotal)}</strong></div>` : ""}</div></div>
     ${document.notes ? `<div class="section"><div class="section-title">Notes</div><div class="notes">${escapeHtml(document.notes)}</div></div>` : ""}
