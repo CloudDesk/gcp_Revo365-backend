@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { productController } from "../controller/Product.controller.js";
 import { productInsertSchema } from "../schemas/v1/product.schema.js";
 import { validateRequestBody } from "../schemas/ajv.schema.js";
-import { filesUpload } from "../multer/Multer.js";
+import { filesUpload, journalAttachmentUpload } from "../multer/Multer.js";
 import { gets3DataStream, gets3Dataurl } from "../aws/getDatafroms3.js";
 import { picklistControler } from "../controller/picklist.controller.js";
 import { recordCount } from "../controller/recordcount.controller.js";
@@ -570,6 +570,26 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.createDeliveryChallan
     );
     fastify.get(
+        '/finance/delivery-challans/customers',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanCustomers
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/context',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanCustomerContext
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanInvoices
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices/:invoiceId/lines',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanInvoiceLines
+    );
+    fastify.get(
         '/finance/delivery-challans/:challanId',
         { preHandler: [getSession, requireDeliveryChallanPermission('read')] },
         financeAccountController.getDeliveryChallan
@@ -715,7 +735,7 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
     );
     fastify.post(
         '/finance/journals/:journalId/attachment',
-        { preHandler: [getSession, requireJournalPermission('edit'), filesUpload] },
+        { preHandler: [getSession, requireJournalPermission('edit'), journalAttachmentUpload] },
         journalController.attachFile
     );
     fastify.post(

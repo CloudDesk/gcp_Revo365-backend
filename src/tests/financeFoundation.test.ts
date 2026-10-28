@@ -17,6 +17,7 @@ import {
   protectAccountNumber,
   requireIsoDate,
   requirePositiveMoney,
+  resolveFinanceContext,
   toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
@@ -83,6 +84,7 @@ import {
 import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
 import {
   extractDeliverableInvoiceLines,
+  resolveDeliveryChallanDocumentAccess,
   validateManualDeliveryLines,
   validateDeliveryQuantities,
 } from "../utils/finance/deliveryChallan.utils.js";
@@ -519,6 +521,11 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
         unit: "Nos",
         unitrate: null,
         lineamount: null,
+        hsnsaccode: null,
+        taxableamount: null,
+        gstrate: 0,
+        gstamount: 0,
+        totalamount: null,
       },
       {
         invoicelinekey: "item:2",
@@ -528,6 +535,11 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
         unit: "Nos",
         unitrate: null,
         lineamount: null,
+        hsnsaccode: null,
+        taxableamount: null,
+        gstrate: 0,
+        gstamount: 0,
+        totalamount: null,
       },
     ]);
   });
@@ -573,10 +585,72 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
       deliveryquantity: 2,
       unit: "Nos",
       assetreference: "RFID-1",
+      hsnsaccode: null,
+      unitrate: null,
+      taxableamount: null,
+      gstrate: 0,
+      gstamount: null,
+      totalamount: null,
     }]);
     assert.throws(
       () => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]),
       FinanceValidationError
+    );
+  });
+
+  test("recalculates Manual/General amounts and rejects GST above 28 percent", () => {
+    const [line] = validateManualDeliveryLines([{
+      productname: "Demo equipment",
+      deliveryquantity: 3,
+      unit: "Nos",
+      unitrate: 99.99,
+      gstrate: 18,
+      taxableamount: 1,
+      gstamount: 1,
+      totalamount: 1,
+    }]);
+    assert.equal(line.taxableamount, 299.97);
+    assert.equal(line.gstamount, 53.99);
+    assert.equal(line.totalamount, 353.96);
+    assert.throws(
+      () => validateManualDeliveryLines([{
+        productname: "Demo equipment",
+        deliveryquantity: 1,
+        unitrate: 100,
+        gstrate: 29,
+      }]),
+      /between 0 and 28 percent/
+    );
+  });
+
+  test("uses one document-access rule for Manual and Invoice-linked Challans", () => {
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(false, false), {
+      canViewAmounts: false,
+      canAccessDocument: true,
+    });
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, false), {
+      canViewAmounts: false,
+      canAccessDocument: false,
+    });
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, true), {
+      canViewAmounts: true,
+      canAccessDocument: true,
+    });
+  });
+});
+
+describe("Finance organization context", () => {
+  test("rejects missing organization context instead of falling back to tenant 1", () => {
+    assert.throws(
+      () => resolveFinanceContext({ session: { useremail: "user@example.com" }, url: "/finance/dashboard" }),
+      (error: any) => error?.code === "FINANCE_ORGANIZATION_CONTEXT_REQUIRED" && error?.statusCode === 401
+    );
+  });
+
+  test("uses the positive organization stored in the authenticated session", () => {
+    assert.deepEqual(
+      resolveFinanceContext({ session: { useremail: "user@example.com", organizationid: 7 } }),
+      { actor: "user@example.com", organizationId: 7 }
     );
   });
 });

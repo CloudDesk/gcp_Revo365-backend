@@ -12,6 +12,7 @@ const __dirname = dirname(__filename);
 console.log(__dirname, "DIRNAME");
 
 const uploadsDir = path.resolve(__dirname, "../../../uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
 console.log(uploadsDir, "uploadsDIR");
 
 const execAsync = util.promisify(exec);

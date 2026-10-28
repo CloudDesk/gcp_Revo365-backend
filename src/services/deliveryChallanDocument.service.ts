@@ -40,16 +40,21 @@ const loadDocumentData = async (challanId: number, organizationId: number) => {
   const result = await query(
     `SELECT dc.id, dc.challannumber, dc.challanmode, dc.challandate,
             dc.invoicenumber, dc.referencenumber, dc.purpose, dc.recipientname,
-            dc.recipientphone, dc.recipientaddress, dc.notes, dc.showamounts,
+            dc.recipientphone, dc.recipientemail, dc.recipientaddress,
+            dc.billingaddress, dc.notes, dc.showamounts,
             COALESCE(jsonb_agg(jsonb_build_object(
               'id', dcl.id,
               'productname', dcl.productname,
               'assetreference', dcl.assetreference,
-              'invoicequantity', dcl.invoicequantity,
               'deliveryquantity', dcl.deliveryquantity,
               'unit', dcl.unit,
+              'hsnsaccode', dcl.hsnsaccode,
               'unitrate', dcl.unitrate,
-              'lineamount', dcl.lineamount
+              'lineamount', dcl.lineamount,
+              'taxableamount', dcl.taxableamount,
+              'gstrate', dcl.gstrate,
+              'gstamount', dcl.gstamount,
+              'totalamount', dcl.totalamount
             ) ORDER BY dcl.id) FILTER (WHERE dcl.id IS NOT NULL), '[]'::jsonb) AS lines
      FROM delivery_challans dc
      LEFT JOIN delivery_challan_lines dcl ON dcl.deliverychallanid = dc.id
@@ -115,10 +120,13 @@ export module deliveryChallanDocumentService {
         showamounts: document.showamounts === true,
         lines: document.lines.map((line: any) => ({
           ...line,
-          invoicequantity: line.invoicequantity == null ? null : Number(line.invoicequantity),
           deliveryquantity: Number(line.deliveryquantity),
           unitrate: line.unitrate == null ? null : Number(line.unitrate),
           lineamount: line.lineamount == null ? null : Number(line.lineamount),
+          taxableamount: line.taxableamount == null ? null : Number(line.taxableamount),
+          gstrate: line.gstrate == null ? null : Number(line.gstrate),
+          gstamount: line.gstamount == null ? null : Number(line.gstamount),
+          totalamount: line.totalamount == null ? null : Number(line.totalamount),
         })),
       });
       const pdfBuffer = await renderHtmlToPdf(html);

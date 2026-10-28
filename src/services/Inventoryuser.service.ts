@@ -138,6 +138,7 @@ export module userInventoryService {
             id: result.rows[0].id,           // ← needed for hiddenby, adminreplyby etc.
             useremail,
             role: result.rows[0].role,
+            organizationid: result.rows[0].organizationid,
           };
           let sessionsaved = await saveSession(sessionId, sessionData);
           if (sessionsaved) {

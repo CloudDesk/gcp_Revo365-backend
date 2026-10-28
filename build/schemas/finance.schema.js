@@ -424,7 +424,7 @@ export const createJournalDraftSchema = {
     type: "object",
     additionalProperties: false,
     properties: journalDraftProperties,
-    required: ["entrydate", "description", "lines"],
+    required: ["entrydate", "journalpurpose", "description", "lines"],
 };
 export const updateJournalDraftSchema = {
     type: "object",
@@ -433,7 +433,7 @@ export const updateJournalDraftSchema = {
         ...journalDraftProperties,
         version: { type: "integer", minimum: 1 },
     },
-    required: ["entrydate", "description", "lines", "version"],
+    required: ["entrydate", "journalpurpose", "description", "lines", "version"],
 };
 export const postJournalSchema = {
     type: "object",

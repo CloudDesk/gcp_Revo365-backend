@@ -1,5 +1,9 @@
 import pool, { query } from "../database/postgres.js";
-import { PROTOCOL } from "../config/config.js";
+import { PUBLIC_API_BASE_URL } from "../config/config.js";
+import { randomUUID } from "crypto";
+import { mkdir, unlink, writeFile } from "fs/promises";
+import { dirname, extname, resolve } from "path";
+import { fileURLToPath } from "url";
 import {
   FinanceValidationError,
   nowEpoch,
@@ -14,6 +18,56 @@ import {
   normalizeJournalDraft,
   normalizeJournalReversal,
 } from "../utils/finance/journal.utils.js";
+import { accessScopeService } from "./accessScope.service.js";
+
+const uploadDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../uploads");
+await mkdir(uploadDirectory, { recursive: true });
+const JOURNAL_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const JOURNAL_ATTACHMENT_EXTENSIONS = new Set([
+  ".pdf", ".xls", ".xlsx", ".doc", ".docx", ".csv", ".jpg", ".jpeg", ".png",
+]);
+
+const hasPrefix = (buffer: Buffer, bytes: number[]) =>
+  bytes.every((byte, index) => buffer[index] === byte);
+
+export const isValidJournalAttachmentContent = (buffer: Buffer, extension: string) => {
+  if (!buffer.length) return false;
+  if (extension === ".pdf") return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+  if (extension === ".png") return hasPrefix(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if ([".jpg", ".jpeg"].includes(extension)) return hasPrefix(buffer, [0xff, 0xd8, 0xff]);
+  if ([".doc", ".xls"].includes(extension)) {
+    return hasPrefix(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  }
+  if ([".docx", ".xlsx"].includes(extension)) {
+    if (!hasPrefix(buffer, [0x50, 0x4b, 0x03, 0x04])) return false;
+    const archiveText = buffer.toString("latin1");
+    return extension === ".docx" ? archiveText.includes("word/") : archiveText.includes("xl/");
+  }
+  if (extension === ".csv") {
+    const sample = buffer.subarray(0, Math.min(buffer.length, 64 * 1024));
+    return !sample.includes(0) && !sample.toString("utf8").includes("\ufffd");
+  }
+  return false;
+};
+
+const attachmentUrl = (filename: string) => {
+  const configuredBase = String(PUBLIC_API_BASE_URL || "").trim().replace(/\/$/, "");
+  const relativePath = `/${encodeURIComponent(filename)}`;
+  return configuredBase ? `${configuredBase}${relativePath}` : relativePath;
+};
+
+const removeLocalAttachment = async (url: unknown) => {
+  const value = String(url || "").trim();
+  if (!value) return;
+  let filename = "";
+  try {
+    filename = decodeURIComponent(new URL(value, "http://local.invalid").pathname.split("/").pop() || "");
+  } catch {
+    return;
+  }
+  if (!filename || filename.includes("/") || filename.includes("\\")) return;
+  await unlink(resolve(uploadDirectory, filename)).catch(() => undefined);
+};
 
 const RESTRICTED_MANUAL_ACCOUNT_SUBTYPES = [
   "bank",
@@ -59,7 +113,8 @@ const insertAuditEvent = async (
 const validateEligibleAccounts = async (
   client: any,
   organizationId: number,
-  draft: NormalizedJournalDraft
+  draft: NormalizedJournalDraft,
+  request: any
 ) => {
   const ids = Array.from(new Set(draft.lines.map((line) => line.financeaccountid)));
   const result = await client.query(
@@ -107,6 +162,14 @@ const validateEligibleAccounts = async (
     if (line.partytype === "supplier" && line.partyid != null) supplierIds.add(line.partyid);
   });
   if (customerIds.size) {
+    const accessResults = await Promise.all(
+      Array.from(customerIds).map((customerId) =>
+        accessScopeService.canVendorAccessCustomer(request, customerId)
+      )
+    );
+    if (accessResults.some((allowed) => !allowed)) {
+      throw new FinanceValidationError("One or more selected customer Contacts are unavailable.", 404);
+    }
     const customers = await client.query(
       `SELECT id FROM users WHERE id = ANY($1::bigint[])`,
       [Array.from(customerIds)]
@@ -455,6 +518,18 @@ export module journalService {
 
   export const listEligibleContacts = async (request: any) => {
     resolveFinanceContext(request);
+    const customerConditions: string[] = [];
+    const customerParams: any[] = [];
+    await accessScopeService.appendVendorBusinessCustomerScope(
+      request,
+      customerConditions,
+      customerParams,
+      1,
+      { customerAlias: "u", customerIdColumn: "id" }
+    );
+    const customerWhere = customerConditions.length
+      ? `WHERE ${customerConditions.join(" AND ")}`
+      : "";
     const [customerResult, supplierResult] = await Promise.all([
       query(
         `SELECT id,
@@ -462,8 +537,10 @@ export module journalService {
                          NULLIF(TRIM(COALESCE(useremail, '')), ''),
                          'Customer ' || id::text) AS name,
                 useremail AS email
-         FROM users
+         FROM users u
+         ${customerWhere}
          ORDER BY LOWER(COALESCE(NULLIF(TRIM(CONCAT_WS(' ', firstname, lastname)), ''), useremail, '')), id`
+        , customerParams
       ),
       query(
         `SELECT id,
@@ -673,7 +750,7 @@ export module journalService {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await validateEligibleAccounts(client, organizationId, draft);
+      await validateEligibleAccounts(client, organizationId, draft, request);
       await validateRelatedEntry(client, organizationId, draft.relatedjournalentryid);
       const epoch = nowEpoch();
       const result = await client.query(
@@ -752,7 +829,7 @@ export module journalService {
           "JOURNAL_VERSION_CONFLICT"
         );
       }
-      await validateEligibleAccounts(client, organizationId, draft);
+      await validateEligibleAccounts(client, organizationId, draft, request);
       await validateRelatedEntry(client, organizationId, draft.relatedjournalentryid, journalId);
       const epoch = nowEpoch();
       await client.query(
@@ -787,34 +864,46 @@ export module journalService {
   export const attachFile = async (request: any) => {
     const { organizationId, actor } = resolveFinanceContext(request);
     const journalId = requireId(request.params?.journalId, "journalId");
-    const files = Array.isArray(request.files) ? request.files : [];
-    const file = files[0];
-    const host = String(request.headers?.host || "").trim();
-    if (!file?.filename || !file?.originalname || !host) {
+    const file = request.file || (Array.isArray(request.files) ? request.files[0] : null);
+    const originalName = String(file?.originalname || "").trim();
+    const extension = extname(originalName).toLowerCase();
+    const buffer = file?.buffer as Buffer | undefined;
+    if (!originalName || !buffer) {
       throw new FinanceValidationError("Select a Journal attachment to upload.");
     }
-    const allowedMimeTypes = new Set([
-      "application/pdf",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "text/csv",
-      "image/jpeg",
-      "image/png",
-    ]);
-    if (!allowedMimeTypes.has(String(file.mimetype || "").toLowerCase())) {
+    if (!JOURNAL_ATTACHMENT_EXTENSIONS.has(extension)) {
       throw new FinanceValidationError(
         "Journal attachments must be PDF, Excel, Word, CSV, JPG, or PNG files."
       );
     }
-    if (Number(file.size || 0) > 10 * 1024 * 1024) {
+    if (buffer.length > JOURNAL_ATTACHMENT_MAX_BYTES) {
       throw new FinanceValidationError("Journal attachments must not exceed 10 MB.");
     }
+    if (!isValidJournalAttachmentContent(buffer, extension)) {
+      throw new FinanceValidationError(
+        "The selected Journal attachment does not match its file type."
+      );
+    }
+    const storedFilename = `journal-${journalId}-${randomUUID()}${extension}`;
+    const storedPath = resolve(uploadDirectory, storedFilename);
     const epoch = nowEpoch();
     const client = await pool.connect();
+    let previousAttachmentUrl: string | null = null;
+    let fileWritten = false;
     try {
       await client.query("BEGIN");
+      const currentResult = await client.query(
+        `SELECT attachmenturl FROM journal_entries
+         WHERE id = $1 AND organizationid = $2 AND isdeleted = FALSE
+         FOR UPDATE`,
+        [journalId, organizationId]
+      );
+      if (!currentResult.rows[0]) {
+        throw new FinanceValidationError("Journal not found.", 404, "JOURNAL_NOT_FOUND");
+      }
+      previousAttachmentUrl = currentResult.rows[0].attachmenturl || null;
+      await writeFile(storedPath, buffer as any, { flag: "wx" });
+      fileWritten = true;
       const result = await client.query(
         `UPDATE journal_entries
          SET attachmenturl = $1, attachmentname = $2,
@@ -822,8 +911,8 @@ export module journalService {
          WHERE id = $5 AND organizationid = $6 AND isdeleted = FALSE
          RETURNING id`,
         [
-          `${PROTOCOL}://${host}/${file.filename}`,
-          String(file.originalname).slice(0, 500),
+          attachmentUrl(storedFilename),
+          originalName.slice(0, 500),
           actor,
           epoch,
           journalId,
@@ -834,12 +923,14 @@ export module journalService {
         throw new FinanceValidationError("Journal not found.", 404, "JOURNAL_NOT_FOUND");
       }
       await insertAuditEvent(client, organizationId, journalId, "attachment_uploaded", actor, {
-        filename: String(file.originalname).slice(0, 500),
+        filename: originalName.slice(0, 500),
       });
       await client.query("COMMIT");
+      await removeLocalAttachment(previousAttachmentUrl);
       return await getById(request);
     } catch (error) {
       await client.query("ROLLBACK");
+      if (fileWritten) await unlink(storedPath).catch(() => undefined);
       throw error;
     } finally {
       client.release();
@@ -967,7 +1058,7 @@ export module journalService {
           partytype: line.partytype || null,
           partyid: line.partyid == null ? null : Number(line.partyid),
         })),
-      } as NormalizedJournalDraft);
+      } as NormalizedJournalDraft, request);
       const epoch = nowEpoch();
       await client.query(
         `UPDATE journal_entries

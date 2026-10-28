@@ -11,9 +11,11 @@ import {
 import {
   buildCustomerStatement,
   CustomerStatementRow,
+  deriveCustomerPaymentStatus,
   toCustomerStatementDate,
 } from "../utils/finance/customerStatement.utils.js";
 import { onAccountStatementService } from "./onAccountStatement.service.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 const requirePositiveInteger = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -629,16 +631,14 @@ export module customerStatementService {
     const unallocatedOnAccountCredit = toMoney(
       onAccountCreditResult.rows[0]?.amount || 0
     );
-    const adjustedCurrentReceivable = toMoney(
-      Math.max(
-        invoiceSummary.currentreceivable - unallocatedOnAccountCredit +
-          journalPartyResult.rows.reduce(
-            (total: number, line: any) => total + Number(line.debitamount || 0) - Number(line.creditamount || 0),
-            0
-          ),
-        0
-      )
+    const rawAdjustedCurrentReceivable = toMoney(
+      invoiceSummary.currentreceivable - unallocatedOnAccountCredit +
+        journalPartyResult.rows.reduce(
+          (total: number, line: any) => total + Number(line.debitamount || 0) - Number(line.creditamount || 0),
+          0
+        )
     );
+    const adjustedCurrentReceivable = toMoney(Math.max(rawAdjustedCurrentReceivable, 0));
     const tdsSettled = toMoney(Math.min(
       invoiceSummary.paidamount,
       Number(paymentResult.rows[0]?.tdsamount || 0) +
@@ -647,14 +647,11 @@ export module customerStatementService {
     const paymentReceived = toMoney(
       Math.max(invoiceSummary.paidamount - tdsSettled, 0)
     );
-    const paymentStatus =
-      invoiceSummary.invoicecount === 0
-        ? "no_invoices"
-        : invoiceSummary.invoiceamount > 0 && invoiceSummary.currentreceivable === 0
-          ? "paid"
-          : invoiceSummary.paidamount > 0
-            ? "partially_paid"
-            : "pending";
+    const paymentStatus = deriveCustomerPaymentStatus({
+      invoiceCount: invoiceSummary.invoicecount,
+      invoiceAmount: invoiceSummary.invoiceamount,
+      adjustedBalance: rawAdjustedCurrentReceivable,
+    });
 
     if (summaryOnly) {
       return {
@@ -1037,7 +1034,7 @@ export module customerStatementService {
   };
 
   export const getCustomerInvoiceDocument = async (request: any) => {
-    resolveFinanceContext(request);
+    const { organizationId } = resolveFinanceContext(request);
     const customerId = requirePositiveInteger(
       request.params?.customerId,
       "customerId"
@@ -1046,6 +1043,13 @@ export module customerStatementService {
       request.params?.invoiceId,
       "invoiceId"
     );
+    if (!(await accessScopeService.canVendorAccessCustomer(request, customerId))) {
+      throw new FinanceValidationError(
+        "Invoice not found for this customer.",
+        404,
+        "FINANCE_INVOICE_NOT_FOUND"
+      );
+    }
     await requireCustomer(customerId);
 
     const result = await query(
@@ -1075,9 +1079,10 @@ export module customerStatementService {
       ) consolidated ON TRUE
       WHERE invoice.id = $1
         AND invoice.customerid = $2
+        AND invoice.organizationid = $3
       LIMIT 1
       `,
-      [invoiceId, customerId]
+      [invoiceId, customerId, organizationId]
     );
     const invoice = result.rows[0];
     if (!invoice) {

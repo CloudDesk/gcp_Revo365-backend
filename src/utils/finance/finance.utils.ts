@@ -185,16 +185,25 @@ export const resolveFinanceContext = (request: any) => {
     session.userid ??
     session.userId ??
     "unknown";
-  const organizationId = Number(
-    session.organizationid ?? session.organizationId ?? 1
-  );
+  const submittedOrganizationId = session.organizationid ?? session.organizationId;
+  const organizationId = Number(submittedOrganizationId);
+  const hasValidOrganization = Number.isSafeInteger(organizationId) && organizationId > 0;
+  if (!hasValidOrganization) {
+    console.warn("[finance-context] Organization context rejected.", {
+      actor: String(actor),
+      role: String(session.role || "unknown"),
+      path: String(request?.url || request?.raw?.url || "unknown"),
+    });
+    throw new FinanceValidationError(
+      "Organization context is required. Sign in again.",
+      401,
+      "FINANCE_ORGANIZATION_CONTEXT_REQUIRED"
+    );
+  }
 
   return {
     actor: String(actor),
-    organizationId:
-      Number.isSafeInteger(organizationId) && organizationId > 0
-        ? organizationId
-        : 1,
+    organizationId,
   };
 };
 
