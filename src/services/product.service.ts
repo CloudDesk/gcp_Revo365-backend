@@ -12,8 +12,6 @@ export module productService {
     request: any
   ) => {
     try {
-      console.log("daat");
-      console.log(request.isServerReady, "serice");
       const keys = Object.keys(request.query);
       const values = Object.values(request.query);
       let whereClauses = [];
@@ -47,45 +45,25 @@ export module productService {
           sortByPrice = true;
         } 
         else {
-          console.log(values)
-          console.log(values.indexOf('NOT warranty'), 'Having NOT???')
           let splittext
           let splitwarranty
           let indexofnot = values.indexOf('NOT warranty')
           if (indexofnot != -1) {
-            console.log(values[indexofnot])
             splittext = values[indexofnot]
-            console.log(splittext, 'data')
             splitwarranty = splittext.split(' ')
           }
 
           if (Array.isArray(splitwarranty) && splitwarranty[0] === 'NOT') {
             splittext = splitwarranty[1]
           }
-          console.log(splittext, 'split texts')
-          // whereClauses.push(
-          //   `(${paramValues
-          //     .map((_, idx) => `${key} = $${parameterIndex + idx}`)
-          //     .join(" OR ")})`
-          // );
-          console.log(key, 'key is')
-
-          console.log(keys[indexofnot], 'key is values')
-          console.log(indexofnot, 'index of not is')
-          console.log(paramValues, 'params valuese')
           whereClauses.push(
             `(${paramValues
               .map((_, idx) => {
-                console.log(idx, 'index is data')
-                console.log(indexofnot, 'index is not')
                 return `${index === indexofnot ? `${key} != $${parameterIndex + idx}` : `${key} = $${parameterIndex + idx}`}`;
               })
               .join(" OR ")})`
           );
 
-
-          console.log(whereClauses, 'whereclause')
-          console.log(queryParams)
           if (index === indexofnot) {
             paramValues = [splittext]
           }
@@ -93,29 +71,6 @@ export module productService {
           parameterIndex += paramValues.length;
         }
       });
-
-      // const whereClause =
-      //   whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-      // const offset = (pageNumber - 1) * recordCount;
-      // let queryText;
-      // if (whereClause) {
-      //   if (!sortByPrice) {
-      //     queryText = `SELECT * FROM products ${whereClause} AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)  ORDER BY modifieddate DESC OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
-      //       }`;
-      //   } else {
-      //     queryText = `SELECT * FROM products ${whereClause} AND (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)  ORDER BY ${orderbyfield} ${orderby} OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
-      //       }`;
-      //   }
-      // }
-      // else {
-      //   if (!sortByPrice) {
-      //     queryText = `SELECT * FROM products where (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)  ORDER BY modifieddate DESC OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
-      //       }`;
-      //   } else {
-      //     queryText = `SELECT * FROM products where (isarchive = FALSE or isarchive IS NULL) AND (isdeleted = FALSE or isdeleted IS NULL)  ORDER BY ${orderbyfield} ${orderby} OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1
-      //       }`;
-      //   }
-      // }
 
       const offset = (pageNumber - 1) * recordCount;
       const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")} AND ` : "where";
@@ -129,8 +84,6 @@ export module productService {
           ${orderByClause}
           OFFSET $${parameterIndex} LIMIT $${parameterIndex + 1}
       `;
-      console.log(queryText, 'Query');
-      console.log(queryParams)
       queryParams.push(offset, recordCount);
       const result: QueryResult = await query(queryText, queryParams);
       let datatypecheckResult = await dataTypeCheck(result);
@@ -138,7 +91,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN getProducts", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -163,7 +115,6 @@ export module productService {
           if (key === "displaysize" || key === "price") {
             let rangeWhereClause = paramValues
               .map((range) => {
-                console.log(range);
                 const [lowerBound, upperBound] = range.split("-");
                 queryParams.push(lowerBound, upperBound);
                 const clause = `(${key} BETWEEN $${parameterIndex} AND $${parameterIndex + 1
@@ -174,60 +125,31 @@ export module productService {
               .join(" OR ");
             whereClauses.push(`(${rangeWhereClause})`);
           }
-          //sortby Query
           else if (key === "sortby") {
             let [fieldName, fieldValue] = paramValues[0].split("-");
             orderby = fieldValue;
             orderbyfield = `(${paramValues.map((_, idx) => `${fieldName}`)})`;
             sortByPrice = true;
           }
-          // else {
-          //   whereClauses.push(
-          //     `(${paramValues
-          //       .map((_, idx) => `${key} = $${parameterIndex + idx}`)
-          //       .join(" OR ")})`
-          //   );
-          //   queryParams.push(...paramValues);
-          //   parameterIndex += paramValues.length;
-          // }
           else {
-            console.log(values)
-            console.log(values.indexOf('NOT warranty'), 'Having NOT???')
             let splittext
             let splitwarranty
             let indexofnot = values.indexOf('NOT warranty')
             if (indexofnot != -1) {
-              console.log(values[indexofnot])
               splittext = values[indexofnot]
-              console.log(splittext, 'data')
               splitwarranty = splittext.split(' ')
             }
 
             if (Array.isArray(splitwarranty) && splitwarranty[0] === 'NOT') {
               splittext = splitwarranty[1]
             }
-            console.log(splittext, 'split texts')
-            // whereClauses.push(
-            //   `(${paramValues
-            //     .map((_, idx) => `${key} = $${parameterIndex + idx}`)
-            //     .join(" OR ")})`
-            // );
-            console.log(key, 'key is')
-
-            console.log(keys[indexofnot], 'key is values')
-            console.log(indexofnot, 'index of not is')
-            console.log(paramValues, 'params valuese')
             whereClauses.push(
               `(${paramValues
                 .map((_, idx) => {
-                  console.log(idx, 'index is data')
-                  console.log(indexofnot, 'index is not')
                   return `${index === indexofnot ? `${key} != $${parameterIndex + idx}` : `${key} = $${parameterIndex + idx}`}`;
                 })
                 .join(" OR ")})`
             );
-            console.log(whereClauses, 'whereclause')
-            console.log(queryParams)
             if (index === indexofnot) {
               paramValues = [splittext]
             }
@@ -259,15 +181,12 @@ export module productService {
       if (offset >= 0 && recordcount) {
         queryParams.push(offset, recordcount);
       }
-      console.log(queryText);
-      console.log(queryParams);
       const result: QueryResult = await query(queryText, queryParams);
       let datatypecheckResult = await dataTypeCheck(result);
       return datatypecheckResult;
     } catch (error) {
       console.error("Query Execution Error: IN getEcomProducts", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -341,7 +260,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN getSimilarProducts", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -388,15 +306,12 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN getArcheivedProducts", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
 
   export const getEachProducts = async function (request, id: Number) {
     try {
-      console.log("getEachProducts call 3");
-      console.log(id);
       const result: QueryResult = await query(
         `SELECT * FROM products where id=${id}`,
         []
@@ -404,21 +319,18 @@ export module productService {
       let getvalues = { objectName: "null" };
       getvalues.objectName = "products";
       let data = await picklistservice.getProductPicklist(getvalues);
-      console.log(data);
       let datatypecheckResult = await dataTypeCheck(result);
       datatypecheckResult[0].picklist = data;
       return datatypecheckResult;
     } catch (error) {
       console.error("Query Execution Error: IN getEachProducts", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
 
   export const getStockData = async function (stockFields, stockValues) {
     try {
-      console.log(3);
       function findAllNullIndices(arr) {
         return arr.reduce((indices, currentValue, currentIndex) => {
           if (currentValue === null) {
@@ -428,14 +340,10 @@ export module productService {
         }, []);
       }
 
-      console.log(4);
       let gettingNullIndex = findAllNullIndices(stockValues);
       let paramIndex = 0;
       let findValue = stockFields.indexOf("colour");
       if (findValue !== -1) {
-        console.log(stockValues[findValue], "colour is ");
-      } else {
-        console.log("not found!!!");
       }
       let queryStockData = `SELECT * FROM stock WHERE ${stockFields
         .map((field, index) => {
@@ -450,21 +358,17 @@ export module productService {
 
       let params = stockValues.filter((e) => e !== null);
 
-      console.log(5);
       const result: any = await query(queryStockData, params);
-      console.log(8);
       return result.rows[0];
     } catch (error) {
       console.error("Query Execution Error: IN getStockData", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
 
   export const insertStockData = async function (stockFields, stockValues) {
     try {
-      console.log(11);
       let querydata: any;
       const insertStocks = (querydata = `INSERT INTO stock (${stockFields.join(
         ", "
@@ -473,23 +377,17 @@ export module productService {
         .join(", ")}) RETURNING *`);
       let params: any;
       params = [...stockValues];
-      console.log(11);
       const Stockresult = await query(insertStocks, params);
-      console.log(Stockresult.rows);
-      console.log(12);
       return Stockresult.rows[0];
     } catch (error) {
       console.error("Query Execution Error: IN insertStockData", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
 
   export const updatestockQuantity = async function (puc: any, oldpuc: any) {
     try {
-      console.log(puc, "puc data");
-      console.log(oldpuc, "Old Puc");
       let querydata;
       let resultarray = [];
       if (puc && (!oldpuc || oldpuc === null || oldpuc === undefined)) {
@@ -518,13 +416,11 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN updatestockQuantity", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
 
   export const updateRemoveFromRecyclebin = async () => {
-    console.log("inside update recycle bin");
     const updateQuery = `
         UPDATE products
         SET removefromrecyclebin = true
@@ -539,7 +435,6 @@ export module productService {
   export const upsertProduct = async (request: any) => {
     try {
       const fieldsNeedingInitCap = ['colour', 'graphicscard', 'processor'];
-      console.log(1);
       const upsertProductData = request;
       let oldpucvalue;
       let existingProductData: any = {};
@@ -586,9 +481,6 @@ export module productService {
             fieldNames.push("puc");
             fieldValues.push(result.puc);
           }
-          // querydata = `UPDATE products SET ${fieldNames
-          //   .map((field, index) => `${field} = $${index + 1}`)
-          //   .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
           querydata = `UPDATE products SET ${fieldNames
             .map((field, index) =>
               `${field} = ${fieldsNeedingInitCap.includes(field) ? `INITCAP($${index + 1})` : `$${index + 1}`}`)
@@ -599,7 +491,6 @@ export module productService {
           let Stockresult = await insertStockData(stockFields, stockValues);
           if (Stockresult) {
             var index = fieldNames.indexOf("puc");
-            console.log(index);
             if (index != -1) {
               oldpucvalue = fieldValues[index];
               fieldValues[index] = Stockresult.puc;
@@ -607,9 +498,6 @@ export module productService {
               fieldNames.push("puc");
               fieldValues.push(Stockresult.puc);
             }
-            // querydata = `UPDATE products SET ${fieldNames
-            //   .map((field, index) => `${field} = $${index + 1}`)
-            //   .join(", ")} WHERE id = $${fieldNames.length + 1} RETURNING *`;
             querydata = `UPDATE products SET ${fieldNames
               .map((field, index) =>
                 `${field} = ${fieldsNeedingInitCap.includes(field) ? `INITCAP($${index + 1})` : `$${index + 1}`}`)
@@ -625,13 +513,10 @@ export module productService {
         let subcategoryvalue = fieldValues[getSubcategorydata]
         let result
         if (subcategoryvalue && subcategoryvalue != 'accessories') {
-          console.log(2);
           result = await getStockData(stockFields, stockValues);
-          console.log(9);
         }
         if (result) {
           var index = fieldNames.indexOf("puc");
-          console.log(index);
           if (index != -1) {
             oldpucvalue = fieldValues[index];
             fieldValues[index] = result.puc;
@@ -639,23 +524,15 @@ export module productService {
             fieldNames.push("puc");
             fieldValues.push(result.puc);
           }
-          // querydata = `INSERT INTO products (${fieldNames.join(
-          //   ", "
-          // )}) VALUES (${fieldNames
-          //   .map((_, index) => `$${index + 1}`)
-          //   .join(", ")}) RETURNING *`;
           querydata = `INSERT INTO products (${fieldNames.join(", ")}) VALUES (${fieldNames
             .map((field, index) =>
               `${fieldsNeedingInitCap.includes(field) ? `INITCAP($${index + 1})` : `$${index + 1}`}`)
             .join(", ")}) RETURNING *`;
           params = fieldValues;
         } else {
-          console.log(10);
           let Stockresult = await insertStockData(stockFields, stockValues);
-          console.log(13);
           if (Stockresult) {
             var index = fieldNames.indexOf("puc");
-            console.log(index);
             if (index != -1) {
               oldpucvalue = fieldValues[index];
               fieldValues[index] = Stockresult.puc;
@@ -663,11 +540,6 @@ export module productService {
               fieldNames.push("puc");
               fieldValues.push(Stockresult.puc);
             }
-            // querydata = `INSERT INTO products (${fieldNames.join(
-            //   ", "
-            // )}) VALUES (${fieldNames
-            //   .map((_, index) => `$${index + 1}`)
-            //   .join(", ")}) RETURNING *`;
             querydata = `INSERT INTO products (${fieldNames.join(", ")}) VALUES (${fieldNames
               .map((field, index) =>
                 `${fieldsNeedingInitCap.includes(field) ? `INITCAP($${index + 1})` : `$${index + 1}`}`)
@@ -691,7 +563,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN upsertProduct", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -741,7 +612,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN upsertProductwithFile", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -768,7 +638,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN deleteProduct", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -778,11 +647,8 @@ export module productService {
       const { large, medium, small } = request.body;
       const { productid } = request.params;
       const { ...upsertFields } = request.body;
-      console.log(upsertFields);
       const fieldNames = Object.keys(upsertFields);
       const fieldValues = Object.values(upsertFields);
-      console.log(fieldNames, "Field Name");
-      console.log(fieldValues, "field Values");
       let querydata;
       let params: any[] = [];
 
@@ -791,7 +657,6 @@ export module productService {
         {}
       );
       let value = getData.rows[0];
-      console.log(value);
       if (getData.rows.length > 0) {
         querydata = `UPDATE products SET ${fieldNames
           .map((field, index) => `${field} = $${index + 1}`)
@@ -804,7 +669,6 @@ export module productService {
     } catch (error) {
       console.error("Query Execution Error: IN rearrangeImage", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };

@@ -73,12 +73,6 @@ export const servicecostestimationSchema = {
                 type:'Service SGST should be Number'
             }
         },
-        servicetds:{
-            type:['number','null'],
-            errorMessage:{
-                type:'Service TDS should be Number'
-            }
-        },
         servicetaxamount:{
             type:['number','null'],
             errorMessage:{

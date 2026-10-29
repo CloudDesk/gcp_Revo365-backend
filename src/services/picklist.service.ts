@@ -9,6 +9,8 @@ interface objectName {
 export module picklistservice {
   export const getProductPicklist = async (request: any) => {
     try {
+      console.log('Get Product picklist')
+      console.log("request.params", request.params);
       let sortedData
       let objectName: string;
       let quoteobject = false
@@ -25,6 +27,7 @@ export module picklistservice {
         `select * from picklist where object = $1`,
         [objectName]
       );
+      console.log("picklistResult11", picklistResult);
       let datatypecheckResult = await dataTypeCheck(picklistResult);
       const groupedData = {};
       for (const value of datatypecheckResult) {
@@ -91,7 +94,6 @@ export module picklistservice {
         if (Array.isArray(groupedData[key])) {
           if (key === "ram" || key === "storagecapacity" || key === "frequency" || key === "warranty" || key === 'ageoflaptopmonth') {
             groupedData[key].sort(compareNumbers);
-            // console.log(groupedData[key]);
           }
           else if (key === "operatingsystemversion") {
             groupedData[key].sort(compareLabelsAndNumbers)
@@ -100,42 +102,10 @@ export module picklistservice {
             groupedData[key].sort(compareLabelsAndNumbersDsc)
           }
           else if (quoteobject && key === 'status'){
-            // console.log('INISIDE STATUS FIELD ')
-            // groupedData[key].forEach((e)=>{
-            //   if(e.label === 'In Progress'){
-            //     groupedData[0] = e
-            //   }
-            //   else if (e.label === 'Negotiation'){
-            //     groupedData[1] = e
-            //   }
-            //   else if (e.label === 'Closed Won'){
-            //     groupedData[2] = e
-            //   }
-            //   else if (e.label === 'Closed Lost'){
-            //     groupedData[3] = e
-            //   }
-            // })
-
-            // groupedData[key].forEach((e,index)=>{
-            //   console.log(groupedData[key][index])
-            //   if(e.label ==="In Progress" ){
-            //     groupedData[key][0] = e
-            //   }
-            //   else if(e.label ==="Negotiation" ){
-            //     groupedData[key][1] = e
-            //   }
-            //   if(e.label ==="In Progress" ){
-            //     groupedData[key][0] = e
-            //   }
-            //   if(e.label ==="In Progress" ){
-            //     groupedData[key][0] = e
-            //   }
-            // })
-
-            // console.log(groupedData[key] ,'Final Data')
+          
+           
           }
           else {
-            // Default sorting based on label
             groupedData[key].sort((a, b) => (a.label > b.label ? 1 : -1));
           }
         }
@@ -144,7 +114,6 @@ export module picklistservice {
     } catch (error) {
       console.error("Query Execution Error: IN getProductPicklist", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };
@@ -219,7 +188,6 @@ export module picklistservice {
         if (Array.isArray(groupedData[key])) {
           if (key === "ram" || key === "storagecapacity" || key === "frequency" || key === "warranty" || key === 'ageoflaptopmonth') {
             groupedData[key].sort(compareNumbers);
-            // console.log(groupedData[key]);
           }
           else if (key === "operatingsystemversion") {
             groupedData[key].sort(compareLabelsAndNumbers)
@@ -234,9 +202,8 @@ export module picklistservice {
       }
       return groupedData;
     } catch (error) {
-      console.error("Query Execution Error: IN getProductPicklist", error);
+      console.error("Query Execution Error: IN getAllPicklist", error);
       let ErrorMessage = await ErrorHandler.handleQueryError(error)
-      console.log(ErrorMessage);
       return ErrorMessage
     }
   };

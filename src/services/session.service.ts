@@ -1,19 +1,20 @@
 import { REDIS_SESSIONEXSEC } from '../config/config.js';
 import { redisClient } from '../database/redis.session.js';
+import { query } from '../database/postgres.js';
 
 export const saveSession = async (sessionId, sessionData): Promise<string> => {
-  console.log('Inside saveSessionredis');
-  console.log('Generated Session ID:', sessionId);
-  console.log('Session Data:', sessionData);
   const createdTime = Math.floor(Date.now() / 1000);
+  const organizationId = Number(
+    sessionData?.organizationid ?? sessionData?.organizationId
+  );
 
   const sessionDataWithCreatedTime = {
     ...sessionData,
+    ...(Number.isSafeInteger(organizationId) && organizationId > 0
+      ? { organizationid: organizationId }
+      : {}),
     createddate: createdTime
   };
-  console.log('Updated Session Data:', sessionDataWithCreatedTime);
-  console.log('Start');
-
   let sessionDataString;
   if (typeof sessionData === 'string') {
     sessionDataString = sessionData;
@@ -22,72 +23,80 @@ export const saveSession = async (sessionId, sessionData): Promise<string> => {
   }
   
   const sizeofsessionDataWithCreatedTime = Buffer.byteLength(sessionDataString, 'utf8');
-  console.log('Data size:', sizeofsessionDataWithCreatedTime, 'bytes');
   
-
   let redissaved = await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, JSON.stringify(sessionDataWithCreatedTime));
-  console.log('Saved data:',redissaved);
   return sessionId;
 };
 export const getSession = async (req: any, reply: any): Promise<any> => {
     try {
-      console.log('Inside GetSession');
-      console.log(req.headers ,'headers are ')
-      console.log(req.headers.authorization, "getSession headers");
       const sessionId = req.headers.authorization;
       
       if (!sessionId) {
-        console.log('No session ID provided in the authorization header');
         return reply.status(401).send({ error: 'Unauthorized: No valid session' });
       }
   
       const sessionData = await redisClient.get(sessionId);
-      console.log('SESSION DATA1:', sessionData);
   
       if (sessionData) {
-        const sessionDataSize = Buffer.byteLength(sessionData, 'utf8');
-        console.log('Data size:', sessionDataSize, 'bytes');
-        await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, sessionData);
-        return JSON.parse(sessionData);
+        // Attach to req so controllers can access the logged-in user's data.
+        // Upgrade legacy sessions from the user's persisted tenant assignment;
+        // this is a lookup, never a hard-coded organization fallback.
+        req.session = JSON.parse(sessionData);
+        if (!req.session?.organizationid && !req.session?.organizationId) {
+          const table = req.session?.role ? 'inventoryusers' : 'users';
+          try {
+            const persisted = await query(
+              `SELECT organizationid FROM ${table} WHERE id = $1 LIMIT 1`,
+              [req.session?.id]
+            );
+            const organizationId = Number(persisted.rows[0]?.organizationid);
+            if (Number.isSafeInteger(organizationId) && organizationId > 0) {
+              req.session.organizationid = organizationId;
+            }
+          } catch (error: any) {
+            // Organization columns are introduced by the pending tenant-context
+            // migration. Until it is approved, a legacy single-tenant database
+            // may derive its sole existing finance organization. Never choose an
+            // organization when the data contains more than one candidate.
+            if (error?.code !== '42703') throw error;
+            const organizations = await query(
+              `SELECT organizationid
+               FROM finance_accounts
+               WHERE organizationid IS NOT NULL
+               GROUP BY organizationid
+               ORDER BY organizationid
+               LIMIT 2`
+            );
+            if (organizations.rows.length === 1) {
+              const organizationId = Number(organizations.rows[0].organizationid);
+              if (Number.isSafeInteger(organizationId) && organizationId > 0) {
+                req.session.organizationid = organizationId;
+              }
+            }
+          }
+          if (!req.session?.organizationid && !req.session?.organizationId) {
+            console.warn('[finance-context] Session has no organization ID.', {
+              actor: req.session?.useremail || req.session?.id || 'unknown',
+              role: req.session?.role || 'unknown',
+              path: req.url,
+            });
+          }
+        }
+        await redisClient.setEx(sessionId, REDIS_SESSIONEXSEC, JSON.stringify(req.session));
+        return;
       } else {
-        console.log('Session not found or expired');
         return reply.status(401).send({ error: 'Unauthorized: No valid session' });
       }
     } catch (error) {
-      console.error('Error validating session:', error);
+      console.error('Error in getSession:', error);
       return reply.status(401).send({ error: 'Unauthorized: No valid session' });
     }
   };
-  
-// export const getSession = async (req: any, reply: any): Promise<any> => {
-//   try {
-//     console.log('Inside GetSession')
-//     console.log(req.headers.authorization, "getSession headers");
-//     const sessionId = req.headers.authorization;
-//     console.log('>>>',sessionId)
-//     if (!sessionId) {
-//       console.log('No session ID provided in the authorization header');
-//       return reply.status(401).send({ error: 'Unauthorized: No valid session' });
-//     }
 
-//     const sessionData = await redisClient.getEx(sessionId, { 'EX': SESSIONEXSEC });
 
-//     if (sessionData) {
-//       redisClient.setEx(sessionId, SESSIONEXSEC, JSON.stringify(sessionData));
-//       return JSON.parse(sessionData);
-//     } else {
-//       console.log('Session not found or expired');
-//       return reply.status(401).send({ error: 'Unauthorized: No valid session' });
-//     }
-//   } catch (error) {
-//     console.error('Error validating session:', error);
-//     return reply.status(401).send({ error: 'Unauthorized: No valid session' });
-//   }
-// };
 
 export const getSessionData = async (req: any) => {
   const { sessionId } = req.query;
-  console.log(sessionId, "sessionIdsessionId");
 
   if (!sessionId) {
     throw new Error('No session ID found');
@@ -98,7 +107,7 @@ export const getSessionData = async (req: any) => {
 
     return {
       sessionId,
-      userdata: sessionData ? [JSON.parse(sessionData)] : [] // Wrap in an array or return an empty array if null
+      userdata: sessionData ? [JSON.parse(sessionData)] : [] 
     };
 
   } catch (error) {
