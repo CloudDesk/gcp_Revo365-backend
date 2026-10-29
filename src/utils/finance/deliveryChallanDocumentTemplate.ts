@@ -38,7 +38,7 @@ const formatAddress = (value: unknown, fallback: string) => String(value || fall
   .map((part) => part.trim())
   .filter(Boolean)
   .map(escapeHtml)
-  .join(",<br>");
+  .join(", ");
 const formatDate = (value: string | Date) => {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? escapeHtml(value) : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }).format(date);

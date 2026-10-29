@@ -83,6 +83,7 @@ import {
 import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
 import {
   extractDeliverableInvoiceLines,
+  extractInvoiceDeliveryAddressContext,
   resolveDeliveryChallanDocumentAccess,
   validateManualDeliveryLines,
   validateDeliveryQuantities,
@@ -541,6 +542,63 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
         totalamount: null,
       },
     ]);
+  });
+
+  test("maps the current Invoice taxable and GST fields into Delivery Challan lines", () => {
+    const [line] = extractDeliverableInvoiceLines({
+      items: [{
+        id: 99,
+        name: "Laptop",
+        quantity: 2,
+        taxablevalue: "₹2,000.00",
+        taxamount: "₹360.00",
+        cgst: "₹180.00",
+        sgst: "₹180.00",
+        taxpercent: "18%",
+        totalamount: "₹2,360.00",
+      }],
+    });
+    assert.equal(line.taxableamount, 2000);
+    assert.equal(line.gstamount, 360);
+    assert.equal(line.gstrate, 18);
+    assert.equal(line.totalamount, 2360);
+  });
+
+  test("uses Invoice billing and shipping snapshots for Delivery Challan details", () => {
+    const context = extractInvoiceDeliveryAddressContext(
+      { name: "Billing Contact", doornumber: "10", address: "Main Road", city: "Chennai", state: "Tamil Nadu", pincode: "600001" },
+      JSON.stringify({ name: "Delivery Contact", mobilenumber: "9876543210", email: "delivery@example.com", doornumber: "22", address: "Lake View", landmark: "Near Park", city: "Chennai", state: "Tamil Nadu", pincode: "600042" })
+    );
+    assert.deepEqual(context, {
+      billingaddress: "10, Main Road, Chennai, Tamil Nadu, 600001",
+      recipientaddress: "22, Lake View, Near Park, Chennai, Tamil Nadu, 600042",
+      recipientname: "Delivery Contact",
+      recipientphone: "9876543210",
+      recipientemail: "delivery@example.com",
+    });
+  });
+
+  test("falls back to the address printed on legacy Invoices without snapshots", () => {
+    const context = extractInvoiceDeliveryAddressContext(null, null, {
+      formattedaddress: "12 Legacy Street, Chennai - 600001",
+      name: "Legacy Customer",
+      mobilenumber: "9000000000",
+    });
+    assert.equal(context.billingaddress, "12 Legacy Street, Chennai - 600001");
+    assert.equal(context.recipientaddress, "12 Legacy Street, Chennai - 600001");
+    assert.equal(context.recipientname, "Legacy Customer");
+    assert.equal(context.recipientphone, "9000000000");
+  });
+
+  test("uses a valid revoinvoice source when locking the Invoice during Challan save", () => {
+    const serviceSource = readFileSync(
+      new URL("../services/deliveryChallan.service.ts", import.meta.url),
+      "utf8"
+    );
+    assert.match(
+      serviceSource,
+      /SELECT id, invoicenumber, invoicedata,[\s\S]*?FROM revoinvoice\s+WHERE id = \$1[\s\S]*?FOR UPDATE/
+    );
   });
 
   test("allows partial delivery up to the server-calculated remaining quantity", () => {

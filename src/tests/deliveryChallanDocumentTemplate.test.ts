@@ -39,13 +39,14 @@ test("Delivery Challan PDF includes taxable, GST, and total snapshots", () => {
   assert.match(html, /8471/);
 });
 
-test("Delivery Challan PDF wraps and safely escapes address components", () => {
+test("Delivery Challan PDF uses the Invoice address format and wraps safely", () => {
   const html = getDeliveryChallanDocumentHtml({
     ...baseDocument,
     billingaddress: "12 Main Road, Chennai, Tamil Nadu 600001",
     recipientaddress: "Floor <2>\nTech Park, Chennai",
   });
-  assert.match(html, /12 Main Road,<br>Chennai,<br>Tamil Nadu 600001/);
-  assert.match(html, /Floor &lt;2&gt;,<br>Tech Park,<br>Chennai/);
+  assert.match(html, /12 Main Road, Chennai, Tamil Nadu 600001/);
+  assert.match(html, /Floor &lt;2&gt;, Tech Park, Chennai/);
+  assert.doesNotMatch(html, /12 Main Road,<br>/);
   assert.match(html, /overflow-wrap:anywhere/);
 });
