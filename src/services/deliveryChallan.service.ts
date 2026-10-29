@@ -8,6 +8,7 @@ import {
 import {
   DeliverableInvoiceLine,
   extractDeliverableInvoiceLines,
+  extractInvoiceDeliveryAddressContext,
   resolveDeliveryChallanDocumentAccess,
   validateManualDeliveryLines,
   validateDeliveryQuantities,
@@ -308,7 +309,9 @@ export module deliveryChallanService {
     const invoiceId = requirePositiveInteger(request.params?.invoiceId, "invoiceId");
     await requireCustomer(customerId, organizationId);
     const invoice = await query(
-      `SELECT id, invoicenumber, invoicedate, createddate, invoicefor, invoicedata
+      `SELECT id, invoicenumber, invoicedate, createddate, invoicefor, invoicedata,
+              billingaddresssnapshot, shippingaddresssnapshot, customername,
+              customeraddress, customerphonenumber
        FROM revoinvoice
        WHERE id = $1 AND customerid = $2 AND organizationid = $3
          AND LOWER(COALESCE(invoicefor, '')) <> 'penalty'
@@ -327,12 +330,18 @@ export module deliveryChallanService {
       [organizationId, customerId, invoiceId]
     );
     const row = invoice.rows[0];
+    const addressContext = extractInvoiceDeliveryAddressContext(
+      row.billingaddresssnapshot,
+      row.shippingaddresssnapshot,
+      { formattedaddress: row.customeraddress, name: row.customername, mobilenumber: row.customerphonenumber }
+    );
     return {
       invoice: {
         id: Number(row.id),
         invoicenumber: String(row.invoicenumber || `INV-${row.id}`),
         invoicedate: toCustomerStatementDate(row.invoicedate || row.createddate),
         source: String(row.invoicefor || "invoice"),
+        ...addressContext,
       },
       lines: withDeliveryProgress(
         extractDeliverableInvoiceLines(row.invoicedata),
@@ -429,7 +438,9 @@ export module deliveryChallanService {
       let validatedLines: any[];
       if (mode === "invoice") {
         const invoiceResult = await client.query(
-        `SELECT id, invoicenumber, invoicedata FROM revoinvoice
+        `SELECT id, invoicenumber, invoicedata, billingaddresssnapshot, shippingaddresssnapshot,
+                customername, customeraddress, customerphonenumber
+         FROM revoinvoice
          WHERE id = $1 AND customerid = $2 AND organizationid = $3
            AND LOWER(COALESCE(invoicefor, '')) <> 'penalty'
          FOR UPDATE`,
@@ -439,6 +450,18 @@ export module deliveryChallanService {
         if (!invoice) {
           throw new FinanceValidationError("Invoice not found for this customer.", 404, "DELIVERY_INVOICE_NOT_FOUND");
         }
+        const invoiceAddress = extractInvoiceDeliveryAddressContext(
+          invoice.billingaddresssnapshot,
+          invoice.shippingaddresssnapshot,
+          { formattedaddress: invoice.customeraddress, name: invoice.customername, mobilenumber: invoice.customerphonenumber }
+        );
+        // Billing is an immutable Invoice snapshot. Delivery/contact fields stay
+        // editable, but use the Invoice snapshot when the browser omitted them.
+        billingaddress = invoiceAddress.billingaddress || billingaddress;
+        recipientaddress ||= invoiceAddress.recipientaddress;
+        recipientname ||= invoiceAddress.recipientname;
+        recipientphone ||= invoiceAddress.recipientphone;
+        recipientemail ||= invoiceAddress.recipientemail;
         // The source Invoice number is the canonical reference for an
         // Invoice-linked Challan; no duplicate user entry is required.
         referencenumber = String(invoice.invoicenumber || `INV-${invoiceId}`);

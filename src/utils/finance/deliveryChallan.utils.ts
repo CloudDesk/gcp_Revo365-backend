@@ -15,6 +15,14 @@ export type DeliverableInvoiceLine = {
   totalamount: number | null;
 };
 
+export type InvoiceDeliveryAddressContext = {
+  billingaddress: string | null;
+  recipientaddress: string | null;
+  recipientname: string | null;
+  recipientphone: string | null;
+  recipientemail: string | null;
+};
+
 const parseInvoiceJson = (value: unknown): any => {
   if (!value) return {};
   if (typeof value === "string") {
@@ -36,6 +44,54 @@ const moneyValue = (value: unknown): number | null => {
   if (value == null || value === "") return null;
   const parsed = Number(String(value).replace(/[^0-9.-]/g, ""));
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null;
+};
+
+const textValue = (...values: unknown[]): string | null => {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+};
+
+const addressSnapshot = (value: unknown): Record<string, unknown> | null => {
+  const parsed = parseInvoiceJson(value);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    && Object.keys(parsed).length > 0 ? parsed : null;
+};
+
+const formatAddressSnapshot = (snapshot: Record<string, unknown> | null): string | null => {
+  if (!snapshot) return null;
+  const formatted = textValue(snapshot.formattedaddress, snapshot.formattedAddress);
+  if (formatted) return formatted;
+  const parts = [
+    snapshot.doornumber,
+    snapshot.address,
+    snapshot.landmark,
+    snapshot.city,
+    snapshot.state,
+    snapshot.pincode,
+  ].map((value) => String(value ?? "").trim()).filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+};
+
+export const extractInvoiceDeliveryAddressContext = (
+  billingSnapshotValue: unknown,
+  shippingSnapshotValue: unknown,
+  invoiceCustomerValue?: unknown
+): InvoiceDeliveryAddressContext => {
+  const invoiceCustomer = addressSnapshot(invoiceCustomerValue);
+  const billing = addressSnapshot(billingSnapshotValue) || invoiceCustomer;
+  const shipping = addressSnapshot(shippingSnapshotValue);
+  const recipient = shipping || billing;
+  return {
+    billingaddress: formatAddressSnapshot(billing),
+    recipientaddress: formatAddressSnapshot(recipient),
+    recipientname: textValue(recipient?.name, recipient?.customername, billing?.name, billing?.customername),
+    recipientphone: textValue(recipient?.mobilenumber, recipient?.phonenumber, recipient?.phone,
+      billing?.mobilenumber, billing?.phonenumber, billing?.phone),
+    recipientemail: textValue(recipient?.email, recipient?.useremail, billing?.email, billing?.useremail),
+  };
 };
 
 export const extractDeliverableInvoiceLines = (
@@ -63,15 +119,18 @@ export const extractDeliverableInvoiceLines = (
 
     const productId = Number(item?.productid);
     const unitrate = moneyValue(item?.unitrate ?? item?.unitPrice ?? item?.rate ?? item?.price ?? item?.mrp);
-    const taxableamount = moneyValue(item?.taxableamount ?? item?.taxableAmount ?? item?.subtotal ?? item?.amount);
-    const cgst = moneyValue(item?.cgstamount ?? item?.cgstAmount) || 0;
-    const sgst = moneyValue(item?.sgstamount ?? item?.sgstAmount) || 0;
-    const igst = moneyValue(item?.igstamount ?? item?.igstAmount) || 0;
-    const gstamount = moneyValue(item?.gstamount ?? item?.gstAmount) ?? Math.round((cgst + sgst + igst) * 100) / 100;
+    const taxableamount = moneyValue(item?.taxableamount ?? item?.taxableAmount
+      ?? item?.taxablevalue ?? item?.taxableValue ?? item?.subtotal ?? item?.amount);
+    const cgst = moneyValue(item?.cgstamount ?? item?.cgstAmount ?? item?.cgst) || 0;
+    const sgst = moneyValue(item?.sgstamount ?? item?.sgstAmount ?? item?.sgst) || 0;
+    const igst = moneyValue(item?.igstamount ?? item?.igstAmount ?? item?.igst) || 0;
+    const gstamount = moneyValue(item?.gstamount ?? item?.gstAmount ?? item?.taxamount ?? item?.taxAmount
+      ?? item?.totalgst ?? item?.totalGst) ?? Math.round((cgst + sgst + igst) * 100) / 100;
     const totalamount = moneyValue(item?.totalamount ?? item?.totalMRP ?? item?.grandtotal)
       ?? (taxableamount == null ? moneyValue(item?.amount) : Math.round((taxableamount + gstamount) * 100) / 100);
     const lineamount = totalamount;
-    const explicitRate = moneyValue(item?.gstrate ?? item?.gstRate ?? item?.taxpercentage ?? item?.taxPercentage);
+    const explicitRate = moneyValue(item?.gstrate ?? item?.gstRate ?? item?.taxpercentage ?? item?.taxPercentage
+      ?? item?.taxpercent ?? item?.taxPercent ?? item?.gstpercentage ?? item?.gstPercentage);
     const gstrate = explicitRate ?? (taxableamount && gstamount ? Math.round((gstamount / taxableamount) * 10000) / 100 : 0);
     return [{
       invoicelinekey,
