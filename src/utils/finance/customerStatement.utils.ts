@@ -20,9 +20,29 @@ export type CustomerStatementRow = {
   bankcashaccountname?: string | null;
   bankname?: string | null;
   documentnumbers?: string[];
+  documentlinks?: Array<{
+    documentnumber: string;
+    invoiceurl: string | null;
+  }>;
+  invoiceurl?: string | null;
 };
 
 type StatementInputRow = Omit<CustomerStatementRow, "balance">;
+
+export const deriveCustomerPaymentStatus = ({
+  invoiceCount,
+  invoiceAmount,
+  adjustedBalance,
+}: {
+  invoiceCount: number;
+  invoiceAmount: number;
+  adjustedBalance: number;
+}) => {
+  if (invoiceCount === 0) return "no_invoices";
+  if (adjustedBalance <= 0) return "paid";
+  if (adjustedBalance < invoiceAmount) return "partially_paid";
+  return "pending";
+};
 
 const compareRows = (left: StatementInputRow, right: StatementInputRow) => {
   const dateOrder = left.transactiondate.localeCompare(right.transactiondate);
@@ -56,13 +76,17 @@ export const buildCustomerStatement = (
   );
 
   let runningBalance = openingReceivable;
-  const records: CustomerStatementRow[] = periodRows.map((row) => {
+  const chronologicalRecords: CustomerStatementRow[] = periodRows.map((row) => {
     runningBalance = toMoney(
       runningBalance + statementEffect(row),
       "statement balance"
     );
     return { ...row, balance: runningBalance };
   });
+
+  // Calculate balances oldest-to-newest, then present the latest activity first.
+  // Reversing after the calculation preserves the balance as of each transaction.
+  const records = chronologicalRecords.reverse();
 
   return {
     records,

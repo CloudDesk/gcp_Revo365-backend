@@ -184,6 +184,15 @@ export module onAccountStatementService {
       statementSummary.period.map((movement: any) => Number(movement.movementid))
     );
     const periodRows = rows.filter((row: any) => periodIds.has(Number(row.movementid)));
+    const displayRows = [...periodRows].sort((left: any, right: any) => {
+      const leftDate = String(toFinanceDateOnly(left.eventdate) || left.eventdate);
+      const rightDate = String(toFinanceDateOnly(right.eventdate) || right.eventdate);
+      const dateOrder = rightDate.localeCompare(leftDate);
+      if (dateOrder !== 0) return dateOrder;
+      const createdOrder = Number(right.createddate || 0) - Number(left.createddate || 0);
+      if (createdOrder !== 0) return createdOrder;
+      return Number(right.movementid || 0) - Number(left.movementid || 0);
+    });
     const currentavailable = toMoney(
       referenceRows.reduce((sum, row) => sum + row.availableamount, 0)
     );
@@ -197,7 +206,7 @@ export module onAccountStatementService {
     return {
       partytype,
       partyid,
-      records: periodRows.map((row: any) => ({
+      records: displayRows.map((row: any) => ({
         id: Number(row.movementid),
         referenceid: Number(row.referenceid),
         referencenumber: row.referencenumber,

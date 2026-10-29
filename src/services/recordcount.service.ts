@@ -3,6 +3,7 @@ import { QueryResult } from "pg";
 import { ErrorHandler } from "../errorHandler/errorHandler.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 export module recordCountService {
   export const getRecordCount = async (objectName: string, request: any) => {
     try {
@@ -318,7 +319,8 @@ export module recordCountService {
           if (shouldFilterPaymentStatus) {
             const paymentSummaries =
               await revoinvoiceservice.getPaymentSummariesByCustomerIds(
-                filteredUserIds
+                filteredUserIds,
+                resolveFinanceContext(request).organizationId
               );
             filteredUserIds = filteredUserIds.filter(
               (userId: any) =>

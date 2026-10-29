@@ -17,6 +17,7 @@ import {
   protectAccountNumber,
   requireIsoDate,
   requirePositiveMoney,
+  resolveFinanceContext,
   toFinanceDateOnly,
   toMoney,
 } from "../utils/finance/finance.utils.js";
@@ -80,8 +81,11 @@ import {
   buildCustomerStatement,
   toCustomerStatementDate,
 } from "../utils/finance/customerStatement.utils.js";
+import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
 import {
   extractDeliverableInvoiceLines,
+  extractInvoiceDeliveryAddressContext,
+  resolveDeliveryChallanDocumentAccess,
   validateManualDeliveryLines,
   validateDeliveryQuantities,
 } from "../utils/finance/deliveryChallan.utils.js";
@@ -518,6 +522,11 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
         unit: "Nos",
         unitrate: null,
         lineamount: null,
+        hsnsaccode: null,
+        taxableamount: null,
+        gstrate: 0,
+        gstamount: 0,
+        totalamount: null,
       },
       {
         invoicelinekey: "item:2",
@@ -527,8 +536,70 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
         unit: "Nos",
         unitrate: null,
         lineamount: null,
+        hsnsaccode: null,
+        taxableamount: null,
+        gstrate: 0,
+        gstamount: 0,
+        totalamount: null,
       },
     ]);
+  });
+
+  test("maps the current Invoice taxable and GST fields into Delivery Challan lines", () => {
+    const [line] = extractDeliverableInvoiceLines({
+      items: [{
+        id: 99,
+        name: "Laptop",
+        quantity: 2,
+        taxablevalue: "₹2,000.00",
+        taxamount: "₹360.00",
+        cgst: "₹180.00",
+        sgst: "₹180.00",
+        taxpercent: "18%",
+        totalamount: "₹2,360.00",
+      }],
+    });
+    assert.equal(line.taxableamount, 2000);
+    assert.equal(line.gstamount, 360);
+    assert.equal(line.gstrate, 18);
+    assert.equal(line.totalamount, 2360);
+  });
+
+  test("uses Invoice billing and shipping snapshots for Delivery Challan details", () => {
+    const context = extractInvoiceDeliveryAddressContext(
+      { name: "Billing Contact", doornumber: "10", address: "Main Road", city: "Chennai", state: "Tamil Nadu", pincode: "600001" },
+      JSON.stringify({ name: "Delivery Contact", mobilenumber: "9876543210", email: "delivery@example.com", doornumber: "22", address: "Lake View", landmark: "Near Park", city: "Chennai", state: "Tamil Nadu", pincode: "600042" })
+    );
+    assert.deepEqual(context, {
+      billingaddress: "10, Main Road, Chennai, Tamil Nadu, 600001",
+      recipientaddress: "22, Lake View, Near Park, Chennai, Tamil Nadu, 600042",
+      recipientname: "Delivery Contact",
+      recipientphone: "9876543210",
+      recipientemail: "delivery@example.com",
+    });
+  });
+
+  test("falls back to the address printed on legacy Invoices without snapshots", () => {
+    const context = extractInvoiceDeliveryAddressContext(null, null, {
+      formattedaddress: "12 Legacy Street, Chennai - 600001",
+      name: "Legacy Customer",
+      mobilenumber: "9000000000",
+    });
+    assert.equal(context.billingaddress, "12 Legacy Street, Chennai - 600001");
+    assert.equal(context.recipientaddress, "12 Legacy Street, Chennai - 600001");
+    assert.equal(context.recipientname, "Legacy Customer");
+    assert.equal(context.recipientphone, "9000000000");
+  });
+
+  test("uses a valid revoinvoice source when locking the Invoice during Challan save", () => {
+    const serviceSource = readFileSync(
+      new URL("../services/deliveryChallan.service.ts", import.meta.url),
+      "utf8"
+    );
+    assert.match(
+      serviceSource,
+      /SELECT id, invoicenumber, invoicedata,[\s\S]*?FROM revoinvoice\s+WHERE id = \$1[\s\S]*?FOR UPDATE/
+    );
   });
 
   test("allows partial delivery up to the server-calculated remaining quantity", () => {
@@ -572,16 +643,78 @@ describe("Delivery Challan Phase 3 quantity rules", () => {
       deliveryquantity: 2,
       unit: "Nos",
       assetreference: "RFID-1",
+      hsnsaccode: null,
+      unitrate: null,
+      taxableamount: null,
+      gstrate: 0,
+      gstamount: null,
+      totalamount: null,
     }]);
     assert.throws(
       () => validateManualDeliveryLines([{ productname: "Demo equipment", deliveryquantity: 0, unit: "Nos" }]),
       FinanceValidationError
     );
   });
+
+  test("recalculates Manual/General amounts and rejects GST above 28 percent", () => {
+    const [line] = validateManualDeliveryLines([{
+      productname: "Demo equipment",
+      deliveryquantity: 3,
+      unit: "Nos",
+      unitrate: 99.99,
+      gstrate: 18,
+      taxableamount: 1,
+      gstamount: 1,
+      totalamount: 1,
+    }]);
+    assert.equal(line.taxableamount, 299.97);
+    assert.equal(line.gstamount, 53.99);
+    assert.equal(line.totalamount, 353.96);
+    assert.throws(
+      () => validateManualDeliveryLines([{
+        productname: "Demo equipment",
+        deliveryquantity: 1,
+        unitrate: 100,
+        gstrate: 29,
+      }]),
+      /between 0 and 28 percent/
+    );
+  });
+
+  test("uses one document-access rule for Manual and Invoice-linked Challans", () => {
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(false, false), {
+      canViewAmounts: false,
+      canAccessDocument: true,
+    });
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, false), {
+      canViewAmounts: false,
+      canAccessDocument: false,
+    });
+    assert.deepEqual(resolveDeliveryChallanDocumentAccess(true, true), {
+      canViewAmounts: true,
+      canAccessDocument: true,
+    });
+  });
+});
+
+describe("Finance organization context", () => {
+  test("rejects missing organization context instead of falling back to tenant 1", () => {
+    assert.throws(
+      () => resolveFinanceContext({ session: { useremail: "user@example.com" }, url: "/finance/dashboard" }),
+      (error: any) => error?.code === "FINANCE_ORGANIZATION_CONTEXT_REQUIRED" && error?.statusCode === 401
+    );
+  });
+
+  test("uses the positive organization stored in the authenticated session", () => {
+    assert.deepEqual(
+      resolveFinanceContext({ session: { useremail: "user@example.com", organizationid: 7 } }),
+      { actor: "user@example.com", organizationId: 7 }
+    );
+  });
 });
 
 describe("Customer Statement Phase 3 foundation", () => {
-  test("orders Invoice and Customer Payment rows and calculates running receivable", () => {
+  test("returns the latest Customer Statement rows first with chronological balances", () => {
     const statement = buildCustomerStatement([
       {
         id: "payment-1",
@@ -611,10 +744,84 @@ describe("Customer Statement Phase 3 foundation", () => {
       },
     ]);
 
-    assert.equal(statement.records[0].reference, "INV-1");
-    assert.equal(statement.records[0].balance, 1000);
-    assert.equal(statement.records[1].balance, 600);
+    assert.equal(statement.records[0].reference, "BT-1");
+    assert.equal(statement.records[0].balance, 600);
+    assert.equal(statement.records[1].balance, 1000);
     assert.equal(statement.summary.closingreceivable, 600);
+  });
+
+  test("reduces receivable by bank payment plus TDS while keeping both amounts separate", () => {
+    const statement = buildCustomerStatement([
+      {
+        id: "invoice-tds",
+        sourceid: 1,
+        transactiontype: "invoice",
+        transactiondate: "2026-10-15",
+        reference: "INV-TDS",
+        description: "Invoice",
+        invoiceamount: 1180,
+        paymentamount: 0,
+        settledamount: 0,
+        tdsamount: 0,
+        unappliedamount: 0,
+      },
+      {
+        id: "payment-tds",
+        sourceid: 1,
+        transactiontype: "customer_payment",
+        transactiondate: "2026-10-16",
+        reference: "BT-TDS",
+        description: "Receipt with TDS",
+        invoiceamount: 0,
+        paymentamount: 1080,
+        settledamount: 1180,
+        tdsamount: 100,
+        unappliedamount: 0,
+      },
+    ]);
+
+    assert.equal(statement.records[0].paymentamount, 1080);
+    assert.equal(statement.records[0].tdsamount, 100);
+    assert.equal(statement.records[0].balance, 0);
+    assert.equal(statement.summary.paymentamount, 1080);
+    assert.equal(statement.summary.tdsreceivable, 100);
+    assert.equal(statement.summary.closingreceivable, 0);
+  });
+
+  test("shows a Customer manual Journal credit as a payment with the correct balance", () => {
+    const statement = buildCustomerStatement([
+      {
+        id: "invoice-1",
+        sourceid: 1,
+        transactiontype: "invoice",
+        transactiondate: "2026-09-22",
+        reference: "INV-1",
+        description: "Invoice",
+        invoiceamount: 1_100_143,
+        paymentamount: 0,
+        settledamount: 0,
+        tdsamount: 0,
+        unappliedamount: 0,
+      },
+      {
+        id: "journal-152-346",
+        sourceid: 152,
+        transactiontype: "customer_payment",
+        transactiondate: "2026-10-23",
+        reference: "JE-00000152",
+        description: "Manual Journal adjustment",
+        invoiceamount: 0,
+        paymentamount: 1_000,
+        settledamount: 1_000,
+        tdsamount: 0,
+        unappliedamount: 0,
+        source: "manual_journal",
+      },
+    ]);
+
+    assert.equal(statement.records[0].reference, "JE-00000152");
+    assert.equal(statement.records[0].paymentamount, 1_000);
+    assert.equal(statement.records[0].balance, 1_099_143);
   });
 
   test("uses pre-period rows for the opening receivable", () => {
@@ -652,6 +859,69 @@ describe("Customer Statement Phase 3 foundation", () => {
 
     assert.equal(statement.summary.openingreceivable, 1000);
     assert.equal(statement.summary.closingreceivable, 750);
+  });
+
+  test("reduces customer receivable immediately for On Account but not for Advance until allocation", () => {
+    const statement = buildCustomerStatement([
+      {
+        id: "invoice-1", sourceid: 1, transactiontype: "invoice",
+        transactiondate: "2026-10-01", reference: "INV-1", description: "Invoice",
+        invoiceamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+        unappliedamount: 0,
+      },
+      {
+        id: "on-account-1", sourceid: 2, transactiontype: "customer_payment",
+        transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+        invoiceamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+        unappliedamount: 300, allocationmethod: "on_account",
+      },
+      {
+        id: "advance-1", sourceid: 3, transactiontype: "customer_payment",
+        transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+        invoiceamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+        unappliedamount: 200, allocationmethod: "advance",
+      },
+      {
+        id: "advance-application-1", sourceid: 4, transactiontype: "customer_payment",
+        transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+        invoiceamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+        unappliedamount: 0, allocationmethod: "on_account_application",
+      },
+    ]);
+
+    assert.deepEqual(statement.records.map((row) => row.balance), [500, 700, 700, 1000]);
+    assert.equal(statement.summary.closingreceivable, 500);
+  });
+
+  test("applies the equivalent On Account and Advance timing to Supplier payable", () => {
+    const statement = buildSupplierStatement([
+      {
+        id: "bill-1", sourceid: 1, transactiontype: "bill",
+        transactiondate: "2026-10-01", reference: "BILL-1", description: "Bill",
+        billamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+      },
+      {
+        id: "on-account-1", sourceid: 2, transactiontype: "supplier_payment",
+        transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+        billamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+        allocationmethod: "on_account",
+      },
+      {
+        id: "advance-1", sourceid: 3, transactiontype: "supplier_payment",
+        transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+        billamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+        allocationmethod: "advance",
+      },
+      {
+        id: "advance-application-1", sourceid: 4, transactiontype: "supplier_payment",
+        transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+        billamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+        allocationmethod: "on_account_application",
+      },
+    ]);
+
+    assert.deepEqual(statement.records.map((row) => row.balance), [500, 700, 700, 1000]);
+    assert.equal(statement.summary.closingpayable, 500);
   });
 
   test("serializes epoch Invoice dates in the India business date", () => {
@@ -1466,10 +1736,7 @@ describe("Cash and Bank foundation validation", () => {
       resolveCustomerReceiptAllocationMethod("on_account"),
       "on_account"
     );
-    assert.throws(
-      () => resolveCustomerReceiptAllocationMethod("advance"),
-      FinanceValidationError
-    );
+    assert.equal(resolveCustomerReceiptAllocationMethod("advance"), "advance");
   });
 
   test("Customer receipt schema keeps legacy allocations and permits allocation-free On Account receipts", () => {
@@ -1502,6 +1769,7 @@ describe("Cash and Bank foundation validation", () => {
       validate({ ...base, allocationmethod: "on_account" }),
       true
     );
+    assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
     assert.equal(
       validate({ ...base, allocationmethod: "against_document" }),
       false
@@ -1536,10 +1804,7 @@ describe("Cash and Bank foundation validation", () => {
   test("Supplier payment allocation method defaults to the existing bill flow", () => {
     assert.equal(resolveOnAccountAllocationMethod(undefined), "against_document");
     assert.equal(resolveOnAccountAllocationMethod("on_account"), "on_account");
-    assert.throws(
-      () => resolveOnAccountAllocationMethod("advance"),
-      FinanceValidationError
-    );
+    assert.equal(resolveOnAccountAllocationMethod("advance"), "advance");
   });
 
   test("Supplier payment schema preserves bill payments and permits allocation-free advances", () => {
@@ -1565,6 +1830,7 @@ describe("Cash and Bank foundation validation", () => {
       true
     );
     assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+    assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
     assert.equal(
       validate({ ...base, allocationmethod: "against_document" }),
       false
@@ -1641,6 +1907,7 @@ describe("Finance source classification", () => {
     assert.deepEqual(getCustomerReceiptSourceTypes(), [
       "customer_receipt",
       "customer_on_account",
+      "customer_advance",
       "retail_receipt",
       "retail_instore_receipt",
       "service_request_receipt",

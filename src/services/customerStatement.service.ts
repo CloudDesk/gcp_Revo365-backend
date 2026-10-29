@@ -11,9 +11,11 @@ import {
 import {
   buildCustomerStatement,
   CustomerStatementRow,
+  deriveCustomerPaymentStatus,
   toCustomerStatementDate,
 } from "../utils/finance/customerStatement.utils.js";
 import { onAccountStatementService } from "./onAccountStatement.service.js";
+import { accessScopeService } from "./accessScope.service.js";
 
 const requirePositiveInteger = (value: unknown, fieldName: string) => {
   const parsed = Number(value);
@@ -285,21 +287,45 @@ export module customerStatementService {
       customerId
     );
 
-    const [invoiceResult, paymentResult, onAccountPaymentResult, transferResult, addressResult] = await Promise.all([
+    const [invoiceResult, paymentResult, onAccountPaymentResult, transferResult, addressResult, onAccountCreditResult, journalPartyResult] = await Promise.all([
       query(
         `
-        SELECT *
-        FROM revoinvoice
-        WHERE customerid = $1
-        ORDER BY invoicedate, id
+        SELECT
+          invoice.*,
+          consolidated.documenturl AS consolidatedinvoiceurl,
+          consolidated.documentnumber AS consolidatedinvoicenumber
+        FROM revoinvoice invoice
+        LEFT JOIN LATERAL (
+          SELECT ci.documenturl, ci.documentnumber
+          FROM consolidated_invoice_sources cis
+          JOIN consolidated_invoices ci
+            ON ci.id = cis.consolidatedinvoiceid
+          WHERE cis.revoinvoiceid = invoice.id
+            AND ci.status = 'generated'
+            AND COALESCE(ci.iscurrent, TRUE) = TRUE
+            AND NULLIF(TRIM(COALESCE(ci.documenturl, '')), '') IS NOT NULL
+          ORDER BY ci.versionnumber DESC NULLS LAST, ci.id DESC
+          LIMIT 1
+        ) consolidated ON TRUE
+        WHERE invoice.customerid = $1
+        ORDER BY invoice.invoicedate, invoice.id
         `,
         [customerId]
       ),
       summaryOnly
         ? query(
             `
-            SELECT COUNT(*)::int AS total
+            SELECT
+              COUNT(*)::int AS total,
+              COALESCE(SUM(allocation.tdsamount), 0)::numeric(18, 2) AS tdsamount
             FROM bank_transactions t
+            LEFT JOIN LATERAL (
+              SELECT SUM(a.tdsamount) AS tdsamount
+              FROM bank_transaction_allocations a
+              WHERE a.banktransactionid = t.id
+                AND a.documenttype = 'sales_invoice'
+                AND a.status = 'applied'
+            ) allocation ON TRUE
             WHERE t.organizationid = $1
               AND t.partytype = 'customer'
               AND t.partyid = $2
@@ -325,7 +351,7 @@ export module customerStatementService {
           COALESCE(allocation.tdsamount, 0) AS tdsamount,
           COALESCE(allocation.totalsettledamount, 0) AS totalsettledamount,
           COALESCE(allocation.documentnumbers, ARRAY[]::varchar[]) AS documentnumbers,
-          COALESCE(unapplied.remainingamount, 0) AS unappliedamount
+          COALESCE(unapplied.remainingamount, onaccount.availableamount, 0) AS unappliedamount
         FROM bank_transactions t
         JOIN bank_cash_accounts b
           ON b.id = t.bankcashaccountid
@@ -353,6 +379,15 @@ export module customerStatementService {
             AND u.partyid = $2
             AND u.status = 'open'
         ) unapplied ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT r.availableamount
+          FROM on_account_references r
+          WHERE r.organizationid = t.organizationid
+            AND r.partytype = 'customer'
+            AND r.sourcebanktransactionid = t.id
+          ORDER BY r.id DESC
+          LIMIT 1
+        ) onaccount ON TRUE
         WHERE t.organizationid = $1
           AND t.partytype = 'customer'
           AND t.partyid = $2
@@ -365,7 +400,9 @@ export module customerStatementService {
       summaryOnly
         ? query(
             `
-            SELECT COUNT(DISTINCT m.journalentryid)::int AS total
+            SELECT
+              COUNT(DISTINCT m.journalentryid)::int AS total,
+              COALESCE(SUM(a.tdsamount), 0)::numeric(18, 2) AS tdsamount
             FROM on_account_document_allocations a
             JOIN on_account_references r
               ON r.id = a.onaccountreferenceid
@@ -392,7 +429,11 @@ export module customerStatementService {
               j.id,
               j.journalnumber AS transactionnumber,
               j.entrydate AS transactiondate,
-              SUM(a.bankportion)::numeric(18, 2) AS amount,
+              SUM(CASE
+                WHEN COALESCE(source_bt.allocationmethod, 'advance') = 'advance'
+                  THEN a.bankportion
+                ELSE 0
+              END)::numeric(18, 2) AS amount,
               'on_account_application'::text AS allocationmethod,
               'on_account_application'::text AS sourcetype,
               j.description AS remarks,
@@ -401,7 +442,13 @@ export module customerStatementService {
               NULL::text AS bankname,
               SUM(a.bankportion)::numeric(18, 2) AS allocationamount,
               SUM(a.tdsamount)::numeric(18, 2) AS tdsamount,
-              SUM(a.totalsettlement)::numeric(18, 2) AS totalsettledamount,
+              SUM(
+                CASE
+                  WHEN COALESCE(source_bt.allocationmethod, 'advance') = 'advance'
+                    THEN a.bankportion
+                  ELSE 0
+                END + a.tdsamount
+              )::numeric(18, 2) AS totalsettledamount,
               array_agg(DISTINCT a.documentnumber ORDER BY a.documentnumber)
                 FILTER (WHERE a.documentnumber IS NOT NULL AND TRIM(a.documentnumber) <> '')
                 AS documentnumbers,
@@ -410,6 +457,10 @@ export module customerStatementService {
             JOIN on_account_references r
               ON r.id = a.onaccountreferenceid
              AND r.organizationid = a.organizationid
+            LEFT JOIN bank_transactions source_bt
+              ON source_bt.id = r.sourcebanktransactionid
+             AND source_bt.organizationid = r.organizationid
+             AND source_bt.isdeleted = FALSE
             JOIN on_account_movements m
               ON m.id = a.onaccountmovementid
              AND m.organizationid = a.organizationid
@@ -492,6 +543,63 @@ export module customerStatementService {
         `,
         [customerId]
       ),
+      query(
+        `
+        SELECT COALESCE(SUM(movement_balance.amount), 0)::numeric(18, 2) AS amount
+        FROM on_account_references r
+        JOIN bank_transactions origin
+          ON origin.id = r.sourcebanktransactionid
+         AND origin.organizationid = r.organizationid
+         AND origin.isdeleted = FALSE
+         AND origin.allocationmethod = 'on_account'
+        JOIN LATERAL (
+          SELECT COALESCE(SUM(
+            CASE WHEN m.direction = 'increase' THEN m.amount ELSE -m.amount END
+          ), 0)::numeric(18, 2) AS amount
+          FROM on_account_movements m
+          LEFT JOIN bank_transactions movement_bank
+            ON movement_bank.id = m.banktransactionid
+           AND movement_bank.organizationid = m.organizationid
+           AND movement_bank.isdeleted = FALSE
+          LEFT JOIN journal_entries movement_journal
+            ON movement_journal.id = m.journalentryid
+           AND movement_journal.organizationid = m.organizationid
+           AND movement_journal.isdeleted = FALSE
+          WHERE m.organizationid = r.organizationid
+            AND m.onaccountreferenceid = r.id
+            AND ($3::date IS NULL OR COALESCE(
+              movement_bank.transactiondate,
+              movement_journal.entrydate,
+              TO_TIMESTAMP(m.createddate)::date
+            ) <= $3::date)
+        ) movement_balance ON TRUE
+        WHERE r.organizationid = $1
+          AND r.partytype = 'customer'
+          AND r.partyid = $2
+          AND ($3::date IS NULL OR origin.transactiondate <= $3::date)
+        `,
+        [organizationId, customerId, toDate]
+      ),
+      query(
+        `SELECT jl.id, je.id AS journalid, je.journalnumber, je.entrydate,
+                je.description AS journaldescription, jl.description AS linedescription,
+                jl.debitamount, jl.creditamount
+         FROM journal_lines jl
+         JOIN journal_entries je
+           ON je.id = jl.journalentryid
+          AND je.organizationid = $1
+          AND je.status = 'posted'
+          AND je.isdeleted = FALSE
+         JOIN finance_accounts fa
+           ON fa.id = jl.financeaccountid
+          AND fa.organizationid = je.organizationid
+          AND fa.accountsubtype = 'accounts_receivable'
+         WHERE jl.partytype = 'customer'
+           AND jl.partyid = $2
+           AND ($3::date IS NULL OR je.entrydate <= $3::date)
+         ORDER BY je.entrydate, je.id, jl.lineorder, jl.id`,
+        [organizationId, customerId, summaryOnly ? toDate : null]
+      ),
     ]);
 
     const activeInvoices = invoiceResult.rows.filter(isActiveInvoice);
@@ -520,14 +628,30 @@ export module customerStatementService {
         ? Number(invoiceSummary[key])
         : toMoney(invoiceSummary[key], key);
     });
-    const paymentStatus =
-      invoiceSummary.invoicecount === 0
-        ? "no_invoices"
-        : invoiceSummary.invoiceamount > 0 && invoiceSummary.currentreceivable === 0
-          ? "paid"
-          : invoiceSummary.paidamount > 0
-            ? "partially_paid"
-            : "pending";
+    const unallocatedOnAccountCredit = toMoney(
+      onAccountCreditResult.rows[0]?.amount || 0
+    );
+    const rawAdjustedCurrentReceivable = toMoney(
+      invoiceSummary.currentreceivable - unallocatedOnAccountCredit +
+        journalPartyResult.rows.reduce(
+          (total: number, line: any) => total + Number(line.debitamount || 0) - Number(line.creditamount || 0),
+          0
+        )
+    );
+    const adjustedCurrentReceivable = toMoney(Math.max(rawAdjustedCurrentReceivable, 0));
+    const tdsSettled = toMoney(Math.min(
+      invoiceSummary.paidamount,
+      Number(paymentResult.rows[0]?.tdsamount || 0) +
+        Number(onAccountPaymentResult.rows[0]?.tdsamount || 0)
+    ));
+    const paymentReceived = toMoney(
+      Math.max(invoiceSummary.paidamount - tdsSettled, 0)
+    );
+    const paymentStatus = deriveCustomerPaymentStatus({
+      invoiceCount: invoiceSummary.invoicecount,
+      invoiceAmount: invoiceSummary.invoiceamount,
+      adjustedBalance: rawAdjustedCurrentReceivable,
+    });
 
     if (summaryOnly) {
       return {
@@ -543,7 +667,7 @@ export module customerStatementService {
           outstandinginvoicecount: invoiceSummary.outstandinginvoicecount,
           invoiceamount: invoiceSummary.invoiceamount,
           paidamount: invoiceSummary.paidamount,
-          balanceamount: invoiceSummary.currentreceivable,
+          balanceamount: adjustedCurrentReceivable,
           paymentstatus: paymentStatus,
         },
         records: [] as CustomerStatementRow[],
@@ -554,16 +678,16 @@ export module customerStatementService {
         summary: {
           openingreceivable: 0,
           invoiceamount: 0,
-          paymentamount: 0,
-          settledamount: 0,
-          tdsreceivable: 0,
+          paymentamount: paymentReceived,
+          settledamount: invoiceSummary.paidamount,
+          tdsreceivable: tdsSettled,
           unappliedamount: 0,
-          closingreceivable: invoiceSummary.currentreceivable,
+          closingreceivable: adjustedCurrentReceivable,
           invoicecount: invoiceSummary.invoicecount,
           paymentcount:
             Number(paymentResult.rows[0]?.total || 0) +
             Number(onAccountPaymentResult.rows[0]?.total || 0),
-          currentreceivable: invoiceSummary.currentreceivable,
+          currentreceivable: adjustedCurrentReceivable,
         },
       };
     }
@@ -590,8 +714,20 @@ export module customerStatementService {
         source: String(invoice.invoicefor || "invoice"),
         bankcashaccountname: null,
         bankname: null,
+        invoiceurl:
+          String(invoice.invoiceurl || "").trim() ||
+          String(invoice.supportingdocumenturl || "").trim() ||
+          String(invoice.consolidatedinvoiceurl || "").trim() ||
+          null,
       }];
     });
+
+    const invoiceDocumentByNumber = new Map(
+      invoiceRows.map((invoice: any) => [
+        String(invoice.reference),
+        invoice.invoiceurl || null,
+      ])
+    );
 
     const paymentRows = [
       ...paymentResult.rows,
@@ -612,7 +748,13 @@ export module customerStatementService {
         invoiceamount: 0,
         paymentamount: toMoney(payment.amount),
         allocatedamount: toMoney(payment.allocationamount),
-        settledamount: toMoney(payment.totalsettledamount),
+        settledamount: toMoney(
+          payment.allocationmethod === "on_account"
+            ? payment.amount
+            : payment.allocationmethod === "advance"
+              ? 0
+              : payment.totalsettledamount
+        ),
         tdsamount: toMoney(payment.tdsamount),
         unappliedamount: toMoney(payment.unappliedamount),
         status: String(payment.postingstatus || "posted"),
@@ -620,14 +762,51 @@ export module customerStatementService {
         allocationmethod: String(payment.allocationmethod || "invoice_allocation"),
         bankcashaccountname: payment.bankcashaccountname || null,
         bankname: payment.bankname || null,
+        invoiceurl: null,
         documentnumbers: Array.isArray(payment.documentnumbers)
           ? payment.documentnumbers.map(String)
+          : [],
+        documentlinks: Array.isArray(payment.documentnumbers)
+          ? payment.documentnumbers.map((documentNumber: unknown) => ({
+              documentnumber: String(documentNumber),
+              invoiceurl:
+                invoiceDocumentByNumber.get(String(documentNumber)) || null,
+            }))
           : [],
       }];
     });
 
+    const journalRows = journalPartyResult.rows.flatMap((line: any) => {
+      const transactionDate = toCustomerStatementDate(line.entrydate);
+      if (!transactionDate) return [];
+      const debit = toMoney(line.debitamount);
+      const credit = toMoney(line.creditamount);
+      return [{
+        id: `journal-${line.journalid}-${line.id}`,
+        sourceid: Number(line.journalid),
+        transactiontype: debit > 0 ? "invoice" as const : "customer_payment" as const,
+        transactiondate: transactionDate,
+        reference: String(line.journalnumber || `JE-${line.journalid}`),
+        description: String(line.linedescription || line.journaldescription || "Manual Journal adjustment"),
+        invoiceamount: debit,
+        paymentamount: credit,
+        allocatedamount: 0,
+        settledamount: credit,
+        tdsamount: 0,
+        unappliedamount: 0,
+        status: "posted",
+        source: "manual_journal",
+        allocationmethod: null,
+        bankcashaccountname: null,
+        bankname: null,
+        invoiceurl: null,
+        documentnumbers: [],
+        documentlinks: [],
+      }];
+    });
+
     const statement = buildCustomerStatement(
-      [...invoiceRows, ...paymentRows],
+      [...invoiceRows, ...paymentRows, ...journalRows],
       { fromdate: fromDate, todate: toDate }
     );
     const filteredRecords = transactionType
@@ -651,7 +830,7 @@ export module customerStatementService {
         outstandinginvoicecount: invoiceSummary.outstandinginvoicecount,
         invoiceamount: invoiceSummary.invoiceamount,
         paidamount: invoiceSummary.paidamount,
-        balanceamount: invoiceSummary.currentreceivable,
+        balanceamount: toMoney(Math.max(statement.summary.closingreceivable, 0)),
         paymentstatus: paymentStatus,
       },
       records: records as CustomerStatementRow[],
@@ -663,7 +842,7 @@ export module customerStatementService {
         ...statement.summary,
         invoicecount: invoiceRows.length,
         paymentcount: paymentRows.length,
-        currentreceivable: invoiceSummary.currentreceivable,
+        currentreceivable: toMoney(Math.max(statement.summary.closingreceivable, 0)),
       },
     };
   };
@@ -786,10 +965,25 @@ export module customerStatementService {
     const [recordResult, countResult] = await Promise.all([
       query(
         `
-        SELECT *
-        FROM revoinvoice
-        WHERE customerid = $1
-        ORDER BY COALESCE(invoicedate, createddate) DESC, id DESC
+        SELECT
+          invoice.*,
+          consolidated.documenturl AS consolidatedinvoiceurl,
+          consolidated.documentnumber AS consolidatedinvoicenumber
+        FROM revoinvoice invoice
+        LEFT JOIN LATERAL (
+          SELECT ci.documenturl, ci.documentnumber
+          FROM consolidated_invoice_sources cis
+          JOIN consolidated_invoices ci
+            ON ci.id = cis.consolidatedinvoiceid
+          WHERE cis.revoinvoiceid = invoice.id
+            AND ci.status = 'generated'
+            AND COALESCE(ci.iscurrent, TRUE) = TRUE
+            AND NULLIF(TRIM(COALESCE(ci.documenturl, '')), '') IS NOT NULL
+          ORDER BY ci.versionnumber DESC NULLS LAST, ci.id DESC
+          LIMIT 1
+        ) consolidated ON TRUE
+        WHERE invoice.customerid = $1
+        ORDER BY COALESCE(invoice.invoicedate, invoice.createddate) DESC, invoice.id DESC
         OFFSET $2 LIMIT $3
         `,
         [customerId, offset, count]
@@ -824,11 +1018,87 @@ export module customerStatementService {
           paidamount: paymentState.paidAmount,
           balanceamount: paymentState.outstandingAmount,
           paymentstatus,
+          invoiceurl:
+            String(invoice.invoiceurl || "").trim() ||
+            String(invoice.supportingdocumenturl || "").trim() ||
+            String(invoice.consolidatedinvoiceurl || "").trim() ||
+            null,
+          documentnumber:
+            String(invoice.consolidatedinvoicenumber || "").trim() || null,
         };
       }),
       total: Number(countResult.rows[0]?.total || 0),
       page,
       count,
+    };
+  };
+
+  export const getCustomerInvoiceDocument = async (request: any) => {
+    const { organizationId } = resolveFinanceContext(request);
+    const customerId = requirePositiveInteger(
+      request.params?.customerId,
+      "customerId"
+    );
+    const invoiceId = requirePositiveInteger(
+      request.params?.invoiceId,
+      "invoiceId"
+    );
+    if (!(await accessScopeService.canVendorAccessCustomer(request, customerId))) {
+      throw new FinanceValidationError(
+        "Invoice not found for this customer.",
+        404,
+        "FINANCE_INVOICE_NOT_FOUND"
+      );
+    }
+    await requireCustomer(customerId);
+
+    const result = await query(
+      `
+      SELECT
+        invoice.id,
+        invoice.invoicenumber,
+        invoice.invoicedocumenttype,
+        COALESCE(
+          NULLIF(TRIM(invoice.invoiceurl), ''),
+          NULLIF(TRIM(invoice.supportingdocumenturl), ''),
+          NULLIF(TRIM(consolidated.documenturl), '')
+        ) AS documenturl,
+        consolidated.documentnumber
+      FROM revoinvoice invoice
+      LEFT JOIN LATERAL (
+        SELECT ci.documenturl, ci.documentnumber
+        FROM consolidated_invoice_sources cis
+        JOIN consolidated_invoices ci
+          ON ci.id = cis.consolidatedinvoiceid
+        WHERE cis.revoinvoiceid = invoice.id
+          AND ci.status = 'generated'
+          AND COALESCE(ci.iscurrent, TRUE) = TRUE
+          AND NULLIF(TRIM(COALESCE(ci.documenturl, '')), '') IS NOT NULL
+        ORDER BY ci.versionnumber DESC NULLS LAST, ci.id DESC
+        LIMIT 1
+      ) consolidated ON TRUE
+      WHERE invoice.id = $1
+        AND invoice.customerid = $2
+        AND invoice.organizationid = $3
+      LIMIT 1
+      `,
+      [invoiceId, customerId, organizationId]
+    );
+    const invoice = result.rows[0];
+    if (!invoice) {
+      throw new FinanceValidationError(
+        "Invoice not found for this customer.",
+        404,
+        "FINANCE_INVOICE_NOT_FOUND"
+      );
+    }
+
+    return {
+      invoiceid: Number(invoice.id),
+      invoicenumber: String(invoice.invoicenumber || `INV-${invoice.id}`),
+      documenturl: String(invoice.documenturl || "").trim() || null,
+      documentnumber: String(invoice.documentnumber || "").trim() || null,
+      documenttype: String(invoice.invoicedocumenttype || "invoice"),
     };
   };
 

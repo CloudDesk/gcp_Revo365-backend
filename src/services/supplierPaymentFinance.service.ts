@@ -192,6 +192,7 @@ const getExistingPayment = async (
       [
         FINANCE_SOURCE_TYPES.supplierBillPayment,
         FINANCE_SOURCE_TYPES.supplierOnAccount,
+        FINANCE_SOURCE_TYPES.supplierAdvance,
       ],
       requestReference,
     ]
@@ -225,6 +226,7 @@ const postSupplierOnAccountPayment = async ({
   amount,
   remarks,
   requestReference,
+  allocationMethod,
 }: {
   actor: string;
   organizationId: number;
@@ -234,7 +236,9 @@ const postSupplierOnAccountPayment = async ({
   amount: number;
   remarks: string | null;
   requestReference: string;
+  allocationMethod: "on_account" | "advance";
 }) => {
+  const isAdvance = allocationMethod === "advance";
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -272,7 +276,7 @@ const postSupplierOnAccountPayment = async ({
     }
     if (account.status !== "active") {
       throw new FinanceValidationError(
-        "Supplier advances can only be posted from an active Bank/Cash account."
+        `${isAdvance ? "Supplier advances" : "On Account payments"} can only be posted from an active Bank/Cash account.`
       );
     }
 
@@ -298,24 +302,27 @@ const postSupplierOnAccountPayment = async ({
       account.openingbalancedate
     );
 
-    const supplierAdvanceResult = await client.query(
+    const counterpartyAccountCode = isAdvance
+      ? "SYS-SUPPLIER-ADVANCE"
+      : "SYS-AP";
+    const counterpartyAccountResult = await client.query(
       `
       SELECT id
       FROM finance_accounts
       WHERE organizationid = $1
-        AND accountcode = 'SYS-SUPPLIER-ADVANCE'
+        AND accountcode = $2
         AND status = 'active'
         AND isdeleted = FALSE
       LIMIT 1
       `,
-      [organizationId]
+      [organizationId, counterpartyAccountCode]
     );
-    const supplierAdvanceAccountId = Number(supplierAdvanceResult.rows[0]?.id);
-    if (!Number.isSafeInteger(supplierAdvanceAccountId)) {
+    const counterpartyAccountId = Number(counterpartyAccountResult.rows[0]?.id);
+    if (!Number.isSafeInteger(counterpartyAccountId)) {
       throw new FinanceValidationError(
-        "Supplier Advances system ledger is unavailable.",
+        `${isAdvance ? "Supplier Advances" : "Accounts Payable"} system ledger is unavailable.`,
         409,
-        "SUPPLIER_ADVANCE_LEDGER_MISSING"
+        isAdvance ? "SUPPLIER_ADVANCE_LEDGER_MISSING" : "ACCOUNTS_PAYABLE_LEDGER_MISSING"
       );
     }
 
@@ -326,7 +333,10 @@ const postSupplierOnAccountPayment = async ({
     );
     const epoch = nowEpoch();
     const paymentRemarks =
-      remarks || `Advance paid On Account to ${supplierName}`;
+      remarks ||
+      (isAdvance
+        ? `Advance paid to ${supplierName}`
+        : `Payment recorded On Account to ${supplierName}`);
     const bankTransactionResult = await client.query(
       `
       INSERT INTO bank_transactions (
@@ -340,8 +350,8 @@ const postSupplierOnAccountPayment = async ({
       VALUES (
         $1, $2, $3, 'supplier', $4, $5, $6,
         'credit', $7, 0, $7, $8,
-        'on_account', $9, $10, $10,
-        $11, 'posted', 'manual', $12, $12, $13, $13
+        $9, $10, $11, $11,
+        $12, 'posted', 'manual', $13, $13, $14, $14
       )
       RETURNING *
       `,
@@ -351,10 +361,13 @@ const postSupplierOnAccountPayment = async ({
         transactionDate,
         supplierId,
         supplierName,
-        supplierAdvanceAccountId,
+        counterpartyAccountId,
         amount,
         balanceAfter,
-        FINANCE_SOURCE_TYPES.supplierOnAccount,
+        allocationMethod,
+        isAdvance
+          ? FINANCE_SOURCE_TYPES.supplierAdvance
+          : FINANCE_SOURCE_TYPES.supplierOnAccount,
         requestReference,
         paymentRemarks,
         actor,
@@ -396,7 +409,7 @@ const postSupplierOnAccountPayment = async ({
       `,
       [
         journalEntry.id,
-        supplierAdvanceAccountId,
+        counterpartyAccountId,
         supplierId,
         amount,
         paymentRemarks,
@@ -491,11 +504,12 @@ const postSupplierOnAccountPayment = async ({
       INSERT INTO finance_audit_events (
         organizationid, entitytype, entityid, action, actor, eventdata, createddate
       )
-      VALUES ($1, 'bank_transaction', $2, 'supplier_on_account_posted', $3, $4::jsonb, $5)
+      VALUES ($1, 'bank_transaction', $2, $3, $4, $5::jsonb, $6)
       `,
       [
         organizationId,
         bankTransaction.id,
+        isAdvance ? "supplier_advance_posted" : "supplier_on_account_posted",
         actor,
         JSON.stringify({
           transactionnumber: transactionNumber,
@@ -557,7 +571,7 @@ export module supplierPaymentFinanceService {
     const allocationMethod = resolveOnAccountAllocationMethod(
       request.query?.allocationmethod
     );
-    if (allocationMethod === "on_account") {
+    if (allocationMethod === "on_account" || allocationMethod === "advance") {
       const supplierResult = await query(
         `
         SELECT id, suppliername, supplieremail, supplierphonenumber, suppliercode
@@ -687,7 +701,7 @@ export module supplierPaymentFinanceService {
     const allocationMethod = resolveOnAccountAllocationMethod(
       request.body?.allocationmethod
     );
-    if (allocationMethod === "on_account") {
+    if (allocationMethod === "on_account" || allocationMethod === "advance") {
       if (supplierId === null) {
         throw new FinanceValidationError("Supplier On Account is not available for a Supplier-less Direct Expense Bill.");
       }
@@ -696,7 +710,7 @@ export module supplierPaymentFinanceService {
         : [];
       if (requestedAllocations.length > 0) {
         throw new FinanceValidationError(
-          "Bill allocations are not allowed for an On Account Supplier advance."
+          `Bill allocations are not allowed for a Supplier ${allocationMethod === "advance" ? "advance" : "On Account payment"}.`
         );
       }
       return postSupplierOnAccountPayment({
@@ -708,6 +722,7 @@ export module supplierPaymentFinanceService {
         amount,
         remarks,
         requestReference,
+        allocationMethod,
       });
     }
     const requestedAllocations = Array.isArray(request.body?.allocations)

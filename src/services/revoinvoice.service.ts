@@ -12,6 +12,7 @@ import {
     isRetailStoreProductOrder,
 } from "../utils/finance/retailReceipt.utils.js";
 import { ecommercePaymentFinanceService } from "./ecommercePaymentFinance.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 
 // ─── Email Helpers (Internal) ───────────────────────────────────────────────
 
@@ -492,8 +493,12 @@ const enrichRentalInvoiceAssets = async (invoiceRows: any[]) => {
 
 export module revoinvoiceservice {
     export const getPaymentSummariesByCustomerIds = async (
-        customerIds: any[]
+        customerIds: any[],
+        organizationId: number
     ) => {
+        if (!Number.isSafeInteger(Number(organizationId)) || Number(organizationId) <= 0) {
+            throw new Error("A valid organization ID is required for customer payment summaries.");
+        }
         const normalizedCustomerIds = Array.from(
             new Set(
                 customerIds
@@ -507,14 +512,88 @@ export module revoinvoiceservice {
             return {};
         }
 
-        const invoiceResult = await query(
-            `
-            SELECT *
-            FROM revoinvoice
-            WHERE customerid = ANY($1::int[])
-            ORDER BY customerid, id
-            `,
-            [normalizedCustomerIds]
+        const [invoiceResult, journalResult, onAccountResult] = await Promise.all([
+            query(
+                `
+                SELECT *
+                FROM revoinvoice
+                WHERE customerid = ANY($1::int[])
+                ORDER BY customerid, id
+                `,
+                [normalizedCustomerIds]
+            ),
+            query(
+                `
+                SELECT
+                    jl.partyid AS customerid,
+                    COALESCE(SUM(
+                        COALESCE(jl.debitamount, 0) - COALESCE(jl.creditamount, 0)
+                    ), 0)::numeric(18, 2)
+                        AS journaladjustment
+                FROM journal_lines jl
+                JOIN journal_entries je
+                  ON je.id = jl.journalentryid
+                 AND je.organizationid = $1
+                 AND je.status = 'posted'
+                 AND je.isdeleted = FALSE
+                JOIN finance_accounts fa
+                  ON fa.id = jl.financeaccountid
+                 AND fa.organizationid = je.organizationid
+                 AND fa.accountsubtype = 'accounts_receivable'
+                WHERE jl.partytype = 'customer'
+                  AND jl.partyid = ANY($2::int[])
+                GROUP BY jl.partyid
+                `,
+                [organizationId, normalizedCustomerIds]
+            ),
+            query(
+                `
+                SELECT
+                    r.partyid AS customerid,
+                    COALESCE(SUM(movement_balance.amount), 0)::numeric(18, 2)
+                        AS availableamount
+                FROM on_account_references r
+                JOIN bank_transactions origin
+                  ON origin.id = r.sourcebanktransactionid
+                 AND origin.organizationid = r.organizationid
+                 AND origin.isdeleted = FALSE
+                 AND origin.allocationmethod = 'on_account'
+                JOIN LATERAL (
+                    SELECT COALESCE(SUM(
+                        CASE WHEN m.direction = 'increase' THEN m.amount ELSE -m.amount END
+                    ), 0)::numeric(18, 2) AS amount
+                    FROM on_account_movements m
+                    LEFT JOIN bank_transactions movement_bank
+                      ON movement_bank.id = m.banktransactionid
+                     AND movement_bank.organizationid = m.organizationid
+                     AND movement_bank.isdeleted = FALSE
+                    LEFT JOIN journal_entries movement_journal
+                      ON movement_journal.id = m.journalentryid
+                     AND movement_journal.organizationid = m.organizationid
+                     AND movement_journal.isdeleted = FALSE
+                    WHERE m.organizationid = r.organizationid
+                      AND m.onaccountreferenceid = r.id
+                ) movement_balance ON TRUE
+                WHERE r.organizationid = $1
+                  AND r.partytype = 'customer'
+                  AND r.partyid = ANY($2::int[])
+                GROUP BY r.partyid
+                `,
+                [organizationId, normalizedCustomerIds]
+            ),
+        ]);
+
+        const journalAdjustmentByCustomer = new Map<number, number>(
+            journalResult.rows.map((row: any) => [
+                Number(row.customerid),
+                Number(row.journaladjustment || 0),
+            ])
+        );
+        const onAccountCreditByCustomer = new Map<number, number>(
+            onAccountResult.rows.map((row: any) => [
+                Number(row.customerid),
+                Number(row.availableamount || 0),
+            ])
         );
 
         const summaryByCustomer = new Map<number, any>();
@@ -551,6 +630,12 @@ export module revoinvoiceservice {
                     paidamount: 0,
                     balanceamount: 0,
                 };
+                summary.balanceamount = Number(Math.max(
+                    summary.balanceamount
+                        - (onAccountCreditByCustomer.get(customerId) || 0)
+                        + (journalAdjustmentByCustomer.get(customerId) || 0),
+                    0
+                ).toFixed(2));
                 const paymentstatus =
                     summary.invoicecount === 0
                         ? "no_invoices"
@@ -800,6 +885,7 @@ export module revoinvoiceservice {
 
     export const generaterevoinvoice = async (request: any, invoicedata: any, reply: any) => {
         try {
+            const { organizationId } = resolveFinanceContext(request);
             let invoicefor = invoicedata[0].invoicefor
             let template = ''
             if (invoicefor === 'product' || invoicefor === 'penalty') {
@@ -816,7 +902,8 @@ export module revoinvoiceservice {
             delete result.fileurl;
             let data = {
                 id: result.id,
-                invoiceurl: result.invoiceUrl
+                invoiceurl: result.invoiceUrl,
+                organizationid: organizationId
             }
             let insertFileinvoice: any = await upsertRevoInvoice(data);
             if (insertFileinvoice.command === "UPDATE" || insertFileinvoice.command === "INSERT") {
@@ -839,6 +926,10 @@ export module revoinvoiceservice {
             let querydata: string;
             let params: any[];
             const { id, product, ...upsertFields } = invoicedata;
+            const organizationId = Number(upsertFields.organizationid);
+            if (!Number.isSafeInteger(organizationId) || organizationId <= 0) {
+                throw new Error("A valid organizationid is required to save an Invoice.");
+            }
 
             // Rental billing rows are internal source records. They must never
             // consume an official Sales Invoice number or expose a customer PDF.
@@ -864,7 +955,7 @@ export module revoinvoiceservice {
                 querydata = `UPDATE revoinvoice SET ${fieldNames
                     .map((field, index) => `${field} = $${index + 1}`)
                     .join(", ")} WHERE id = $${fieldNames.length + 1} AND organizationid = $${fieldNames.length + 2} RETURNING *`;
-                params = [...fieldValues, id, Number(upsertFields.organizationid || 1)];
+                params = [...fieldValues, id, organizationId];
             } else {
                 console.log('inside else')
                 querydata = `INSERT INTO revoinvoice (${fieldNames.join(

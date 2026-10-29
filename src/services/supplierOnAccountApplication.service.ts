@@ -96,9 +96,9 @@ const getExistingApplication = async (
   return {
     idempotent: true,
     requestreference: requestReference,
-    journalentryid: Number(rows[0].journalentryid),
-    journalnumber: rows[0].journalnumber,
-    applicationdate: rows[0].entrydate,
+    journalentryid: rows[0].journalentryid ? Number(rows[0].journalentryid) : null,
+    journalnumber: rows[0].journalnumber || null,
+    applicationdate: rows[0].entrydate || null,
     bankportion: toMoney(
       rows.reduce((total: number, row: any) => total + Number(row.bankportion), 0)
     ),
@@ -129,15 +129,20 @@ export module supplierOnAccountApplicationService {
     try {
       const referenceResult = await client.query(
         `
-        SELECT id, referencenumber, originalamount, usedamount,
-               availableamount, status, createddate
-        FROM on_account_references
-        WHERE organizationid = $1
-          AND partytype = 'supplier'
-          AND partyid = $2
-          AND status IN ('open', 'partially_applied')
-          AND availableamount > 0
-        ORDER BY createddate, id
+        SELECT r.id, r.referencenumber, r.originalamount, r.usedamount,
+               r.availableamount, r.status, r.createddate,
+               CASE WHEN bt.allocationmethod = 'on_account' THEN 'on_account' ELSE 'advance' END AS entrytype
+        FROM on_account_references r
+        LEFT JOIN bank_transactions bt
+          ON bt.id = r.sourcebanktransactionid
+         AND bt.organizationid = r.organizationid
+         AND bt.isdeleted = FALSE
+        WHERE r.organizationid = $1
+          AND r.partytype = 'supplier'
+          AND r.partyid = $2
+          AND r.status IN ('open', 'partially_applied')
+          AND r.availableamount > 0
+        ORDER BY r.createddate, r.id
         `,
         [organizationId, reference.supplierid]
       );
@@ -170,6 +175,7 @@ export module supplierOnAccountApplicationService {
           usedamount: toMoney(row.usedamount),
           availableamount: toMoney(row.availableamount),
           status: row.status,
+          entrytype: row.entrytype,
           createddate: Number(row.createddate),
         })),
         bills,
@@ -297,6 +303,12 @@ export module supplierOnAccountApplicationService {
       const referenceById = new Map(
         references.map((row: any) => [Number(row.id), row])
       );
+      const advanceBankPortion = toMoney(
+        matrix.reduce((total: number, chunk: any) => {
+          const reference: any = referenceById.get(chunk.referenceid);
+          return total + (reference?.entrytype === "advance" ? chunk.bankportion : 0);
+        }, 0)
+      );
       for (const requested of requestedReferences) {
         const reference: any = referenceById.get(requested.referenceid);
         if (
@@ -384,9 +396,9 @@ export module supplierOnAccountApplicationService {
         };
       });
 
-      const accountCodes = totalTdsAmount > 0
-        ? ["SYS-SUPPLIER-ADVANCE", "SYS-AP", "SYS-TDS-PAYABLE"]
-        : ["SYS-SUPPLIER-ADVANCE", "SYS-AP"];
+      const accountCodes = ["SYS-AP"];
+      if (advanceBankPortion > 0) accountCodes.push("SYS-SUPPLIER-ADVANCE");
+      if (totalTdsAmount > 0) accountCodes.push("SYS-TDS-PAYABLE");
       const accountResult = await client.query(
         `SELECT accountcode, id FROM finance_accounts
          WHERE organizationid = $1 AND accountcode = ANY($2::text[])
@@ -399,9 +411,9 @@ export module supplierOnAccountApplicationService {
       const advanceAccountId = accounts.get("SYS-SUPPLIER-ADVANCE");
       const payableAccountId = accounts.get("SYS-AP");
       const tdsAccountId = accounts.get("SYS-TDS-PAYABLE");
-      if (!advanceAccountId || !payableAccountId) {
+      if (!payableAccountId || (advanceBankPortion > 0 && !advanceAccountId)) {
         throw new FinanceValidationError(
-          "Supplier Advance or Accounts Payable system ledger is unavailable.",
+          "A required Supplier Advance or Accounts Payable system ledger is unavailable.",
           409,
           "ON_ACCOUNT_LEDGER_MISSING"
         );
@@ -435,45 +447,42 @@ export module supplierOnAccountApplicationService {
       }
 
       const epoch = nowEpoch();
-      const journalResult = await client.query(
-        `INSERT INTO journal_entries (
-           organizationid, entrydate, sourcetype, sourceid, status,
-           description, createdby, postedby, createddate, posteddate
-         ) VALUES ($1, $2, 'on_account_application', 0, 'posted', $3, $4, $4, $5, $5)
-         RETURNING id`,
-        [
-          organizationId,
-          applicationDate,
-          remarks || `Applied Supplier On Account balance against ${preparedBills.length} Bill${preparedBills.length === 1 ? "" : "s"}.`,
-          actor,
-          epoch,
-        ]
-      );
-      const journalId = Number(journalResult.rows[0].id);
-      const journalNumber = `JE-${String(journalId).padStart(8, "0")}`;
       const description = remarks || `Applied Supplier On Account balance against ${preparedBills.length} Bill${preparedBills.length === 1 ? "" : "s"}.`;
-      await client.query(
-        `UPDATE journal_entries SET journalnumber = $1, sourceid = $2 WHERE id = $2`,
-        [journalNumber, journalId]
-      );
-      await client.query(
-        `INSERT INTO journal_lines (
-           journalentryid, financeaccountid, partytype, partyid,
-           debitamount, creditamount, description
-         ) VALUES
-           ($1, $2, 'supplier', $3, $4, 0, $5),
-           ($1, $6, 'supplier', $3, 0, $7, $5)`,
-        [
-          journalId,
-          payableAccountId,
-          supplierId,
-          totalSettlement,
-          description,
-          advanceAccountId,
-          totalBankPortion,
-        ]
-      );
-      if (totalTdsAmount > 0) {
+      let journalId: number | null = null;
+      let journalNumber: string | null = null;
+      const journalAmount = toMoney(advanceBankPortion + totalTdsAmount);
+      if (journalAmount > 0) {
+        const journalResult = await client.query(
+          `INSERT INTO journal_entries (
+             organizationid, entrydate, sourcetype, sourceid, status,
+             description, createdby, postedby, createddate, posteddate
+           ) VALUES ($1, $2, 'on_account_application', 0, 'posted', $3, $4, $4, $5, $5)
+           RETURNING id`,
+          [organizationId, applicationDate, description, actor, epoch]
+        );
+        journalId = Number(journalResult.rows[0].id);
+        journalNumber = `JE-${String(journalId).padStart(8, "0")}`;
+        await client.query(
+          `UPDATE journal_entries SET journalnumber = $1, sourceid = $2 WHERE id = $2`,
+          [journalNumber, journalId]
+        );
+        await client.query(
+          `INSERT INTO journal_lines (
+             journalentryid, financeaccountid, partytype, partyid,
+             debitamount, creditamount, description
+           ) VALUES ($1, $2, 'supplier', $3, $4, 0, $5)`,
+          [journalId, payableAccountId, supplierId, journalAmount, description]
+        );
+        if (advanceBankPortion > 0) {
+          await client.query(
+            `INSERT INTO journal_lines (
+               journalentryid, financeaccountid, partytype, partyid,
+               debitamount, creditamount, description
+             ) VALUES ($1, $2, 'supplier', $3, 0, $4, $5)`,
+            [journalId, advanceAccountId, supplierId, advanceBankPortion, description]
+          );
+        }
+        if (totalTdsAmount > 0) {
         await client.query(
           `INSERT INTO journal_lines (
              journalentryid, financeaccountid, partytype, partyid,
@@ -481,6 +490,7 @@ export module supplierOnAccountApplicationService {
            ) VALUES ($1, $2, 'supplier', $3, 0, $4, $5)`,
           [journalId, tdsAccountId, supplierId, totalTdsAmount, description]
         );
+        }
       }
 
       const allocationRecords = [];
@@ -607,6 +617,14 @@ export module supplierOnAccountApplicationService {
             }
           : null;
         const existingPayments = parsePaymentData(prepared.bill.paymentdata);
+        const billAllocationTypes = Array.from(new Set(
+          allocationRecords
+            .filter((allocation: any) => allocation.billid === Number(prepared.bill.id))
+            .map((allocation: any) => referenceById.get(allocation.referenceid)?.entrytype || "advance")
+        ));
+        const appliedPaymentMethod = billAllocationTypes.length > 1
+          ? "on_account_and_advance"
+          : billAllocationTypes[0] || "on_account";
         const paymentEntry = {
           id: existingPayments.length + 1,
           paymentamount: prepared.allocationAmount,
@@ -615,9 +633,9 @@ export module supplierOnAccountApplicationService {
           tdssection: statutorySnapshot,
           adjustmenttype: section ? "tds_payable" : null,
           settlementamount: prepared.totalSettledAmount,
-          paymentmethod: "on_account",
+          paymentmethod: appliedPaymentMethod,
           paymentdate: epoch,
-          transactionreference: journalNumber,
+          transactionreference: journalNumber || requestReference,
           source: "finance_supplier_on_account_application",
           status: "success",
           comments: remarks,
@@ -660,7 +678,7 @@ export module supplierOnAccountApplicationService {
                    'supplier_on_account_applied', $3, $4::jsonb, $5)`,
         [
           organizationId,
-          journalId,
+          journalId || referenceIds[0],
           actor,
           JSON.stringify({
             supplierid: supplierId,

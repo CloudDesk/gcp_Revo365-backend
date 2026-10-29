@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import {
   createJournalDraftSchema,
@@ -14,11 +15,15 @@ import {
 import { FinanceValidationError } from "../utils/finance/finance.utils.js";
 import { requireJournalPermission } from "../services/financeAccess.service.js";
 import pool from "../database/postgres.js";
+import { deriveCustomerPaymentStatus } from "../utils/finance/customerStatement.utils.js";
+import { accessScopeService } from "../services/accessScope.service.js";
+import { isValidJournalAttachmentContent } from "../services/journal.service.js";
 
 describe("Journal Phase 4 foundation", () => {
   test("defines create and optimistic-concurrency update contracts", () => {
     assert.deepEqual(createJournalDraftSchema.required, [
       "entrydate",
+      "journalpurpose",
       "description",
       "lines",
     ]);
@@ -34,6 +39,7 @@ describe("Journal Phase 4 foundation", () => {
   test("normalizes a balanced two-line draft in stable line order", () => {
     const draft = normalizeJournalDraft({
       entrydate: "2026-08-17",
+      journalpurpose: "accrual",
       reference: "ACCRUAL-AUG",
       description: "August salary accrual",
       lines: [
@@ -45,8 +51,52 @@ describe("Journal Phase 4 foundation", () => {
     assert.equal(draft.totalcredit, 30000);
     assert.equal(draft.difference, 0);
     assert.deepEqual(draft.lines.map((line) => line.lineorder), [1, 2]);
-    assert.equal(draft.journalpurpose, "general");
+    assert.equal(draft.journalpurpose, "accrual");
     assert.equal(draft.relatedjournalentryid, null);
+  });
+
+  test("requires an explicit Journal purpose instead of silently defaulting", () => {
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-10-21",
+        description: "Missing purpose",
+        lines: [
+          { financeaccountid: 11, debitamount: 100, creditamount: 0 },
+          { financeaccountid: 12, debitamount: 0, creditamount: 100 },
+        ],
+      }),
+      (error: unknown) =>
+        error instanceof FinanceValidationError &&
+        error.message === "journalpurpose is required."
+    );
+  });
+
+  test("normalizes optional customer and supplier contacts on Journal lines", () => {
+    const draft = normalizeJournalDraft({
+      entrydate: "2026-10-20",
+      journalpurpose: "general",
+      description: "Party-linked control account adjustment",
+      lines: [
+        { financeaccountid: 11, partytype: "customer", partyid: 41, debitamount: 250, creditamount: 0 },
+        { financeaccountid: 12, debitamount: 0, creditamount: 250 },
+      ],
+    });
+    assert.equal(draft.lines[0].partytype, "customer");
+    assert.equal(draft.lines[0].partyid, 41);
+    assert.equal(draft.lines[1].partytype, null);
+    assert.equal(draft.lines[1].partyid, null);
+    assert.throws(
+      () => normalizeJournalDraft({
+        entrydate: "2026-10-20",
+        journalpurpose: "general",
+        description: "Incomplete Contact",
+        lines: [
+          { financeaccountid: 11, partytype: "customer", debitamount: 250, creditamount: 0 },
+          { financeaccountid: 12, debitamount: 0, creditamount: 250 },
+        ],
+      }),
+      FinanceValidationError
+    );
   });
 
   test("requires a structured related entry for reclassification and correction", () => {
@@ -74,21 +124,26 @@ describe("Journal Phase 4 foundation", () => {
     );
   });
 
-  test("allows an unbalanced Draft without treating it as posted", () => {
-    const draft = normalizeJournalDraft({
-      entrydate: "2026-08-17",
-      description: "Work in progress",
-      lines: [
-        { financeaccountid: 11, debitamount: 100, creditamount: 0 },
-        { financeaccountid: 12, debitamount: 0, creditamount: 75 },
-      ],
-    });
-    assert.equal(draft.difference, 25);
+  test("rejects an unbalanced Draft before it can be saved", () => {
+    assert.throws(() => normalizeJournalDraft({
+        entrydate: "2026-08-17",
+        journalpurpose: "accrual",
+        description: "Work in progress",
+        lines: [
+          { financeaccountid: 11, debitamount: 100, creditamount: 0 },
+          { financeaccountid: 12, debitamount: 0, creditamount: 75 },
+        ],
+      }),
+      (error: unknown) =>
+        error instanceof FinanceValidationError &&
+        error.code === "JOURNAL_NOT_BALANCED"
+    );
   });
 
   test("rejects invalid line sides and over-precision money", () => {
     const base = {
       entrydate: "2026-08-17",
+      journalpurpose: "general",
       description: "Invalid draft",
     };
     assert.throws(
@@ -241,5 +296,49 @@ describe("Journal Phase 4 foundation", () => {
       }),
       FinanceValidationError
     );
+  });
+
+  test("uses adjusted balances for Paid, Pending, and credit-balance statuses", () => {
+    assert.equal(deriveCustomerPaymentStatus({ invoiceCount: 0, invoiceAmount: 0, adjustedBalance: 0 }), "no_invoices");
+    assert.equal(deriveCustomerPaymentStatus({ invoiceCount: 1, invoiceAmount: 1180, adjustedBalance: 0 }), "paid");
+    assert.equal(deriveCustomerPaymentStatus({ invoiceCount: 1, invoiceAmount: 1180, adjustedBalance: -100 }), "paid");
+    assert.equal(deriveCustomerPaymentStatus({ invoiceCount: 1, invoiceAmount: 1180, adjustedBalance: 500 }), "partially_paid");
+    assert.equal(deriveCustomerPaymentStatus({ invoiceCount: 1, invoiceAmount: 1180, adjustedBalance: 1180 }), "pending");
+  });
+
+  test("keeps Journal uploads and customer document reads behind hardened contracts", () => {
+    const routes = readFileSync(new URL("../routes/routes.ts", import.meta.url), "utf8");
+    const journalService = readFileSync(new URL("../services/journal.service.ts", import.meta.url), "utf8");
+    const statementService = readFileSync(new URL("../services/customerStatement.service.ts", import.meta.url), "utf8");
+    assert.match(routes, /journalAttachmentUpload/);
+    assert.doesNotMatch(journalService, /request\.headers\?\.host/);
+    assert.match(journalService, /isValidJournalAttachmentContent/);
+    assert.match(journalService, /canVendorAccessCustomer\(request, customerId\)/);
+    assert.match(statementService, /canVendorAccessCustomer\(request, customerId\)/);
+    assert.match(statementService, /FINANCE_INVOICE_NOT_FOUND/);
+  });
+
+  test("validates Journal attachment bytes instead of trusting the filename", () => {
+    assert.equal(isValidJournalAttachmentContent(Buffer.from("%PDF-1.7\n"), ".pdf"), true);
+    assert.equal(isValidJournalAttachmentContent(Buffer.from("not a pdf"), ".pdf"), false);
+    assert.equal(isValidJournalAttachmentContent(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ".png"), true);
+    assert.equal(isValidJournalAttachmentContent(Buffer.from([0x4d, 0x5a, 0x90, 0x00]), ".png"), false);
+    assert.equal(isValidJournalAttachmentContent(Buffer.from("Account,Debit,Credit\nCash,100,0"), ".csv"), true);
+    assert.equal(isValidJournalAttachmentContent(Buffer.from([0x00, 0x01, 0x02]), ".csv"), false);
+  });
+
+  test("preserves unrestricted customer access for Admin and Accountant roles", async () => {
+    assert.equal(await accessScopeService.canVendorAccessCustomer({ session: { role: "Admin", id: 1 } }, 999), true);
+    assert.equal(await accessScopeService.canVendorAccessCustomer({ session: { role: "Accountant", id: 2 } }, 999), true);
+    for (const role of ["Admin", "Accountant"]) {
+      const whereClauses: string[] = [];
+      const queryParams: any[] = [];
+      const nextIndex = await accessScopeService.appendVendorBusinessCustomerScope(
+        { session: { role, id: 1 } }, whereClauses, queryParams, 1
+      );
+      assert.equal(nextIndex, 1);
+      assert.deepEqual(whereClauses, []);
+      assert.deepEqual(queryParams, []);
+    }
   });
 });

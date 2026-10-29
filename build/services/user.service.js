@@ -10,11 +10,13 @@ import { getOtp, saveOtp } from "./otp.service.js";
 import { revoinvoiceservice } from "./revoinvoice.service.js";
 import { firebaseAuth } from "../firebase/firebaseAdmin.js";
 import { accessScopeService } from "./accessScope.service.js";
+import { resolveFinanceContext } from "../utils/finance/finance.utils.js";
 let generatedotp;
 export var userService;
 (function (userService) {
     userService.getUsersData = async (request) => {
         try {
+            const { organizationId } = resolveFinanceContext(request);
             const pageNumber = parseInt(request.query.page) || 1;
             const recordCount = parseInt(request.query.count) || 5000;
             const paymentStatusFilter = String(request.query?.paymentstatusfilter || "all").toLowerCase();
@@ -128,7 +130,7 @@ export var userService;
             });
             const rentalDeliveryLocationsPromise = revoinvoiceservice.getRentalDeliveryLocationsByCustomerIds(customerIds);
             const paymentSummariesPromise = includePaymentSummary
-                ? revoinvoiceservice.getPaymentSummariesByCustomerIds(customerIds)
+                ? revoinvoiceservice.getPaymentSummariesByCustomerIds(customerIds, organizationId)
                 : Promise.resolve({});
             const [rentalCounts, rentalDeliveryLocations, paymentSummaries] = await Promise.all([
                 rentalCountsPromise,
@@ -237,7 +239,8 @@ export var userService;
                     const sessionId = uuidv4();
                     const sessionData = {
                         id: ecomResult.rows[0]?.id,
-                        useremail
+                        useremail,
+                        organizationid: ecomResult.rows[0]?.organizationid,
                     };
                     let sessionSaved = await saveSession(sessionId, sessionData);
                     if (sessionSaved) {
@@ -267,7 +270,8 @@ export var userService;
                             role: inventoryResult.rows[0].role,
                             useremail: inventoryResult.rows[0].useremail,
                             userpassword: inventoryResult.rows[0].userpassword,
-                            usersphonenumber: inventoryResult.rows[0].usersphonenumber
+                            usersphonenumber: inventoryResult.rows[0].usersphonenumber,
+                            organizationid: inventoryResult.rows[0].organizationid,
                         };
                         let sessionSaved = await saveSession(sessionId, sessionData);
                         if (sessionSaved) {
@@ -356,6 +360,7 @@ export var userService;
             const sessionData = {
                 id: ecomResult.rows[0]?.id,
                 useremail: ecomResult.rows[0]?.useremail,
+                organizationid: ecomResult.rows[0]?.organizationid,
             };
             const sessionSaved = await saveSession(sessionId, sessionData);
             if (sessionSaved) {

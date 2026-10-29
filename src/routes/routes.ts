@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { productController } from "../controller/Product.controller.js";
 import { productInsertSchema } from "../schemas/v1/product.schema.js";
 import { validateRequestBody } from "../schemas/ajv.schema.js";
-import { filesUpload } from "../multer/Multer.js";
+import { filesUpload, journalAttachmentUpload } from "../multer/Multer.js";
 import { gets3DataStream, gets3Dataurl } from "../aws/getDatafroms3.js";
 import { picklistControler } from "../controller/picklist.controller.js";
 import { recordCount } from "../controller/recordcount.controller.js";
@@ -515,6 +515,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         financeAccountController.listCustomerInvoices
     );
     fastify.get(
+        '/finance/customers/:customerId/invoices/:invoiceId/document',
+        { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
+        financeAccountController.getCustomerInvoiceDocument
+    );
+    fastify.get(
         '/finance/customers/:customerId/payments',
         { preHandler: [getSession, requireFinancePermission('read', 'customer_statement')] },
         financeAccountController.listCustomerPayments
@@ -563,6 +568,26 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/delivery-challans',
         { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
         financeAccountController.createDeliveryChallan
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanCustomers
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/context',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanCustomerContext
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.listDeliveryChallanInvoices
+    );
+    fastify.get(
+        '/finance/delivery-challans/customers/:customerId/invoices/:invoiceId/lines',
+        { preHandler: [getSession, requireDeliveryChallanPermission('create')] },
+        financeAccountController.getDeliveryChallanInvoiceLines
     );
     fastify.get(
         '/finance/delivery-challans/:challanId',
@@ -679,6 +704,11 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         journalController.listEligibleAccounts
     );
     fastify.get(
+        '/finance/journals/contacts',
+        { preHandler: [getSession, requireJournalPermission('read')] },
+        journalController.listEligibleContacts
+    );
+    fastify.get(
         '/finance/journals/related-entries',
         { preHandler: [getSession, requireJournalPermission('read')] },
         journalController.listRelatedEntries
@@ -702,6 +732,16 @@ const Revo365Routes = async function (fastify: FastifyInstance, opts: any) {
         '/finance/journals/:journalId',
         { preHandler: [getSession, requireJournalPermission('edit'), validateRequestBody(updateJournalDraftSchema)] },
         journalController.updateDraft
+    );
+    fastify.post(
+        '/finance/journals/:journalId/attachment',
+        { preHandler: [getSession, requireJournalPermission('edit'), journalAttachmentUpload] },
+        journalController.attachFile
+    );
+    fastify.post(
+        '/finance/journals/:journalId/delete',
+        { preHandler: [getSession, requireJournalPermission('delete'), validateRequestBody(postJournalSchema)] },
+        journalController.deleteDraft
     );
     fastify.post(
         '/finance/journals/:journalId/post',

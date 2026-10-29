@@ -15,6 +15,7 @@ export type SupplierStatementRow = {
   balance: number;
   status?: string | null;
   source?: string | null;
+  allocationmethod?: string | null;
   bankcashaccountname?: string | null;
   bankname?: string | null;
   documentnumbers?: string[];
@@ -57,13 +58,17 @@ export const buildSupplierStatement = (
   );
 
   let runningBalance = openingPayable;
-  const records: SupplierStatementRow[] = periodRows.map((row) => {
+  const chronologicalRecords: SupplierStatementRow[] = periodRows.map((row) => {
     runningBalance = toMoney(
       runningBalance + statementEffect(row),
       "supplier statement balance"
     );
     return { ...row, balance: runningBalance };
   });
+
+  // Calculate balances oldest-to-newest, then present the latest activity first.
+  // Reversing after the calculation preserves the balance as of each transaction.
+  const records = chronologicalRecords.reverse();
 
   return {
     records,

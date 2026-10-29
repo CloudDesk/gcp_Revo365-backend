@@ -172,7 +172,7 @@ export const createRetailReceiptSchema = {
     },
     allocationmethod: {
       type: "string",
-      enum: ["against_document", "on_account"],
+      enum: ["against_document", "on_account", "advance"],
     },
     remarks: nullableString,
     allocations: {
@@ -201,7 +201,7 @@ export const createRetailReceiptSchema = {
     {
       if: {
         properties: {
-          allocationmethod: { const: "on_account" },
+          allocationmethod: { enum: ["on_account", "advance"] },
         },
         required: ["allocationmethod"],
       },
@@ -344,7 +344,7 @@ export const createSupplierPaymentSchema = {
     },
     allocationmethod: {
       type: "string",
-      enum: ["against_document", "on_account"],
+      enum: ["against_document", "on_account", "advance"],
     },
     remarks: nullableString,
     allocations: {
@@ -374,7 +374,7 @@ export const createSupplierPaymentSchema = {
     {
       if: {
         properties: {
-          allocationmethod: { const: "on_account" },
+          allocationmethod: { enum: ["on_account", "advance"] },
         },
         required: ["allocationmethod"],
       },
@@ -409,6 +409,8 @@ const journalLineSchema = {
   additionalProperties: false,
   properties: {
     financeaccountid: { type: "integer", minimum: 1 },
+    partytype: { type: ["string", "null"], enum: ["customer", "supplier", null] },
+    partyid: { type: ["integer", "null"], minimum: 1 },
     description: { type: ["string", "null"], maxLength: 2000 },
     debitamount: { type: "number", minimum: 0 },
     creditamount: { type: "number", minimum: 0 },
@@ -440,7 +442,7 @@ export const createJournalDraftSchema = {
   type: "object",
   additionalProperties: false,
   properties: journalDraftProperties,
-  required: ["entrydate", "description", "lines"],
+  required: ["entrydate", "journalpurpose", "description", "lines"],
 };
 
 export const updateJournalDraftSchema = {
@@ -450,7 +452,7 @@ export const updateJournalDraftSchema = {
     ...journalDraftProperties,
     version: { type: "integer", minimum: 1 },
   },
-  required: ["entrydate", "description", "lines", "version"],
+  required: ["entrydate", "journalpurpose", "description", "lines", "version"],
 };
 
 export const postJournalSchema = {

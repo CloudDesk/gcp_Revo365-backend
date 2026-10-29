@@ -8,6 +8,8 @@ export const MANUAL_JOURNAL_REVERSAL_SOURCE = "manual_journal_reversal";
 
 export type NormalizedJournalLine = {
   financeaccountid: number;
+  partytype: "customer" | "supplier" | null;
+  partyid: number | null;
   description: string | null;
   debitamount: number;
   creditamount: number;
@@ -70,7 +72,10 @@ export const normalizeJournalDraft = (
     true,
     2000
   )!;
-  const journalpurpose = String(payload?.journalpurpose || "general") as NormalizedJournalDraft["journalpurpose"];
+  const journalpurpose = String(payload?.journalpurpose || "").trim() as NormalizedJournalDraft["journalpurpose"];
+  if (!journalpurpose) {
+    throw new FinanceValidationError("journalpurpose is required.");
+  }
   if (!["general", "accrual", "reclassification", "correction"].includes(journalpurpose)) {
     throw new FinanceValidationError(
       "journalpurpose must be general, accrual, reclassification, or correction."
@@ -118,10 +123,33 @@ export const normalizeJournalDraft = (
         `Enter either Debit or Credit for Journal line ${index + 1}.`
       );
     }
+    const rawPartyType = String(line?.partytype || "").trim().toLowerCase();
+    const partytype = rawPartyType
+      ? rawPartyType as NormalizedJournalLine["partytype"]
+      : null;
+    if (partytype !== null && !["customer", "supplier"].includes(partytype)) {
+      throw new FinanceValidationError(
+        `Contact type on Journal line ${index + 1} must be customer or supplier.`
+      );
+    }
+    const rawPartyId = line?.partyid;
+    const partyid = rawPartyId == null || rawPartyId === "" ? null : Number(rawPartyId);
+    if (partyid !== null && (!Number.isSafeInteger(partyid) || partyid <= 0)) {
+      throw new FinanceValidationError(
+        `A valid Contact is required for Journal line ${index + 1}.`
+      );
+    }
+    if ((partytype === null) !== (partyid === null)) {
+      throw new FinanceValidationError(
+        `Contact type and Contact must both be provided for Journal line ${index + 1}.`
+      );
+    }
     totalDebitCents += Math.round(debitamount * 100);
     totalCreditCents += Math.round(creditamount * 100);
     return {
       financeaccountid,
+      partytype,
+      partyid,
       description: normalizeText(
         line?.description,
         `description on Journal line ${index + 1}`,
@@ -133,6 +161,14 @@ export const normalizeJournalDraft = (
       lineorder: index + 1,
     };
   });
+
+  if (totalDebitCents <= 0 || totalDebitCents !== totalCreditCents) {
+    throw new FinanceValidationError(
+      "Total Debit and Total Credit must be equal before saving the Journal.",
+      409,
+      "JOURNAL_NOT_BALANCED"
+    );
+  }
 
   return {
     entrydate,

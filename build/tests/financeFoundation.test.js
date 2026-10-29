@@ -16,6 +16,7 @@ import { resolveChartAccountDateRange } from "../utils/finance/chartAccountPerio
 import pool from "../database/postgres.js";
 import { financeAccountService } from "../services/financeAccount.service.js";
 import { buildCustomerStatement, toCustomerStatementDate, } from "../utils/finance/customerStatement.utils.js";
+import { buildSupplierStatement } from "../utils/finance/supplierStatement.utils.js";
 import { extractDeliverableInvoiceLines, validateManualDeliveryLines, validateDeliveryQuantities, } from "../utils/finance/deliveryChallan.utils.js";
 import { assertOnAccountMovementBalance, calculateOnAccountAvailableFromMovements, deriveOnAccountStatus, formatOnAccountReferenceNumber, normalizeOnAccountPartyType, normalizeOnAccountStatusFilter, resolveOnAccountAllocationMethod, isOnAccountReferenceReconciled, validateOnAccountSettlementAmounts, buildOnAccountApplicationMatrix, buildOnAccountReadScope, summarizeOnAccountStatement, } from "../utils/finance/onAccount.utils.js";
 import { requireFinancePermission } from "../services/financeAccess.service.js";
@@ -362,6 +363,42 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
             assert.equal(statement.records[1].balance, 600);
             assert.equal(statement.summary.closingreceivable, 600);
         });
+        test("reduces receivable by bank payment plus TDS while keeping both amounts separate", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-tds",
+                    sourceid: 1,
+                    transactiontype: "invoice",
+                    transactiondate: "2026-10-15",
+                    reference: "INV-TDS",
+                    description: "Invoice",
+                    invoiceamount: 1180,
+                    paymentamount: 0,
+                    settledamount: 0,
+                    tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "payment-tds",
+                    sourceid: 1,
+                    transactiontype: "customer_payment",
+                    transactiondate: "2026-10-16",
+                    reference: "BT-TDS",
+                    description: "Receipt with TDS",
+                    invoiceamount: 0,
+                    paymentamount: 1080,
+                    settledamount: 1180,
+                    tdsamount: 100,
+                    unappliedamount: 0,
+                },
+            ]);
+            assert.equal(statement.records[1].paymentamount, 1080);
+            assert.equal(statement.records[1].tdsamount, 100);
+            assert.equal(statement.records[1].balance, 0);
+            assert.equal(statement.summary.paymentamount, 1080);
+            assert.equal(statement.summary.tdsreceivable, 100);
+            assert.equal(statement.summary.closingreceivable, 0);
+        });
         test("uses pre-period rows for the opening receivable", () => {
             const statement = buildCustomerStatement([
                 {
@@ -393,6 +430,65 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
             ], { fromdate: "2026-08-01", todate: "2026-08-31" });
             assert.equal(statement.summary.openingreceivable, 1000);
             assert.equal(statement.summary.closingreceivable, 750);
+        });
+        test("reduces customer receivable immediately for On Account but not for Advance until allocation", () => {
+            const statement = buildCustomerStatement([
+                {
+                    id: "invoice-1", sourceid: 1, transactiontype: "invoice",
+                    transactiondate: "2026-10-01", reference: "INV-1", description: "Invoice",
+                    invoiceamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+                    unappliedamount: 0,
+                },
+                {
+                    id: "on-account-1", sourceid: 2, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+                    invoiceamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+                    unappliedamount: 300, allocationmethod: "on_account",
+                },
+                {
+                    id: "advance-1", sourceid: 3, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+                    invoiceamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+                    unappliedamount: 200, allocationmethod: "advance",
+                },
+                {
+                    id: "advance-application-1", sourceid: 4, transactiontype: "customer_payment",
+                    transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+                    invoiceamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+                    unappliedamount: 0, allocationmethod: "on_account_application",
+                },
+            ]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.equal(statement.summary.closingreceivable, 500);
+        });
+        test("applies the equivalent On Account and Advance timing to Supplier payable", () => {
+            const statement = buildSupplierStatement([
+                {
+                    id: "bill-1", sourceid: 1, transactiontype: "bill",
+                    transactiondate: "2026-10-01", reference: "BILL-1", description: "Bill",
+                    billamount: 1000, paymentamount: 0, settledamount: 0, tdsamount: 0,
+                },
+                {
+                    id: "on-account-1", sourceid: 2, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-02", reference: "BT-OA", description: "On Account",
+                    billamount: 0, paymentamount: 300, settledamount: 300, tdsamount: 0,
+                    allocationmethod: "on_account",
+                },
+                {
+                    id: "advance-1", sourceid: 3, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-03", reference: "BT-ADV", description: "Advance",
+                    billamount: 0, paymentamount: 200, settledamount: 0, tdsamount: 0,
+                    allocationmethod: "advance",
+                },
+                {
+                    id: "advance-application-1", sourceid: 4, transactiontype: "supplier_payment",
+                    transactiondate: "2026-10-04", reference: "JE-ADV", description: "Advance allocation",
+                    billamount: 0, paymentamount: 200, settledamount: 200, tdsamount: 0,
+                    allocationmethod: "on_account_application",
+                },
+            ]);
+            assert.deepEqual(statement.records.map((row) => row.balance), [1000, 700, 700, 500]);
+            assert.equal(statement.summary.closingpayable, 500);
         });
         test("serializes epoch Invoice dates in the India business date", () => {
             assert.equal(toCustomerStatementDate(1786386600), "2026-08-11");
@@ -927,7 +1023,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
         test("Customer receipt allocation method defaults to the existing invoice flow", () => {
             assert.equal(resolveCustomerReceiptAllocationMethod(undefined), "against_document");
             assert.equal(resolveCustomerReceiptAllocationMethod("on_account"), "on_account");
-            assert.throws(() => resolveCustomerReceiptAllocationMethod("advance"), FinanceValidationError);
+            assert.equal(resolveCustomerReceiptAllocationMethod("advance"), "advance");
         });
         test("Customer receipt schema keeps legacy allocations and permits allocation-free On Account receipts", () => {
             const validate = new Ajv({ strict: false }).compile(createRetailReceiptSchema);
@@ -947,6 +1043,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
                 allocations: [],
             }), true);
             assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
             assert.equal(validate({ ...base, allocationmethod: "against_document" }), false);
             assert.equal(validate({
                 ...base,
@@ -967,7 +1064,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
         test("Supplier payment allocation method defaults to the existing bill flow", () => {
             assert.equal(resolveOnAccountAllocationMethod(undefined), "against_document");
             assert.equal(resolveOnAccountAllocationMethod("on_account"), "on_account");
-            assert.throws(() => resolveOnAccountAllocationMethod("advance"), FinanceValidationError);
+            assert.equal(resolveOnAccountAllocationMethod("advance"), "advance");
         });
         test("Supplier payment schema preserves bill payments and permits allocation-free advances", () => {
             const validate = new Ajv({ strict: false }).compile(createSupplierPaymentSchema);
@@ -983,6 +1080,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
             }), true);
             assert.equal(validate({ ...base, allocationmethod: "on_account", allocations: [] }), true);
             assert.equal(validate({ ...base, allocationmethod: "on_account" }), true);
+            assert.equal(validate({ ...base, allocationmethod: "advance" }), true);
             assert.equal(validate({ ...base, allocationmethod: "against_document" }), false);
             assert.equal(validate({
                 ...base,
@@ -1027,6 +1125,7 @@ describe("Finance foundation regression suite", { concurrency: false }, () => {
             assert.deepEqual(getCustomerReceiptSourceTypes(), [
                 "customer_receipt",
                 "customer_on_account",
+                "customer_advance",
                 "retail_receipt",
                 "retail_instore_receipt",
                 "service_request_receipt",
